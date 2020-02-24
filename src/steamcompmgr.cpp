@@ -34,7 +34,7 @@
 #include <mutex>
 #include <vector>
 
-#include <assert.h> 
+#include <assert.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -99,7 +99,7 @@ typedef struct _win {
 	unsigned int	opacity;
 	unsigned long	map_sequence;
 	unsigned long	damage_sequence;
-	
+
 	Bool isSteam;
 	Bool isSteamPopup;
 	Bool wantsUnfocus;
@@ -112,12 +112,12 @@ typedef struct _win {
 	unsigned int requestedHeight;
 	Bool nudged;
 	Bool ignoreOverrideRedirect;
-	
+
 	Bool mouseMoved;
-	
+
 	long int WLsurfaceID;
 	struct wlr_surface *wlrsurface;
-	
+
 	std::vector< commit_t > commit_queue;
 } win;
 
@@ -266,42 +266,42 @@ void imageWaitThreadRun( void )
 {
 wait:
 	waitListSem.wait();
-	
+
 	bool bFound = false;
 	uint32_t fence;
 	uint64_t commitID;
-	
+
 retry:
 	{
 		std::unique_lock< std::mutex > lock( waitListLock );
-		
+
 		if( waitList.size() == 0 )
 		{
 			goto wait;
 		}
-		
+
 		fence = waitList[ 0 ].first;
 		commitID = waitList[ 0 ].second;
 		bFound = true;
 		waitList.erase( waitList.begin() );
 	}
-	
+
 	assert( bFound == true );
-	
+
 	gpuvis_trace_printf( "wait fence begin_ctx=%lu\n", commitID );
 	vulkan_wait_for_fence( fence );
 	gpuvis_trace_printf( "wait fence end_ctx=%lu\n", commitID );
-	
+
 	{
 		std::unique_lock< std::mutex > lock( listCommitsDoneLock );
-		
+
 		listCommitsDone.push_back( commitID );
 	}
-	
+
 	static Display *threadDPY = XOpenDisplay ( wlserver_get_nested_display() );
 	XSendEvent( threadDPY, ourWindow, True, SubstructureRedirectMask, &nudgeEvent );
 	XFlush( threadDPY );
-	
+
 	goto retry;
 }
 
@@ -382,7 +382,7 @@ unsigned int
 get_time_in_milliseconds (void)
 {
 	struct timeval  tv;
-	
+
 	gettimeofday (&tv, NULL);
 	return tv.tv_sec * 1000 + tv.tv_usec / 1000;
 }
@@ -428,12 +428,12 @@ static win *
 find_win (Display *dpy, Window id)
 {
 	win	*w;
-	
+
 	if (id == None)
 	{
 		return NULL;
 	}
-	
+
 	for (w = list; w; w = w->next)
 	{
 		if (w->id == id)
@@ -450,25 +450,25 @@ find_win (Display *dpy, Window id)
 	XQueryTree(dpy, id, &root, &parent, &children, &childrenCount);
 	if (children)
 		XFree(children);
-	
+
 	if (root == parent || parent == None)
 	{
 		return NULL;
 	}
-	
+
 	return find_win(dpy, parent);
 }
 
 static win * find_win( struct wlr_surface *surf )
 {
 	win	*w = nullptr;
-	
+
 	for (w = list; w; w = w->next)
 	{
 		if ( w->wlrsurface == surf )
 			return w;
 	}
-	
+
 	return nullptr;
 }
 
@@ -479,13 +479,13 @@ set_win_hidden (Display *dpy, win *w, Bool hidden)
 	{
 		return;
 	}
-	
+
 	if (w->isHidden == hidden)
 	{
 		return;
 	}
-	
-	
+
+
 	if (hidden == True)
 	{
 		XChangeProperty(dpy, w->id, WMStateAtom, XA_ATOM, 32,
@@ -496,7 +496,7 @@ set_win_hidden (Display *dpy, win *w, Bool hidden)
 		XChangeProperty(dpy, w->id, WMStateAtom, XA_ATOM, 32,
 						PropModeReplace, (unsigned char *)NULL, 0);
 	}
-	
+
 	w->isHidden = hidden;
 }
 
@@ -508,7 +508,7 @@ release_commit ( commit_t &commit )
 		drm_free_fbid( &g_DRM, commit.fb_id );
 		commit.fb_id = 0;
 	}
-	
+
 	if ( commit.vulkanTex != 0 )
 	{
 		vulkan_free_texture( commit.vulkanTex );
@@ -522,9 +522,9 @@ import_commit ( struct wlr_dmabuf_attributes *dmabuf, commit_t &commit )
 	if ( BIsNested() == False )
 	{
 		// We'll also need a copy for Vulkan to consume below.
-		
+
 		int fdCopy = dup( dmabuf->fd[0] );
-		
+
 		if ( fdCopy == -1 )
 		{
 			close( dmabuf->fd[0] );
@@ -533,14 +533,14 @@ import_commit ( struct wlr_dmabuf_attributes *dmabuf, commit_t &commit )
 
 		commit.fb_id = drm_fbid_from_dmabuf( &g_DRM, dmabuf );
 		assert( commit.fb_id != 0 );
-		
+
 		close( dmabuf->fd[0] );
 		dmabuf->fd[0] = fdCopy;
 	}
-	
+
 	commit.vulkanTex = vulkan_create_texture_from_dmabuf( dmabuf );
 	assert( commit.vulkanTex != 0 );
-	
+
 	return true;
 }
 
@@ -555,12 +555,12 @@ get_window_last_done_commit( win *w, commit_t &commit )
 			lastCommit = i;
 		}
 	}
-	
+
 	if ( lastCommit == -1 )
 	{
 		return false;
 	}
-	
+
 	commit = w->commit_queue[ lastCommit ];
 	return true;
 }
@@ -571,12 +571,12 @@ handle_mouse_movement(Display *dpy, int posX, int posY)
 	// Some stuff likes to warp in-place
 	if (cursorX == posX && cursorY == posY)
 		return;
-	
+
 	cursorX = posX;
 	cursorY = posY;
-	
+
 	win *w = find_win(dpy, currentFocusWindow);
-	
+
 	if (w && gameFocused)
 	{
 		// If mouse moved and we're on the hook for showing the cursor, repaint
@@ -591,15 +591,15 @@ handle_mouse_movement(Display *dpy, int posX, int posY)
 			hasRepaint = true;
 		}
 	}
-	
+
 	// Ignore the first events as it's likely to be non-user-initiated warps
 	// Account for one warp from us, one warp from the app and one warp from
 	// the toolkit.
 	if ( !w || ( w->mouseMoved++ < 3 ) )
 		return;
-	
+
 	lastCursorMovedTime = get_time_in_milliseconds();
-	
+
 	hideCursorForMovement = False;
 }
 
@@ -607,122 +607,122 @@ static void
 paint_cursor ( Display *dpy, win *w, struct Composite_t *pComposite, struct VulkanPipeline_t *pPipeline )
 {
 	float scaledCursorX, scaledCursorY;
-	
+
 	Window window_returned, child;
 	int root_x, root_y;
 	int win_x, win_y;
 	unsigned int mask_return;
-	
+
 	XQueryPointer(dpy, DefaultRootWindow(dpy), &window_returned,
 				  &child, &root_x, &root_y, &win_x, &win_y,
 			   &mask_return);
-	
+
 	handle_mouse_movement( dpy, root_x, root_y );
-	
+
 	// Also need new texture
 	if (cursorImageDirty)
 	{
 		XFixesCursorImage* im = XFixesGetCursorImage(dpy);
-		
+
 		if (!im)
 			return;
-		
+
 		cursorHotX = im->xhot;
 		cursorHotY = im->yhot;
-		
+
 		cursorWidth = im->width;
 		cursorHeight = im->height;
-		
+
 		if ( cursorTexture != 0 )
 		{
 			vulkan_free_texture( cursorTexture );
 			cursorTexture = 0;
 		}
-		
+
 		// Assume the cursor is fully translucent unless proven otherwise
 		bool bNoCursor = true;
-		
+
 		unsigned int cursorDataBuffer[cursorWidth * cursorHeight];
 		for (int i = 0; i < cursorWidth * cursorHeight; i++)
 		{
 			cursorDataBuffer[i] = im->pixels[i];
-			
+
 			if ( cursorDataBuffer[i] & 0x000000ff )
 			{
 				bNoCursor = false;
 			}
 		}
-		
+
 		if ( bNoCursor != cursorImageEmpty )
 		{
 			cursorImageEmpty = bNoCursor;
-			
+
 			if ( cursorImageEmpty == true )
 			{
 // 				fprintf( stderr, "grab?\n" );
 			}
 		}
-		
+
 		if ( cursorImageEmpty == True )
 			return;
-		
+
 		cursorTexture = vulkan_create_texture_from_bits( cursorWidth, cursorHeight, VK_FORMAT_R8G8B8A8_UNORM, cursorDataBuffer );
-		
+
 		assert( cursorTexture != 0 );
 
 		XFree(im);
-		
+
 		cursorImageDirty = False;
 	}
-	
+
 	if ( cursorImageEmpty == True )
 		return;
-	
+
 	float currentScaleRatio = 1.0;
 	float XRatio = (float)currentOutputWidth / w->a.width;
 	float YRatio = (float)currentOutputHeight / w->a.height;
 	int cursorOffsetX, cursorOffsetY;
-	
+
 	currentScaleRatio = (XRatio < YRatio) ? XRatio : YRatio;
-	
+
 	cursorOffsetX = (currentOutputWidth - w->a.width * currentScaleRatio * globalScaleRatio) / 2.0f;
 	cursorOffsetY = (currentOutputHeight - w->a.height * currentScaleRatio * globalScaleRatio) / 2.0f;
-	
+
 	// Actual point on scaled screen where the cursor hotspot should be
 	scaledCursorX = (win_x - w->a.x) * currentScaleRatio * globalScaleRatio + cursorOffsetX;
 	scaledCursorY = (win_y - w->a.y) * currentScaleRatio * globalScaleRatio + cursorOffsetY;
-	
+
 	if ( zoomScaleRatio != 1.0 )
 	{
 		scaledCursorX += ((w->a.width / 2) - win_x) * currentScaleRatio * globalScaleRatio;
 		scaledCursorY += ((w->a.height / 2) - win_y) * currentScaleRatio * globalScaleRatio;
 	}
-	
+
 	// Apply the cursor offset inside the texture using the display scale
 	scaledCursorX = scaledCursorX - cursorHotX;
 	scaledCursorY = scaledCursorY - cursorHotY;
-	
+
 	int curLayer = pComposite->nLayerCount;
-	
+
 	pComposite->layers[ curLayer ].flOpacity = 1.0;
-	
+
 	pComposite->layers[ curLayer ].flScaleX = 1.0;
 	pComposite->layers[ curLayer ].flScaleY = 1.0;
-	
+
 	pComposite->layers[ curLayer ].flOffsetX = -scaledCursorX;
 	pComposite->layers[ curLayer ].flOffsetY = -scaledCursorY;
-	
+
 	pPipeline->layerBindings[ curLayer ].surfaceWidth = cursorWidth;
 	pPipeline->layerBindings[ curLayer ].surfaceHeight = cursorHeight;
-	
+
 	pPipeline->layerBindings[ curLayer ].zpos = 2; // cursor, on top of both bottom layers
-	
+
 	pPipeline->layerBindings[ curLayer ].tex = cursorTexture;
 	pPipeline->layerBindings[ curLayer ].fbid = BIsNested() ? 0 : vulkan_texture_get_fbid( cursorTexture );
-	
+
 	pPipeline->layerBindings[ curLayer ].bFilter = false;
 	pPipeline->layerBindings[ curLayer ].bBlackBorder = false;
-	
+
 	pComposite->nLayerCount += 1;
 }
 
@@ -734,22 +734,22 @@ paint_window (Display *dpy, win *w, struct Composite_t *pComposite, struct Vulka
 	float currentScaleRatio = 1.0;
 	commit_t lastCommit = {};
 	bool validContents = get_window_last_done_commit( w, lastCommit );
-	
+
 	if (!w)
 		return;
-	
+
 	// Don't add a layer at all if it's an overlay without contents
 	if (w->isOverlay && !validContents)
 		return;
 
 	// Base plane will stay as tex=0 if we don't have contents yet, which will
 	// make us fall back to compositing and use the Vulkan null texture
-	
+
 	win *mainOverlayWindow = find_win(dpy, currentOverlayWindow);
-	
+
 	if (notificationMode && !mainOverlayWindow)
 		return;
-	
+
 	if (notificationMode)
 	{
 		sourceWidth = mainOverlayWindow->a.width;
@@ -760,45 +760,45 @@ paint_window (Display *dpy, win *w, struct Composite_t *pComposite, struct Vulka
 		sourceWidth = w->a.width;
 		sourceHeight = w->a.height;
 	}
-	
+
 	if (sourceWidth != currentOutputWidth || sourceHeight != currentOutputHeight || globalScaleRatio != 1.0f)
 	{
 		float XRatio = (float)currentOutputWidth / sourceWidth;
 		float YRatio = (float)currentOutputHeight / sourceHeight;
-		
+
 		currentScaleRatio = (XRatio < YRatio) ? XRatio : YRatio;
 		currentScaleRatio *= globalScaleRatio;
-		
+
 		drawXOffset = (currentOutputWidth - sourceWidth * currentScaleRatio) / 2.0f;
 		drawYOffset = (currentOutputHeight - sourceHeight * currentScaleRatio) / 2.0f;
-		
+
 		if ( zoomScaleRatio != 1.0 )
 		{
 			drawXOffset += ((sourceWidth / 2) - cursorX) * currentScaleRatio;
 			drawYOffset += ((sourceHeight / 2) - cursorY) * currentScaleRatio;
 		}
 	}
-	
+
 	int curLayer = pComposite->nLayerCount;
-	
+
 	pComposite->layers[ curLayer ].flOpacity = w->isOverlay ? w->opacity / (float)OPAQUE : 1.0f;
-	
+
 	pComposite->layers[ curLayer ].flScaleX = 1.0 / currentScaleRatio;
 	pComposite->layers[ curLayer ].flScaleY = 1.0 / currentScaleRatio;
-	
+
 	if (notificationMode)
 	{
 		int xOffset = 0, yOffset = 0;
-		
+
 		int width = w->a.width * currentScaleRatio;
 		int height = w->a.height * currentScaleRatio;
-		
+
 		if (globalScaleRatio != 1.0f)
 		{
 			xOffset = (currentOutputWidth - currentOutputWidth * globalScaleRatio) / 2.0;
 			yOffset = (currentOutputHeight - currentOutputHeight * globalScaleRatio) / 2.0;
 		}
-		
+
 		pComposite->layers[ curLayer ].flOffsetX = (currentOutputWidth - xOffset - width) * -1.0f;
 		pComposite->layers[ curLayer ].flOffsetY = (currentOutputHeight - yOffset - height) * -1.0f;
 	}
@@ -807,18 +807,18 @@ paint_window (Display *dpy, win *w, struct Composite_t *pComposite, struct Vulka
 		pComposite->layers[ curLayer ].flOffsetX = -drawXOffset;
 		pComposite->layers[ curLayer ].flOffsetY = -drawYOffset;
 	}
-	
+
 	pPipeline->layerBindings[ curLayer ].surfaceWidth = w->a.width;
 	pPipeline->layerBindings[ curLayer ].surfaceHeight = w->a.height;
-	
+
 	pPipeline->layerBindings[ curLayer ].zpos = w->isOverlay ? 1 : 0;
-	
+
 	pPipeline->layerBindings[ curLayer ].tex = lastCommit.vulkanTex;
 	pPipeline->layerBindings[ curLayer ].fbid = lastCommit.fb_id;
-	
+
 	pPipeline->layerBindings[ curLayer ].bFilter = w->isOverlay ? true : g_bFilterGameWindow;
 	pPipeline->layerBindings[ curLayer ].bBlackBorder = notificationMode ? false : true;
-	
+
 	pComposite->nLayerCount += 1;
 }
 
@@ -832,15 +832,15 @@ static void
 paint_debug_info (Display *dpy)
 {
 	int Y = 100;
-	
+
 // 	glBindTexture(GL_TEXTURE_2D, 0);
-	
+
 	char messageBuffer[256];
-	
+
 	sprintf(messageBuffer, "Compositing at %.1f FPS", currentFrameRate);
-	
+
 	float textYMax = 0.0f;
-	
+
 	paint_message(messageBuffer, Y, 1.0f, 1.0f, 1.0f); Y += textYMax;
 	if (find_win(dpy, currentFocusWindow))
 	{
@@ -855,22 +855,22 @@ paint_debug_info (Display *dpy)
 			paint_message("Presenting Steam", Y, 1.0f, 1.0f, 0.0f); Y += textYMax;
 		}
 	}
-	
+
 	win *overlay = find_win(dpy, currentOverlayWindow);
 	win *notification = find_win(dpy, currentNotificationWindow);
-	
+
 	if (overlay && gamesRunningCount && overlay->opacity)
 	{
 		sprintf(messageBuffer, "Compositing overlay at opacity %f", overlay->opacity / (float)OPAQUE);
 		paint_message(messageBuffer, Y, 1.0f, 0.0f, 1.0f); Y += textYMax;
 	}
-	
+
 	if (notification && gamesRunningCount && notification->opacity)
 	{
 		sprintf(messageBuffer, "Compositing notification at opacity %f", notification->opacity / (float)OPAQUE);
 		paint_message(messageBuffer, Y, 1.0f, 0.0f, 1.0f); Y += textYMax;
 	}
-	
+
 	if (gotXError) {
 		paint_message("Encountered X11 error", Y, 1.0f, 0.0f, 0.0f); Y += textYMax;
 	}
@@ -880,27 +880,27 @@ static void
 paint_all (Display *dpy)
 {
 	static long long int paintID = 0;
-	
+
 	paintID++;
 	gpuvis_trace_printf( "paint_all begin_ctx=%llu\n", paintID );
 	win	*w;
 	win	*overlay;
 	win	*notification;
-	
+
 	unsigned int currentTime = get_time_in_milliseconds();
 	Bool fadingOut = ((currentTime - fadeOutStartTime) < FADE_OUT_DURATION && fadeOutWindow.id != None);
-	
+
 	w = find_win(dpy, currentFocusWindow);
 	overlay = find_win(dpy, currentOverlayWindow);
 	notification = find_win(dpy, currentNotificationWindow);
-	
+
 	if ( !w )
 	{
 		return;
 	}
-	
+
 	frameCounter++;
-	
+
 	if (frameCounter == 300)
 	{
 		currentFrameRate = 300 * 1000.0f / (currentTime - lastSampledFrameTime);
@@ -922,24 +922,24 @@ paint_all (Display *dpy)
 			stats_printf( "focus=%i\n", w->gameID );
 		}
 	}
-	
+
 	struct Composite_t composite = {};
 	struct VulkanPipeline_t pipeline = {};
-	
+
 	// Fading out from previous window?
 	if (fadingOut)
 	{
 		double newOpacity = ((currentTime - fadeOutStartTime) / (double)FADE_OUT_DURATION);
-		
+
 		// Draw it in the background
 		fadeOutWindow.opacity = (1.0d - newOpacity) * OPAQUE;
 		paint_window(dpy, &fadeOutWindow, &composite, &pipeline, False);
-		
+
 		w = find_win(dpy, currentFocusWindow);
-		
+
 		// Blend new window on top with linear crossfade
 		w->opacity = newOpacity * OPAQUE;
-		
+
 		paint_window(dpy, w, &composite, &pipeline, False);
 	}
 	else
@@ -947,21 +947,21 @@ paint_all (Display *dpy)
 		w = find_win(dpy, currentFocusWindow);
 		// Just draw focused window as normal, be it Steam or the game
 		paint_window(dpy, w, &composite, &pipeline, False);
-		
+
 		if (fadeOutWindow.id) {
-			
+
 			if (fadeOutWindowGone)
 			{
 				// This is the only reference to these resources now.
 				fadeOutWindowGone = False;
 			}
 			fadeOutWindow.id = None;
-			
+
 			// Finished fading out, mark previous window hidden
 			set_win_hidden(dpy, &fadeOutWindow, True);
 		}
 	}
-	
+
 	if (gamesRunningCount && overlay)
 	{
 		if (overlay->opacity)
@@ -969,7 +969,7 @@ paint_all (Display *dpy)
 			paint_window(dpy, overlay, &composite, &pipeline, False);
 		}
 	}
-	
+
 	if (gamesRunningCount && notification)
 	{
 		if (notification->opacity)
@@ -977,7 +977,7 @@ paint_all (Display *dpy)
 			paint_window(dpy, notification, &composite, &pipeline, True);
 		}
 	}
-	
+
 	// Draw cursor if we need to
 	if (w && gameFocused)
 	{
@@ -986,12 +986,12 @@ paint_all (Display *dpy)
 			paint_cursor( dpy, w, &composite, &pipeline );
 		}
 	}
-	
+
 	if (drawDebugInfo)
 		paint_debug_info(dpy);
-	
+
 	bool bDoComposite = true;
-	
+
 	if ( BIsNested() == false && alwaysComposite == False )
 	{
 		if ( drm_can_avoid_composite( &g_DRM, &composite, &pipeline ) == true )
@@ -999,16 +999,16 @@ paint_all (Display *dpy)
 			bDoComposite = false;
 		}
 	}
-	
+
 	if ( bDoComposite == true )
 	{
 		bool bResult = vulkan_composite( &composite, &pipeline );
-		
+
 		if ( bResult != true )
 		{
 			fprintf (stderr, "composite alarm!!!\n");
 		}
-		
+
 		if ( BIsNested() == True )
 		{
 			vulkan_present_to_window();
@@ -1020,30 +1020,30 @@ paint_all (Display *dpy)
 			composite.layers[ 0 ].flScaleX = 1.0;
 			composite.layers[ 0 ].flScaleY = 1.0;
 			composite.layers[ 0 ].flOpacity = 1.0;
-			
+
 			memset( &pipeline, 0, sizeof( pipeline ) );
-			
+
 			pipeline.layerBindings[ 0 ].surfaceWidth = g_nOutputWidth;
 			pipeline.layerBindings[ 0 ].surfaceHeight = g_nOutputHeight;
-			
+
 			pipeline.layerBindings[ 0 ].fbid = vulkan_get_last_composite_fbid();
 			pipeline.layerBindings[ 0 ].bFilter = false;
-			
+
 			bool bFlip = drm_can_avoid_composite( &g_DRM, &composite, &pipeline );
-			
+
 			// We should always handle a 1-layer flip
 			assert( bFlip == true );
-			
+
 			drm_atomic_commit( &g_DRM, &composite, &pipeline );
 		}
 	}
 	else
 	{
 		assert( BIsNested() == false );
-		
+
 		drm_atomic_commit( &g_DRM, &composite, &pipeline );
 	}
-	
+
 	gpuvis_trace_printf( "paint_all end_ctx=%llu\n", paintID );
 	gpuvis_trace_printf( "paint_all %i layers, composite %i\n", (int)composite.nLayerCount, bDoComposite );
 }
@@ -1053,7 +1053,7 @@ setup_pointer_barriers (Display *dpy)
 {
 	int i;
 	win		    *w = find_win (dpy, currentFocusWindow);
-	
+
 	// If we had barriers before, get rid of them.
 	for (i = 0; i < 4; i++)
 	{
@@ -1063,28 +1063,28 @@ setup_pointer_barriers (Display *dpy)
 			scaledFocusBarriers[i] = None;
 		}
 	}
-	
+
 	if (!gameFocused)
 	{
 		return;
 	}
-	
+
 	// Constrain it to the window; careful, the corners will leak due to a known X server bug
 	scaledFocusBarriers[0] = XFixesCreatePointerBarrier(dpy, DefaultRootWindow(dpy), 0, w->a.y, root_width, w->a.y, 0, 0, NULL);
 	scaledFocusBarriers[1] = XFixesCreatePointerBarrier(dpy, DefaultRootWindow(dpy), w->a.x + w->a.width, 0, w->a.x + w->a.width, root_height, 0, 0, NULL);
 	scaledFocusBarriers[2] = XFixesCreatePointerBarrier(dpy, DefaultRootWindow(dpy), root_width, w->a.y + w->a.height, 0, w->a.y + w->a.height, 0, 0, NULL);
 	scaledFocusBarriers[3] = XFixesCreatePointerBarrier(dpy, DefaultRootWindow(dpy), w->a.x, root_height, w->a.x, 0, 0, 0, NULL);
-	
+
 	// Make sure the cursor is somewhere in our jail
 	Window window_returned, child;
 	int root_x, root_y;
 	int win_x, win_y;
 	unsigned int mask_return;
-	
+
 	XQueryPointer(dpy, DefaultRootWindow(dpy), &window_returned,
 				  &child, &root_x, &root_y, &win_x, &win_y,
 			   &mask_return);
-	
+
 	if (root_x >= w->a.width || root_y >= w->a.height)
 	{
 		XWarpPointer(dpy, None, currentFocusWindow, 0, 0, 0, 0, w->a.width / 2, w->a.height / 2);
@@ -1097,14 +1097,14 @@ determine_and_apply_focus (Display *dpy)
 	win *w, *focus = NULL;
 	win *steam = nullptr;
 	win *steampopup = nullptr;
-	
+
 	gameFocused = False;
-	
+
 	unsigned long maxDamageSequence = 0;
 	Bool usingOverrideRedirectWindow = False;
-	
+
 	unsigned int maxOpacity = 0;
-	
+
 	for (w = list; w; w = w->next)
 	{
 		if ( w->isSteam == True )
@@ -1116,11 +1116,11 @@ determine_and_apply_focus (Display *dpy)
 		{
 			steampopup = w;
 		}
-		
+
 		// We allow using an override redirect window in some cases, but if we have
 		// a choice between two windows we always prefer the non-override redirect one.
 		Bool windowIsOverrideRedirect = w->a.override_redirect && !w->ignoreOverrideRedirect;
-		
+
 		if (w->gameID && w->a.map_state == IsViewable && w->a.c_class == InputOutput &&
 			(w->damage_sequence >= maxDamageSequence) &&
 			(!windowIsOverrideRedirect || !usingOverrideRedirectWindow))
@@ -1128,13 +1128,13 @@ determine_and_apply_focus (Display *dpy)
 			focus = w;
 			gameFocused = True;
 			maxDamageSequence = w->damage_sequence;
-			
+
 			if (windowIsOverrideRedirect)
 			{
 				usingOverrideRedirectWindow = True;
 			}
 		}
-		
+
 		if (w->isOverlay)
 		{
 			if (w->a.width == 1920 && w->opacity >= maxOpacity)
@@ -1148,7 +1148,7 @@ determine_and_apply_focus (Display *dpy)
 			}
 		}
 	}
-	
+
 	if ( !gameFocused )
 	{
 		if ( steampopup && ( ( steam && steam->wantsUnfocus ) || !steam ) )
@@ -1172,7 +1172,7 @@ determine_and_apply_focus (Display *dpy)
 // 	{
 // 		// Initiate fade out if switching focus
 // 		w = find_win(dpy, currentFocusWindow);
-// 		
+//
 // 		if (w)
 // 		{
 // 			ensure_win_resources(dpy, w);
@@ -1180,7 +1180,7 @@ determine_and_apply_focus (Display *dpy)
 // 			fadeOutStartTime = get_time_in_milliseconds();
 // 		}
 // 	}
-	
+
 // 	if (fadeOutWindow.id && currentFocusWindow != focus->id)
 	if ( currentFocusWindow != focus->id )
 	{
@@ -1193,34 +1193,34 @@ determine_and_apply_focus (Display *dpy)
 			wlserver_mousefocus( focus->wlrsurface );
 			wlserver_unlock();
 		}
-		
+
 		gpuvis_trace_printf( "determine_and_apply_focus focus %lu\n", focus->id );
 	}
-	
+
 	currentFocusWindow = focus->id;
-	
+
 	w = focus;
-	
+
 	set_win_hidden(dpy, w, False);
-	
+
 	setup_pointer_barriers(dpy);
-	
+
 	if (gameFocused || (!gamesRunningCount && list[0].id != focus->id))
 	{
 		XRaiseWindow(dpy, focus->id);
 	}
-	
+
 	XSetInputFocus(dpy, focus->id, RevertToNone, CurrentTime);
-	
+
 	if (!focus->nudged)
 	{
 		XMoveWindow(dpy, focus->id, 1, 1);
 		focus->nudged = True;
 	}
-	
+
 	if (w->a.x != 0 || w->a.y != 0)
 		XMoveWindow(dpy, focus->id, 0, 0);
-	
+
 	if ( focus->isFullscreen && ( w->a.width != root_width || w->a.height != root_height || globalScaleRatio != 1.0f ) )
 	{
 		XResizeWindow(dpy, focus->id, root_width, root_height);
@@ -1231,20 +1231,20 @@ determine_and_apply_focus (Display *dpy)
 	{
 		XResizeWindow(dpy, focus->id, focus->requestedWidth, focus->requestedHeight);
 	}
-	
+
 	Window	    root_return = None, parent_return = None;
 	Window	    *children = NULL;
 	unsigned int    nchildren = 0;
 	unsigned int    i = 0;
-	
+
 	XQueryTree (dpy, w->id, &root_return, &parent_return, &children, &nchildren);
-	
+
 	while (i < nchildren)
 	{
 		XSelectInput(dpy, children[i], PointerMotionMask);
 		i++;
 	}
-	
+
 	XFree (children);
 }
 
@@ -1258,7 +1258,7 @@ get_prop(Display *dpy, Window win, Atom prop, unsigned int def)
 	Atom actual;
 	int format;
 	unsigned long n, left;
-	
+
 	unsigned char *data;
 	int result = XGetWindowProperty(dpy, win, prop, 0L, 1L, False,
 									XA_CARDINAL, &actual, &format,
@@ -1278,22 +1278,22 @@ get_size_hints(Display *dpy, win *w)
 {
 	XSizeHints hints;
 	long hintsSpecified;
-	
+
 	XGetWMNormalHints(dpy, w->id, &hints, &hintsSpecified);
-	
+
 	if (hintsSpecified & (PMaxSize | PMinSize) &&
 		hints.max_width && hints.max_height && hints.min_width && hints.min_height &&
 		hints.max_width == hints.min_width && hints.min_height == hints.max_height)
 	{
 		w->requestedWidth = hints.max_width;
 		w->requestedHeight = hints.max_height;
-		
+
 		w->sizeHintsSpecified = True;
 	}
 	else
 	{
 		w->sizeHintsSpecified = False;
-		
+
 		// Below block checks for a pattern that matches old SDL fullscreen applications;
 		// SDL creates a fullscreen overrride-redirect window and reparents the game
 		// window under it, centered. We get rid of the modeswitch and also want that
@@ -1303,15 +1303,15 @@ get_size_hints(Display *dpy, win *w)
 			Window	    root_return = None, parent_return = None;
 			Window	    *children = NULL;
 			unsigned int    nchildren = 0;
-			
+
 			XQueryTree (dpy, w->id, &root_return, &parent_return, &children, &nchildren);
-			
+
 			if (nchildren == 1)
 			{
 				XWindowAttributes attribs;
-				
+
 				XGetWindowAttributes (dpy, children[0], &attribs);
-				
+
 				// If we have a unique children that isn't override-reidrect that is
 				// contained inside this fullscreen window, it's probably it.
 				if (attribs.override_redirect == False &&
@@ -1319,16 +1319,16 @@ get_size_hints(Display *dpy, win *w)
 					attribs.height <= w->a.height)
 				{
 					w->sizeHintsSpecified = True;
-					
+
 					w->requestedWidth = attribs.width;
 					w->requestedHeight = attribs.height;
-					
+
 					XMoveWindow(dpy, children[0], 0, 0);
-					
+
 					w->ignoreOverrideRedirect = True;
 				}
 			}
-			
+
 			XFree (children);
 		}
 	}
@@ -1338,19 +1338,19 @@ static void
 map_win (Display *dpy, Window id, unsigned long sequence)
 {
 	win		*w = find_win (dpy, id);
-	
+
 	if (!w)
 		return;
-	
+
 	w->a.map_state = IsViewable;
-	
+
 	/* This needs to be here or else we lose transparency messages */
 	XSelectInput (dpy, id, PropertyChangeMask | SubstructureNotifyMask |
 	PointerMotionMask | LeaveWindowMask);
-	
+
 	/* This needs to be here since we don't get PropertyNotify when unmapped */
 	w->opacity = get_prop (dpy, w->id, opacityAtom, TRANSLUCENT);
-	
+
 	w->isSteam = get_prop (dpy, w->id, steamAtom, 0);
 
 	XTextProperty tp;
@@ -1366,7 +1366,7 @@ map_win (Display *dpy, Window id, unsigned long sequence)
 	}
 
 	w->wantsUnfocus = get_prop(dpy, w->id, steamUnfocusAtom, 1);
-	
+
 	if ( steamMode == True )
 	{
 		w->gameID = get_prop (dpy, w->id, gameAtom, 0);
@@ -1376,12 +1376,12 @@ map_win (Display *dpy, Window id, unsigned long sequence)
 		w->gameID = w->id;
 	}
 	w->isOverlay = get_prop (dpy, w->id, overlayAtom, 0);
-	
+
 	get_size_hints(dpy, w);
-	
+
 	w->damage_sequence = 0;
 	w->map_sequence = sequence;
-	
+
 	focusDirty = True;
 }
 
@@ -1393,16 +1393,16 @@ finish_unmap_win (Display *dpy, win *w)
 // 	{
 // 		teardown_win_resources( w );
 // 	}
-	
+
 	if (fadeOutWindow.id == w->id)
 	{
 		fadeOutWindowGone = True;
 	}
-	
+
 	/* don't care about properties anymore */
 	set_ignore (dpy, NextRequest (dpy));
 	XSelectInput(dpy, w->id, 0);
-	
+
 	clipChanged = True;
 }
 
@@ -1413,9 +1413,9 @@ unmap_win (Display *dpy, Window id, Bool fade)
 	if (!w)
 		return;
 	w->a.map_state = IsUnmapped;
-	
+
 	focusDirty = True;
-	
+
 	finish_unmap_win (dpy, w);
 }
 
@@ -1424,7 +1424,7 @@ add_win (Display *dpy, Window id, Window prev, unsigned long sequence)
 {
 	win				*new_win = new win;
 	win				**p;
-	
+
 	if (!new_win)
 		return;
 	if (prev)
@@ -1452,7 +1452,7 @@ add_win (Display *dpy, Window id, Window prev, unsigned long sequence)
 		new_win->damage = XDamageCreate (dpy, id, XDamageReportRawRectangles);
 	}
 	new_win->opacity = TRANSLUCENT;
-	
+
 	new_win->isOverlay = False;
 	new_win->isSteam = False;
 	new_win->isSteamPopup = False;
@@ -1473,17 +1473,17 @@ add_win (Display *dpy, Window id, Window prev, unsigned long sequence)
 	new_win->requestedHeight = 0;
 	new_win->nudged = False;
 	new_win->ignoreOverrideRedirect = False;
-	
+
 	new_win->mouseMoved = False;
-	
+
 	new_win->WLsurfaceID = 0;
 	new_win->wlrsurface = NULL;
-	
+
 	new_win->next = *p;
 	*p = new_win;
 	if (new_win->a.map_state == IsViewable)
 		map_win (dpy, id, sequence);
-	
+
 	focusDirty = True;
 }
 
@@ -1491,7 +1491,7 @@ static void
 restack_win (Display *dpy, win *w, Window new_above)
 {
 	Window  old_above;
-	
+
 	if (w->next)
 		old_above = w->next->id;
 	else
@@ -1499,7 +1499,7 @@ restack_win (Display *dpy, win *w, Window new_above)
 	if (old_above != new_above)
 	{
 		win **prev;
-		
+
 		/* unhook */
 		for (prev = &list; *prev; prev = &(*prev)->next)
 		{
@@ -1507,7 +1507,7 @@ restack_win (Display *dpy, win *w, Window new_above)
 				break;
 		}
 		*prev = w->next;
-		
+
 		/* rehook */
 		for (prev = &list; *prev; prev = &(*prev)->next)
 		{
@@ -1516,7 +1516,7 @@ restack_win (Display *dpy, win *w, Window new_above)
 		}
 		w->next = *prev;
 		*prev = w;
-		
+
 		focusDirty = True;
 	}
 }
@@ -1525,7 +1525,7 @@ static void
 configure_win (Display *dpy, XConfigureEvent *ce)
 {
 	win		    *w = find_win (dpy, ce->window);
-	
+
 	if (!w || w->id != ce->window)
 	{
 		if (ce->window == root)
@@ -1535,7 +1535,7 @@ configure_win (Display *dpy, XConfigureEvent *ce)
 		}
 		return;
 	}
-	
+
 	w->a.x = ce->x;
 	w->a.y = ce->y;
 	w->a.width = ce->width;
@@ -1543,7 +1543,7 @@ configure_win (Display *dpy, XConfigureEvent *ce)
 	w->a.border_width = ce->border_width;
 	w->a.override_redirect = ce->override_redirect;
 	restack_win (dpy, w, ce->above);
-	
+
 	focusDirty = True;
 }
 
@@ -1552,10 +1552,10 @@ circulate_win (Display *dpy, XCirculateEvent *ce)
 {
 	win	    *w = find_win (dpy, ce->window);
 	Window  new_above;
-	
+
 	if (!w || w->id != ce->window)
 		return;
-	
+
 	if (ce->place == PlaceOnTop)
 		new_above = list->id;
 	else
@@ -1571,7 +1571,7 @@ static void map_request (Display *dpy, XMapRequestEvent *mapRequest)
 
 static void configure_request (Display *dpy, XConfigureRequestEvent *configureRequest)
 {
-	XWindowChanges changes = 
+	XWindowChanges changes =
 	{
 		.x = configureRequest->x,
 		.y = configureRequest->y,
@@ -1594,7 +1594,7 @@ static void
 finish_destroy_win (Display *dpy, Window id, Bool gone)
 {
 	win	**prev, *w;
-	
+
 	for (prev = &list; (w = *prev); prev = &w->next)
 		if (w->id == id)
 		{
@@ -1622,7 +1622,7 @@ destroy_win (Display *dpy, Window id, Bool gone, Bool fade)
 	if (currentNotificationWindow == id && gone)
 		currentNotificationWindow = None;
 	focusDirty = True;
-	
+
 	finish_destroy_win (dpy, id, gone);
 }
 
@@ -1631,28 +1631,28 @@ damage_win (Display *dpy, XDamageNotifyEvent *de)
 {
 	win	*w = find_win (dpy, de->drawable);
 	win *focus = find_win(dpy, currentFocusWindow);
-	
+
 	if (!w)
 		return;
-	
+
 	if (w->isOverlay && !w->opacity)
 		return;
-	
+
 	// First damage event we get, compute focus; we only want to focus damaged
 	// windows to have meaningful frames.
 	if (w->gameID && w->damage_sequence == 0)
 		focusDirty = True;
-	
+
 	w->damage_sequence = damageSequence++;
-	
+
 	// If we just passed the focused window, we might be eliglible to take over
 	if (focus && focus != w && w->gameID &&
 		w->damage_sequence > focus->damage_sequence)
 		focusDirty = True;
-	
+
 	if (w->damage)
 		XDamageSubtract(dpy, w->damage, None, None);
-	
+
 	gpuvis_trace_printf( "damage_win win %lx gameID %llu\n", w->id, w->gameID );
 }
 
@@ -1660,16 +1660,16 @@ static void
 handle_wl_surface_id(win *w, long surfaceID)
 {
 	struct wlr_surface *surface = NULL;
-	
+
 	wlserver_lock();
-	
+
 	surface = wlserver_get_surface( surfaceID );
-	
+
 	if ( surface == NULL )
 	{
 		// We'll retry next time
 		w->WLsurfaceID = surfaceID;
-		
+
 		wlserver_unlock();
 		return;
 	}
@@ -1684,29 +1684,29 @@ handle_wl_surface_id(win *w, long surfaceID)
 
 	// Pull the first buffer out of that window, if needed
 	xwayland_surface_role_commit( surface );
-	
+
 	wlserver_unlock();
-		
+
 	w->wlrsurface = surface;
 }
-						   
+
 static int
 error (Display *dpy, XErrorEvent *ev)
 {
 	int	    o;
 	const char    *name = NULL;
 	static char buffer[256];
-	
+
 	if (should_ignore (dpy, ev->serial))
 		return 0;
-	
+
 	if (ev->request_code == composite_opcode &&
 		ev->minor_code == X_CompositeRedirectSubwindows)
 	{
 		fprintf (stderr, "Another composite manager is already running\n");
 		exit (1);
 	}
-	
+
 	o = ev->error_code - xfixes_error;
 	switch (o) {
 		case BadRegion: name = "BadRegion";	break;
@@ -1726,18 +1726,18 @@ error (Display *dpy, XErrorEvent *ev)
 		case BadGlyph: name ="BadGlyph"; break;
 		default: break;
 	}
-	
+
 	if (name == NULL)
 	{
 		buffer[0] = '\0';
 		XGetErrorText (dpy, ev->error_code, buffer, sizeof (buffer));
 		name = buffer;
 	}
-	
+
 	fprintf (stderr, "error %d: %s request %d minor %d serial %lu\n",
 			 ev->error_code, (strlen (name) > 0) ? name : "unknown",
 			 ev->request_code, ev->minor_code, ev->serial);
-	
+
 	gotXError = True;
 	/*    abort ();	    this is just annoying to most people */
 	return 0;
@@ -1749,10 +1749,10 @@ register_cm (Display *dpy)
 	Window w;
 	Atom a;
 	static char net_wm_cm[] = "_NET_WM_CM_Sxx";
-	
+
 	snprintf (net_wm_cm, sizeof (net_wm_cm), "_NET_WM_CM_S%d", scr);
 	a = XInternAtom (dpy, net_wm_cm, False);
-	
+
 	w = XGetSelectionOwner (dpy, a);
 	if (w != None)
 	{
@@ -1760,7 +1760,7 @@ register_cm (Display *dpy)
 		char **strs;
 		int count;
 		Atom winNameAtom = XInternAtom (dpy, "_NET_WM_NAME", False);
-		
+
 		if (!XGetTextProperty (dpy, w, &tp, winNameAtom) &&
 			!XGetTextProperty (dpy, w, &tp, XA_WM_NAME))
 		{
@@ -1774,47 +1774,47 @@ register_cm (Display *dpy)
 			fprintf (stderr,
 					 "Another composite manager is already running (%s)\n",
 					 strs[0]);
-			
+
 			XFreeStringList (strs);
 		}
-		
+
 		XFree (tp.value);
-		
+
 		return False;
 	}
-	
+
 	w = XCreateSimpleWindow (dpy, RootWindow (dpy, scr), 0, 0, 1, 1, 0, None,
 							 None);
-	
+
 	Xutf8SetWMProperties (dpy, w, "steamcompmgr", "steamcompmgr", NULL, 0, NULL, NULL,
 						  NULL);
-	
+
 	Atom atomWmCheck = XInternAtom(dpy, "_NET_SUPPORTING_WM_CHECK", False);
 	XChangeProperty(dpy, root, atomWmCheck,
 					XA_WINDOW, 32, PropModeReplace, (unsigned char *)&w, 1);
 	XChangeProperty(dpy, w, atomWmCheck,
 					XA_WINDOW, 32, PropModeReplace, (unsigned char *)&w, 1);
-	
-	
+
+
 	Atom fullScreenSupported = XInternAtom(dpy, "_NET_WM_STATE_FULLSCREEN", False);
 	XChangeProperty(dpy, root, XInternAtom(dpy, "_NET_SUPPORTED", False),
 					XA_ATOM, 32, PropModeAppend, (unsigned char *)&fullScreenSupported, 1);
-	
+
 	XSetSelectionOwner (dpy, a, w, 0);
-	
+
 	ourWindow = w;
-	
+
 	nudgeEvent.xclient.type = ClientMessage;
 	nudgeEvent.xclient.window = ourWindow;
 	nudgeEvent.xclient.format = 32;
-	
+
 	return True;
 }
 
 void handle_done_commits( void )
 {
 	std::lock_guard<std::mutex> lock( listCommitsDoneLock );
-	
+
 	// very fast loop yes
 	for ( uint32_t i = 0; i < listCommitsDone.size(); i++ )
 	{
@@ -1829,9 +1829,9 @@ void handle_done_commits( void )
 					gpuvis_trace_printf( "commit %lu done\n", w->commit_queue[ j ].commitID );
 					w->commit_queue[ j ].done = true;
 					bFoundWindow = true;
-					
+
 					// Window just got a new available commit, determine if that's worth a repaint
-					
+
 					// If this is an overlay that we're presenting, repaint
 					if ( gameFocused )
 					{
@@ -1839,23 +1839,23 @@ void handle_done_commits( void )
 						{
 							hasRepaint = true;
 						}
-						
+
 						if ( w->id == currentNotificationWindow && w->opacity != TRANSLUCENT )
 						{
 							hasRepaint = true;
 						}
 					}
-					
+
 					// If this is the main plane, repaint
 					if ( w->id == currentFocusWindow )
 					{
 						hasRepaint = true;
 					}
-					
+
 					break;
 				}
 			}
-			
+
 			if ( bFoundWindow == true )
 			{
 				if ( j > 0 )
@@ -1871,50 +1871,50 @@ void handle_done_commits( void )
 			}
 		}
 	}
-	
+
 	listCommitsDone.clear();
 }
 
 void check_new_wayland_res( void )
 {
 	std::lock_guard<std::mutex> lock( wayland_commit_lock );
-	
+
 	for ( uint32_t i = 0; i < wayland_commit_queue.size(); i++ )
 	{
 		win	*w = find_win( wayland_commit_queue[ i ].surf );
-		
+
 		assert( wayland_commit_queue[ i ].attribs.fd[0] != -1 );
-		
+
 		if ( w == nullptr )
 		{
 			close( wayland_commit_queue[ i ].attribs.fd[0] );
 			fprintf (stderr, "waylandres but no win\n");
 			continue;
 		}
-		
+
 		commit_t newCommit = {};
-		
+
 		bool bSuccess = import_commit( &wayland_commit_queue[ i ].attribs, newCommit );
-		
+
 		if ( bSuccess == true )
 		{
 			newCommit.commitID = ++maxCommmitID;
 			w->commit_queue.push_back( newCommit );
 		}
-		
+
 		uint32_t fence = vulkan_get_texture_fence( newCommit.vulkanTex );
-		
+
 		gpuvis_trace_printf( "pushing wait for commit %lu\n", newCommit.commitID );
 		{
 			std::unique_lock< std::mutex > lock( waitListLock );
-			
+
 			waitList.push_back( std::make_pair( fence, newCommit.commitID ) );
 		}
-		
+
 		// Wake up commit wait thread if chilling
 		waitListSem.signal();
 	}
-	
+
 	wayland_commit_queue.clear();
 }
 
@@ -1929,10 +1929,10 @@ steamcompmgr_main (int argc, char **argv)
 	int		    composite_major, composite_minor;
 	int		    o;
 	int			readyPipeFD = -1;
-	
+
 	// :/
 	optind = 1;
-	
+
 	while ((o = getopt (argc, argv, ":R:T:w:h:W:H:r:NSvVecslnb")) != -1)
 	{
 		switch (o) {
@@ -1980,7 +1980,7 @@ steamcompmgr_main (int argc, char **argv)
 		XSynchronize (dpy, 1);
 	scr = DefaultScreen (dpy);
 	root = RootWindow (dpy, scr);
-	
+
 	if (!XRenderQueryExtension (dpy, &render_event, &render_error))
 	{
 		fprintf (stderr, "No render extension\n");
@@ -1993,7 +1993,7 @@ steamcompmgr_main (int argc, char **argv)
 		exit (1);
 	}
 	XCompositeQueryVersion (dpy, &composite_major, &composite_minor);
-	
+
 	if (!XDamageQueryExtension (dpy, &damage_event, &damage_error))
 	{
 		fprintf (stderr, "No damage extension\n");
@@ -2014,12 +2014,12 @@ steamcompmgr_main (int argc, char **argv)
 		fprintf (stderr, "No XFixes extension\n");
 		exit (1);
 	}
-	
+
 	if (!register_cm(dpy))
 	{
 		exit (1);
 	}
-	
+
 	/* get atoms */
 	steamAtom = XInternAtom (dpy, STEAM_PROP, False);
 	steamUnfocusAtom = XInternAtom (dpy, "STEAM_UNFOCUS", False);
@@ -2043,25 +2043,25 @@ steamcompmgr_main (int argc, char **argv)
 	WMStateAtom = XInternAtom (dpy, "_NET_WM_STATE", False);
 	WMStateHiddenAtom = XInternAtom (dpy, "_NET_WM_STATE_HIDDEN", False);
 	WLSurfaceIDAtom = XInternAtom (dpy, "WL_SURFACE_ID", False);
-	
+
 	root_width = DisplayWidth (dpy, scr);
 	root_height = DisplayHeight (dpy, scr);
-	
+
 	allDamage = None;
 	clipChanged = True;
-	
+
 	if ( vulkan_init() != True )
 	{
 		fprintf (stderr, "alarm!!!\n");
 	}
-	
+
 	vblank_init();
-	
+
 	currentOutputWidth = g_nOutputWidth;
 	currentOutputHeight = g_nOutputHeight;
-	
+
 	XGrabServer (dpy);
-	
+
 	if (doRender)
 	{
 		XCompositeRedirectSubwindows (dpy, root, CompositeRedirectManual);
@@ -2081,67 +2081,67 @@ steamcompmgr_main (int argc, char **argv)
 	for (uint32_t i = 0; i < nchildren; i++)
 		add_win (dpy, children[i], i ? children[i-1] : None, 0);
 	XFree (children);
-	
+
 	XUngrabServer (dpy);
-	
+
 	XF86VidModeLockModeSwitch(dpy, scr, True);
-	
+
 	// Start it with the cursor hidden until moved by user
 	hideCursorForMovement = True;
-	
+
 	gamesRunningCount = get_prop(dpy, root, gamesRunningAtom, 0);
 	overscanScaleRatio = get_prop(dpy, root, screenScaleAtom, 0xFFFFFFFF) / (double)0xFFFFFFFF;
 	zoomScaleRatio = get_prop(dpy, root, screenZoomAtom, 0xFFFF) / (double)0xFFFF;
-	
+
 	globalScaleRatio = overscanScaleRatio * zoomScaleRatio;
-	
+
 	determine_and_apply_focus(dpy);
-	
+
 	if ( readyPipeFD != -1 )
 	{
 		dprintf( readyPipeFD, "%s\n", wlserver_get_nested_display() );
 		close( readyPipeFD );
 		readyPipeFD = -1;
 	}
-	
+
 	if ( g_nSubCommandArg != 0 )
 	{
 		pid_t pid;
-		
+
 		sigset_t fullset;
 		sigfillset( &fullset );
-		
+
 		posix_spawnattr_t attr;
-		
+
 		posix_spawnattr_init( &attr );
 		posix_spawnattr_setflags( &attr, POSIX_SPAWN_SETSIGDEF );
 		posix_spawnattr_setsigdefault( &attr, &fullset );
-		
+
 		// (Don't Lose) The Children
 		prctl( PR_SET_CHILD_SUBREAPER );
-		
+
 		posix_spawnp( &pid, argv[ g_nSubCommandArg ], NULL, &attr, &argv[ g_nSubCommandArg ], environ );
-		
+
 		std::thread waitThread([](){
 			while( wait( nullptr ) >= 0 )
 			{
 				;
 			}
-			
+
 			run = false;
 		});
-		
+
 		waitThread.detach();
 	}
-	
+
 	std::thread imageWaitThread( imageWaitThreadRun );
 	imageWaitThread.detach();
-	
+
 	for (;;)
 	{
 		focusDirty = False;
 		bool vblank = false;
-		
+
 		do {
 			XNextEvent (dpy, &ev);
 			if ((ev.type & 0x7f) != KeymapNotify)
@@ -2162,7 +2162,7 @@ steamcompmgr_main (int argc, char **argv)
 				case DestroyNotify:
 				{
 					win * w = find_win(dpy, ev.xdestroywindow.window);
-					
+
 					if (w && w->id == ev.xdestroywindow.window)
 						destroy_win (dpy, ev.xdestroywindow.window, True, True);
 					break;
@@ -2170,7 +2170,7 @@ steamcompmgr_main (int argc, char **argv)
 				case MapNotify:
 				{
 					win * w = find_win(dpy, ev.xmap.window);
-					
+
 					if (w && w->id == ev.xmap.window)
 						map_win (dpy, ev.xmap.window, ev.xmap.serial);
 					break;
@@ -2178,7 +2178,7 @@ steamcompmgr_main (int argc, char **argv)
 				case UnmapNotify:
 				{
 					win * w = find_win(dpy, ev.xunmap.window);
-					
+
 					if (w && w->id == ev.xunmap.window)
 						unmap_win (dpy, ev.xunmap.window, True);
 					break;
@@ -2189,7 +2189,7 @@ steamcompmgr_main (int argc, char **argv)
 					else
 					{
 						win * w = find_win(dpy, ev.xreparent.window);
-						
+
 						if (w && w->id == ev.xreparent.window)
 						{
 							destroy_win (dpy, ev.xreparent.window, False, True);
@@ -2230,24 +2230,24 @@ steamcompmgr_main (int argc, char **argv)
 						if (w && w->isOverlay)
 						{
 							unsigned int newOpacity = get_prop(dpy, w->id, opacityAtom, TRANSLUCENT);
-							
+
 							if (newOpacity != w->opacity)
 							{
 								w->opacity = newOpacity;
-								
+
 								if ( gameFocused && ( w->id == currentOverlayWindow || w->id == currentNotificationWindow ) )
 								{
 									hasRepaint = true;
 								}
 							}
-							
+
 							if (w->isOverlay)
 							{
 								set_win_hidden(dpy, w, w->opacity == TRANSLUCENT);
 							}
-							
+
 							unsigned int maxOpacity = 0;
-							
+
 							for (w = list; w; w = w->next)
 							{
 								if (w->isOverlay)
@@ -2309,37 +2309,37 @@ steamcompmgr_main (int argc, char **argv)
 					if (ev.xproperty.atom == gamesRunningAtom)
 					{
 						gamesRunningCount = get_prop(dpy, root, gamesRunningAtom, 0);
-						
+
 						focusDirty = True;
 					}
 					if (ev.xproperty.atom == screenScaleAtom)
 					{
 						overscanScaleRatio = get_prop(dpy, root, screenScaleAtom, 0xFFFFFFFF) / (double)0xFFFFFFFF;
-						
+
 						globalScaleRatio = overscanScaleRatio * zoomScaleRatio;
-						
+
 						win *w;
-						
+
 						if ((w = find_win(dpy, currentFocusWindow)))
 						{
 							hasRepaint = true;
 						}
-						
+
 						focusDirty = True;
 					}
 					if (ev.xproperty.atom == screenZoomAtom)
 					{
 						zoomScaleRatio = get_prop(dpy, root, screenZoomAtom, 0xFFFF) / (double)0xFFFF;
-						
+
 						globalScaleRatio = overscanScaleRatio * zoomScaleRatio;
-						
+
 						win *w;
-						
+
 						if ((w = find_win(dpy, currentFocusWindow)))
 						{
 							hasRepaint = true;
 						}
-						
+
 						focusDirty = True;
 					}
 					break;
@@ -2357,19 +2357,19 @@ steamcompmgr_main (int argc, char **argv)
 								if ((unsigned)ev.xclient.data.l[1] == fullscreenAtom)
 								{
 									w->isFullscreen = ev.xclient.data.l[0];
-									
+
 									focusDirty = True;
 								}
 							}
 						}
-						
+
 						if ( ev.xclient.data.l[0] == 24 && ev.xclient.data.l[1] == 8 )
 						{
 							// Message from vblankmanager
 							gpuvis_trace_printf( "got vblank\n" );
 							vblank = true;
 						}
-						
+
 						break;
 					}
 					case LeaveNotify:
@@ -2405,10 +2405,10 @@ steamcompmgr_main (int argc, char **argv)
 						break;
 			}
 		} while (QLength (dpy));
-		
+
 		if (focusDirty == True)
 			determine_and_apply_focus(dpy);
-		
+
 		if (doRender)
 		{
 			// Pick our width/height for this potential frame, regardless of how it might change later
@@ -2427,7 +2427,7 @@ steamcompmgr_main (int argc, char **argv)
 				{
 					// Remake output images if we ever care about resizing there
 				}
-				
+
 				currentOutputWidth = g_nOutputWidth;
 				currentOutputHeight = g_nOutputHeight;
 			}
@@ -2447,57 +2447,57 @@ steamcompmgr_main (int argc, char **argv)
 					}
 				}
 			}
-			
+
 			handle_done_commits();
 
 			check_new_wayland_res();
-			
+
 			if ( hasRepaint == true && vblank == true )
 			{
 				paint_all(dpy);
-				
+
 				// Consumed the need to repaint here
 				hasRepaint = false;
 			}
-			
+
 			struct timespec now;
 			clock_gettime(CLOCK_MONOTONIC, &now);
-			
+
 			// If we're in the middle of a fade, pump an event into the loop to
 			// make sure we keep pushing frames even if the app isn't updating.
 			if (fadeOutWindow.id)
 				XSendEvent(dpy, ourWindow, True, SubstructureRedirectMask, &nudgeEvent);
-			
+
 			Window window_returned, child;
 			int root_x, root_y;
 			int win_x, win_y;
 			unsigned int mask_return;
-			
+
 			XQueryPointer(dpy, DefaultRootWindow(dpy), &window_returned,
 						  &child, &root_x, &root_y, &win_x, &win_y,
 						&mask_return);
-			
+
 			handle_mouse_movement( dpy, root_x, root_y );
-			
+
 			if ( mask_return & ( Button1Mask | Button2Mask | Button3Mask | Button4Mask | Button5Mask ) )
 			{
 				hideCursorForMovement = False;
 				lastCursorMovedTime = get_time_in_milliseconds();
 			}
-			
+
 			if (!hideCursorForMovement &&
 				(get_time_in_milliseconds() - lastCursorMovedTime) > CURSOR_HIDE_TIME)
 			{
 				hideCursorForMovement = True;
-				
+
 				win *w = find_win(dpy, currentFocusWindow);
-				
+
 				// Rearm warp count
 				if (w)
 				{
 					w->mouseMoved = 0;
 				}
-				
+
 				// We're hiding the cursor, force redraw if we were showing it
 				if ( w && gameFocused && !cursorImageEmpty )
 				{
@@ -2505,7 +2505,7 @@ steamcompmgr_main (int argc, char **argv)
 					XSendEvent(dpy, ourWindow, True, SubstructureRedirectMask, &nudgeEvent);
 				}
 			}
-			
+
 			// Ask for a new surface every vblank
 			if ( vblank == true )
 			{
@@ -2522,7 +2522,7 @@ steamcompmgr_main (int argc, char **argv)
 			}
 
 			vulkan_garbage_collect();
-			
+
 			vblank = false;
 		}
 	}
