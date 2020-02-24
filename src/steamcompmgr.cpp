@@ -153,18 +153,6 @@ float			overscanScaleRatio = 1.0;
 float			zoomScaleRatio = 1.0;
 float			globalScaleRatio = 1.0f;
 
-PointerBarrier	scaledFocusBarriers[4];
-int 			cursorX, cursorY;
-Bool 			cursorImageDirty = True;
-int 			cursorHotX, cursorHotY;
-int				cursorWidth, cursorHeight;
-VulkanTexture_t cursorTexture;
-
-Bool			hideCursorForMovement;
-unsigned int	lastCursorMovedTime;
-static bool		cursorImageEmpty;
-
-
 Bool			focusDirty = False;
 bool			hasRepaint = false;
 
@@ -565,23 +553,144 @@ get_window_last_done_commit( win *w, commit_t &commit )
 	return true;
 }
 
-static void
-handle_mouse_movement(Display *dpy, int posX, int posY)
+/**
+ * Constructor for a cursor. It is hidden in the beginning (normally until moved by user).
+ */
+MouseCursor::MouseCursor(_XDisplay *display)
+	: m_texture(0)
+	, m_dirty(true)
+	, m_imageEmpty(false)
+	, m_hideForMovement(true)
+	, m_hasPlane(false)
+	, m_display(display)
+{
+}
+
+void MouseCursor::queryPositions(int &rootX, int &rootY, int &winX, int &winY)
+{
+	Window window, child;
+	unsigned int mask;
+
+	XQueryPointer(m_display, DefaultRootWindow(m_display), &window, &child,
+				  &rootX, &rootY, &winX, &winY, &mask);
+
+}
+
+void MouseCursor::queryGlobalPosition(int &x, int &y)
+{
+	int winX, winY;
+	queryPositions(x, y, winX, winY);
+}
+
+void MouseCursor::queryButtonMask(unsigned int &mask)
+{
+	Window window, child;
+	int rootX, rootY, winX, winY;
+
+	XQueryPointer(m_display, DefaultRootWindow(m_display), &window, &child,
+				  &rootX, &rootY, &winX, &winY, &mask);
+}
+
+void MouseCursor::checkSuspension()
+{
+	unsigned int buttonMask;
+	queryButtonMask(buttonMask);
+
+	if (buttonMask & ( Button1Mask | Button2Mask | Button3Mask | Button4Mask | Button5Mask )) {
+		m_hideForMovement = false;
+		m_lastMovedTime = get_time_in_milliseconds();
+	}
+
+	const bool suspended = get_time_in_milliseconds() - m_lastMovedTime > CURSOR_HIDE_TIME;
+	if (!m_hideForMovement && suspended) {
+		m_hideForMovement = true;
+
+		win *window = find_win(m_display, currentFocusWindow);
+
+		// Rearm warp count
+		if (window) {
+			window->mouseMoved = 0;
+		}
+
+		// We're hiding the cursor, force redraw if we were showing it
+		if (window && gameFocused && !m_imageEmpty ) {
+			hasRepaint = true;
+			XSendEvent(m_display, ourWindow, true, SubstructureRedirectMask, &nudgeEvent);
+		}
+	}
+}
+
+void MouseCursor::warp(int x, int y)
+{
+	XWarpPointer(m_display, None, currentFocusWindow, 0, 0, 0, 0, x, y);
+}
+
+void MouseCursor::resetPosition()
+{
+	warp(m_x, m_y);
+}
+
+void MouseCursor::setDirty()
+{
+	// We can't prove it's empty until checking again
+	m_imageEmpty = false;
+	m_dirty = true;
+}
+
+void MouseCursor::constrainPosition()
+{
+	int i;
+	win *window = find_win(m_display, currentFocusWindow);
+
+	// If we had barriers before, get rid of them.
+	for (i = 0; i < 4; i++) {
+		if (m_scaledFocusBarriers[i] != None) {
+			XFixesDestroyPointerBarrier(m_display, m_scaledFocusBarriers[i]);
+			m_scaledFocusBarriers[i] = None;
+		}
+	}
+
+	if (!gameFocused) {
+		return;
+	}
+
+	auto barricade = [this](int x1, int y1, int x2, int y2) {
+		return XFixesCreatePointerBarrier(m_display, DefaultRootWindow(m_display),
+										  x1, y1, x2, y2, 0, 0, NULL);
+	};
+
+	// Constrain it to the window; careful, the corners will leak due to a known X server bug.
+	m_scaledFocusBarriers[0] = barricade(0, window->a.y, root_width, window->a.y);
+
+	m_scaledFocusBarriers[1] = barricade(window->a.x + window->a.width, 0,
+										 window->a.x + window->a.width, root_height);
+	m_scaledFocusBarriers[2] = barricade(root_width, window->a.y + window->a.height,
+										 0, window->a.y + window->a.height);
+	m_scaledFocusBarriers[3] = barricade(window->a.x, root_height, window->a.x, 0);
+
+	// Make sure the cursor is somewhere in our jail
+	int rootX, rootY;
+	queryGlobalPosition(rootX, rootY);
+
+	if (rootX >= window->a.width || rootY >= window->a.height) {
+		warp(window->a.width / 2, window->a.height / 2);
+	}
+}
+
+void MouseCursor::move(int x, int y)
 {
 	// Some stuff likes to warp in-place
-	if (cursorX == posX && cursorY == posY)
+	if (m_x == x && m_y == y) {
 		return;
+	}
+	m_x = x;
+	m_y = y;
 
-	cursorX = posX;
-	cursorY = posY;
+	win *window = find_win(m_display, currentFocusWindow);
 
-	win *w = find_win(dpy, currentFocusWindow);
-
-	if (w && gameFocused)
-	{
+	if (window && gameFocused) {
 		// If mouse moved and we're on the hook for showing the cursor, repaint
-		if ( !hideCursorForMovement && !cursorImageEmpty )
-		{
+		if (!m_hideForMovement && !m_imageEmpty) {
 			hasRepaint = true;
 		}
 
@@ -595,112 +704,127 @@ handle_mouse_movement(Display *dpy, int posX, int posY)
 	// Ignore the first events as it's likely to be non-user-initiated warps
 	// Account for one warp from us, one warp from the app and one warp from
 	// the toolkit.
-	if ( !w || ( w->mouseMoved++ < 3 ) )
+	if (!window || window->mouseMoved++ < 3 )
 		return;
 
-	lastCursorMovedTime = get_time_in_milliseconds();
-
-	hideCursorForMovement = False;
+	m_lastMovedTime = get_time_in_milliseconds();
+	m_hideForMovement = false;
 }
 
-static void
-paint_cursor ( Display *dpy, win *w, struct Composite_t *pComposite, struct VulkanPipeline_t *pPipeline )
+void MouseCursor::updatePosition()
 {
-	float scaledCursorX, scaledCursorY;
+	int x,y;
+	queryGlobalPosition(x, y);
+	move(x, y);
+	checkSuspension();
+}
 
-	Window window_returned, child;
-	int root_x, root_y;
-	int win_x, win_y;
-	unsigned int mask_return;
+int MouseCursor::x() const
+{
+	return m_x;
+}
 
-	XQueryPointer(dpy, DefaultRootWindow(dpy), &window_returned,
-				  &child, &root_x, &root_y, &win_x, &win_y,
-			   &mask_return);
+int MouseCursor::y() const
+{
+	return m_y;
+}
 
-	handle_mouse_movement( dpy, root_x, root_y );
-
-	// Also need new texture
-	if (cursorImageDirty)
-	{
-		XFixesCursorImage* im = XFixesGetCursorImage(dpy);
-
-		if (!im)
-			return;
-
-		cursorHotX = im->xhot;
-		cursorHotY = im->yhot;
-
-		cursorWidth = im->width;
-		cursorHeight = im->height;
-
-		if ( cursorTexture != 0 )
-		{
-			vulkan_free_texture( cursorTexture );
-			cursorTexture = 0;
-		}
-
-		// Assume the cursor is fully translucent unless proven otherwise
-		bool bNoCursor = true;
-
-		unsigned int cursorDataBuffer[cursorWidth * cursorHeight];
-		for (int i = 0; i < cursorWidth * cursorHeight; i++)
-		{
-			cursorDataBuffer[i] = im->pixels[i];
-
-			if ( cursorDataBuffer[i] & 0x000000ff )
-			{
-				bNoCursor = false;
-			}
-		}
-
-		if ( bNoCursor != cursorImageEmpty )
-		{
-			cursorImageEmpty = bNoCursor;
-
-			if ( cursorImageEmpty == true )
-			{
-// 				fprintf( stderr, "grab?\n" );
-			}
-		}
-
-		if ( cursorImageEmpty == True )
-			return;
-
-		cursorTexture = vulkan_create_texture_from_bits( cursorWidth, cursorHeight, VK_FORMAT_R8G8B8A8_UNORM, cursorDataBuffer );
-
-		assert( cursorTexture != 0 );
-
-		XFree(im);
-
-		cursorImageDirty = False;
+bool MouseCursor::getTexture()
+{
+	if (!m_dirty) {
+		return !m_imageEmpty;
 	}
 
-	if ( cursorImageEmpty == True )
-		return;
+	auto *image = XFixesGetCursorImage(m_display);
 
+	if (!image) {
+		return false;
+	}
+
+	m_hotspotX = image->xhot;
+	m_hotspotY = image->yhot;
+
+	m_width = image->width;
+	m_height = image->height;
+
+	if (m_texture) {
+		vulkan_free_texture(m_texture);
+		m_texture = 0;
+	}
+
+	// Assume the cursor is fully translucent unless proven otherwise.
+	bool bNoCursor = true;
+
+	unsigned int cursorDataBuffer[m_width * m_height];
+	for (int i = 0; i < m_width * m_height; i++) {
+		cursorDataBuffer[i] = image->pixels[i];
+
+		if ( cursorDataBuffer[i] & 0x000000ff ) {
+			bNoCursor = false;
+		}
+	}
+
+	if (bNoCursor != m_imageEmpty) {
+		m_imageEmpty = bNoCursor;
+
+		if (m_imageEmpty) {
+// 				fprintf( stderr, "grab?\n" );
+		}
+	}
+
+	if (m_imageEmpty) {
+		return false;
+	}
+
+	m_texture = vulkan_create_texture_from_bits(m_width, m_height, VK_FORMAT_R8G8B8A8_UNORM,
+												cursorDataBuffer);
+	assert(m_texture);
+	XFree(image);
+	m_dirty = false;
+
+	return true;
+}
+
+void MouseCursor::paint(win *window, struct Composite_t *pComposite,
+						struct VulkanPipeline_t *pPipeline)
+{
+	if (m_hideForMovement || m_imageEmpty) {
+		return;
+	}
+
+	int rootX, rootY, winX, winY;
+	queryPositions(rootX, rootY, winX, winY);
+	move(rootX, rootY);
+
+	// Also need new texture
+	if (!getTexture()) {
+		return;
+	}
+
+	float scaledX, scaledY;
 	float currentScaleRatio = 1.0;
-	float XRatio = (float)currentOutputWidth / w->a.width;
-	float YRatio = (float)currentOutputHeight / w->a.height;
+	float XRatio = (float)currentOutputWidth / window->a.width;
+	float YRatio = (float)currentOutputHeight / window->a.height;
 	int cursorOffsetX, cursorOffsetY;
 
 	currentScaleRatio = (XRatio < YRatio) ? XRatio : YRatio;
 
-	cursorOffsetX = (currentOutputWidth - w->a.width * currentScaleRatio * globalScaleRatio) / 2.0f;
-	cursorOffsetY = (currentOutputHeight - w->a.height * currentScaleRatio * globalScaleRatio) / 2.0f;
+	cursorOffsetX = (currentOutputWidth - window->a.width * currentScaleRatio * globalScaleRatio) / 2.0f;
+	cursorOffsetY = (currentOutputHeight - window->a.height * currentScaleRatio * globalScaleRatio) / 2.0f;
 
 	// Actual point on scaled screen where the cursor hotspot should be
-	scaledCursorX = (win_x - w->a.x) * currentScaleRatio * globalScaleRatio + cursorOffsetX;
-	scaledCursorY = (win_y - w->a.y) * currentScaleRatio * globalScaleRatio + cursorOffsetY;
+	scaledX = (winX - window->a.x) * currentScaleRatio * globalScaleRatio + cursorOffsetX;
+	scaledY = (winY - window->a.y) * currentScaleRatio * globalScaleRatio + cursorOffsetY;
 
 	if ( zoomScaleRatio != 1.0 )
 	{
-		scaledCursorX += ((w->a.width / 2) - win_x) * currentScaleRatio * globalScaleRatio;
-		scaledCursorY += ((w->a.height / 2) - win_y) * currentScaleRatio * globalScaleRatio;
+		scaledX += ((window->a.width / 2) - winX) * currentScaleRatio * globalScaleRatio;
+		scaledY += ((window->a.height / 2) - winY) * currentScaleRatio * globalScaleRatio;
 	}
 
 	// Apply the cursor offset inside the texture using the display scale
-	scaledCursorX = scaledCursorX - cursorHotX;
-	scaledCursorY = scaledCursorY - cursorHotY;
+	scaledX = scaledX - m_hotspotX;
+	scaledY = scaledY - m_hotspotY;
 
 	int curLayer = pComposite->nLayerCount;
 
@@ -709,16 +833,17 @@ paint_cursor ( Display *dpy, win *w, struct Composite_t *pComposite, struct Vulk
 	pComposite->layers[ curLayer ].flScaleX = 1.0;
 	pComposite->layers[ curLayer ].flScaleY = 1.0;
 
-	pComposite->layers[ curLayer ].flOffsetX = -scaledCursorX;
-	pComposite->layers[ curLayer ].flOffsetY = -scaledCursorY;
+	pComposite->layers[ curLayer ].flOffsetX = -scaledX;
+	pComposite->layers[ curLayer ].flOffsetY = -scaledY;
 
-	pPipeline->layerBindings[ curLayer ].surfaceWidth = cursorWidth;
-	pPipeline->layerBindings[ curLayer ].surfaceHeight = cursorHeight;
+	pPipeline->layerBindings[ curLayer ].surfaceWidth = m_width;
+	pPipeline->layerBindings[ curLayer ].surfaceHeight = m_height;
 
 	pPipeline->layerBindings[ curLayer ].zpos = 2; // cursor, on top of both bottom layers
 
-	pPipeline->layerBindings[ curLayer ].tex = cursorTexture;
-	pPipeline->layerBindings[ curLayer ].fbid = BIsNested() ? 0 : vulkan_texture_get_fbid( cursorTexture );
+	pPipeline->layerBindings[ curLayer ].tex = m_texture;
+	pPipeline->layerBindings[ curLayer ].fbid = BIsNested() ? 0 :
+															  vulkan_texture_get_fbid(m_texture);
 
 	pPipeline->layerBindings[ curLayer ].bFilter = false;
 	pPipeline->layerBindings[ curLayer ].bBlackBorder = false;
@@ -727,7 +852,8 @@ paint_cursor ( Display *dpy, win *w, struct Composite_t *pComposite, struct Vulk
 }
 
 static void
-paint_window (Display *dpy, win *w, struct Composite_t *pComposite, struct VulkanPipeline_t *pPipeline, Bool notificationMode)
+paint_window (Display *dpy, win *w, struct Composite_t *pComposite,
+			  struct VulkanPipeline_t *pPipeline, Bool notificationMode, MouseCursor *cursor)
 {
 	uint32_t sourceWidth, sourceHeight;
 	int drawXOffset = 0, drawYOffset = 0;
@@ -774,8 +900,8 @@ paint_window (Display *dpy, win *w, struct Composite_t *pComposite, struct Vulka
 
 		if ( zoomScaleRatio != 1.0 )
 		{
-			drawXOffset += ((sourceWidth / 2) - cursorX) * currentScaleRatio;
-			drawYOffset += ((sourceHeight / 2) - cursorY) * currentScaleRatio;
+			drawXOffset += ((sourceWidth / 2) - cursor->x()) * currentScaleRatio;
+			drawYOffset += ((sourceHeight / 2) - cursor->y()) * currentScaleRatio;
 		}
 	}
 
@@ -877,7 +1003,7 @@ paint_debug_info (Display *dpy)
 }
 
 static void
-paint_all (Display *dpy)
+paint_all(Display *dpy, MouseCursor *cursor)
 {
 	static long long int paintID = 0;
 
@@ -933,20 +1059,20 @@ paint_all (Display *dpy)
 
 		// Draw it in the background
 		fadeOutWindow.opacity = (1.0d - newOpacity) * OPAQUE;
-		paint_window(dpy, &fadeOutWindow, &composite, &pipeline, False);
+		paint_window(dpy, &fadeOutWindow, &composite, &pipeline, False, cursor);
 
 		w = find_win(dpy, currentFocusWindow);
 
 		// Blend new window on top with linear crossfade
 		w->opacity = newOpacity * OPAQUE;
 
-		paint_window(dpy, w, &composite, &pipeline, False);
+		paint_window(dpy, w, &composite, &pipeline, False, cursor);
 	}
 	else
 	{
 		w = find_win(dpy, currentFocusWindow);
 		// Just draw focused window as normal, be it Steam or the game
-		paint_window(dpy, w, &composite, &pipeline, False);
+		paint_window(dpy, w, &composite, &pipeline, False, cursor);
 
 		if (fadeOutWindow.id) {
 
@@ -966,7 +1092,7 @@ paint_all (Display *dpy)
 	{
 		if (overlay->opacity)
 		{
-			paint_window(dpy, overlay, &composite, &pipeline, False);
+			paint_window(dpy, overlay, &composite, &pipeline, False, cursor);
 		}
 	}
 
@@ -974,17 +1100,13 @@ paint_all (Display *dpy)
 	{
 		if (notification->opacity)
 		{
-			paint_window(dpy, notification, &composite, &pipeline, True);
+			paint_window(dpy, notification, &composite, &pipeline, True, cursor);
 		}
 	}
 
 	// Draw cursor if we need to
-	if (w && gameFocused)
-	{
-		if ( !hideCursorForMovement && !cursorImageEmpty )
-		{
-			paint_cursor( dpy, w, &composite, &pipeline );
-		}
+	if (w && gameFocused) {
+		cursor->paint(w, &composite, &pipeline );
 	}
 
 	if (drawDebugInfo)
@@ -1049,50 +1171,7 @@ paint_all (Display *dpy)
 }
 
 static void
-setup_pointer_barriers (Display *dpy)
-{
-	int i;
-	win		    *w = find_win (dpy, currentFocusWindow);
-
-	// If we had barriers before, get rid of them.
-	for (i = 0; i < 4; i++)
-	{
-		if (scaledFocusBarriers[i] != None)
-		{
-			XFixesDestroyPointerBarrier(dpy, scaledFocusBarriers[i]);
-			scaledFocusBarriers[i] = None;
-		}
-	}
-
-	if (!gameFocused)
-	{
-		return;
-	}
-
-	// Constrain it to the window; careful, the corners will leak due to a known X server bug
-	scaledFocusBarriers[0] = XFixesCreatePointerBarrier(dpy, DefaultRootWindow(dpy), 0, w->a.y, root_width, w->a.y, 0, 0, NULL);
-	scaledFocusBarriers[1] = XFixesCreatePointerBarrier(dpy, DefaultRootWindow(dpy), w->a.x + w->a.width, 0, w->a.x + w->a.width, root_height, 0, 0, NULL);
-	scaledFocusBarriers[2] = XFixesCreatePointerBarrier(dpy, DefaultRootWindow(dpy), root_width, w->a.y + w->a.height, 0, w->a.y + w->a.height, 0, 0, NULL);
-	scaledFocusBarriers[3] = XFixesCreatePointerBarrier(dpy, DefaultRootWindow(dpy), w->a.x, root_height, w->a.x, 0, 0, 0, NULL);
-
-	// Make sure the cursor is somewhere in our jail
-	Window window_returned, child;
-	int root_x, root_y;
-	int win_x, win_y;
-	unsigned int mask_return;
-
-	XQueryPointer(dpy, DefaultRootWindow(dpy), &window_returned,
-				  &child, &root_x, &root_y, &win_x, &win_y,
-			   &mask_return);
-
-	if (root_x >= w->a.width || root_y >= w->a.height)
-	{
-		XWarpPointer(dpy, None, currentFocusWindow, 0, 0, 0, 0, w->a.width / 2, w->a.height / 2);
-	}
-}
-
-static void
-determine_and_apply_focus (Display *dpy)
+determine_and_apply_focus (Display *dpy, MouseCursor *cursor)
 {
 	win *w, *focus = NULL;
 	win *steam = nullptr;
@@ -1203,7 +1282,7 @@ determine_and_apply_focus (Display *dpy)
 
 	set_win_hidden(dpy, w, False);
 
-	setup_pointer_barriers(dpy);
+	cursor->constrainPosition();
 
 	if (gameFocused || (!gamesRunningCount && list[0].id != focus->id))
 	{
@@ -2086,8 +2165,7 @@ steamcompmgr_main (int argc, char **argv)
 
 	XF86VidModeLockModeSwitch(dpy, scr, True);
 
-	// Start it with the cursor hidden until moved by user
-	hideCursorForMovement = True;
+	std::unique_ptr<MouseCursor> cursor(new MouseCursor(dpy));
 
 	gamesRunningCount = get_prop(dpy, root, gamesRunningAtom, 0);
 	overscanScaleRatio = get_prop(dpy, root, screenScaleAtom, 0xFFFFFFFF) / (double)0xFFFFFFFF;
@@ -2095,7 +2173,7 @@ steamcompmgr_main (int argc, char **argv)
 
 	globalScaleRatio = overscanScaleRatio * zoomScaleRatio;
 
-	determine_and_apply_focus(dpy);
+	determine_and_apply_focus(dpy, cursor.get());
 
 	if ( readyPipeFD != -1 )
 	{
@@ -2378,8 +2456,7 @@ steamcompmgr_main (int argc, char **argv)
 							// This shouldn't happen due to our pointer barriers,
 							// but there is a known X server bug; warp to last good
 							// position.
-							XWarpPointer(dpy, None, currentFocusWindow, 0, 0, 0, 0,
-										 cursorX, cursorY);
+							cursor->resetPosition();
 						}
 						break;
 					case MotionNotify:
@@ -2387,7 +2464,7 @@ steamcompmgr_main (int argc, char **argv)
 						win * w = find_win(dpy, ev.xmotion.window);
 						if (w && w->id == currentFocusWindow)
 						{
-							handle_mouse_movement( dpy, ev.xmotion.x, ev.xmotion.y );
+							cursor->move(ev.xmotion.x, ev.xmotion.y);
 						}
 						break;
 					}
@@ -2398,16 +2475,14 @@ steamcompmgr_main (int argc, char **argv)
 						}
 						else if (ev.type == xfixes_event + XFixesCursorNotify)
 						{
-							cursorImageDirty = True;
-							// We can't prove it's empty until checking again
-							cursorImageEmpty = false;
+							cursor->setDirty();
 						}
 						break;
 			}
 		} while (QLength (dpy));
 
 		if (focusDirty == True)
-			determine_and_apply_focus(dpy);
+			determine_and_apply_focus(dpy, cursor.get());
 
 		if (doRender)
 		{
@@ -2454,7 +2529,7 @@ steamcompmgr_main (int argc, char **argv)
 
 			if ( hasRepaint == true && vblank == true )
 			{
-				paint_all(dpy);
+				paint_all(dpy, cursor.get());
 
 				// Consumed the need to repaint here
 				hasRepaint = false;
@@ -2468,43 +2543,7 @@ steamcompmgr_main (int argc, char **argv)
 			if (fadeOutWindow.id)
 				XSendEvent(dpy, ourWindow, True, SubstructureRedirectMask, &nudgeEvent);
 
-			Window window_returned, child;
-			int root_x, root_y;
-			int win_x, win_y;
-			unsigned int mask_return;
-
-			XQueryPointer(dpy, DefaultRootWindow(dpy), &window_returned,
-						  &child, &root_x, &root_y, &win_x, &win_y,
-						&mask_return);
-
-			handle_mouse_movement( dpy, root_x, root_y );
-
-			if ( mask_return & ( Button1Mask | Button2Mask | Button3Mask | Button4Mask | Button5Mask ) )
-			{
-				hideCursorForMovement = False;
-				lastCursorMovedTime = get_time_in_milliseconds();
-			}
-
-			if (!hideCursorForMovement &&
-				(get_time_in_milliseconds() - lastCursorMovedTime) > CURSOR_HIDE_TIME)
-			{
-				hideCursorForMovement = True;
-
-				win *w = find_win(dpy, currentFocusWindow);
-
-				// Rearm warp count
-				if (w)
-				{
-					w->mouseMoved = 0;
-				}
-
-				// We're hiding the cursor, force redraw if we were showing it
-				if ( w && gameFocused && !cursorImageEmpty )
-				{
-					hasRepaint = true;
-					XSendEvent(dpy, ourWindow, True, SubstructureRedirectMask, &nudgeEvent);
-				}
-			}
+			cursor->updatePosition();
 
 			// Ask for a new surface every vblank
 			if ( vblank == true )
