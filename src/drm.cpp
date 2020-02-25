@@ -701,8 +701,8 @@ bool drm_can_avoid_composite( struct drm_t *drm, struct Composite_t *pComposite,
 				{
 					liftoff_layer_set_property( drm->lo_layers[ i ], "rotation", DRM_MODE_ROTATE_270);
 				}
-				
-				if ( pPipeline->layerBindings[ i ].fbid != 0 )
+
+				if ( pPipeline->layerBindings[ i ].fbid == 0 )
 				{
 					return false;
 				}
