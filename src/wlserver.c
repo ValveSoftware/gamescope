@@ -680,15 +680,15 @@ void wlserver_mousefocus( struct wlr_surface *wlrsurface )
 	wlr_seat_pointer_notify_enter( wlserver.wlr.seat, wlrsurface, wlserver.mouse_surface_cursorx, wlserver.mouse_surface_cursory );
 }
 
-void wlserver_mousemotion( int x, int y, uint32_t time )
+void wlserver_mousemotion( int dx, int dy, uint32_t time )
 {
-	pointerX += x;
-	pointerY += y;
-	if ( g_XWLDpy != NULL )
-	{
-		XTestFakeRelativeMotionEvent( g_XWLDpy, x, y, CurrentTime );
-		XFlush( g_XWLDpy );
+	if (!wlserver.mouse_focus_surface) {
+		return;
 	}
+	wlserver_movecursor(dx, dy, dx, dy, time);
+	wlr_seat_pointer_notify_motion(wlserver.wlr.seat, time, wlserver.mouse_surface_cursorx,
+								   wlserver.mouse_surface_cursory);
+	wlr_seat_pointer_notify_frame(wlserver.wlr.seat);
 }
 
 void wlserver_mousebutton( int button, bool press, uint32_t time )
