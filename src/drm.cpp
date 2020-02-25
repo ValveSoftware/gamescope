@@ -27,6 +27,7 @@ uint32_t g_nDRMFormat;
 bool g_bRotated;
 
 bool g_bUseLayers;
+bool g_bDebugLayers;
 
 static int s_drm_log = 0;
 
@@ -458,6 +459,10 @@ int init_drm(struct drm_t *drm, const char *device, const char *mode_str, unsign
 		g_nOutputWidth = drm->mode->vdisplay;
 		g_nOutputHeight = drm->mode->hdisplay;
 	}
+
+	if (g_bUseLayers) {
+		liftoff_log_init(g_bDebugLayers ? LIFTOFF_DEBUG : LIFTOFF_ERROR, NULL);
+	}
 	
 	drm->lo_device = liftoff_device_create( drm->fd );
 	drm->lo_output = liftoff_output_create( drm->lo_device, drm->crtc_id );
@@ -701,8 +706,8 @@ bool drm_can_avoid_composite( struct drm_t *drm, struct Composite_t *pComposite,
 				{
 					liftoff_layer_set_property( drm->lo_layers[ i ], "rotation", DRM_MODE_ROTATE_270);
 				}
-
-				if ( pPipeline->layerBindings[ i ].fbid == 0 )
+				
+				if ( pPipeline->layerBindings[ i ].fbid != 0 )
 				{
 					return false;
 				}

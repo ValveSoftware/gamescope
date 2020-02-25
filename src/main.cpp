@@ -59,7 +59,7 @@ int main(int argc, char **argv)
 	
 	bool bSleepAtStartup = false;
 	
-	while ((o = getopt (argc, argv, ":R:T:w:h:W:H:r:NSvVecslnb")) != -1)
+	while ((o = getopt (argc, argv, ":R:T:w:h:W:H:r:NSvVecsdlnb")) != -1)
 	{
 		switch (o) {
 			case 'w':
@@ -82,6 +82,9 @@ int main(int argc, char **argv)
 				break;
 			case 'l':
 				g_bUseLayers = true;
+				break;
+			case 'd':
+				g_bDebugLayers = true;
 				break;
 			case 'n':
 				g_bFilterGameWindow = false;

@@ -86,6 +86,7 @@ extern uint32_t g_nDRMFormat;
 
 extern bool g_bUseLayers;
 extern bool g_bRotated;
+extern bool g_bDebugLayers;
 
 int init_drm(struct drm_t *drm, const char *device, const char *mode_str, unsigned int vrefresh);
 int drm_atomic_commit(struct drm_t *drm, struct Composite_t *pComposite, struct VulkanPipeline_t *pPipeline );
