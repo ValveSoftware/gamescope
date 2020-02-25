@@ -669,11 +669,15 @@ void wlserver_key( uint32_t key, bool press, uint32_t time )
 void wlserver_mousefocus( struct wlr_surface *wlrsurface )
 {
 	if (wlserver.mouse_focus_surface != wlrsurface) {
+		wlr_log(WLR_DEBUG, "focus: %p -> %p (was constraint: %d)",
+				wlserver.mouse_focus_surface, wlrsurface, (bool)wlserver.wlr.constraint.active);
+
 		if (wlserver.wlr.constraint.active && wlserver.wlr.constraint.active->surface == wlrsurface)
 			wlserver_constrain_pointer(wlserver.wlr.constraint.active);
 		else
 			wlserver_constrain_pointer(NULL);
 	}
+
 	wlserver.mouse_focus_surface = wlrsurface;
 	wlserver.mouse_surface_cursorx = wlrsurface->current.width / 2.0;
 	wlserver.mouse_surface_cursory = wlrsurface->current.height / 2.0;
@@ -730,7 +734,7 @@ struct wlr_surface *wlserver_get_surface( long surfaceID )
 	
 	if ( !wlr_surface_set_role(ret, &xwayland_surface_role, NULL, NULL, 0 ) )
 	{
-		fprintf (stderr, "Failed to set xwayland surface role");
+		fprintf (stderr, "Failed to set xwayland surface role.\n");
 		return NULL;
 	}
 	

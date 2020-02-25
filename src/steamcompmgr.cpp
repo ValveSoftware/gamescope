@@ -566,20 +566,14 @@ MouseCursor::MouseCursor(_XDisplay *display)
 {
 }
 
-void MouseCursor::queryPositions(int &rootX, int &rootY, int &winX, int &winY)
+void MouseCursor::queryRelativePosition(int &winX, int &winY)
 {
 	Window window, child;
+	int rootX, rootY;
 	unsigned int mask;
 
 	XQueryPointer(m_display, DefaultRootWindow(m_display), &window, &child,
 				  &rootX, &rootY, &winX, &winY, &mask);
-
-}
-
-void MouseCursor::queryGlobalPosition(int &x, int &y)
-{
-	int winX, winY;
-	queryPositions(x, y, winX, winY);
 }
 
 void MouseCursor::queryButtonMask(unsigned int &mask)
@@ -669,9 +663,6 @@ void MouseCursor::constrainPosition()
 	m_scaledFocusBarriers[3] = barricade(window->a.x, root_height, window->a.x, 0);
 
 	// Make sure the cursor is somewhere in our jail
-//	int rootX, rootY;
-//	queryGlobalPosition(rootX, rootY);
-
 	if (pointerX >= window->a.width || pointerY >= window->a.height) {
 		warp(window->a.width / 2, window->a.height / 2);
 	}
@@ -685,7 +676,6 @@ void MouseCursor::move(int x, int y)
 	}
 	m_x = pointerX;
 	m_y = pointerY;
-//	fprintf (stderr, "XXX %d,%d -> %d,%d\n", x, y, pointerX, pointerY);
 
 	win *window = find_win(m_display, currentFocusWindow);
 
@@ -714,9 +704,7 @@ void MouseCursor::move(int x, int y)
 
 void MouseCursor::updatePosition()
 {
-	int x,y;
-	queryGlobalPosition(x, y);
-	move(x, y);
+	move(pointerX, pointerY);
 	checkSuspension();
 }
 
@@ -793,8 +781,8 @@ void MouseCursor::paint(win *window, struct Composite_t *pComposite,
 		return;
 	}
 
-	int rootX, rootY, winX, winY;
-	queryPositions(rootX, rootY, winX, winY);
+	int winX, winY;
+	queryRelativePosition(winX, winY);
 	move(pointerX, pointerY);
 
 	// Also need new texture
