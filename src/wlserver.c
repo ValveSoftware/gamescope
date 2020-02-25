@@ -38,6 +38,8 @@ struct wlserver_t wlserver;
 Display *g_XWLDpy;
 
 bool run = true;
+int pointerX = 0;
+int pointerY = 0;
 
 void sig_handler(int signal)
 {
@@ -172,6 +174,8 @@ static void wlserver_handle_pointer_motion(struct wl_listener *listener, void *d
 	{
 		wlserver_movecursor( event->unaccel_dx, event->unaccel_dy );
 
+		pointerX = wlserver.mouse_surface_cursorx;
+		pointerY = wlserver.mouse_surface_cursory;
 		wlr_seat_pointer_notify_motion( wlserver.wlr.seat, event->time_msec, wlserver.mouse_surface_cursorx, wlserver.mouse_surface_cursory );
 		wlr_seat_pointer_notify_frame( wlserver.wlr.seat );
 	}
@@ -198,7 +202,7 @@ static void wlserver_handle_touch_down(struct wl_listener *listener, void *data)
 
 		wlserver.touchdown_x = x * wlserver.mouse_focus_surface->current.width;
 		wlserver.touchdown_y = y * wlserver.mouse_focus_surface->current.height;
-		
+
 		wlserver.mouse_surface_cursorx = x * wlserver.mouse_focus_surface->current.width;
 		wlserver.mouse_surface_cursory = y * wlserver.mouse_focus_surface->current.height;
 
@@ -529,6 +533,8 @@ void wlserver_mousefocus( struct wlr_surface *wlrsurface )
 
 void wlserver_mousemotion( int x, int y, uint32_t time )
 {
+	pointerX += x;
+	pointerY += y;
 	if ( g_XWLDpy != NULL )
 	{
 		XTestFakeRelativeMotionEvent( g_XWLDpy, x, y, CurrentTime );

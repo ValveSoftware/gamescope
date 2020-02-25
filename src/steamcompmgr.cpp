@@ -669,10 +669,10 @@ void MouseCursor::constrainPosition()
 	m_scaledFocusBarriers[3] = barricade(window->a.x, root_height, window->a.x, 0);
 
 	// Make sure the cursor is somewhere in our jail
-	int rootX, rootY;
-	queryGlobalPosition(rootX, rootY);
+//	int rootX, rootY;
+//	queryGlobalPosition(rootX, rootY);
 
-	if (rootX >= window->a.width || rootY >= window->a.height) {
+	if (pointerX >= window->a.width || pointerY >= window->a.height) {
 		warp(window->a.width / 2, window->a.height / 2);
 	}
 }
@@ -680,11 +680,12 @@ void MouseCursor::constrainPosition()
 void MouseCursor::move(int x, int y)
 {
 	// Some stuff likes to warp in-place
-	if (m_x == x && m_y == y) {
+	if (m_x == pointerX && m_y == pointerY) {
 		return;
 	}
-	m_x = x;
-	m_y = y;
+	m_x = pointerX;
+	m_y = pointerY;
+//	fprintf (stderr, "XXX %d,%d -> %d,%d\n", x, y, pointerX, pointerY);
 
 	win *window = find_win(m_display, currentFocusWindow);
 
@@ -794,7 +795,7 @@ void MouseCursor::paint(win *window, struct Composite_t *pComposite,
 
 	int rootX, rootY, winX, winY;
 	queryPositions(rootX, rootY, winX, winY);
-	move(rootX, rootY);
+	move(pointerX, pointerY);
 
 	// Also need new texture
 	if (!getTexture()) {
