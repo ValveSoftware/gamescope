@@ -9,6 +9,8 @@
 #include <wlr/backend.h>
 #include <wlr/backend/session.h>
 #include <wlr/render/wlr_renderer.h>
+#include <wlr/types/wlr_pointer_constraints_v1.h>
+#include <wlr/types/wlr_relative_pointer_v1.h>
 #include <wlr/xwayland.h>
 
 struct wlserver_t {
@@ -27,6 +29,18 @@ struct wlserver_t {
 		struct wlr_session *session;	
 		struct wlr_seat *seat;
 		struct wlr_output *output;
+
+		struct wlr_relative_pointer_manager_v1 *relative_pointer_manager;
+		struct wl_listener relative_pointer_listener;
+
+		struct wlr_pointer_constraints_v1 *pointer_constraints;
+		struct wl_listener pointer_constraints_listener;
+
+		struct {
+			struct wlr_pointer_constraint_v1 *active;
+			pixman_region32_t confine; // invalid if active == NULL
+			struct wl_listener commit;
+		} constraint;
 	} wlr;
 	
 	struct wlr_surface *mouse_focus_surface;

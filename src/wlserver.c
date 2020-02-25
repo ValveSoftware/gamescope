@@ -23,6 +23,7 @@
 #include <wlr/interfaces/wlr_pointer.h>
 #include <wlr/render/wlr_renderer.h>
 #include <wlr/util/log.h>
+#include <wlr/util/region.h>
 
 #define C_SIDE
 
@@ -138,8 +139,15 @@ static void wlserver_handle_key(struct wl_listener *listener, void *data)
 	wlr_seat_keyboard_notify_key( wlserver.wlr.seat, event->time_msec, event->keycode, event->state );
 }
 
-static void wlserver_movecursor( int x, int y )
+static void wlserver_confine_pointer(double *dx, double *dy);
+
+static void wlserver_movecursor(double dx, double dy, double x, double y, uint64_t time)
 {
+	wlr_relative_pointer_manager_v1_send_relative_motion(wlserver.wlr.relative_pointer_manager,
+														 wlserver.wlr.seat, time * 1000,
+														 dx, dy, x, y);
+	wlserver_confine_pointer(&x, &y);
+
 	wlserver.mouse_surface_cursorx += x;
 	
 	if ( wlserver.mouse_surface_cursorx > wlserver.mouse_focus_surface->current.width - 1 )
@@ -163,6 +171,9 @@ static void wlserver_movecursor( int x, int y )
 	{
 		wlserver.mouse_surface_cursory = 0;
 	}
+
+	pointerX = wlserver.mouse_surface_cursorx;
+	pointerY = wlserver.mouse_surface_cursory;
 }
 
 static void wlserver_handle_pointer_motion(struct wl_listener *listener, void *data)
@@ -172,10 +183,9 @@ static void wlserver_handle_pointer_motion(struct wl_listener *listener, void *d
 	
 	if ( wlserver.mouse_focus_surface != NULL )
 	{
-		wlserver_movecursor( event->unaccel_dx, event->unaccel_dy );
+		wlserver_movecursor(event->delta_x, event->delta_y, event->unaccel_dx, event->unaccel_dy,
+							event->time_msec );
 
-		pointerX = wlserver.mouse_surface_cursorx;
-		pointerY = wlserver.mouse_surface_cursory;
 		wlr_seat_pointer_notify_motion( wlserver.wlr.seat, event->time_msec, wlserver.mouse_surface_cursorx, wlserver.mouse_surface_cursory );
 		wlr_seat_pointer_notify_frame( wlserver.wlr.seat );
 	}
@@ -291,6 +301,131 @@ static void wlserver_handle_touch_motion(struct wl_listener *listener, void *dat
 	}
 }
 
+struct wlserver_pointer_constraint {
+	struct wlr_pointer_constraint_v1 *constraint;
+	struct wl_listener destroy;
+};
+
+void wlserver_confine_pointer(double *dx, double *dy)
+{
+	if (!wlserver.wlr.constraint.active) {
+		return;
+	}
+	if (wlserver.wlr.constraint.active->type == WLR_POINTER_CONSTRAINT_V1_LOCKED) {
+		*dx = 0;
+		*dy = 0;
+		return;
+	}
+
+	double confinedX, confinedY;
+	if (!wlr_region_confine(&wlserver.wlr.constraint.active->region, pointerX, pointerY,
+								   pointerX + *dx, pointerY + *dy, &confinedX, &confinedY)) {
+		*dx = 0;
+		*dy = 0;
+		return;
+	}
+
+	*dx = confinedX - pointerX;
+	*dy = confinedY - pointerY;
+
+}
+
+static void wlserver_check_constraint_region()
+{
+	struct wlr_pointer_constraint_v1 *constraint = wlserver.wlr.constraint.active;
+
+	pixman_region32_t *region = &constraint->region;
+
+	// TODO: sway does some additional stuff with the region. Ask the devs if it's necessary.
+
+	if (constraint->type == WLR_POINTER_CONSTRAINT_V1_CONFINED) {
+		pixman_region32_copy(&wlserver.wlr.constraint.confine, region);
+	} else {
+		pixman_region32_clear(&wlserver.wlr.constraint.confine);
+	}
+}
+
+void wlserver_handle_constraint_commit(struct wl_listener *listener, void *data)
+{
+	assert(wlserver.wlr.constraint.active->surface == data);
+	wlserver_check_constraint_region();
+}
+
+static void wlserver_warp_to_constraint_hint(struct wlr_pointer_constraint_v1 *constraint)
+{
+	if (constraint->current.committed & WLR_POINTER_CONSTRAINT_V1_STATE_CURSOR_HINT) {
+		pointerX = constraint->current.cursor_hint.x + wlserver.mouse_surface_cursorx;
+		pointerY = constraint->current.cursor_hint.y + wlserver.mouse_surface_cursory;
+	}
+}
+
+void wlserver_constrain_pointer(struct wlr_pointer_constraint_v1 *constraint)
+{
+	if (wlserver.wlr.constraint.active == constraint) {
+		return;
+	}
+
+	wl_list_remove(&wlserver.wlr.constraint.commit.link);
+	if (wlserver.wlr.constraint.active) {
+		if (constraint == NULL) {
+			wlserver_warp_to_constraint_hint(wlserver.wlr.constraint.active);
+		}
+		wlr_pointer_constraint_v1_send_deactivated(wlserver.wlr.constraint.active);
+	}
+
+	wlserver.wlr.constraint.active = constraint;
+
+	if (constraint == NULL) {
+		wl_list_init(&wlserver.wlr.constraint.commit.link);
+		return;
+	}
+
+	wlserver_check_constraint_region();
+	wlr_pointer_constraint_v1_send_activated(constraint);
+
+	wlserver.wlr.constraint.commit.notify = wlserver_handle_constraint_commit;
+	wl_signal_add(&constraint->surface->events.commit, &wlserver.wlr.constraint.commit);
+}
+
+static void wlserver_handle_constraint_destroy(struct wl_listener *listener, void *data)
+{
+	struct wlserver_pointer_constraint *wlserver_constraint
+			= wl_container_of(listener, wlserver_constraint, destroy);
+
+	struct wlr_pointer_constraint_v1 *constraint = data;
+	wl_list_remove(&wlserver_constraint->destroy.link);
+
+	if (wlserver.wlr.constraint.active == constraint) {
+		wlserver_warp_to_constraint_hint(constraint);
+
+		if (wlserver.wlr.constraint.commit.link.next != NULL) {
+			wl_list_remove(&wlserver.wlr.constraint.commit.link);
+		}
+		wl_list_init(&wlserver.wlr.constraint.commit.link);
+		wlserver.wlr.constraint.active = NULL;
+	}
+
+	free(wlserver_constraint);
+}
+
+static void wlserver_handle_pointer_constraint(struct wl_listener *listener, void *data)
+{
+	struct wlr_pointer_constraint_v1 *constraint = data;
+	struct wlserver_pointer_constraint *wlserver_constraint
+			= calloc(1, sizeof(struct wlserver_pointer_constraint));
+	if (!wlserver_constraint) {
+		wlr_log(WLR_ERROR, "Creating pointer constraint failed.");
+		return;
+	}
+	wlserver_constraint->constraint = constraint;
+	wlserver_constraint->destroy.notify = wlserver_handle_constraint_destroy;
+	wl_signal_add(&constraint->events.destroy, &wlserver_constraint->destroy);
+
+	if (wlserver.mouse_focus_surface == constraint->surface) {
+		wlserver_constrain_pointer(constraint);
+	}
+}
+
 static void wlserver_new_input(struct wl_listener *listener, void *data)
 {
 	struct wlr_input_device *device = data;
@@ -360,6 +495,7 @@ int wlserver_init(int argc, char **argv, bool bIsNested) {
 	
 	wlr_log_init(WLR_DEBUG, NULL);
 	wlserver.wl_display = wl_display_create();
+	wl_list_init(&wlserver.wlr.constraint.commit.link);
 
 	signal(SIGTERM, sig_handler);
 	signal(SIGINT, sig_handler);
@@ -401,7 +537,14 @@ int wlserver_init(int argc, char **argv, bool bIsNested) {
 		wl_signal_add( &wlserver.wlr.headless_backend->events.new_input, &new_input_listener );
 		wlr_headless_add_input_device( wlserver.wlr.headless_backend, WLR_INPUT_DEVICE_KEYBOARD );
 	}
-	
+
+	wlserver.wlr.relative_pointer_manager = wlr_relative_pointer_manager_v1_create(wlserver.wl_display);
+
+	wlserver.wlr.pointer_constraints = wlr_pointer_constraints_v1_create(wlserver.wl_display);
+	wlserver.wlr.pointer_constraints_listener.notify = wlserver_handle_pointer_constraint;
+	wl_signal_add( &wlserver.wlr.pointer_constraints->events.new_constraint,
+				   &wlserver.wlr.pointer_constraints_listener);
+
 	wlserver.wlr.renderer = wlr_backend_get_renderer( wlserver.wlr.multi_backend );
 	
 	assert(wlserver.wlr.renderer);
@@ -525,6 +668,12 @@ void wlserver_key( uint32_t key, bool press, uint32_t time )
 
 void wlserver_mousefocus( struct wlr_surface *wlrsurface )
 {
+	if (wlserver.mouse_focus_surface != wlrsurface) {
+		if (wlserver.wlr.constraint.active && wlserver.wlr.constraint.active->surface == wlrsurface)
+			wlserver_constrain_pointer(wlserver.wlr.constraint.active);
+		else
+			wlserver_constrain_pointer(NULL);
+	}
 	wlserver.mouse_focus_surface = wlrsurface;
 	wlserver.mouse_surface_cursorx = wlrsurface->current.width / 2.0;
 	wlserver.mouse_surface_cursory = wlrsurface->current.height / 2.0;
