@@ -698,61 +698,63 @@ bool drm_can_avoid_composite( struct drm_t *drm, struct Composite_t *pComposite,
 
 	if ( g_bUseLayers == true )
 	{
+
 		for ( int i = 0; i < k_nMaxLayers; i++ )
 		{
 			if ( i < nLayerCount )
 			{
-				if ( g_bRotated )
-				{
-					liftoff_layer_set_property( drm->lo_layers[ i ], "rotation", DRM_MODE_ROTATE_270);
-				}
-				
-				if ( pPipeline->layerBindings[ i ].fbid != 0 )
+				if ( pPipeline->layerBindings[ i ].fbid == 0 )
 				{
 					return false;
 				}
+
 				liftoff_layer_set_property( drm->lo_layers[ i ], "FB_ID", pPipeline->layerBindings[ i ].fbid);
 				drm->fbids_in_req.push_back( pPipeline->layerBindings[ i ].fbid );
-				
-				if ( g_bUseLayers == true )
+
+				liftoff_layer_set_property( drm->lo_layers[ i ], "zpos", pPipeline->layerBindings[ i ].zpos );
+				liftoff_layer_set_property( drm->lo_layers[ i ], "alpha", pComposite->layers[ i ].flOpacity * 0xffff);
+
+				if ( pPipeline->layerBindings[ i ].zpos == 0 )
 				{
-					liftoff_layer_set_property( drm->lo_layers[ i ], "zpos", pPipeline->layerBindings[ i ].zpos );
-					liftoff_layer_set_property( drm->lo_layers[ i ], "alpha", pComposite->layers[ i ].flOpacity * 0xffff);
-				
-					if ( pPipeline->layerBindings[ i ].zpos == 0 )
-					{
-						assert( ( pComposite->layers[ i ].flOpacity * 0xffff ) == 0xffff );
-					}
+					assert( ( pComposite->layers[ i ].flOpacity * 0xffff ) == 0xffff );
 				}
-				
+
+				const uint16_t srcWidth = pPipeline->layerBindings[ i ].surfaceWidth;
+				const uint16_t srcHeight = pPipeline->layerBindings[ i ].surfaceHeight;
+
 				liftoff_layer_set_property( drm->lo_layers[ i ], "SRC_X", 0);
 				liftoff_layer_set_property( drm->lo_layers[ i ], "SRC_Y", 0);
-				liftoff_layer_set_property( drm->lo_layers[ i ], "SRC_W", pPipeline->layerBindings[ i ].surfaceWidth << 16);
-				liftoff_layer_set_property( drm->lo_layers[ i ], "SRC_H", pPipeline->layerBindings[ i ].surfaceHeight << 16);
-				
-				if ( g_bRotated )
-				{
-					liftoff_layer_set_property( drm->lo_layers[ i ], "CRTC_X", pComposite->layers[ i ].flOffsetY * -1);
-					liftoff_layer_set_property( drm->lo_layers[ i ], "CRTC_Y", pComposite->layers[ i ].flOffsetX * -1);
-					
-					liftoff_layer_set_property( drm->lo_layers[ i ], "CRTC_H", pPipeline->layerBindings[ i ].surfaceWidth / pComposite->layers[ i ].flScaleX);
-					liftoff_layer_set_property( drm->lo_layers[ i ], "CRTC_W", pPipeline->layerBindings[ i ].surfaceHeight / pComposite->layers[ i ].flScaleY);
-					
+				liftoff_layer_set_property( drm->lo_layers[ i ], "SRC_W", srcWidth << 16);
+				liftoff_layer_set_property( drm->lo_layers[ i ], "SRC_H", srcHeight << 16);
+
+				int32_t crtcX = -pComposite->layers[ i ].flOffsetX;
+				int32_t crtcY = -pComposite->layers[ i ].flOffsetY;
+				uint64_t crtcW = srcWidth / pComposite->layers[ i ].flScaleX;
+				uint64_t crtcH = srcHeight / pComposite->layers[ i ].flScaleY;
+
+				if (g_bRotated) {
+					const int32_t x = crtcX;
+					const uint64_t w = crtcW;
+					crtcX = crtcY;
+					crtcY = x;
+					crtcW = crtcH;
+					crtcH = w;
+
+					liftoff_layer_set_property( drm->lo_layers[ i ], "rotation", DRM_MODE_ROTATE_270);
 				}
-				else
-				{
-					liftoff_layer_set_property( drm->lo_layers[ i ], "CRTC_X", pComposite->layers[ i ].flOffsetX * -1);
-					liftoff_layer_set_property( drm->lo_layers[ i ], "CRTC_Y", pComposite->layers[ i ].flOffsetY * -1);
-					
-					liftoff_layer_set_property( drm->lo_layers[ i ], "CRTC_W", pPipeline->layerBindings[ i ].surfaceWidth / pComposite->layers[ i ].flScaleX);
-					liftoff_layer_set_property( drm->lo_layers[ i ], "CRTC_H", pPipeline->layerBindings[ i ].surfaceHeight / pComposite->layers[ i ].flScaleY);
-				}
+
+				liftoff_layer_set_property( drm->lo_layers[ i ], "CRTC_X", crtcX);
+				liftoff_layer_set_property( drm->lo_layers[ i ], "CRTC_Y", crtcY);
+
+				liftoff_layer_set_property( drm->lo_layers[ i ], "CRTC_W", crtcW);
+				liftoff_layer_set_property( drm->lo_layers[ i ], "CRTC_H", crtcH);
 			}
 			else
 			{
 				liftoff_layer_set_property( drm->lo_layers[ i ], "FB_ID", 0 );
 			}
 		}
+
 	}
 	
 	assert( drm->req == nullptr );
