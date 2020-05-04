@@ -234,9 +234,9 @@ static void wlserver_handle_touch_down(struct wl_listener *listener, void *data)
 
 static void wlserver_handle_touch_up(struct wl_listener *listener, void *data)
 {
-		struct wlserver_touch *touch = wl_container_of( listener, touch, down );
-		struct wlr_event_touch_up *event = data;
-	
+	struct wlserver_touch *touch = wl_container_of( listener, touch, up );
+	struct wlr_event_touch_up *event = data;
+
 	if ( wlserver.mouse_focus_surface != NULL )
 	{
 		bool bReleasedAny = false;
