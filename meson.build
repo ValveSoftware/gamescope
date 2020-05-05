@@ -1,4 +1,4 @@
-project('gamescope', ['c','cpp'])
+project('gamescope', ['c','cpp'], meson_version: '>=0.54.0')
 
 add_project_arguments([
 	'-DWLR_USE_UNSTABLE',
@@ -27,8 +27,9 @@ math           = cc.find_library('m')
 thread_dep = dependency('threads')
 sdl_dep = dependency('SDL2')
 
-wlroots_proj = subproject('wlroots')
-wlroots_static_dep = wlroots_proj.get_variable('wlroots_static_dep')
+wlroots_proj = subproject('wlroots', default_options:
+  ['default_library=static', 'examples=false'])
+wlroots_static_dep = wlroots_proj.get_variable('wlroots')
 
 shadercompiler = find_program('glslangValidator')
 
