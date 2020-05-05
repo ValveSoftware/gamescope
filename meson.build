@@ -43,7 +43,8 @@ spirv_shader = custom_target('shader_target',
   install : false,
 )
 
-liftoff_proj = subproject('libliftoff')
+liftoff_proj = subproject('libliftoff', default_options:
+  ['default_library=static'])
 libftoff_dep = liftoff_proj.get_variable('liftoff')
 
 executable(
