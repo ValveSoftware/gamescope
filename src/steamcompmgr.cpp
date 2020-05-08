@@ -1740,7 +1740,7 @@ finish_destroy_win (Display *dpy, Window id, Bool gone)
 				XDamageDestroy (dpy, w->damage);
 				w->damage = None;
 			}
-			free (w);
+			delete w;
 			break;
 		}
 }
