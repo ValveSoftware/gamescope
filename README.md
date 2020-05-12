@@ -27,7 +27,7 @@ On any X11 or Wayland desktop running Mesa with commit [3746ee91](https://gitlab
 
 ```
 // Upscale a 720p game to 1080p with integer scaling
-gamescope -w 1280 -h 720 -W 1920 -H 1080 -- %command%
+gamescope -w 1280 -h 720 -W 1920 -H 1080 -n -- %command%
 ```
 
 ```
