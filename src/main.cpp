@@ -171,14 +171,14 @@ int initOutput(void)
 	}
 }
 
-void wayland_commit(struct wlr_surface *surf, struct wlr_dmabuf_attributes *attribs)
+void wayland_commit(struct wlr_surface *surf, struct wlr_buffer *buf)
 {
 	{
 		std::lock_guard<std::mutex> lock( wayland_commit_lock );
 		
 		ResListEntry_t newEntry = {
 			.surf = surf,
-			.attribs = *attribs
+			.buf = buf,
 		};
 		wayland_commit_queue.push_back( newEntry );
 	}
