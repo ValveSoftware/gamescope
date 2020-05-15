@@ -81,6 +81,7 @@ uint64_t maxCommmitID;
 
 struct commit_t
 {
+	struct wlr_buffer *buf;
 	uint32_t fb_id;
 	VulkanTexture_t vulkanTex;
 	uint64_t commitID;
@@ -541,11 +542,17 @@ release_commit ( commit_t &commit )
 		vulkan_free_texture( commit.vulkanTex );
 		commit.vulkanTex = 0;
 	}
+
+	wlserver_lock();
+	wlr_buffer_unlock( commit.buf );
+	wlserver_unlock();
 }
 
 static bool
-import_commit ( struct wlr_dmabuf_attributes *dmabuf, commit_t &commit )
+import_commit ( struct wlr_buffer *buf, struct wlr_dmabuf_attributes *dmabuf, commit_t &commit )
 {
+	commit.buf = buf;
+
 	if ( BIsNested() == False )
 	{
 		commit.fb_id = drm_fbid_from_dmabuf( &g_DRM, dmabuf );
@@ -2390,10 +2397,8 @@ void check_new_wayland_res( void )
 			assert( result == true );
 
 			commit_t newCommit = {};
-			bool bSuccess = import_commit( &dmabuf, newCommit );
+			bool bSuccess = import_commit( buf, &dmabuf, newCommit );
 			wlr_dmabuf_attributes_finish( &dmabuf );
-
-			release_queue.push_back( buf );
 
 			if ( bSuccess == true )
 			{
