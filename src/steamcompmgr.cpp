@@ -2355,52 +2355,81 @@ void handle_done_commits( void )
 
 void check_new_wayland_res( void )
 {
-	std::lock_guard<std::mutex> lock( wayland_commit_lock );
+	// We need to release buffers without having a commit queue lock, otherwise
+	// we won't be able to lock wlserver without a deadlock
+	std::vector<struct wlr_buffer *> release_queue;
 
-	for ( uint32_t i = 0; i < wayland_commit_queue.size(); i++ )
 	{
-		win	*w = find_win( wayland_commit_queue[ i ].surf );
+		std::lock_guard<std::mutex> lock( wayland_commit_lock );
 
-		assert( wayland_commit_queue[ i ].attribs.fd[0] != -1 );
-
-		if ( w == nullptr )
+		for ( uint32_t i = 0; i < wayland_commit_queue.size(); i++ )
 		{
-			wlr_dmabuf_attributes_finish( &wayland_commit_queue[ i ].attribs );
-			fprintf (stderr, "waylandres but no win\n");
-			continue;
+			struct wlr_buffer *buf = wayland_commit_queue[ i ].buf;
+
+			win	*w = find_win( wayland_commit_queue[ i ].surf );
+
+			if ( w == nullptr )
+			{
+				release_queue.push_back( buf );
+				fprintf (stderr, "waylandres but no win\n");
+				continue;
+			}
+
+			struct wlr_dmabuf_attributes dmabuf = {};
+			bool result = False;
+			if ( wlr_buffer_get_dmabuf( buf, &dmabuf ) ) {
+				result = true;
+				for ( int i = 0; i < dmabuf.n_planes; i++ ) {
+					dmabuf.fd[i] = dup( dmabuf.fd[i] );
+					assert( dmabuf.fd[i] >= 0 );
+				}
+			} else {
+				struct wlr_client_buffer *client_buf = (struct wlr_client_buffer *) buf;
+				result = wlr_texture_to_dmabuf( client_buf->texture, &dmabuf );
+			}
+			assert( result == true );
+
+			commit_t newCommit = {};
+			bool bSuccess = import_commit( &dmabuf, newCommit );
+			wlr_dmabuf_attributes_finish( &dmabuf );
+
+			release_queue.push_back( buf );
+
+			if ( bSuccess == true )
+			{
+				newCommit.commitID = ++maxCommmitID;
+				w->commit_queue.push_back( newCommit );
+			}
+
+			int fence = vulkan_get_texture_fence( newCommit.vulkanTex );
+
+			if ( fence < 0 )
+			{
+				fprintf (stderr, "no fence for texture\n");
+				continue;
+			}
+
+			gpuvis_trace_printf( "pushing wait for commit %lu\n", newCommit.commitID );
+			{
+				std::unique_lock< std::mutex > lock( waitListLock );
+
+				waitList.push_back( std::make_pair( fence, newCommit.commitID ) );
+			}
+
+			// Wake up commit wait thread if chilling
+			waitListSem.signal();
 		}
 
-		commit_t newCommit = {};
-
-		bool bSuccess = import_commit( &wayland_commit_queue[ i ].attribs, newCommit );
-		wlr_dmabuf_attributes_finish( &wayland_commit_queue[ i ].attribs );
-
-		if ( bSuccess == true )
-		{
-			newCommit.commitID = ++maxCommmitID;
-			w->commit_queue.push_back( newCommit );
-		}
-
-		int fence = vulkan_get_texture_fence( newCommit.vulkanTex );
-
-		if ( fence < 0 )
-		{
-			fprintf (stderr, "no fence for texture\n");
-			continue;
-		}
-
-		gpuvis_trace_printf( "pushing wait for commit %lu\n", newCommit.commitID );
-		{
-			std::unique_lock< std::mutex > lock( waitListLock );
-
-			waitList.push_back( std::make_pair( fence, newCommit.commitID ) );
-		}
-
-		// Wake up commit wait thread if chilling
-		waitListSem.signal();
+		wayland_commit_queue.clear();
 	}
 
-	wayland_commit_queue.clear();
+	wlserver_lock();
+	for ( uint32_t i = 0; i < release_queue.size(); i++ )
+	{
+		wlr_buffer_unlock( release_queue[ i ] );
+	}
+	wlserver_unlock();
+	release_queue.clear();
 }
 
 int

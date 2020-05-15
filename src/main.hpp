@@ -9,7 +9,7 @@ void startSteamCompMgr(void);
 
 void register_signal(void);
 
-void wayland_commit(struct wlr_surface *surf, struct wlr_dmabuf_attributes *attribs);
+void wayland_commit(struct wlr_surface *surf, struct wlr_buffer *buf);
 
 extern int g_nNestedWidth;
 extern int g_nNestedHeight;
