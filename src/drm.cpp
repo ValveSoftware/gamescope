@@ -13,9 +13,14 @@
 #include <sys/select.h>
 #include <signal.h>
 
+extern "C" {
+#include <wlr/types/wlr_buffer.h>
+}
+
 #include "drm.hpp"
 #include "main.hpp"
 #include "vblankmanager.hpp"
+#include "wlserver.hpp"
 
 #include "gpuvis_trace_utils.h"
 
@@ -631,7 +636,7 @@ out:
 	return ret;
 }
 
-uint32_t drm_fbid_from_dmabuf( struct drm_t *drm, struct wlr_dmabuf_attributes *dma_buf )
+uint32_t drm_fbid_from_dmabuf( struct drm_t *drm, struct wlr_buffer *buf, struct wlr_dmabuf_attributes *dma_buf )
 {
 	assert( dma_buf->n_planes == 1);
 
@@ -655,7 +660,15 @@ uint32_t drm_fbid_from_dmabuf( struct drm_t *drm, struct wlr_dmabuf_attributes *
 	}
 	assert( drm->map_fbid_inflightflips[ fb_id ].held == false );
 
+	if ( buf != nullptr )
+	{
+		wlserver_lock();
+		buf = wlr_buffer_lock( buf );
+		wlserver_unlock();
+	}
+
 	drm->map_fbid_inflightflips[ fb_id ].id = fb_id;
+	drm->map_fbid_inflightflips[ fb_id ].buf = buf;
 	drm->map_fbid_inflightflips[ fb_id ].held = true;
 	drm->map_fbid_inflightflips[ fb_id ].n_refs = 0;
 	
@@ -670,6 +683,13 @@ static void drm_free_fb( struct drm_t *drm, struct fb *fb )
 	if ( drmModeRmFB( drm->fd, fb->id ) != 0 )
 	{
 		perror( "drmModeRmFB failed" );
+	}
+
+	if ( fb->buf != nullptr )
+	{
+		wlserver_lock();
+		wlr_buffer_unlock( fb->buf );
+		wlserver_unlock();
 	}
 
 	fb = {};

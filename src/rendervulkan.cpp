@@ -347,6 +347,7 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, VkFormat format, bo
 		// We assume we own the memory when doing this right now.
 		// We could support the import scenario as well if needed
 // 		assert( bTextureable == false );
+		assert( pDMA == nullptr );
 
 		m_DMA.modifier = DRM_FORMAT_MOD_INVALID;
 		m_DMA.n_planes = 1;
@@ -376,7 +377,7 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, VkFormat format, bo
 
 		m_DMA.stride[0] = image_layout.rowPitch;
 		
-		m_FBID = drm_fbid_from_dmabuf( &g_DRM, &m_DMA );
+		m_FBID = drm_fbid_from_dmabuf( &g_DRM, nullptr, &m_DMA );
 		
 		if ( m_FBID == 0 )
 			return false;
