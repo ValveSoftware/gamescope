@@ -54,7 +54,7 @@ void nudge_steamcompmgr(void)
 	
 	if ( bHasNestedDisplay == false )
 	{
-		g_XWLDpy = XOpenDisplay( wlserver.wlr.xwayland->display_name );
+		g_XWLDpy = XOpenDisplay( wlserver.wlr.xwayland_server->display_name );
 		
 		XWLExposeEvent.xclient.type = ClientMessage;
 		XWLExposeEvent.xclient.window = DefaultRootWindow( g_XWLDpy );
@@ -105,7 +105,7 @@ const struct wlr_surface_role xwayland_surface_role = {
 
 static void xwayland_ready(struct wl_listener *listener, void *data)
 {
-	setenv("DISPLAY", wlserver.wlr.xwayland->display_name, true);
+	setenv("DISPLAY", wlserver.wlr.xwayland_server->display_name, true);
 	
 	startSteamCompMgr();
 }
@@ -396,8 +396,12 @@ int wlserver_init(int argc, char **argv, bool bIsNested) {
 
 	wlserver.wlr.compositor = wlr_compositor_create(wlserver.wl_display, wlserver.wlr.renderer);
 	
-	wlserver.wlr.xwayland = wlr_xwayland_create(wlserver.wl_display, wlserver.wlr.compositor, False);
-	wl_signal_add(&wlserver.wlr.xwayland->events.ready, &xwayland_ready_listener);
+	struct wlr_xwayland_server_options xwayland_options = {
+		.lazy = false,
+		.enable_wm = false,
+	};
+	wlserver.wlr.xwayland_server = wlr_xwayland_server_create(wlserver.wl_display, &xwayland_options);
+	wl_signal_add(&wlserver.wlr.xwayland_server->events.ready, &xwayland_ready_listener);
 	
 	const char *socket = wl_display_add_socket_auto(wlserver.wl_display);
 	if (!socket)
@@ -409,7 +413,6 @@ int wlserver_init(int argc, char **argv, bool bIsNested) {
 
 	wlserver.wlr.seat = wlr_seat_create(wlserver.wl_display, "seat0");
 	wlr_seat_set_capabilities( wlserver.wlr.seat, WL_SEAT_CAPABILITY_POINTER | WL_SEAT_CAPABILITY_KEYBOARD );
-	wlr_xwayland_set_seat(wlserver.wlr.xwayland, wlserver.wlr.seat);
 
 	wlr_log(WLR_INFO, "Running compositor on wayland display '%s'", socket);
 
@@ -485,7 +488,7 @@ int wlserver_run(void)
 
 	// We need to shutdown Xwayland before disconnecting all clients, otherwise
 	// wlroots will restart it automatically.
-	wlr_xwayland_destroy(wlserver.wlr.xwayland);
+	wlr_xwayland_server_destroy(wlserver.wlr.xwayland_server);
 	wl_display_destroy_clients(wlserver.wl_display);
 	wl_display_destroy(wlserver.wl_display);
 	return 0;
@@ -550,7 +553,7 @@ struct wlr_surface *wlserver_get_surface( long surfaceID )
 {
 	struct wlr_surface *ret = NULL;
 
-	struct wl_resource *resource = wl_client_get_object(wlserver.wlr.xwayland->client, surfaceID);
+	struct wl_resource *resource = wl_client_get_object(wlserver.wlr.xwayland_server->client, surfaceID);
 	if (resource) {
 		ret = wlr_surface_from_resource(resource);
 	}
@@ -570,5 +573,5 @@ struct wlr_surface *wlserver_get_surface( long surfaceID )
 
 const char *wlserver_get_nested_display( void )
 {
-	return wlserver.wlr.xwayland->display_name;
+	return wlserver.wlr.xwayland_server->display_name;
 }

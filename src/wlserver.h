@@ -25,7 +25,7 @@ struct wlserver_t {
 
 		struct wlr_renderer *renderer;
 		struct wlr_compositor *compositor;
-		struct wlr_xwayland *xwayland;
+		struct wlr_xwayland_server *xwayland_server;
 		struct wlr_session *session;	
 		struct wlr_seat *seat;
 		struct wlr_output *output;
