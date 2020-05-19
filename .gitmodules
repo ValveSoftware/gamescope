@@ -1,6 +1,6 @@
 [submodule "subprojects/wlroots"]
 	path = subprojects/wlroots
-	url = https://github.com/Plagman/wlroots.git
+	url = https://github.com/swaywm/wlroots.git
 [submodule "subprojects/libliftoff"]
 	path = subprojects/libliftoff
 	url = https://github.com/emersion/libliftoff.git
