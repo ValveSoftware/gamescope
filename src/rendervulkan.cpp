@@ -384,6 +384,7 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, VkFormat format, cr
 		// We could support the import scenario as well if needed (but we
 		// already have a DMA-BUF in that case).
 // 		assert( bTextureable == false );
+		assert( pDMA == nullptr );
 
 		struct wlr_dmabuf_attributes dmabuf = {};
 		dmabuf.modifier = DRM_FORMAT_MOD_INVALID;
@@ -405,7 +406,7 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, VkFormat format, cr
 
 		dmabuf.stride[0] = m_unRowPitch;
 		
-		m_FBID = drm_fbid_from_dmabuf( &g_DRM, &dmabuf );
+		m_FBID = drm_fbid_from_dmabuf( &g_DRM, nullptr, &dmabuf );
 		
 		if ( m_FBID == 0 )
 			return false;
