@@ -86,7 +86,15 @@ void xwayland_surface_role_commit(struct wlr_surface *wlr_surface) {
 	
 	struct wlr_dmabuf_attributes dmabuf_attribs = {};
 	bool result = False;
-	result = wlr_texture_to_dmabuf( tex, &dmabuf_attribs );
+	if ( wlr_buffer_get_dmabuf( &wlr_surface->buffer->base, &dmabuf_attribs ) ) {
+		result = true;
+		for ( int i = 0; i < dmabuf_attribs.n_planes; i++ ) {
+			dmabuf_attribs.fd[i] = dup( dmabuf_attribs.fd[i] );
+			assert( dmabuf_attribs.fd[i] >= 0 );
+		}
+	} else {
+		result = wlr_texture_to_dmabuf( tex, &dmabuf_attribs );
+	}
 	assert( result == true );
 	
 	gpuvis_trace_printf( "xwayland_surface_role_commit wlr_surface %p\n", wlr_surface );
