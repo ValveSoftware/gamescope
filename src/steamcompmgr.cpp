@@ -2009,6 +2009,7 @@ register_cm (Display *dpy)
 
 
 	Atom supportedAtoms[] = {
+		XInternAtom(dpy, "_NET_WM_STATE", False),
 		XInternAtom(dpy, "_NET_WM_STATE_FULLSCREEN", False),
 		XInternAtom(dpy, "_NET_ACTIVE_WINDOW", False),
 	};
