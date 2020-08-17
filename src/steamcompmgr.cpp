@@ -199,6 +199,7 @@ static Atom		activeWindowAtom;
 static Atom		netWMStateAtom;
 static Atom		WMTransientForAtom;
 static Atom		netWMStateHiddenAtom;
+static Atom		netWMStateFocusedAtom;
 static Atom		WLSurfaceIDAtom;
 static Atom		steamUnfocusAtom;
 static Atom		steamTouchClickModeAtom;
@@ -487,7 +488,6 @@ set_win_hidden (Display *dpy, win *w, Bool hidden)
 		return;
 	}
 
-
 	if (hidden == True)
 	{
 		XChangeProperty(dpy, w->id, netWMStateAtom, XA_ATOM, 32,
@@ -495,8 +495,13 @@ set_win_hidden (Display *dpy, win *w, Bool hidden)
 	}
 	else
 	{
+		Atom netWMState[] = {
+			netWMStateFullscreenAtom,
+			netWMStateFocusedAtom,
+		};
 		XChangeProperty(dpy, w->id, netWMStateAtom, XA_ATOM, 32,
-						PropModeReplace, (unsigned char *)NULL, 0);
+						PropModeReplace, (unsigned char *)netWMState,
+						sizeof(netWMState) / sizeof(netWMState[0]));
 	}
 
 	w->isHidden = hidden;
@@ -2261,6 +2266,7 @@ steamcompmgr_main (int argc, char **argv)
 	netWMStateAtom = XInternAtom (dpy, "_NET_WM_STATE", False);
 	WMTransientForAtom = XInternAtom (dpy, "WM_TRANSIENT_FOR", False);
 	netWMStateHiddenAtom = XInternAtom (dpy, "_NET_WM_STATE_HIDDEN", False);
+	netWMStateFocusedAtom = XInternAtom (dpy, "_NET_WM_STATE_FOCUSED", False);
 	WLSurfaceIDAtom = XInternAtom (dpy, "WL_SURFACE_ID", False);
 
 	root_width = DisplayWidth (dpy, scr);
