@@ -229,6 +229,7 @@ static Atom		netWMStateSkipPagerAtom;
 static Atom		WLSurfaceIDAtom;
 static Atom		WMStateAtom;
 static Atom		steamInputFocusAtom;
+static Atom		WMChangeStateAtom;
 static Atom		steamTouchClickModeAtom;
 static Atom		utf8StringAtom;
 static Atom		netWMNameAtom;
@@ -2454,6 +2455,26 @@ handle_system_tray_opcode(Display *dpy, XClientMessageEvent *ev)
 	}
 }
 
+/* See http://tronche.com/gui/x/icccm/sec-4.html#s-4.1.4 */
+static void
+handle_wm_change_state(Display *dpy, win *w, XClientMessageEvent *ev)
+{
+	long state = ev->data.l[0];
+
+	if (state == ICCCM_ICONIC_STATE) {
+		/* Wine will request iconic state and cannot ensure that the WM has
+		 * agreed on it; immediately revert to normal state to avoid being
+		 * stuck in a paused state. */
+		fprintf(stderr, "Rejecting WM_CHANGE_STATE to ICONIC for window 0x%lx\n", w->id);
+		uint32_t wmState[] = { ICCCM_NORMAL_STATE, None };
+		XChangeProperty(dpy, w->id, WMStateAtom, WMStateAtom, 32,
+			PropModeReplace, (unsigned char *)wmState,
+			sizeof(wmState) / sizeof(wmState[0]));
+	} else {
+		fprintf(stderr, "Unhandled WM_CHANGE_STATE to %ld for window 0x%lx\n", state, w->id);
+	}
+}
+
 static void
 handle_client_message(Display *dpy, XClientMessageEvent *ev)
 {
@@ -2477,6 +2498,10 @@ handle_client_message(Display *dpy, XClientMessageEvent *ev)
 		else if ( ev->message_type == netWMStateAtom )
 		{
 			handle_net_wm_state( dpy, w, ev );
+		}
+		else if ( ev->message_type == WMChangeStateAtom )
+		{
+			handle_wm_change_state( dpy, w, ev );
 		}
 		else if ( ev->message_type != 0 )
 		{
@@ -3412,6 +3437,7 @@ steamcompmgr_main (int argc, char **argv)
 	steamStreamingClientAtom = XInternAtom (dpy, "STEAM_STREAMING_CLIENT", False);
 	steamStreamingClientVideoAtom = XInternAtom (dpy, "STEAM_STREAMING_CLIENT_VIDEO", False);
 	gamescopeCtrlAppIDAtom = XInternAtom (dpy, "GAMESCOPECTRL_BASELAYER_APPID", False);
+	WMChangeStateAtom = XInternAtom (dpy, "WM_CHANGE_STATE", False);
 
 	root_width = DisplayWidth (dpy, scr);
 	root_height = DisplayHeight (dpy, scr);
