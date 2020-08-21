@@ -1915,6 +1915,17 @@ handle_wl_surface_id(win *w, long surfaceID)
 	w->wlrsurface = surface;
 }
 
+static void
+handle_net_wm_state(Display *dpy, win *w, XEvent *ev)
+{
+	if ((unsigned)ev->xclient.data.l[1] == netWMStateFullscreenAtom)
+	{
+		w->isFullscreen = ev->xclient.data.l[0];
+
+		focusDirty = True;
+	}
+}
+
 static int
 error (Display *dpy, XErrorEvent *ev)
 {
@@ -2617,14 +2628,13 @@ steamcompmgr_main (int argc, char **argv)
 							{
 								XRaiseWindow( dpy, w->id );
 							}
-							else
+							else if ( ev.xclient.message_type == netWMStateAtom )
 							{
-								if ((unsigned)ev.xclient.data.l[1] == netWMStateFullscreenAtom)
-								{
-									w->isFullscreen = ev.xclient.data.l[0];
-
-									focusDirty = True;
-								}
+								handle_net_wm_state( dpy, w, &ev );
+							}
+							else if ( ev.xclient.message_type != 0 )
+							{
+								fprintf( stderr, "Unhandled client message: %s\n", XGetAtomName( dpy, ev.xclient.message_type ) );
 							}
 						}
 
