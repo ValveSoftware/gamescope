@@ -26,6 +26,8 @@ uint32_t g_nOutputWidth = 1280;
 uint32_t g_nOutputHeight = 720;
 int g_nOutputRefresh = 60;
 
+bool g_bFullscreen = false;
+
 bool g_bIsNested = false;
 
 bool g_bFilterGameWindow = true;
@@ -62,7 +64,7 @@ int main(int argc, char **argv)
 	
 	bool bSleepAtStartup = false;
 	
-	while ((o = getopt (argc, argv, ":R:T:w:h:W:H:r:NFSvVecsdlnb")) != -1)
+	while ((o = getopt (argc, argv, ":R:T:w:h:W:H:r:NFSvVecsdlnbf")) != -1)
 	{
 		switch (o) {
 			case 'w':
@@ -94,6 +96,9 @@ int main(int argc, char **argv)
 				break;
 			case 'b':
 				g_bBorderlessOutputWindow = true;
+				break;
+			case 'f':
+				g_bFullscreen = true;
 				break;
 			default:
 				break;

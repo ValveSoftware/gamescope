@@ -16,6 +16,8 @@ extern uint32_t g_nOutputWidth;
 extern uint32_t g_nOutputHeight;
 extern int g_nOutputRefresh;
 
+extern bool g_bFullscreen;
+
 extern bool g_bFilterGameWindow;
 
 extern bool g_bBorderlessOutputWindow;

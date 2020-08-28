@@ -68,7 +68,6 @@ void inputSDLThreadRun( void )
 	SDL_Event event;
 	SDL_Keymod mod;
 	uint32_t key;
-	static bool bFullscreen = false;
 	
 	SDL_Init( SDL_INIT_VIDEO | SDL_INIT_EVENTS );
 
@@ -82,6 +81,11 @@ void inputSDLThreadRun( void )
 	if ( g_bBorderlessOutputWindow == true )
 	{
 		nSDLWindowFlags |= SDL_WINDOW_BORDERLESS;
+	}
+
+	if ( g_bFullscreen == true )
+	{
+		nSDLWindowFlags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
 	}
 
 	g_SDLWindow = SDL_CreateWindow( "gamescope",
@@ -141,8 +145,8 @@ void inputSDLThreadRun( void )
 					switch ( key )
 					{
 						case KEY_F:
-							bFullscreen = !bFullscreen;
-							SDL_SetWindowFullscreen( g_SDLWindow, bFullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0 );
+							g_bFullscreen = !g_bFullscreen;
+							SDL_SetWindowFullscreen( g_SDLWindow, g_bFullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0 );
 							break;
 						case KEY_N:
 							g_bFilterGameWindow = !g_bFilterGameWindow;
