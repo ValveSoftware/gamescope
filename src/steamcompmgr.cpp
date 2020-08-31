@@ -2215,6 +2215,13 @@ error (Display *dpy, XErrorEvent *ev)
 	return 0;
 }
 
+static int
+handle_io_error(Display *dpy)
+{
+	fprintf(stderr, "X11 I/O error\n");
+	pthread_exit(NULL);
+}
+
 static Bool
 register_cm (Display *dpy)
 {
@@ -2464,6 +2471,7 @@ steamcompmgr_main (int argc, char **argv)
 		exit (1);
 	}
 	XSetErrorHandler (error);
+	XSetIOErrorHandler (handle_io_error);
 	if (synchronize)
 		XSynchronize (dpy, 1);
 	scr = DefaultScreen (dpy);
