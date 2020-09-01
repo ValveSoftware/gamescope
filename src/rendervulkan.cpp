@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#include <array>
 
 #include "rendervulkan.hpp"
 #include "main.hpp"
@@ -52,7 +53,7 @@ struct VulkanOutput_t
 	
 	VkBuffer constantBuffer;
 	VkDeviceMemory bufferMemory;
-	Composite_t *pCompositeBuffer;
+	Composite_t::CompositeData_t *pCompositeBuffer;
 
 	VkFence fence;
 	int fenceFD;
@@ -73,7 +74,7 @@ VkDescriptorSetLayout descriptorSetLayout;
 VkPipelineLayout pipelineLayout;
 VkDescriptorSet descriptorSet;
 
-VkPipeline pipeline;
+std::array<std::array<VkPipeline, 2>, k_nMaxLayers> pipelines;
 
 VkBuffer uploadBuffer;
 VkDeviceMemory uploadBufferMemory;
@@ -709,30 +710,59 @@ int init_device()
 	{
 		return false;
 	}
-	
-	VkComputePipelineCreateInfo computePipelineCreateInfo = {
-		VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
-		0,
-		0,
+
+	const std::array<VkSpecializationMapEntry, 2> specializationEntries = {{
 		{
-			VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-			0,
-			0,
-			VK_SHADER_STAGE_COMPUTE_BIT,
-			shaderModule,
-			"main",
-			0
+			.constantID = 0,
+			.offset     = 0,
+			.size       = sizeof(uint32_t)
 		},
-		pipelineLayout,
-		0,
-		0
-	};
+		{
+			.constantID = 1,
+			.offset     = sizeof(uint32_t),
+			.size       = sizeof(VkBool32)
+		},
+	}};
 	
-	res = vkCreateComputePipelines(device, 0, 1, &computePipelineCreateInfo, 0, &pipeline);
-	
-	if ( res != VK_SUCCESS )
-	{
-		return false;
+	for (uint32_t layerCount = 0; layerCount < k_nMaxLayers; layerCount++) {
+		for (VkBool32 swapChannels = 0; swapChannels < 2; swapChannels++) {
+			struct {
+				uint32_t layerCount;
+				VkBool32 swapChannels;
+			} specializationData = {
+				.layerCount   = layerCount,
+				.swapChannels = swapChannels
+			};
+
+			VkSpecializationInfo specializationInfo = {
+				.mapEntryCount = uint32_t(specializationEntries.size()),
+				.pMapEntries   = specializationEntries.data(),
+				.dataSize      = sizeof(specializationData),
+				.pData		   = &specializationData,
+			};
+
+			VkComputePipelineCreateInfo computePipelineCreateInfo = {
+				VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+				0,
+				0,
+				{
+					VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+					0,
+					0,
+					VK_SHADER_STAGE_COMPUTE_BIT,
+					shaderModule,
+					"main",
+					&specializationInfo
+				},
+				pipelineLayout,
+				0,
+				0
+			};
+
+			res = vkCreateComputePipelines(device, 0, 1, &computePipelineCreateInfo, 0, &pipelines[layerCount][swapChannels]);
+			if (res != VK_SUCCESS)
+				return false;
+		}
 	}
 	
 	VkDescriptorSetAllocateInfo descriptorSetAllocateInfo = {
@@ -1032,7 +1062,7 @@ bool vulkan_make_output( VulkanOutput_t *pOutput )
 	VkBufferCreateInfo bufferCreateInfo = {};
 	bufferCreateInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
 	bufferCreateInfo.pNext = nullptr;
-	bufferCreateInfo.size = sizeof( Composite_t );
+	bufferCreateInfo.size = sizeof( Composite_t::CompositeData_t );
 	bufferCreateInfo.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
 	
 	result = vkCreateBuffer( device, &bufferCreateInfo, nullptr, &pOutput->constantBuffer );
@@ -1537,7 +1567,7 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 		pComposite->data.layers[ i ].flOffsetY += 0.5f;
 	}
 
-	*g_output.pCompositeBuffer = *pComposite;
+	*g_output.pCompositeBuffer = pComposite->data;
 	// XXX maybe flush something?
 	
 	assert ( g_output.fence == VK_NULL_HANDLE );
@@ -1567,7 +1597,7 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 		return false;
 	}
 	
-	vkCmdBindPipeline(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
+	vkCmdBindPipeline(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelines[pComposite->nLayerCount][pComposite->nSwapChannels]);
 	
 	vkCmdBindDescriptorSets(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE,
 							pipelineLayout, 0, 1, &descriptorSet, 0, 0);

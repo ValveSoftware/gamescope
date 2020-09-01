@@ -2,9 +2,6 @@
 
 [[vk::binding(1, 0)]] cbuffer compositeDesc
 {
-	int nLayerCount;
-	int nSwapChannels;
-
     float flScale0X;
     float flScale0Y;
 	float flOffset0X;
@@ -41,6 +38,9 @@
 
 [[vk::binding(8, 0)]] Texture2D inLayerTex3;
 [[vk::binding(9, 0)]] SamplerState sampler3;
+
+[[vk::constant_id(0)]] const int  nLayerCount   = 1;
+[[vk::constant_id(1)]] const bool bSwapChannels = false;
 
 [numthreads(8, 8, 1)]
 void main(
@@ -80,7 +80,7 @@ void main(
 		outputValue = layerSample * layerAlpha + outputValue * ( 1.0 - layerAlpha );
 	}
 	
-	if ( nSwapChannels == 1 )
+	if ( bSwapChannels )
 	{
 		outImage [index] = outputValue.bgra;
     }
