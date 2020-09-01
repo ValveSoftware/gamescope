@@ -32,12 +32,15 @@ struct Composite_t
 	int nLayerCount;
 	int nSwapChannels;
 	
-	struct
+	struct CompositeData_t
 	{
-		float flScaleX, flScaleY;
-		float flOffsetX, flOffsetY;
-		float flOpacity;
-	} layers[ k_nMaxLayers ];
+		struct
+		{
+			float flScaleX, flScaleY;
+			float flOffsetX, flOffsetY;
+			float flOpacity;
+		} layers[ k_nMaxLayers ];
+	} data;
 };
 
 #include "drm.hpp"

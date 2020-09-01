@@ -850,13 +850,13 @@ void MouseCursor::paint(win *window, struct Composite_t *pComposite,
 
 	int curLayer = pComposite->nLayerCount;
 
-	pComposite->layers[ curLayer ].flOpacity = 1.0;
+	pComposite->data.layers[ curLayer ].flOpacity = 1.0;
 
-	pComposite->layers[ curLayer ].flScaleX = 1.0;
-	pComposite->layers[ curLayer ].flScaleY = 1.0;
+	pComposite->data.layers[ curLayer ].flScaleX = 1.0;
+	pComposite->data.layers[ curLayer ].flScaleY = 1.0;
 
-	pComposite->layers[ curLayer ].flOffsetX = -scaledX;
-	pComposite->layers[ curLayer ].flOffsetY = -scaledY;
+	pComposite->data.layers[ curLayer ].flOffsetX = -scaledX;
+	pComposite->data.layers[ curLayer ].flOffsetY = -scaledY;
 
 	pPipeline->layerBindings[ curLayer ].surfaceWidth = m_width;
 	pPipeline->layerBindings[ curLayer ].surfaceHeight = m_height;
@@ -929,10 +929,10 @@ paint_window (Display *dpy, win *w, struct Composite_t *pComposite,
 
 	int curLayer = pComposite->nLayerCount;
 
-	pComposite->layers[ curLayer ].flOpacity = w->isOverlay ? w->opacity / (float)OPAQUE : 1.0f;
+	pComposite->data.layers[ curLayer ].flOpacity = w->isOverlay ? w->opacity / (float)OPAQUE : 1.0f;
 
-	pComposite->layers[ curLayer ].flScaleX = 1.0 / currentScaleRatio;
-	pComposite->layers[ curLayer ].flScaleY = 1.0 / currentScaleRatio;
+	pComposite->data.layers[ curLayer ].flScaleX = 1.0 / currentScaleRatio;
+	pComposite->data.layers[ curLayer ].flScaleY = 1.0 / currentScaleRatio;
 
 	if (notificationMode)
 	{
@@ -947,13 +947,13 @@ paint_window (Display *dpy, win *w, struct Composite_t *pComposite,
 			yOffset = (currentOutputHeight - currentOutputHeight * globalScaleRatio) / 2.0;
 		}
 
-		pComposite->layers[ curLayer ].flOffsetX = (currentOutputWidth - xOffset - width) * -1.0f;
-		pComposite->layers[ curLayer ].flOffsetY = (currentOutputHeight - yOffset - height) * -1.0f;
+		pComposite->data.layers[ curLayer ].flOffsetX = (currentOutputWidth - xOffset - width) * -1.0f;
+		pComposite->data.layers[ curLayer ].flOffsetY = (currentOutputHeight - yOffset - height) * -1.0f;
 	}
 	else
 	{
-		pComposite->layers[ curLayer ].flOffsetX = -drawXOffset;
-		pComposite->layers[ curLayer ].flOffsetY = -drawYOffset;
+		pComposite->data.layers[ curLayer ].flOffsetX = -drawXOffset;
+		pComposite->data.layers[ curLayer ].flOffsetY = -drawYOffset;
 	}
 
 	pPipeline->layerBindings[ curLayer ].surfaceWidth = w->a.width;
@@ -1111,10 +1111,10 @@ paint_all(Display *dpy, MouseCursor *cursor)
 	}
 
 	int mainLayer = composite.nLayerCount - 1;
-	focusedWindowScaleX = composite.layers[ mainLayer ].flScaleX;
-	focusedWindowScaleY = composite.layers[ mainLayer ].flScaleY;
-	focusedWindowOffsetX = composite.layers[ mainLayer ].flOffsetX;
-	focusedWindowOffsetY = composite.layers[ mainLayer ].flOffsetY;
+	focusedWindowScaleX = composite.data.layers[ mainLayer ].flScaleX;
+	focusedWindowScaleY = composite.data.layers[ mainLayer ].flScaleY;
+	focusedWindowOffsetX = composite.data.layers[ mainLayer ].flOffsetX;
+	focusedWindowOffsetY = composite.data.layers[ mainLayer ].flOffsetY;
 
 	if (gamesRunningCount && overlay)
 	{
@@ -1176,9 +1176,9 @@ paint_all(Display *dpy, MouseCursor *cursor)
 		{
 			memset( &composite, 0, sizeof( composite ) );
 			composite.nLayerCount = 1;
-			composite.layers[ 0 ].flScaleX = 1.0;
-			composite.layers[ 0 ].flScaleY = 1.0;
-			composite.layers[ 0 ].flOpacity = 1.0;
+			composite.data.layers[ 0 ].flScaleX = 1.0;
+			composite.data.layers[ 0 ].flScaleY = 1.0;
+			composite.data.layers[ 0 ].flOpacity = 1.0;
 
 			memset( &pipeline, 0, sizeof( pipeline ) );
 

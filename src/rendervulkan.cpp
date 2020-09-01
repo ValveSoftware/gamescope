@@ -1533,8 +1533,8 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 	// sample from the center in all four corners in all scaling scenarios
 	for ( int i = 0; i < pComposite->nLayerCount; i++ )
 	{
-		pComposite->layers[ i ].flOffsetX += 0.5f;
-		pComposite->layers[ i ].flOffsetY += 0.5f;
+		pComposite->data.layers[ i ].flOffsetX += 0.5f;
+		pComposite->data.layers[ i ].flOffsetY += 0.5f;
 	}
 
 	*g_output.pCompositeBuffer = *pComposite;

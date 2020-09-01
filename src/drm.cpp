@@ -742,11 +742,11 @@ bool drm_can_avoid_composite( struct drm_t *drm, struct Composite_t *pComposite,
 				drm->fbids_in_req.push_back( pPipeline->layerBindings[ i ].fbid );
 
 				liftoff_layer_set_property( drm->lo_layers[ i ], "zpos", pPipeline->layerBindings[ i ].zpos );
-				liftoff_layer_set_property( drm->lo_layers[ i ], "alpha", pComposite->layers[ i ].flOpacity * 0xffff);
+				liftoff_layer_set_property( drm->lo_layers[ i ], "alpha", pComposite->data.layers[ i ].flOpacity * 0xffff);
 
 				if ( pPipeline->layerBindings[ i ].zpos == 0 )
 				{
-					assert( ( pComposite->layers[ i ].flOpacity * 0xffff ) == 0xffff );
+					assert( ( pComposite->data.layers[ i ].flOpacity * 0xffff ) == 0xffff );
 				}
 
 				const uint16_t srcWidth = pPipeline->layerBindings[ i ].surfaceWidth;
@@ -757,10 +757,10 @@ bool drm_can_avoid_composite( struct drm_t *drm, struct Composite_t *pComposite,
 				liftoff_layer_set_property( drm->lo_layers[ i ], "SRC_W", srcWidth << 16);
 				liftoff_layer_set_property( drm->lo_layers[ i ], "SRC_H", srcHeight << 16);
 
-				int32_t crtcX = -pComposite->layers[ i ].flOffsetX;
-				int32_t crtcY = -pComposite->layers[ i ].flOffsetY;
-				uint64_t crtcW = srcWidth / pComposite->layers[ i ].flScaleX;
-				uint64_t crtcH = srcHeight / pComposite->layers[ i ].flScaleY;
+				int32_t crtcX = -pComposite->data.layers[ i ].flOffsetX;
+				int32_t crtcY = -pComposite->data.layers[ i ].flOffsetY;
+				uint64_t crtcW = srcWidth / pComposite->data.layers[ i ].flScaleX;
+				uint64_t crtcH = srcHeight / pComposite->data.layers[ i ].flScaleY;
 
 				if (g_bRotated) {
 					const int32_t x = crtcX;
@@ -874,24 +874,24 @@ bool drm_can_avoid_composite( struct drm_t *drm, struct Composite_t *pComposite,
 		
 		if ( g_bRotated )
 		{
-			add_plane_property(drm, req, plane_id, "CRTC_X", pComposite->layers[ 0 ].flOffsetY * -1);
-			add_plane_property(drm, req, plane_id, "CRTC_Y", pComposite->layers[ 0 ].flOffsetX * -1);
+			add_plane_property(drm, req, plane_id, "CRTC_X", pComposite->data.layers[ 0 ].flOffsetY * -1);
+			add_plane_property(drm, req, plane_id, "CRTC_Y", pComposite->data.layers[ 0 ].flOffsetX * -1);
 			
-			add_plane_property(drm, req, plane_id, "CRTC_H", pPipeline->layerBindings[ 0 ].surfaceWidth / pComposite->layers[ 0 ].flScaleX);
-			add_plane_property(drm, req, plane_id, "CRTC_W", pPipeline->layerBindings[ 0 ].surfaceHeight / pComposite->layers[ 0 ].flScaleY);
+			add_plane_property(drm, req, plane_id, "CRTC_H", pPipeline->layerBindings[ 0 ].surfaceWidth / pComposite->data.layers[ 0 ].flScaleX);
+			add_plane_property(drm, req, plane_id, "CRTC_W", pPipeline->layerBindings[ 0 ].surfaceHeight / pComposite->data.layers[ 0 ].flScaleY);
 		}
 		else
 		{
-			add_plane_property(drm, req, plane_id, "CRTC_X", pComposite->layers[ 0 ].flOffsetX * -1);
-			add_plane_property(drm, req, plane_id, "CRTC_Y", pComposite->layers[ 0 ].flOffsetY * -1);
+			add_plane_property(drm, req, plane_id, "CRTC_X", pComposite->data.layers[ 0 ].flOffsetX * -1);
+			add_plane_property(drm, req, plane_id, "CRTC_Y", pComposite->data.layers[ 0 ].flOffsetY * -1);
 			
-			add_plane_property(drm, req, plane_id, "CRTC_W", pPipeline->layerBindings[ 0 ].surfaceWidth / pComposite->layers[ 0 ].flScaleX);
-			add_plane_property(drm, req, plane_id, "CRTC_H", pPipeline->layerBindings[ 0 ].surfaceHeight / pComposite->layers[ 0 ].flScaleY);
+			add_plane_property(drm, req, plane_id, "CRTC_W", pPipeline->layerBindings[ 0 ].surfaceWidth / pComposite->data.layers[ 0 ].flScaleX);
+			add_plane_property(drm, req, plane_id, "CRTC_H", pPipeline->layerBindings[ 0 ].surfaceHeight / pComposite->data.layers[ 0 ].flScaleY);
 			
 			gpuvis_trace_printf ( "crtc %i+%i@%ix%i\n",
-								  (int)pComposite->layers[ 0 ].flOffsetX * -1, (int)pComposite->layers[ 0 ].flOffsetY * -1,
-								  (int)(pPipeline->layerBindings[ 0 ].surfaceWidth / pComposite->layers[ 0 ].flScaleX),
-								  (int)(pPipeline->layerBindings[ 0 ].surfaceHeight / pComposite->layers[ 0 ].flScaleX) );
+								  (int)pComposite->data.layers[ 0 ].flOffsetX * -1, (int)pComposite->data.layers[ 0 ].flOffsetY * -1,
+								  (int)(pPipeline->layerBindings[ 0 ].surfaceWidth / pComposite->data.layers[ 0 ].flScaleX),
+								  (int)(pPipeline->layerBindings[ 0 ].surfaceHeight / pComposite->data.layers[ 0 ].flScaleX) );
 		}
 		
 		unsigned test_flags = (drm->flags & DRM_MODE_ATOMIC_ALLOW_MODESET) | DRM_MODE_ATOMIC_TEST_ONLY;
