@@ -172,7 +172,7 @@ bool			hasRepaint = false;
 
 unsigned long	damageSequence = 0;
 
-#define			CURSOR_HIDE_TIME 10000
+#define			CURSOR_HIDE_TIME 10'000
 
 Bool			gotXError = False;
 
@@ -400,13 +400,13 @@ uint64_t get_time_in_nanos()
 {
 	timespec ts;
 	clock_gettime(CLOCK_MONOTONIC_RAW, &ts);
-	return ts.tv_sec * 1000000000ul + ts.tv_nsec;
+	return ts.tv_sec * 1'000'000'000ul + ts.tv_nsec;
 }
 
 unsigned int
 get_time_in_milliseconds (void)
 {
-	return (unsigned int)(get_time_in_nanos() / 1000000ul);
+	return (unsigned int)(get_time_in_nanos() / 1'000'000ul);
 }
 
 static std::atomic<uint64_t> g_lastvblank = { 0lu };
@@ -2847,7 +2847,7 @@ steamcompmgr_main (int argc, char **argv)
 						uint64_t diff = vblankreceived - vblanktime;
 
 						// give it 1 ms of slack.. maybe too long
-						if ( diff > 1000000ul )
+						if ( diff > 1'000'000ul )
 						{
 							gpuvis_trace_printf( "ignored stale vblank\n" );
 						}
