@@ -396,20 +396,17 @@ static inline void stats_printf( const char* format, ...)
 	}
 }
 
-unsigned int
-get_time_in_milliseconds (void)
-{
-	struct timeval  tv;
-
-	gettimeofday (&tv, NULL);
-	return tv.tv_sec * 1000 + tv.tv_usec / 1000;
-}
-
 uint64_t get_time_in_nanos()
 {
 	timespec ts;
 	clock_gettime(CLOCK_MONOTONIC_RAW, &ts);
 	return ts.tv_sec * 1000000000ul + ts.tv_nsec;
+}
+
+unsigned int
+get_time_in_milliseconds (void)
+{
+	return (unsigned int)(get_time_in_nanos() / 1000000ul);
 }
 
 static std::atomic<uint64_t> g_lastvblank = { 0lu };
