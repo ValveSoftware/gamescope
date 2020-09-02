@@ -2944,6 +2944,9 @@ steamcompmgr_main (int argc, char **argv)
 				hasRepaint = false;
 			}
 
+			// TODO: Look into making this _RAW
+			// wlroots, seems to just use normal MONOTONIC
+			// all over so this may be problematic to just change.
 			struct timespec now;
 			clock_gettime(CLOCK_MONOTONIC, &now);
 
