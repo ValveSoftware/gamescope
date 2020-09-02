@@ -647,12 +647,12 @@ int init_device()
 	};
 	
 	VkDescriptorPoolCreateInfo descriptorPoolCreateInfo = {
-		VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-		nullptr,
+		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+		.pNext = nullptr,
 		.flags = 0,
 		.maxSets = k_nMaxSets,
 		.poolSizeCount = 4,
-		descriptorPoolSize
+		.pPoolSizes = descriptorPoolSize
 	};
 	
 	res = vkCreateDescriptorPool(device, &descriptorPoolCreateInfo, 0, &descriptorPool);
@@ -697,7 +697,7 @@ int init_device()
 		.pNext = nullptr,
 		.flags = 0,
 		.bindingCount = 2 + ( k_nMaxLayers * 2 ),
-		vecLayoutBindings.data()
+		.pBindings = vecLayoutBindings.data()
 	};
 	
 	res = vkCreateDescriptorSetLayout(device, &descriptorSetLayoutCreateInfo, 0, &descriptorSetLayout);
