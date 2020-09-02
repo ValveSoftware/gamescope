@@ -1098,7 +1098,7 @@ paint_all(Display *dpy, MouseCursor *cursor)
 		double newOpacity = ((currentTime - fadeOutStartTime) / (double)FADE_OUT_DURATION);
 
 		// Draw it in the background
-		fadeOutWindow.opacity = (1.0d - newOpacity) * OPAQUE;
+		fadeOutWindow.opacity = (1.0 - newOpacity) * OPAQUE;
 		paint_window(dpy, &fadeOutWindow, &composite, &pipeline, False, cursor);
 
 		w = find_win(dpy, currentFocusWindow);
