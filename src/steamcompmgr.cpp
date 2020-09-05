@@ -409,13 +409,6 @@ get_time_in_milliseconds (void)
 	return (unsigned int)(get_time_in_nanos() / 1'000'000ul);
 }
 
-static std::atomic<uint64_t> g_lastvblank = { 0lu };
-
-void mark_vblank_message_time ( void )
-{
-	g_lastvblank = get_time_in_nanos();
-}
-
 static void
 discard_ignore (Display *dpy, unsigned long sequence)
 {
@@ -2830,7 +2823,9 @@ steamcompmgr_main (int argc, char **argv)
 
 					if ( ev.xclient.data.l[0] == 24 && ev.xclient.data.l[1] == 8 )
 					{
-						uint64_t vblanktime = g_lastvblank;
+						// Decode the split up vblanktime... Sign-extend nonsense...
+						uint64_t vblanktime = (uint64_t(uint32_t(ev.xclient.data.l[2])) << 32) |
+											   uint64_t(uint32_t(ev.xclient.data.l[3]));
 						uint64_t vblankreceived = get_time_in_nanos();
 						uint64_t diff = vblankreceived - vblanktime;
 
