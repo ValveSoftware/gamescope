@@ -19,16 +19,14 @@ static Display *g_nestedDpy;
 
 std::atomic<uint64_t> g_lastVblank;
 
-float g_flVblankDrawBufferMS = 5.0;
+uint64_t g_uVblankDrawBufferNS = 5'000'000;
 
 void vblankThreadRun( void )
 {
 	while ( true )
 	{
-		uint64_t lastVblank = g_lastVblank;
-		uint64_t nsecInterval = uint64_t(1.0 / g_nOutputRefresh * 1000.0 * 1000.0 * 1000.0);
-		
-		lastVblank -= (uint64_t)(g_flVblankDrawBufferMS * 1000 * 1000);
+		uint64_t lastVblank = g_lastVblank - g_uVblankDrawBufferNS;
+		uint64_t nsecInterval = 1'000'000'000ul / g_nOutputRefresh;
 
 		uint64_t now = get_time_in_nanos();
 		uint64_t targetPoint = lastVblank + nsecInterval;
@@ -58,7 +56,7 @@ void vblankThreadRun( void )
 		gpuvis_trace_printf( "sent vblank\n" );
 		
 		// Get on the other side of it now
-		sleep_for_nanos( (uint64_t)((g_flVblankDrawBufferMS + 1.0) * 1000 * 1000) );
+		sleep_for_nanos( g_uVblankDrawBufferNS + 1'000'000 );
 	}
 }
 
