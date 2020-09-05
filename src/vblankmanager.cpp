@@ -17,8 +17,7 @@
 
 static Display *g_nestedDpy;
 
-std::mutex g_vblankLock;
-std::chrono::time_point< std::chrono::system_clock > g_lastVblank;
+std::atomic<uint64_t> g_lastVblank;
 
 float g_flVblankDrawBufferMS = 5.0;
 
@@ -26,25 +25,17 @@ void vblankThreadRun( void )
 {
 	while ( true )
 	{
-		std::chrono::time_point< std::chrono::system_clock > lastVblank;
-		int usecInterval = 1.0 / g_nOutputRefresh * 1000.0 * 1000.0;
+		uint64_t lastVblank = g_lastVblank;
+		uint64_t nsecInterval = uint64_t(1.0 / g_nOutputRefresh * 1000.0 * 1000.0 * 1000.0);
 		
-		{
-			std::unique_lock<std::mutex> lock( g_vblankLock );
-			lastVblank = g_lastVblank;
-		}
-		
-		lastVblank -= std::chrono::microseconds( (int)(g_flVblankDrawBufferMS * 1000) );
+		lastVblank -= (uint64_t)(g_flVblankDrawBufferMS * 1000 * 1000);
 
-		std::chrono::system_clock::time_point now = std::chrono::system_clock::now();
-		std::chrono::system_clock::time_point targetPoint = lastVblank + std::chrono::microseconds( usecInterval );
-		
+		uint64_t now = get_time_in_nanos();
+		uint64_t targetPoint = lastVblank + nsecInterval;
 		while ( targetPoint < now )
-		{
-			targetPoint += std::chrono::microseconds( usecInterval );
-		}
-		
-		std::this_thread::sleep_until( targetPoint );
+			targetPoint += nsecInterval;
+
+		sleep_until_nanos( targetPoint );
 
 		// give the time of vblank to steamcompmgr
 		uint64_t vblanktime = get_time_in_nanos();
@@ -67,7 +58,7 @@ void vblankThreadRun( void )
 		gpuvis_trace_printf( "sent vblank\n" );
 		
 		// Get on the other side of it now
-		std::this_thread::sleep_for( std::chrono::microseconds( (int)((g_flVblankDrawBufferMS + 1.0) * 1000) ) );
+		sleep_for_nanos( (uint64_t)((g_flVblankDrawBufferMS + 1.0) * 1000 * 1000) );
 	}
 }
 
@@ -76,7 +67,7 @@ void vblank_init( void )
 	g_nestedDpy = XOpenDisplay( wlserver_get_nested_display() );
 	assert( g_nestedDpy != nullptr );
 	
-	g_lastVblank = std::chrono::system_clock::now();
+	g_lastVblank = get_time_in_nanos();
 
 	std::thread vblankThread( vblankThreadRun );
 	vblankThread.detach();
@@ -84,7 +75,5 @@ void vblank_init( void )
 
 void vblank_mark_possible_vblank( void )
 {
-	std::unique_lock<std::mutex> lock( g_vblankLock );
-
-	g_lastVblank = std::chrono::system_clock::now();
+	g_lastVblank = get_time_in_nanos();
 }
