@@ -403,6 +403,22 @@ uint64_t get_time_in_nanos()
 	return ts.tv_sec * 1'000'000'000ul + ts.tv_nsec;
 }
 
+void sleep_for_nanos(uint64_t nanos)
+{
+	timespec ts;
+	ts.tv_sec = time_t(nanos / 1'000'000'000ul);
+	ts.tv_nsec = long(nanos % 1'000'000'000ul);
+	nanosleep(&ts, nullptr);
+}
+
+void sleep_until_nanos(uint64_t nanos)
+{
+	uint64_t now = get_time_in_nanos();
+	if (now >= nanos)
+		return;
+	sleep_for_nanos(nanos - now);
+}
+
 unsigned int
 get_time_in_milliseconds (void)
 {
