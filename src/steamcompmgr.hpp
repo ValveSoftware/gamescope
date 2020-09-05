@@ -9,6 +9,7 @@ extern uint32_t currentOutputWidth;
 extern uint32_t currentOutputHeight;
 
 unsigned int get_time_in_milliseconds(void);
+uint64_t get_time_in_nanos();
 
 int steamcompmgr_main(int argc, char **argv);
 
@@ -83,5 +84,3 @@ extern float focusedWindowScaleX;
 extern float focusedWindowScaleY;
 extern float focusedWindowOffsetX;
 extern float focusedWindowOffsetY;
-
-void mark_vblank_message_time( void );
