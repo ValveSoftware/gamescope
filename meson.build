@@ -43,9 +43,13 @@ thread_dep = dependency('threads')
 cap_dep = cc.find_library('cap')
 sdl_dep = dependency('SDL2')
 
-wlroots_proj = subproject('wlroots', default_options:
+wlroots_proj = subproject('wlroots', required: false, default_options:
   ['default_library=static', 'examples=false'])
-wlroots_static_dep = wlroots_proj.get_variable('wlroots')
+if wlroots_proj.found()
+  wlroots_static_dep = wlroots_proj.get_variable('wlroots')
+else
+  wlroots_static_dep = dependency('wlroots')
+endif
 
 shadercompiler = find_program('glslangValidator')
 
@@ -59,9 +63,13 @@ spirv_shader = custom_target('shader_target',
   install : false,
 )
 
-liftoff_proj = subproject('libliftoff', default_options:
+liftoff_proj = subproject('libliftoff', required: false, default_options:
   ['default_library=static'])
-libftoff_dep = liftoff_proj.get_variable('liftoff')
+if liftoff_proj.found()
+  libftoff_dep = liftoff_proj.get_variable('liftoff')
+else
+  libftoff_dep = dependency('liftoff')
+endif
 
 executable(
     'gamescope',
