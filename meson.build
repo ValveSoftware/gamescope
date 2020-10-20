@@ -46,9 +46,9 @@ sdl_dep = dependency('SDL2')
 wlroots_proj = subproject('wlroots', required: false, default_options:
   ['default_library=static', 'examples=false'])
 if wlroots_proj.found()
-  wlroots_static_dep = wlroots_proj.get_variable('wlroots')
+  wlroots_dep = wlroots_proj.get_variable('wlroots')
 else
-  wlroots_static_dep = dependency('wlroots')
+  wlroots_dep = dependency('wlroots')
 endif
 
 shadercompiler = find_program('glslangValidator')
@@ -66,9 +66,9 @@ spirv_shader = custom_target('shader_target',
 liftoff_proj = subproject('libliftoff', required: false, default_options:
   ['default_library=static'])
 if liftoff_proj.found()
-  libftoff_dep = liftoff_proj.get_variable('liftoff')
+  liftoff_dep = liftoff_proj.get_variable('liftoff')
 else
-  libftoff_dep = dependency('liftoff')
+  liftoff_dep = dependency('liftoff')
 endif
 
 executable(
@@ -83,8 +83,8 @@ executable(
     dependencies : [
         dep_x11, dep_xdamage, dep_xcomposite, dep_xrender, dep_xext, dep_xfixes,
         dep_xxf86vm, drm_dep, wayland_server, wayland_protos,
-        xkbcommon, math, thread_dep, sdl_dep, wlroots_static_dep,
-        vulkan_dep, libftoff_dep, dep_xtst, cap_dep
+        xkbcommon, math, thread_dep, sdl_dep, wlroots_dep,
+        vulkan_dep, liftoff_dep, dep_xtst, cap_dep
     ],
     install: true,
 )
