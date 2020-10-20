@@ -26,10 +26,10 @@ dep_xdamage = dependency('xdamage')
 dep_xcomposite = dependency('xcomposite')
 dep_xrender = dependency('xrender')
 dep_xext = dependency('xext')
+dep_xfixes = dependency('xfixes')
 dep_xxf86vm = dependency('xxf86vm')
 dep_xtst = dependency('xtst')
 
-pixman_dep = dependency('pixman-1')
 drm_dep = dependency('libdrm')
 vulkan_dep = dependency('vulkan')
 
@@ -37,8 +37,6 @@ cc = meson.get_compiler('c')
 
 wayland_server = dependency('wayland-server')
 wayland_protos = dependency('wayland-protocols', version: '>=1.17')
-pixman         = dependency('pixman-1')
-libinput       = dependency('libinput')
 xkbcommon      = dependency('xkbcommon')
 math           = cc.find_library('m')
 thread_dep = dependency('threads')
@@ -75,9 +73,9 @@ executable(
 	'src/vblankmanager.cpp',
 	[ 'src/rendervulkan.cpp', spirv_shader ],
     dependencies : [
-        dep_x11, dep_xdamage, dep_xcomposite, dep_xrender, dep_xext,
-        dep_xxf86vm, pixman_dep, drm_dep, wayland_server, wayland_protos,
-        libinput, xkbcommon, math, thread_dep, sdl_dep, wlroots_static_dep,
+        dep_x11, dep_xdamage, dep_xcomposite, dep_xrender, dep_xext, dep_xfixes,
+        dep_xxf86vm, drm_dep, wayland_server, wayland_protos,
+        xkbcommon, math, thread_dep, sdl_dep, wlroots_static_dep,
         vulkan_dep, libftoff_dep, dep_xtst, cap_dep
     ],
     install: true,
