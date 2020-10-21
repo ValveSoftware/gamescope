@@ -640,7 +640,6 @@ MouseCursor::MouseCursor(_XDisplay *display)
 	, m_dirty(true)
 	, m_imageEmpty(false)
 	, m_hideForMovement(true)
-	, m_hasPlane(false)
 	, m_display(display)
 {
 }

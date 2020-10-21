@@ -72,8 +72,6 @@ private:
 
 	PointerBarrier m_scaledFocusBarriers[4] = { None };
 
-	bool m_hasPlane;
-
 	_XDisplay *m_display;
 };
 
