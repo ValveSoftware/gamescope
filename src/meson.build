@@ -13,7 +13,7 @@ wayland_server = dependency('wayland-server', version: '>=1.21')
 wayland_protos = dependency('wayland-protocols', version: '>=1.17')
 xkbcommon = dependency('xkbcommon')
 thread_dep = dependency('threads')
-cap_dep = dependency('libcap')
+cap_dep = dependency('libcap', required: false)
 sdl_dep = dependency('SDL2')
 
 stb_dep = dependency('stb')

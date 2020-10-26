@@ -5,7 +5,9 @@
 #include <mutex>
 #include <vector>
 #include <cstring>
+#if defined(__linux__)
 #include <sys/capability.h>
+#endif
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/resource.h>
@@ -435,6 +437,7 @@ int main(int argc, char **argv)
 		}
 	}
 
+#if defined(__linux__)
 	cap_t caps = cap_get_proc();
 	if ( caps != nullptr )
 	{
@@ -478,6 +481,7 @@ int main(int argc, char **argv)
 	{
 		fprintf( stderr, "No CAP_SYS_NICE, falling back to regular-priority compute and threads.\nPerformance will be affected.\n" );
 	}
+#endif
 
 	setenv( "XWAYLAND_FORCE_ENABLE_EXTRA_MODES", "1", 1 );
 
