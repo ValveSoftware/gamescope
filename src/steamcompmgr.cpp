@@ -53,7 +53,11 @@
 #include <sys/time.h>
 #include <sys/wait.h>
 #include <sys/types.h>
+#if defined(__linux__)
 #include <sys/prctl.h>
+#elif defined(__DragonFly__) || defined(__FreeBSD__)
+#include <sys/procctl.h>
+#endif
 #include <sys/socket.h>
 #include <sys/resource.h>
 #include <time.h>
@@ -4832,8 +4836,14 @@ void check_new_wayland_res(xwayland_ctx_t *ctx)
 static void
 spawn_client( char **argv )
 {
+#if defined(__linux__)
 	// (Don't Lose) The Children
 	prctl( PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0 );
+#elif defined(__DragonFly__) || defined(__FreeBSD__)
+	procctl(P_PID, getpid(), PROC_REAP_ACQUIRE, NULL);
+#else
+#warning "Changing reaper process for children is not supported on this platform"
+#endif
 
 	std::string strNewPreload;
 	char *pchPreloadCopy = nullptr;
