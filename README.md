@@ -42,3 +42,56 @@ gamescope -r 30 -- %command%
 // Run the game at 1080p, but scale output to a fullscreen 3440×1440 pillarboxed ultrawide window
 gamescope -w 1920 -h 1080 -W 3440 -H 1440 -b -- %command%
 ```
+
+## Installation
+
+### Requirements
+You should install dev packages if available:
+- cmake
+- git
+- [meson](https://pypi.org/project/meson/) >=0.54.0
+- ninja
+- g++
+- glslang
+- libcap
+- libdrm
+- libgbm
+- libinput
+- libpng
+- libxcb
+- libxcb-composite
+- libxcb-xinput
+- libxdamage
+- libxkbcommon
+- libxrender
+- libxtst
+- libxxf86vm
+- libsystemd (or libelogind)
+- sdl2 (libsdl2)
+- libxcomposite
+- opengl-driver (mesa or nvidia)
+- libvulkan
+- pixman
+- pkg-config
+- wayland
+- wayland-protocols
+- xwayland
+- x11-xcb
+- xcb-icccm
+
+#### Arch-based
+[gamescope (AUR)](https://aur.archlinux.org/packages/gamescope/)
+
+#### Debian-based & Ubuntu-based
+```
+sudo apt install cmake git meson ninja-build g++ glslang-tools libcap-dev libdrm-dev libgbm-dev libinput-dev libpng-dev libxcb1-dev libxcb-composite0-dev libxcb-xinput-dev libxdamage-dev libxkbcommon-dev libxrender-dev libxtst-dev libxxf86vm-dev libsdl2-dev libxcomposite-dev libvulkan-dev libpixman-1-dev pkg-config wayland-protocols xwayland libx11-xcb-dev libxcb-icccm4-dev libsystemd-dev
+```
+
+### Build
+```
+git clone https://github.com/Plagman/gamescope.git
+cd gamescope
+meson build
+ninja -C build
+sudo ninja -C build install
+```
