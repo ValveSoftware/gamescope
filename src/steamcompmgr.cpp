@@ -117,6 +117,8 @@ typedef struct _win {
 	Bool isHidden;
 	Bool isSysTrayIcon;
 	Bool sizeHintsSpecified;
+	Bool skipTaskbar;
+	Bool skipPager;
 	unsigned int requestedWidth;
 	unsigned int requestedHeight;
 	
@@ -211,6 +213,8 @@ static Atom		netWMStateAtom;
 static Atom		WMTransientForAtom;
 static Atom		netWMStateHiddenAtom;
 static Atom		netWMStateFocusedAtom;
+static Atom		netWMStateSkipTaskbarAtom;
+static Atom		netWMStateSkipPagerAtom;
 static Atom		WLSurfaceIDAtom;
 static Atom		WMStateAtom;
 static Atom		steamUnfocusAtom;
@@ -551,21 +555,30 @@ set_win_hidden (Display *dpy, win *w, Bool hidden)
 		return;
 	}
 
+	int netWMStateLen = 0;
+	Atom netWMState[5] = {0};
+
 	if (hidden == True)
 	{
-		XChangeProperty(dpy, w->id, netWMStateAtom, XA_ATOM, 32,
-						PropModeReplace, (unsigned char *)&netWMStateHiddenAtom, 1);
+		netWMState[netWMStateLen++] = netWMStateHiddenAtom;
 	}
 	else
 	{
-		Atom netWMState[] = {
-			netWMStateFullscreenAtom,
-			netWMStateFocusedAtom,
-		};
-		XChangeProperty(dpy, w->id, netWMStateAtom, XA_ATOM, 32,
-						PropModeReplace, (unsigned char *)netWMState,
-						sizeof(netWMState) / sizeof(netWMState[0]));
+		netWMState[netWMStateLen++] = netWMStateFullscreenAtom;
+		netWMState[netWMStateLen++] = netWMStateFocusedAtom;
 	}
+
+	if (w->skipTaskbar)
+	{
+		netWMState[netWMStateLen++] = netWMStateSkipTaskbarAtom;
+	}
+	if (w->skipPager)
+	{
+		netWMState[netWMStateLen++] = netWMStateSkipPagerAtom;
+	}
+
+	XChangeProperty(dpy, w->id, netWMStateAtom, XA_ATOM, 32, PropModeReplace,
+					(unsigned char *)&netWMState, netWMStateLen);
 
 	uint32_t wmState[] = {
 		(uint32_t)(hidden ? ICCCM_ICONIC_STATE : ICCCM_NORMAL_STATE),
@@ -1629,6 +1642,10 @@ get_net_wm_state(Display *dpy, win *w)
 	for (size_t i = 0; i < nitems; i++) {
 		if (props[i] == netWMStateFullscreenAtom) {
 			w->isFullscreen = True;
+		} else if (props[i] == netWMStateSkipTaskbarAtom) {
+			w->skipTaskbar = True;
+		} else if (props[i] == netWMStateSkipPagerAtom) {
+			w->skipPager = True;
 		} else {
 			fprintf(stderr, "Unhandled initial NET_WM_STATE property: %s\n", XGetAtomName(dpy, props[i]));
 		}
@@ -1815,6 +1832,8 @@ add_win (Display *dpy, Window id, Window prev, unsigned long sequence)
 	new_win->isHidden = False;
 	new_win->isSysTrayIcon = False;
 	new_win->sizeHintsSpecified = False;
+	new_win->skipTaskbar = False;
+	new_win->skipPager = False;
 	new_win->requestedWidth = 0;
 	new_win->requestedHeight = 0;
 	new_win->nudged = False;
@@ -2082,6 +2101,12 @@ handle_net_wm_state(Display *dpy, win *w, XClientMessageEvent *ev)
 	for (size_t i = 0; i < 2; i++) {
 		if (props[i] == netWMStateFullscreenAtom) {
 			update_net_wm_state(action, &w->isFullscreen);
+			focusDirty = True;
+		} else if (props[i] == netWMStateSkipTaskbarAtom) {
+			update_net_wm_state(action, &w->skipTaskbar);
+			focusDirty = True;
+		} else if (props[i] == netWMStateSkipPagerAtom) {
+			update_net_wm_state(action, &w->skipPager);
 			focusDirty = True;
 		} else if (props[i] != None) {
 			fprintf(stderr, "Unhandled NET_WM_STATE property change: %s\n", XGetAtomName(dpy, props[i]));
@@ -2425,6 +2450,8 @@ register_cm (Display *dpy)
 	Atom supportedAtoms[] = {
 		XInternAtom(dpy, "_NET_WM_STATE", False),
 		XInternAtom(dpy, "_NET_WM_STATE_FULLSCREEN", False),
+		XInternAtom(dpy, "_NET_WM_STATE_SKIP_TASKBAR", False),
+		XInternAtom(dpy, "_NET_WM_STATE_SKIP_PAGER", False),
 		XInternAtom(dpy, "_NET_ACTIVE_WINDOW", False),
 	};
 
@@ -2731,6 +2758,8 @@ steamcompmgr_main (int argc, char **argv)
 	WMTransientForAtom = XInternAtom (dpy, "WM_TRANSIENT_FOR", False);
 	netWMStateHiddenAtom = XInternAtom (dpy, "_NET_WM_STATE_HIDDEN", False);
 	netWMStateFocusedAtom = XInternAtom (dpy, "_NET_WM_STATE_FOCUSED", False);
+	netWMStateSkipTaskbarAtom = XInternAtom (dpy, "_NET_WM_STATE_SKIP_TASKBAR", False);
+	netWMStateSkipPagerAtom = XInternAtom (dpy, "_NET_WM_STATE_SKIP_PAGER", False);
 	WLSurfaceIDAtom = XInternAtom (dpy, "WL_SURFACE_ID", False);
 	WMStateAtom = XInternAtom (dpy, "WM_STATE", False);
 	utf8StringAtom = XInternAtom (dpy, "UTF8_STRING", False);
