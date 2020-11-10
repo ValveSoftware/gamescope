@@ -1298,6 +1298,12 @@ win_is_override_redirect( win *w )
 	return w->a.override_redirect && !w->ignoreOverrideRedirect;
 }
 
+static bool
+win_skip_taskbar_and_pager( win *w )
+{
+	return w->skipTaskbar && w->skipPager;
+}
+
 // Returns true if a's focus priority > b's.
 static bool
 is_focus_priority_greater( win *a, win *b )
@@ -1312,6 +1318,11 @@ is_focus_priority_greater( win *a, win *b )
 		return false;
 
 	if ( a->wantsUnfocus && !b->wantsUnfocus )
+		return false;
+
+	// Wine sets SKIP_TASKBAR and SKIP_PAGER hints for WS_EX_NOACTIVATE windows.
+	// See https://github.com/Plagman/gamescope/issues/87
+	if ( win_skip_taskbar_and_pager( a ) && !win_skip_taskbar_and_pager ( b ) )
 		return false;
 
 	if ( a->damage_sequence < b->damage_sequence )
