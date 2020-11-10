@@ -34,6 +34,7 @@
 #include <mutex>
 #include <atomic>
 #include <vector>
+#include <algorithm>
 
 #include <assert.h>
 #include <stdlib.h>
@@ -1291,6 +1292,34 @@ check_wlr_surface_deleted ( win *w )
 	}
 }
 
+static bool
+win_is_override_redirect( win *w )
+{
+	return w->a.override_redirect && !w->ignoreOverrideRedirect;
+}
+
+// Returns true if a's focus priority > b's.
+static bool
+is_focus_priority_greater( win *a, win *b )
+{
+	if ( !a->gameID && b->gameID )
+		return false;
+
+	// We allow using an override redirect window in some cases, but if we have
+	// a choice between two windows we always prefer the non-override redirect
+	// one.
+	if ( win_is_override_redirect( a ) && !win_is_override_redirect( b ) )
+		return false;
+
+	if ( a->wantsUnfocus && !b->wantsUnfocus )
+		return false;
+
+	if ( a->damage_sequence < b->damage_sequence )
+		return false;
+
+	return true;
+}
+
 static void
 determine_and_apply_focus (Display *dpy, MouseCursor *cursor)
 {
@@ -1298,15 +1327,8 @@ determine_and_apply_focus (Display *dpy, MouseCursor *cursor)
 
 	gameFocused = False;
 
-	unsigned long maxDamageSequence = 0;
-	Bool usingOverrideRedirectWindow = False;
-	Bool allowNonGameOverrideRedirectWindow = True;
-
 	unsigned int maxOpacity = 0;
-	
-	std::vector< win* > vecPossibleFocusGameWindows;
-	std::vector< win* > vecPossibleFocusAnyWindows;
-
+	std::vector< win* > vecPossibleFocusWindows;
 	for (w = list; w; w = w->next)
 	{
 		// Always skip system tray icons
@@ -1315,41 +1337,9 @@ determine_and_apply_focus (Display *dpy, MouseCursor *cursor)
 			continue;
 		}
 
-		// We allow using an override redirect window in some cases, but if we have
-		// a choice between two windows we always prefer the non-override redirect one.
-		Bool windowIsOverrideRedirect = w->a.override_redirect && !w->ignoreOverrideRedirect;
-
 		if ( w->a.map_state == IsViewable && w->a.c_class == InputOutput && w->isOverlay == False && w->opacity > TRANSLUCENT )
 		{
-			// On the first eligible non-OverrideRedirect window found, flip our criteria and clear
-			// eligible ones so far (which must have been all OverrideRedirect)
-			if ( !windowIsOverrideRedirect && allowNonGameOverrideRedirectWindow )
-			{
-				allowNonGameOverrideRedirectWindow = False;
-				vecPossibleFocusAnyWindows.clear();
-			}
-
-			if ( !windowIsOverrideRedirect || allowNonGameOverrideRedirectWindow )
-			{
-				vecPossibleFocusAnyWindows.push_back( w );
-			}
-
-			if ( w->gameID && ( !windowIsOverrideRedirect || !usingOverrideRedirectWindow ) )
-			{
-				vecPossibleFocusGameWindows.push_back( w );
-				
-				if ( w->damage_sequence >= maxDamageSequence )
-				{
-					focus = w;
-					gameFocused = True;
-					maxDamageSequence = w->damage_sequence;
-					
-					if (windowIsOverrideRedirect)
-					{
-						usingOverrideRedirectWindow = True;
-					}
-				}
-			}
+			vecPossibleFocusWindows.push_back( w );
 		}
 
 		if (w->isOverlay)
@@ -1366,18 +1356,13 @@ determine_and_apply_focus (Display *dpy, MouseCursor *cursor)
 		}
 	}
 
-	if ( !gameFocused )
+	std::sort( vecPossibleFocusWindows.begin(), vecPossibleFocusWindows.end(),
+			   is_focus_priority_greater );
+
+	if ( vecPossibleFocusWindows.size() > 0 )
 	{
-		// just try to obey stacking order here
-		if ( vecPossibleFocusAnyWindows.size() > 0 )
-		{
-			focus = vecPossibleFocusAnyWindows[ 0 ];
-			
-			if ( focus->wantsUnfocus && vecPossibleFocusAnyWindows.size() >= 2 )
-			{
-				focus = vecPossibleFocusAnyWindows[ 1 ];
-			}
-		}
+		focus = vecPossibleFocusWindows[ 0 ];
+		gameFocused = focus->gameID != 0;
 	}
 
 	if (!focus)
@@ -1393,9 +1378,9 @@ determine_and_apply_focus (Display *dpy, MouseCursor *cursor)
 		{
 			bool bFoundTransient = false;
 			
-			for ( uint32_t i = 0; i < vecPossibleFocusGameWindows.size(); i++ )
+			for ( uint32_t i = 0; i < vecPossibleFocusWindows.size(); i++ )
 			{
-				win* candidate = vecPossibleFocusGameWindows[ i ];
+				win *candidate = vecPossibleFocusWindows[ i ];
 				
 				if ( candidate != focus && candidate->transientFor == focus->id )
 				{
