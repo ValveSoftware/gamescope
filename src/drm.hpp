@@ -50,6 +50,8 @@ struct fb {
 
 struct drm_t {
 	int fd;
+
+	uint64_t cursor_width, cursor_height;
 	
 	/* only used for atomic: */
 	struct plane *plane;

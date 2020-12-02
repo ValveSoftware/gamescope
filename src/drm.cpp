@@ -395,6 +395,13 @@ int init_drm(struct drm_t *drm, const char *device, const char *mode_str, unsign
 	drmModeFreeResources(resources);
 	
 	drm->connector_id = connector->connector_id;
+
+	if (drmGetCap(drm->fd, DRM_CAP_CURSOR_WIDTH, &drm->cursor_width) != 0) {
+		drm->cursor_width = 64;
+	}
+	if (drmGetCap(drm->fd, DRM_CAP_CURSOR_HEIGHT, &drm->cursor_height) != 0) {
+		drm->cursor_height = 64;
+	}
 	
 	drmSetClientCap(drm->fd, DRM_CLIENT_CAP_ATOMIC, 1);
 	drmSetClientCap(drm->fd, DRM_CLIENT_CAP_UNIVERSAL_PLANES, 1);
