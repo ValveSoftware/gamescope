@@ -218,7 +218,7 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, VkFormat format, cr
 {
 	VkResult res = VK_ERROR_INITIALIZATION_FAILED;
 
-	VkImageTiling tiling = flags.bMappable ? VK_IMAGE_TILING_LINEAR : VK_IMAGE_TILING_OPTIMAL;
+	VkImageTiling tiling = (flags.bMappable || flags.bLinear) ? VK_IMAGE_TILING_LINEAR : VK_IMAGE_TILING_OPTIMAL;
 	VkImageUsageFlags usage = flags.bTextureable ? VK_IMAGE_USAGE_SAMPLED_BIT : VK_IMAGE_USAGE_STORAGE_BIT;
 	VkMemoryPropertyFlags properties;
 
@@ -1372,6 +1372,7 @@ VulkanTexture_t vulkan_create_texture_from_bits( uint32_t width, uint32_t height
 
 	CVulkanTexture::createFlags texCreateFlags;
 	texCreateFlags.bFlippable = BIsNested() == false;
+	texCreateFlags.bLinear = true; // cursor buffer needs to be linear
 	texCreateFlags.bTextureable = true;
 	texCreateFlags.bTransferDst = true;
 	

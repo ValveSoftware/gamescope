@@ -864,6 +864,7 @@ bool MouseCursor::getTexture()
 		return false;
 	}
 
+	// TODO: choose format & modifiers from cursor plane
 	m_texture = vulkan_create_texture_from_bits(m_width, m_height, VK_FORMAT_R8G8B8A8_UNORM,
 												cursorDataBuffer);
 	assert(m_texture);
