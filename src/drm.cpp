@@ -892,8 +892,7 @@ bool drm_prepare( struct drm_t *drm, struct Composite_t *pComposite, struct Vulk
 	static bool bFirstSwap = true;
 	uint32_t flags = DRM_MODE_ATOMIC_NONBLOCK;
 
-	// Temporary hack until we figure out what AMDGPU DC expects when changing the dest rect
-	if ( 1 || bFirstSwap == true )
+	if ( bFirstSwap == true )
 	{
 		flags |= DRM_MODE_ATOMIC_ALLOW_MODESET;
 	}
