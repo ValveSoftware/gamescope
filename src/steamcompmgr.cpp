@@ -841,12 +841,12 @@ bool MouseCursor::getTexture()
 	// Assume the cursor is fully translucent unless proven otherwise.
 	bool bNoCursor = true;
 
-	uint32_t cursorDataBuffer[m_width * m_height] = {0};
+	auto cursorBuffer = std::vector<uint32_t>(m_width * m_height);
 	for (int i = 0; i < image->height; i++) {
 		for (int j = 0; j < image->width; j++) {
-			cursorDataBuffer[i * m_width + j] = image->pixels[i * image->width + j];
+			cursorBuffer[i * m_width + j] = image->pixels[i * image->width + j];
 
-			if ( cursorDataBuffer[i * m_width + j] & 0x000000ff ) {
+			if ( cursorBuffer[i * m_width + j] & 0x000000ff ) {
 				bNoCursor = false;
 			}
 		}
@@ -866,7 +866,7 @@ bool MouseCursor::getTexture()
 
 	// TODO: choose format & modifiers from cursor plane
 	m_texture = vulkan_create_texture_from_bits(m_width, m_height, VK_FORMAT_R8G8B8A8_UNORM,
-												cursorDataBuffer);
+												cursorBuffer.data());
 	assert(m_texture);
 	XFree(image);
 	m_dirty = false;
