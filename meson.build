@@ -29,6 +29,7 @@ dep_xext = dependency('xext')
 dep_xfixes = dependency('xfixes')
 dep_xxf86vm = dependency('xxf86vm')
 dep_xtst = dependency('xtst')
+dep_xres = dependency('xres')
 
 drm_dep = dependency('libdrm')
 vulkan_dep = dependency('vulkan')
@@ -89,7 +90,7 @@ executable(
 	[ 'src/rendervulkan.cpp', spirv_shader ],
     dependencies : [
         dep_x11, dep_xdamage, dep_xcomposite, dep_xrender, dep_xext, dep_xfixes,
-        dep_xxf86vm, drm_dep, wayland_server, wayland_protos,
+        dep_xxf86vm, dep_xres, drm_dep, wayland_server, wayland_protos,
         xkbcommon, math, thread_dep, sdl_dep, wlroots_dep,
         vulkan_dep, liftoff_dep, dep_xtst, cap_dep
     ],

@@ -60,6 +60,7 @@
 #include <X11/extensions/Xcomposite.h>
 #include <X11/extensions/Xdamage.h>
 #include <X11/extensions/Xrender.h>
+#include <X11/extensions/XRes.h>
 #include <X11/extensions/shape.h>
 #include <X11/extensions/xf86vmode.h>
 
@@ -107,6 +108,7 @@ typedef struct _win {
 
 	char *title;
 	bool utf8_title;
+	pid_t pid;
 
 	Bool isSteam;
 	Bool isSteamPopup;
@@ -1798,6 +1800,29 @@ unmap_win (Display *dpy, Window id, Bool fade)
 	finish_unmap_win (dpy, w);
 }
 
+static pid_t
+get_win_pid (Display *dpy, Window id)
+{
+	XResClientIdSpec client_spec = {
+		.client = id,
+		.mask = XRES_CLIENT_ID_PID_MASK,
+	};
+	long num_ids = 0;
+	XResClientIdValue *client_ids = NULL;
+	XResQueryClientIds(dpy, 1, &client_spec, &num_ids, &client_ids);
+
+	pid_t pid = -1;
+	for (long i = 0; i < num_ids; i++) {
+		pid = XResGetClientPid(&client_ids[i]);
+		if (pid > 0)
+			break;
+	}
+	XResClientIdsDestroy(num_ids, client_ids);
+	if (pid <= 0)
+		fprintf(stderr, "Failed to find PID for window 0x%lx\n", id);
+	return pid;
+}
+
 static void
 add_win (Display *dpy, Window id, Window prev, unsigned long sequence)
 {
@@ -1831,6 +1856,8 @@ add_win (Display *dpy, Window id, Window prev, unsigned long sequence)
 		new_win->damage = XDamageCreate (dpy, id, XDamageReportRawRectangles);
 	}
 	new_win->opacity = OPAQUE;
+
+	new_win->pid = get_win_pid (dpy, id);
 
 	new_win->isOverlay = False;
 	new_win->isSteam = False;
@@ -2659,6 +2686,7 @@ steamcompmgr_main (int argc, char **argv)
 	Window	    *children;
 	unsigned int    nchildren;
 	int		    composite_major, composite_minor;
+	int			xres_major, xres_minor;
 	int		    o;
 	int			readyPipeFD = -1;
 
@@ -2755,6 +2783,16 @@ steamcompmgr_main (int argc, char **argv)
 	if (!XFixesQueryExtension (dpy, &xfixes_event, &xfixes_error))
 	{
 		fprintf (stderr, "No XFixes extension\n");
+		exit (1);
+	}
+	if (!XResQueryVersion (dpy, &xres_major, &xres_minor))
+	{
+		fprintf (stderr, "No XRes extension\n");
+		exit (1);
+	}
+	if (xres_major != 1 || xres_minor < 2)
+	{
+		fprintf (stderr, "Unsupported XRes version: have %d.%d, want 1.2\n", xres_major, xres_minor);
 		exit (1);
 	}
 
