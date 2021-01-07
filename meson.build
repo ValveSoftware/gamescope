@@ -44,13 +44,17 @@ thread_dep = dependency('threads')
 cap_dep = cc.find_library('cap')
 sdl_dep = dependency('SDL2')
 
-wlroots_proj = subproject('wlroots', required: false, default_options:
-  ['default_library=static', 'examples=false'])
-if wlroots_proj.found()
-  wlroots_dep = wlroots_proj.get_variable('wlroots')
-  wlroots_conf = wlroots_proj.get_variable('conf_data')
-  wlroots_has_xwayland = wlroots_conf.get('WLR_HAS_XWAYLAND') == 1
-else
+if not get_option('force_system_libraries')
+  wlroots_proj = subproject('wlroots', required: false, default_options:
+    ['default_library=static', 'examples=false'])
+  if wlroots_proj.found()
+    wlroots_dep = wlroots_proj.get_variable('wlroots')
+    wlroots_conf = wlroots_proj.get_variable('conf_data')
+    wlroots_has_xwayland = wlroots_conf.get('WLR_HAS_XWAYLAND') == 1
+  endif
+endif
+
+if not is_variable('wlroots_dep')
   wlroots_dep = dependency('wlroots', version: '>= 0.11.0')
   wlroots_has_xwayland = cc.get_define('WLR_HAS_XWAYLAND', prefix: '#include <wlr/config.h>', dependencies: wlroots_dep) == '1'
 endif
@@ -71,11 +75,15 @@ spirv_shader = custom_target('shader_target',
   install : false,
 )
 
-liftoff_proj = subproject('libliftoff', required: false, default_options:
-  ['default_library=static'])
-if liftoff_proj.found()
-  liftoff_dep = liftoff_proj.get_variable('liftoff')
-else
+if not get_option('force_system_libraries')
+  liftoff_proj = subproject('libliftoff', required: false, default_options:
+    ['default_library=static'])
+  if liftoff_proj.found() and not get_option('force_system_libraries')
+    liftoff_dep = liftoff_proj.get_variable('liftoff')
+  endif
+endif
+
+if not is_variable('liftoff_dep')
   liftoff_dep = dependency('libliftoff')
 endif
 

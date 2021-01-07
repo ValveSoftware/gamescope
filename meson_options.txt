@@ -1,0 +1,1 @@
+option('force_system_libraries', type: 'boolean', value: false, description: 'Force the use of system libraries instead of subprojects')
