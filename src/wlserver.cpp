@@ -443,7 +443,7 @@ int wlserver_init(int argc, char **argv, bool bIsNested) {
 
 	wl_signal_add( &wlserver.wlr.multi_backend->events.new_input, &new_input_listener );
 
-	wlserver.wlr.headless_backend = wlr_headless_backend_create( wlserver.wl_display, NULL );
+	wlserver.wlr.headless_backend = wlr_headless_backend_create( wlserver.wl_display );
 	if ( wlserver.wlr.headless_backend == NULL )
 	{
 		return 1;

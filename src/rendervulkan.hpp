@@ -54,6 +54,7 @@ extern "C" {
 #include <wlr/render/dmabuf.h>
 #include <wlr/render/gles2.h>
 #include <wlr/render/interface.h>
+#include <wlr/render/egl.h>
 #undef static
 }
 

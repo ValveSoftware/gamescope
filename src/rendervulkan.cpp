@@ -2173,14 +2173,14 @@ static void renderer_render_ellipse_with_matrix( struct wlr_renderer *renderer, 
 	abort(); // unreachable
 }
 
-static const enum wl_shm_format *renderer_get_shm_texture_formats( struct wlr_renderer *wlr_renderer, size_t *len
+static const uint32_t *renderer_get_shm_texture_formats( struct wlr_renderer *wlr_renderer, size_t *len
  )
 {
 	VulkanRenderer_t *renderer = (VulkanRenderer_t *) wlr_renderer;
 	return wlr_renderer_get_shm_texture_formats( renderer->parent, len );
 }
 
-static struct wlr_texture *renderer_texture_from_pixels( struct wlr_renderer *wlr_renderer, enum wl_shm_format shmFormat, uint32_t stride, uint32_t width, uint32_t height, const void *src )
+static struct wlr_texture *renderer_texture_from_pixels( struct wlr_renderer *wlr_renderer, uint32_t shmFormat, uint32_t stride, uint32_t width, uint32_t height, const void *src )
 {
 	VulkanRenderer_t *renderer = (VulkanRenderer_t *) wlr_renderer;
 	return wlr_texture_from_pixels( renderer->parent, shmFormat, stride, width, height, src );
