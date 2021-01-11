@@ -15,6 +15,14 @@ It runs on Mesa+AMDGPU, and could be made to run on other Mesa/DRM drivers with 
 
 If running RadeonSI clients, currently have to set R600_DEBUG=nodcc, or corruption will be observed until the stack picks up DRM modifiers support.
 
+## Building
+
+```
+meson build/
+ninja -C build/
+build/gamescope -- <game>
+```
+
 ## Keyboard shortcuts
 
 **Super + F** : Toggle fullscreen
@@ -25,8 +33,7 @@ If running RadeonSI clients, currently have to set R600_DEBUG=nodcc, or corrupti
 
 ## Examples
 
-On any X11 or Wayland desktop running Mesa commit [d19bc94e4eb9](https://gitlab.freedesktop.org/mesa/mesa/-/commit/d19bc94e4eb94a2c8cbdb328c9eaa2faf1ba424c), you can set the Steam launch arguments of your game as follows:
-
+On any X11 or Wayland desktop running Mesa 20.3+, you can set the Steam launch arguments of your game as follows:
 
 ```
 // Upscale a 720p game to 1440p with integer scaling

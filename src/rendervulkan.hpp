@@ -67,6 +67,7 @@ public:
 			bMappable = false;
 			bTransferSrc = false;
 			bTransferDst = false;
+			bLinear = false;
 		}
 
 		bool bFlippable : 1;
@@ -74,6 +75,7 @@ public:
 		bool bMappable : 1;
 		bool bTransferSrc : 1;
 		bool bTransferDst : 1;
+		bool bLinear : 1;
 	};
 
 	bool BInit( uint32_t width, uint32_t height, VkFormat format, createFlags flags, wlr_dmabuf_attributes *pDMA = nullptr );

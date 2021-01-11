@@ -11,7 +11,6 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <sys/select.h>
-#include <signal.h>
 
 extern "C" {
 #include <wlr/types/wlr_buffer.h>
@@ -248,12 +247,6 @@ static void page_flip_handler(int fd, unsigned int frame,
 
 void flip_handler_thread_run(void)
 {
-	// see wlroots xwayland startup and how wl_event_loop_add_signal works
-	sigset_t mask;
-	sigemptyset(&mask);
-	sigaddset(&mask, SIGUSR1);
-	sigprocmask(SIG_BLOCK, &mask, NULL);
-
 	fd_set fds;
 	int ret;
 	drmEventContext evctx = {
@@ -395,6 +388,13 @@ int init_drm(struct drm_t *drm, const char *device, const char *mode_str, unsign
 	drmModeFreeResources(resources);
 	
 	drm->connector_id = connector->connector_id;
+
+	if (drmGetCap(drm->fd, DRM_CAP_CURSOR_WIDTH, &drm->cursor_width) != 0) {
+		drm->cursor_width = 64;
+	}
+	if (drmGetCap(drm->fd, DRM_CAP_CURSOR_HEIGHT, &drm->cursor_height) != 0) {
+		drm->cursor_height = 64;
+	}
 	
 	drmSetClientCap(drm->fd, DRM_CLIENT_CAP_ATOMIC, 1);
 	drmSetClientCap(drm->fd, DRM_CLIENT_CAP_UNIVERSAL_PLANES, 1);
@@ -717,108 +717,186 @@ void drm_drop_fbid( struct drm_t *drm, uint32_t fbid )
 	}
 }
 
-bool drm_can_avoid_composite( struct drm_t *drm, struct Composite_t *pComposite, struct VulkanPipeline_t *pPipeline )
+/* Prepares an atomic commit without using libliftoff */
+static bool
+drm_prepare_basic( struct drm_t *drm, struct Composite_t *pComposite, struct VulkanPipeline_t *pPipeline )
 {
-	int nLayerCount = pComposite->nLayerCount;
-	
-	if ( g_bUseLayers == false )
+	// Discard cases where our non-liftoff path is known to fail
+
+	// It only supports one layer
+	if ( pComposite->nLayerCount > 1 )
 	{
-		// Discard cases where our non-liftoff path is known to fail
+		return false;
+	}
+
+	// Getting EINVAL trying to flip a 1x1 window, so does liftoff
+	// TODO: get liftoff and/or amdgpuo bug fixed, workaround below
+	if ( pPipeline->layerBindings[ 0 ].surfaceWidth < 64 ||
+		 pPipeline->layerBindings[ 0 ].surfaceHeight < 64 )
+	{
+		return false;
+	}
+	
+	if ( pPipeline->layerBindings[ 0 ].fbid == 0 )
+	{
+		return false;
+	}
+
+	drmModeAtomicReq *req = drm->req;
+	uint32_t plane_id = drm->plane->plane->plane_id;
+	uint32_t fb_id = pPipeline->layerBindings[ 0 ].fbid;
+
+	assert( fb_id != 0 );
+	drm->fbids_in_req.push_back( fb_id );
+
+	if ( g_bRotated )
+	{
+		add_plane_property(drm, req, plane_id, "rotation", DRM_MODE_ROTATE_270);
+	}
+
+	add_plane_property(drm, req, plane_id, "FB_ID", fb_id);
+	add_plane_property(drm, req, plane_id, "CRTC_ID", drm->crtc_id);
+	add_plane_property(drm, req, plane_id, "SRC_X", 0);
+	add_plane_property(drm, req, plane_id, "SRC_Y", 0);
+	add_plane_property(drm, req, plane_id, "SRC_W", pPipeline->layerBindings[ 0 ].surfaceWidth << 16);
+	add_plane_property(drm, req, plane_id, "SRC_H", pPipeline->layerBindings[ 0 ].surfaceHeight << 16);
+
+	gpuvis_trace_printf ( "legacy flip fb_id %u src %ix%i\n", fb_id,
+						 pPipeline->layerBindings[ 0 ].surfaceWidth,
+						 pPipeline->layerBindings[ 0 ].surfaceHeight );
+
+	if ( g_bRotated )
+	{
+		add_plane_property(drm, req, plane_id, "CRTC_X", pComposite->data.layers[ 0 ].flOffsetY * -1);
+		add_plane_property(drm, req, plane_id, "CRTC_Y", pComposite->data.layers[ 0 ].flOffsetX * -1);
 		
-		// It only supports one layer
-		if ( nLayerCount > 1 )
+		add_plane_property(drm, req, plane_id, "CRTC_H", pPipeline->layerBindings[ 0 ].surfaceWidth / pComposite->data.layers[ 0 ].flScaleX);
+		add_plane_property(drm, req, plane_id, "CRTC_W", pPipeline->layerBindings[ 0 ].surfaceHeight / pComposite->data.layers[ 0 ].flScaleY);
+	}
+	else
+	{
+		add_plane_property(drm, req, plane_id, "CRTC_X", pComposite->data.layers[ 0 ].flOffsetX * -1);
+		add_plane_property(drm, req, plane_id, "CRTC_Y", pComposite->data.layers[ 0 ].flOffsetY * -1);
+		
+		add_plane_property(drm, req, plane_id, "CRTC_W", pPipeline->layerBindings[ 0 ].surfaceWidth / pComposite->data.layers[ 0 ].flScaleX);
+		add_plane_property(drm, req, plane_id, "CRTC_H", pPipeline->layerBindings[ 0 ].surfaceHeight / pComposite->data.layers[ 0 ].flScaleY);
+
+		gpuvis_trace_printf ( "crtc %i+%i@%ix%i\n",
+							  (int)pComposite->data.layers[ 0 ].flOffsetX * -1, (int)pComposite->data.layers[ 0 ].flOffsetY * -1,
+							  (int)(pPipeline->layerBindings[ 0 ].surfaceWidth / pComposite->data.layers[ 0 ].flScaleX),
+							  (int)(pPipeline->layerBindings[ 0 ].surfaceHeight / pComposite->data.layers[ 0 ].flScaleX) );
+	}
+
+	unsigned test_flags = (drm->flags & DRM_MODE_ATOMIC_ALLOW_MODESET) | DRM_MODE_ATOMIC_TEST_ONLY;
+	int ret = drmModeAtomicCommit( drm->fd, drm->req, test_flags, NULL );
+
+	if ( ret != 0 && ret != -EINVAL && ret != -ERANGE ) {
+		fprintf( stderr, "drmModeAtomicCommit failed: %s", strerror( -ret ) );
+	}
+
+	return ret == 0;
+}
+
+static bool
+drm_prepare_liftoff( struct drm_t *drm, struct Composite_t *pComposite, struct VulkanPipeline_t *pPipeline )
+{
+	for ( int i = 0; i < k_nMaxLayers; i++ )
+	{
+		if ( i < pComposite->nLayerCount )
 		{
-			return false;
+			if ( pPipeline->layerBindings[ i ].fbid == 0 )
+			{
+				return false;
+			}
+
+			liftoff_layer_set_property( drm->lo_layers[ i ], "FB_ID", pPipeline->layerBindings[ i ].fbid);
+			drm->fbids_in_req.push_back( pPipeline->layerBindings[ i ].fbid );
+
+			liftoff_layer_set_property( drm->lo_layers[ i ], "zpos", pPipeline->layerBindings[ i ].zpos );
+			liftoff_layer_set_property( drm->lo_layers[ i ], "alpha", pComposite->data.layers[ i ].flOpacity * 0xffff);
+
+			if ( pPipeline->layerBindings[ i ].zpos == 0 )
+			{
+				assert( ( pComposite->data.layers[ i ].flOpacity * 0xffff ) == 0xffff );
+			}
+
+			const uint16_t srcWidth = pPipeline->layerBindings[ i ].surfaceWidth;
+			const uint16_t srcHeight = pPipeline->layerBindings[ i ].surfaceHeight;
+
+			liftoff_layer_set_property( drm->lo_layers[ i ], "SRC_X", 0);
+			liftoff_layer_set_property( drm->lo_layers[ i ], "SRC_Y", 0);
+			liftoff_layer_set_property( drm->lo_layers[ i ], "SRC_W", srcWidth << 16);
+			liftoff_layer_set_property( drm->lo_layers[ i ], "SRC_H", srcHeight << 16);
+
+			int32_t crtcX = -pComposite->data.layers[ i ].flOffsetX;
+			int32_t crtcY = -pComposite->data.layers[ i ].flOffsetY;
+			uint64_t crtcW = srcWidth / pComposite->data.layers[ i ].flScaleX;
+			uint64_t crtcH = srcHeight / pComposite->data.layers[ i ].flScaleY;
+
+			if (g_bRotated) {
+				const int32_t x = crtcX;
+				const uint64_t w = crtcW;
+				crtcX = crtcY;
+				crtcY = x;
+				crtcW = crtcH;
+				crtcH = w;
+
+				liftoff_layer_set_property( drm->lo_layers[ i ], "rotation", DRM_MODE_ROTATE_270);
+			}
+
+			liftoff_layer_set_property( drm->lo_layers[ i ], "CRTC_X", crtcX);
+			liftoff_layer_set_property( drm->lo_layers[ i ], "CRTC_Y", crtcY);
+
+			liftoff_layer_set_property( drm->lo_layers[ i ], "CRTC_W", crtcW);
+			liftoff_layer_set_property( drm->lo_layers[ i ], "CRTC_H", crtcH);
 		}
-		
-		// Getting EINVAL trying to flip a 1x1 window, so does liftoff
-		// TODO: get liftoff and/or amdgpuo bug fixed, workaround below
-		if ( pPipeline->layerBindings[ 0 ].surfaceWidth < 64 ||
-			 pPipeline->layerBindings[ 0 ].surfaceHeight < 64 )
+		else
 		{
-			return false;
-		}
-		
-		if ( pPipeline->layerBindings[ 0 ].fbid == 0 )
-		{
-			return false;
+			liftoff_layer_set_property( drm->lo_layers[ i ], "FB_ID", 0 );
 		}
 	}
 
-	drm->fbids_in_req.clear();
+	bool ret = liftoff_output_apply( drm->lo_output, drm->req, drm->flags );
 
-	if ( g_bUseLayers == true )
+	int scanoutLayerCount = 0;
+	if ( ret )
 	{
 		for ( int i = 0; i < k_nMaxLayers; i++ )
 		{
-			if ( i < nLayerCount )
-			{
-				if ( pPipeline->layerBindings[ i ].fbid == 0 )
-				{
-					return false;
-				}
-
-				liftoff_layer_set_property( drm->lo_layers[ i ], "FB_ID", pPipeline->layerBindings[ i ].fbid);
-				drm->fbids_in_req.push_back( pPipeline->layerBindings[ i ].fbid );
-
-				liftoff_layer_set_property( drm->lo_layers[ i ], "zpos", pPipeline->layerBindings[ i ].zpos );
-				liftoff_layer_set_property( drm->lo_layers[ i ], "alpha", pComposite->data.layers[ i ].flOpacity * 0xffff);
-
-				if ( pPipeline->layerBindings[ i ].zpos == 0 )
-				{
-					assert( ( pComposite->data.layers[ i ].flOpacity * 0xffff ) == 0xffff );
-				}
-
-				const uint16_t srcWidth = pPipeline->layerBindings[ i ].surfaceWidth;
-				const uint16_t srcHeight = pPipeline->layerBindings[ i ].surfaceHeight;
-
-				liftoff_layer_set_property( drm->lo_layers[ i ], "SRC_X", 0);
-				liftoff_layer_set_property( drm->lo_layers[ i ], "SRC_Y", 0);
-				liftoff_layer_set_property( drm->lo_layers[ i ], "SRC_W", srcWidth << 16);
-				liftoff_layer_set_property( drm->lo_layers[ i ], "SRC_H", srcHeight << 16);
-
-				int32_t crtcX = -pComposite->data.layers[ i ].flOffsetX;
-				int32_t crtcY = -pComposite->data.layers[ i ].flOffsetY;
-				uint64_t crtcW = srcWidth / pComposite->data.layers[ i ].flScaleX;
-				uint64_t crtcH = srcHeight / pComposite->data.layers[ i ].flScaleY;
-
-				if (g_bRotated) {
-					const int32_t x = crtcX;
-					const uint64_t w = crtcW;
-					crtcX = crtcY;
-					crtcY = x;
-					crtcW = crtcH;
-					crtcH = w;
-
-					liftoff_layer_set_property( drm->lo_layers[ i ], "rotation", DRM_MODE_ROTATE_270);
-				}
-
-				liftoff_layer_set_property( drm->lo_layers[ i ], "CRTC_X", crtcX);
-				liftoff_layer_set_property( drm->lo_layers[ i ], "CRTC_Y", crtcY);
-
-				liftoff_layer_set_property( drm->lo_layers[ i ], "CRTC_W", crtcW);
-				liftoff_layer_set_property( drm->lo_layers[ i ], "CRTC_H", crtcH);
-			}
-			else
-			{
-				liftoff_layer_set_property( drm->lo_layers[ i ], "FB_ID", 0 );
-			}
+			if ( liftoff_layer_get_plane_id( drm->lo_layers[ i ] ) != 0 )
+				scanoutLayerCount++;
 		}
+		ret = scanoutLayerCount == pComposite->nLayerCount;
 	}
-	
+
+	if ( s_drm_log != 0 )
+	{
+		if ( ret )
+			fprintf( stderr, "can drm present %i layers\n", pComposite->nLayerCount );
+		else
+			fprintf( stderr, "can NOT drm present %i layers\n", pComposite->nLayerCount );
+	}
+
+	return ret;
+}
+
+/* Prepares an atomic commit for the provided scene-graph. Returns false on
+ * error or if the scene-graph can't be presented directly. */
+bool drm_prepare( struct drm_t *drm, struct Composite_t *pComposite, struct VulkanPipeline_t *pPipeline )
+{
+	drm->fbids_in_req.clear();
+
 	assert( drm->req == nullptr );
 	drm->req = drmModeAtomicAlloc();
 	
 	static bool bFirstSwap = true;
 	uint32_t flags = DRM_MODE_ATOMIC_NONBLOCK;
-	
-	// Temporary hack until we figure out what AMDGPU DC expects when changing the dest rect
-	if ( 1 || bFirstSwap == true )
+
+	if ( bFirstSwap == true )
 	{
 		flags |= DRM_MODE_ATOMIC_ALLOW_MODESET;
-		bFirstSwap = false;
 	}
-	
+
 	// We do internal refcounting with these events
 	flags |= DRM_MODE_PAGE_FLIP_EVENT;
 	
@@ -832,100 +910,24 @@ bool drm_can_avoid_composite( struct drm_t *drm, struct Composite_t *pComposite,
 		if (add_crtc_property(drm, drm->req, drm->crtc_id, "ACTIVE", 1) < 0)
 			return false;
 	}
-	
+
 	drm->flags = flags;
-	
-	if ( g_bUseLayers == true )
-	{
-		bool ret = liftoff_output_apply( drm->lo_output, drm->req );
 
-		int scanoutLayerCount = 0;
-		if ( ret )
-		{
-			for ( int i = 0; i < k_nMaxLayers; i++ )
-			{
-				if ( liftoff_layer_get_plane_id( drm->lo_layers[ i ] ) != 0 )
-					scanoutLayerCount++;
-			}
-			ret = scanoutLayerCount == nLayerCount;
-		}
-
-		if ( s_drm_log != 0 )
-		{
-			if ( ret )
-				fprintf( stderr, "can drm present %i layers\n", nLayerCount );
-			else
-				fprintf( stderr, "can NOT drm present %i layers\n", nLayerCount );
-		}
-
-		if ( !ret ) {
-			drmModeAtomicFree( drm->req );
-			drm->req = nullptr;
-
-			drm->fbids_in_req.clear();
-		}
-
-		return ret;
+	bool result;
+	if ( g_bUseLayers == true ) {
+		result = drm_prepare_liftoff( drm, pComposite, pPipeline );
+	} else {
+		result = drm_prepare_basic( drm, pComposite, pPipeline );
 	}
-	else
-	{
-		drmModeAtomicReq *req = drm->req;
-		uint32_t plane_id = drm->plane->plane->plane_id;
-		uint32_t fb_id = pPipeline->layerBindings[ 0 ].fbid;
-		
-		assert( fb_id != 0 );
-		drm->fbids_in_req.push_back( fb_id );
-		
-		if ( g_bRotated )
-		{
-			add_plane_property(drm, req, plane_id, "rotation", DRM_MODE_ROTATE_270);
-		}
-		
-		add_plane_property(drm, req, plane_id, "FB_ID", fb_id);
-		add_plane_property(drm, req, plane_id, "CRTC_ID", drm->crtc_id);
-		add_plane_property(drm, req, plane_id, "SRC_X", 0);
-		add_plane_property(drm, req, plane_id, "SRC_Y", 0);
-		add_plane_property(drm, req, plane_id, "SRC_W", pPipeline->layerBindings[ 0 ].surfaceWidth << 16);
-		add_plane_property(drm, req, plane_id, "SRC_H", pPipeline->layerBindings[ 0 ].surfaceHeight << 16);
-		
-		gpuvis_trace_printf ( "legacy flip fb_id %u src %ix%i\n", fb_id,
-							 pPipeline->layerBindings[ 0 ].surfaceWidth,
-							 pPipeline->layerBindings[ 0 ].surfaceHeight );
-		
-		if ( g_bRotated )
-		{
-			add_plane_property(drm, req, plane_id, "CRTC_X", pComposite->data.layers[ 0 ].flOffsetY * -1);
-			add_plane_property(drm, req, plane_id, "CRTC_Y", pComposite->data.layers[ 0 ].flOffsetX * -1);
-			
-			add_plane_property(drm, req, plane_id, "CRTC_H", pPipeline->layerBindings[ 0 ].surfaceWidth / pComposite->data.layers[ 0 ].flScaleX);
-			add_plane_property(drm, req, plane_id, "CRTC_W", pPipeline->layerBindings[ 0 ].surfaceHeight / pComposite->data.layers[ 0 ].flScaleY);
-		}
-		else
-		{
-			add_plane_property(drm, req, plane_id, "CRTC_X", pComposite->data.layers[ 0 ].flOffsetX * -1);
-			add_plane_property(drm, req, plane_id, "CRTC_Y", pComposite->data.layers[ 0 ].flOffsetY * -1);
-			
-			add_plane_property(drm, req, plane_id, "CRTC_W", pPipeline->layerBindings[ 0 ].surfaceWidth / pComposite->data.layers[ 0 ].flScaleX);
-			add_plane_property(drm, req, plane_id, "CRTC_H", pPipeline->layerBindings[ 0 ].surfaceHeight / pComposite->data.layers[ 0 ].flScaleY);
-			
-			gpuvis_trace_printf ( "crtc %i+%i@%ix%i\n",
-								  (int)pComposite->data.layers[ 0 ].flOffsetX * -1, (int)pComposite->data.layers[ 0 ].flOffsetY * -1,
-								  (int)(pPipeline->layerBindings[ 0 ].surfaceWidth / pComposite->data.layers[ 0 ].flScaleX),
-								  (int)(pPipeline->layerBindings[ 0 ].surfaceHeight / pComposite->data.layers[ 0 ].flScaleX) );
-		}
-		
-		unsigned test_flags = (drm->flags & DRM_MODE_ATOMIC_ALLOW_MODESET) | DRM_MODE_ATOMIC_TEST_ONLY;
-		int ret = drmModeAtomicCommit( drm->fd, drm->req, test_flags, NULL );
 
-		if ( ret != 0 )
-		{
-			gpuvis_trace_printf( "legacy flip not possible, %d\n", ret );
-			drmModeAtomicFree( drm->req );
-			drm->req = nullptr;
+	if ( result ) {
+		bFirstSwap = false;
+	} else {
+		drmModeAtomicFree( drm->req );
+		drm->req = nullptr;
 
-			drm->fbids_in_req.clear();
-		}
-
-		return ret == 0;
+		drm->fbids_in_req.clear();
 	}
+
+	return result;
 }

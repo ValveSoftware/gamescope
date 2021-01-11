@@ -50,6 +50,8 @@ struct fb {
 
 struct drm_t {
 	int fd;
+
+	uint64_t cursor_width, cursor_height;
 	
 	/* only used for atomic: */
 	struct plane *plane;
@@ -101,4 +103,4 @@ int init_drm(struct drm_t *drm, const char *device, const char *mode_str, unsign
 int drm_atomic_commit(struct drm_t *drm, struct Composite_t *pComposite, struct VulkanPipeline_t *pPipeline );
 uint32_t drm_fbid_from_dmabuf( struct drm_t *drm, struct wlr_buffer *buf, struct wlr_dmabuf_attributes *dma_buf );
 void drm_drop_fbid( struct drm_t *drm, uint32_t fbid );
-bool drm_can_avoid_composite( struct drm_t *drm, struct Composite_t *pComposite, struct VulkanPipeline_t *pPipeline );
+bool drm_prepare( struct drm_t *drm, struct Composite_t *pComposite, struct VulkanPipeline_t *pPipeline );

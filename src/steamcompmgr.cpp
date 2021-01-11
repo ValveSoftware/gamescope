@@ -111,6 +111,7 @@ typedef struct _win {
 	Bool isSteam;
 	Bool isSteamPopup;
 	Bool wantsUnfocus;
+	Bool wantsInputFocus;
 	unsigned long long int gameID;
 	Bool isOverlay;
 	Bool isFullscreen;
@@ -151,6 +152,7 @@ static int		composite_opcode;
 uint32_t		currentOutputWidth, currentOutputHeight;
 
 static Window	currentFocusWindow;
+static Window	currentInputFocusWindow;
 static Window	currentOverlayWindow;
 static Window	currentNotificationWindow;
 
@@ -214,6 +216,7 @@ static Atom		netWMStateFocusedAtom;
 static Atom		WLSurfaceIDAtom;
 static Atom		WMStateAtom;
 static Atom		steamUnfocusAtom;
+static Atom		steamInputFocusAtom;
 static Atom		steamTouchClickModeAtom;
 static Atom		utf8StringAtom;
 static Atom		netWMNameAtom;
@@ -234,6 +237,10 @@ static Atom		netSystemTrayOpcodeAtom;
 #define ICCCM_WITHDRAWN_STATE 0
 #define ICCCM_NORMAL_STATE 1
 #define ICCCM_ICONIC_STATE 3
+
+#define NET_WM_STATE_REMOVE 0
+#define NET_WM_STATE_ADD 1
+#define NET_WM_STATE_TOGGLE 2
 
 #define SYSTEM_TRAY_REQUEST_DOCK 0
 #define SYSTEM_TRAY_BEGIN_MESSAGE 1
@@ -683,7 +690,7 @@ void MouseCursor::checkSuspension()
 	if (!m_hideForMovement && suspended) {
 		m_hideForMovement = true;
 
-		win *window = find_win(m_display, currentFocusWindow);
+		win *window = find_win(m_display, currentInputFocusWindow);
 
 		// Rearm warp count
 		if (window) {
@@ -700,7 +707,7 @@ void MouseCursor::checkSuspension()
 
 void MouseCursor::warp(int x, int y)
 {
-	XWarpPointer(m_display, None, currentFocusWindow, 0, 0, 0, 0, x, y);
+	XWarpPointer(m_display, None, currentInputFocusWindow, 0, 0, 0, 0, x, y);
 }
 
 void MouseCursor::resetPosition()
@@ -718,7 +725,7 @@ void MouseCursor::setDirty()
 void MouseCursor::constrainPosition()
 {
 	int i;
-	win *window = find_win(m_display, currentFocusWindow);
+	win *window = find_win(m_display, currentInputFocusWindow);
 
 	// If we had barriers before, get rid of them.
 	for (i = 0; i < 4; i++) {
@@ -760,7 +767,7 @@ void MouseCursor::move(int x, int y)
 	m_x = x;
 	m_y = y;
 
-	win *window = find_win(m_display, currentFocusWindow);
+	win *window = find_win(m_display, currentInputFocusWindow);
 
 	if (window) {
 		// If mouse moved and we're on the hook for showing the cursor, repaint
@@ -820,6 +827,11 @@ bool MouseCursor::getTexture()
 
 	m_width = image->width;
 	m_height = image->height;
+	if ( BIsNested() == false && alwaysComposite == False )
+	{
+		m_width = g_DRM.cursor_width;
+		m_height = g_DRM.cursor_height;
+	}
 
 	if (m_texture) {
 		vulkan_free_texture(m_texture);
@@ -829,12 +841,14 @@ bool MouseCursor::getTexture()
 	// Assume the cursor is fully translucent unless proven otherwise.
 	bool bNoCursor = true;
 
-	unsigned int cursorDataBuffer[m_width * m_height];
-	for (int i = 0; i < m_width * m_height; i++) {
-		cursorDataBuffer[i] = image->pixels[i];
+	auto cursorBuffer = std::vector<uint32_t>(m_width * m_height);
+	for (int i = 0; i < image->height; i++) {
+		for (int j = 0; j < image->width; j++) {
+			cursorBuffer[i * m_width + j] = image->pixels[i * image->width + j];
 
-		if ( cursorDataBuffer[i] & 0x000000ff ) {
-			bNoCursor = false;
+			if ( cursorBuffer[i * m_width + j] & 0x000000ff ) {
+				bNoCursor = false;
+			}
 		}
 	}
 
@@ -850,8 +864,9 @@ bool MouseCursor::getTexture()
 		return false;
 	}
 
+	// TODO: choose format & modifiers from cursor plane
 	m_texture = vulkan_create_texture_from_bits(m_width, m_height, VK_FORMAT_R8G8B8A8_UNORM,
-												cursorDataBuffer);
+												cursorBuffer.data());
 	assert(m_texture);
 	XFree(image);
 	m_dirty = false;
@@ -1086,6 +1101,7 @@ paint_all(Display *dpy, MouseCursor *cursor)
 	win	*w;
 	win	*overlay;
 	win	*notification;
+	win *input;
 
 	unsigned int currentTime = get_time_in_milliseconds();
 	Bool fadingOut = ((currentTime - fadeOutStartTime) < FADE_OUT_DURATION && fadeOutWindow.id != None);
@@ -1093,6 +1109,7 @@ paint_all(Display *dpy, MouseCursor *cursor)
 	w = find_win(dpy, currentFocusWindow);
 	overlay = find_win(dpy, currentOverlayWindow);
 	notification = find_win(dpy, currentNotificationWindow);
+	input = find_win(dpy, currentInputFocusWindow);
 
 	if ( !w )
 	{
@@ -1185,8 +1202,8 @@ paint_all(Display *dpy, MouseCursor *cursor)
 	}
 
 	// Draw cursor if we need to
-	if (w) {
-		cursor->paint(w, &composite, &pipeline );
+	if (input) {
+		cursor->paint(input, &composite, &pipeline );
 	}
 
 	if (drawDebugInfo)
@@ -1203,7 +1220,7 @@ paint_all(Display *dpy, MouseCursor *cursor)
 
 	if ( BIsNested() == false && alwaysComposite == False && takeScreenshot == False )
 	{
-		if ( drm_can_avoid_composite( &g_DRM, &composite, &pipeline ) == true )
+		if ( drm_prepare( &g_DRM, &composite, &pipeline ) == true )
 		{
 			bDoComposite = false;
 		}
@@ -1240,7 +1257,7 @@ paint_all(Display *dpy, MouseCursor *cursor)
 			pipeline.layerBindings[ 0 ].fbid = vulkan_get_last_composite_fbid();
 			pipeline.layerBindings[ 0 ].bFilter = false;
 
-			bool bFlip = drm_can_avoid_composite( &g_DRM, &composite, &pipeline );
+			bool bFlip = drm_prepare( &g_DRM, &composite, &pipeline );
 
 			// We should always handle a 1-layer flip
 			assert( bFlip == true );
@@ -1278,6 +1295,7 @@ static void
 determine_and_apply_focus (Display *dpy, MouseCursor *cursor)
 {
 	win *w, *focus = NULL;
+	win *inputFocus = NULL;
 
 	gameFocused = False;
 
@@ -1337,7 +1355,7 @@ determine_and_apply_focus (Display *dpy, MouseCursor *cursor)
 
 		if (w->isOverlay)
 		{
-			if (w->a.width == 1920 && w->opacity >= maxOpacity)
+			if (w->a.width > 1200 && w->opacity >= maxOpacity)
 			{
 				currentOverlayWindow = w->id;
 				maxOpacity = w->opacity;
@@ -1346,6 +1364,11 @@ determine_and_apply_focus (Display *dpy, MouseCursor *cursor)
 			{
 				currentNotificationWindow = w->id;
 			}
+		}
+
+		if ( w->wantsInputFocus )
+		{
+			inputFocus = w;
 		}
 	}
 
@@ -1367,6 +1390,17 @@ determine_and_apply_focus (Display *dpy, MouseCursor *cursor)
 	{
 		currentFocusWindow = None;
 		return;
+	}
+
+	if ( inputFocus == NULL )
+	{
+		inputFocus = focus;
+	}
+	else if ( inputFocus->isOverlay == False )
+	{
+		// Right now we'll assume that if a non-overlay layer wants to temporarily
+		// hijack input, it also wants to be shown. Might relax/generalize this later.
+		focus = inputFocus;
 	}
 	
 	if ( gameFocused )
@@ -1410,7 +1444,30 @@ determine_and_apply_focus (Display *dpy, MouseCursor *cursor)
 // 	if (fadeOutWindow.id && currentFocusWindow != focus->id)
 	if ( currentFocusWindow != focus->id )
 	{
-		set_win_hidden( dpy, find_win(dpy, currentFocusWindow), True );
+		if ( currentFocusWindow != inputFocus->id )
+		{
+			set_win_hidden( dpy, find_win(dpy, currentFocusWindow), True );
+		}
+
+		gpuvis_trace_printf( "determine_and_apply_focus focus %lu\n", focus->id );
+
+		if ( debugFocus == True )
+		{
+			fprintf( stderr, "determine_and_apply_focus focus %lu\n", focus->id );
+			char buf[512];
+			sprintf( buf,  "xwininfo -id 0x%lx; xprop -id 0x%lx; xwininfo -root -tree", focus->id, focus->id );
+			system( buf );
+		}
+	}
+
+	currentFocusWindow = focus->id;
+
+	if ( currentInputFocusWindow != inputFocus->id )
+	{
+		if ( currentInputFocusWindow != focus->id )
+		{
+			set_win_hidden( dpy, find_win(dpy, currentInputFocusWindow), True );
+		}
 
 		if ( focus->wlrsurface != nullptr )
 		{
@@ -1427,31 +1484,25 @@ determine_and_apply_focus (Display *dpy, MouseCursor *cursor)
 			wlserver_unlock();
 		}
 
-		gpuvis_trace_printf( "determine_and_apply_focus focus %lu\n", focus->id );
+		XSetInputFocus(dpy, inputFocus->id, RevertToNone, CurrentTime);
 
-		if ( debugFocus == True )
-		{
-			fprintf( stderr, "determine_and_apply_focus focus %lu\n", focus->id );
-			char buf[512];
-			sprintf( buf,  "xwininfo -id 0x%lx; xprop -id 0x%lx; xwininfo -root -tree", focus->id, focus->id );
-			system( buf );
-		}
+		currentInputFocusWindow = inputFocus->id;
 	}
-
-	currentFocusWindow = focus->id;
 
 	w = focus;
 
 	set_win_hidden(dpy, w, False);
+	if ( inputFocus != focus )
+	{
+		set_win_hidden(dpy, inputFocus, False);
+	}
 
 	cursor->constrainPosition();
 
-	if (gameFocused || (!gamesRunningCount && list[0].id != focus->id))
+	if (gameFocused || (!gamesRunningCount && list[0].id != inputFocus->id))
 	{
-		XRaiseWindow(dpy, focus->id);
+		XRaiseWindow(dpy, inputFocus->id);
 	}
-
-	XSetInputFocus(dpy, focus->id, RevertToNone, CurrentTime);
 
 	if (!focus->nudged)
 	{
@@ -1609,6 +1660,31 @@ get_win_title(Display *dpy, win *w, Atom atom)
 }
 
 static void
+get_net_wm_state(Display *dpy, win *w)
+{
+	Atom type;
+	int format;
+	unsigned long nitems;
+	unsigned long bytesAfter;
+	unsigned char *data;
+	if (XGetWindowProperty(dpy, w->id, netWMStateAtom, 0, 2048, False,
+			AnyPropertyType, &type, &format, &nitems, &bytesAfter, &data) != Success) {
+		return;
+	}
+
+	Atom *props = (Atom *)data;
+	for (size_t i = 0; i < nitems; i++) {
+		if (props[i] == netWMStateFullscreenAtom) {
+			w->isFullscreen = True;
+		} else {
+			fprintf(stderr, "Unhandled initial NET_WM_STATE property: %s\n", XGetAtomName(dpy, props[i]));
+		}
+	}
+
+	XFree(data);
+}
+
+static void
 map_win (Display *dpy, Window id, unsigned long sequence)
 {
 	win		*w = find_win (dpy, id);
@@ -1644,6 +1720,7 @@ map_win (Display *dpy, Window id, unsigned long sequence)
 	}
 
 	w->wantsUnfocus = get_prop(dpy, w->id, steamUnfocusAtom, 0);
+	w->wantsInputFocus = get_prop(dpy, w->id, steamInputFocusAtom, 0);
 
 	if ( steamMode == True )
 	{
@@ -1656,6 +1733,8 @@ map_win (Display *dpy, Window id, unsigned long sequence)
 	w->isOverlay = get_prop (dpy, w->id, overlayAtom, 0);
 
 	get_size_hints(dpy, w);
+
+	get_net_wm_state(dpy, w);
 
 	XWMHints *wmHints = XGetWMHints( dpy, w->id );
 
@@ -1757,6 +1836,7 @@ add_win (Display *dpy, Window id, Window prev, unsigned long sequence)
 	new_win->isSteam = False;
 	new_win->isSteamPopup = False;
 	new_win->wantsUnfocus = False;
+	new_win->wantsInputFocus = False;
 
 	if ( steamMode == True )
 	{
@@ -1943,6 +2023,8 @@ destroy_win (Display *dpy, Window id, Bool gone, Bool fade)
 {
 	if (currentFocusWindow == id && gone)
 		currentFocusWindow = None;
+	if (currentInputFocusWindow == id && gone)
+		currentInputFocusWindow = None;
 	if (currentOverlayWindow == id && gone)
 		currentOverlayWindow = None;
 	if (currentNotificationWindow == id && gone)
@@ -2011,7 +2093,7 @@ handle_wl_surface_id(win *w, long surfaceID)
 
 	// If we already focused on our side and are handling this late,
 	// let wayland know now.
-	if ( w->id == currentFocusWindow )
+	if ( w->id == currentInputFocusWindow )
 	{
 		wlserver_keyboardfocus( surface );
 		wlserver_mousefocus( surface );
@@ -2026,13 +2108,35 @@ handle_wl_surface_id(win *w, long surfaceID)
 }
 
 static void
+update_net_wm_state(uint32_t action, Bool *value)
+{
+	switch (action) {
+	case NET_WM_STATE_REMOVE:
+		*value = false;
+		break;
+	case NET_WM_STATE_ADD:
+		*value = true;
+		break;
+	case NET_WM_STATE_TOGGLE:
+		*value = !*value;
+		break;
+	default:
+		fprintf(stderr, "Unknown NET_WM_STATE action: %" PRIu32 "\n", action);
+	}
+}
+
+static void
 handle_net_wm_state(Display *dpy, win *w, XClientMessageEvent *ev)
 {
-	if ((unsigned)ev->data.l[1] == netWMStateFullscreenAtom)
-	{
-		w->isFullscreen = ev->data.l[0];
-
-		focusDirty = True;
+	uint32_t action = (uint32_t)ev->data.l[0];
+	Atom *props = (Atom *)&ev->data.l[1];
+	for (size_t i = 0; i < 2; i++) {
+		if (props[i] == netWMStateFullscreenAtom) {
+			update_net_wm_state(action, &w->isFullscreen);
+			focusDirty = True;
+		} else if (props[i] != None) {
+			fprintf(stderr, "Unhandled NET_WM_STATE property change: %s\n", XGetAtomName(dpy, props[i]));
+		}
 	}
 }
 
@@ -2125,7 +2229,7 @@ handle_property_notify(Display *dpy, XPropertyEvent *ev)
 			{
 				if (w->isOverlay)
 				{
-					if (w->a.width == 1920 && w->opacity >= maxOpacity)
+					if (w->a.width > 1200 && w->opacity >= maxOpacity)
 					{
 						currentOverlayWindow = w->id;
 						maxOpacity = w->opacity;
@@ -2149,6 +2253,15 @@ handle_property_notify(Display *dpy, XPropertyEvent *ev)
 		if (w)
 		{
 			w->wantsUnfocus = get_prop(dpy, w->id, steamUnfocusAtom, 0);
+			focusDirty = True;
+		}
+	}
+	if (ev->atom == steamInputFocusAtom )
+	{
+		win * w = find_win(dpy, ev->window);
+		if (w)
+		{
+			w->wantsInputFocus = get_prop(dpy, w->id, steamInputFocusAtom, 0);
 			focusDirty = True;
 		}
 	}
@@ -2655,6 +2768,7 @@ steamcompmgr_main (int argc, char **argv)
 	/* get atoms */
 	steamAtom = XInternAtom (dpy, STEAM_PROP, False);
 	steamUnfocusAtom = XInternAtom (dpy, "STEAM_UNFOCUS", False);
+	steamInputFocusAtom = XInternAtom (dpy, "STEAM_INPUT_FOCUS", False);
 	steamTouchClickModeAtom = XInternAtom (dpy, "STEAM_TOUCH_CLICK_MODE", False);
 	gameAtom = XInternAtom (dpy, GAME_PROP, False);
 	overlayAtom = XInternAtom (dpy, OVERLAY_PROP, False);
@@ -2954,7 +3068,7 @@ steamcompmgr_main (int argc, char **argv)
 					}
 					break;
 				case LeaveNotify:
-					if (ev.xcrossing.window == currentFocusWindow)
+					if (ev.xcrossing.window == currentInputFocusWindow)
 					{
 						// This shouldn't happen due to our pointer barriers,
 						// but there is a known X server bug; warp to last good
@@ -2965,7 +3079,7 @@ steamcompmgr_main (int argc, char **argv)
 				case MotionNotify:
 					{
 						win * w = find_win(dpy, ev.xmotion.window);
-						if (w && w->id == currentFocusWindow)
+						if (w && w->id == currentInputFocusWindow)
 						{
 							cursor->move(ev.xmotion.x, ev.xmotion.y);
 						}

@@ -3,7 +3,6 @@
 #include <thread>
 #include <mutex>
 
-#include <signal.h>
 #include <linux/input-event-codes.h>
 
 #include "main.hpp"
@@ -65,12 +64,6 @@ void updateOutputRefresh( void )
 
 void inputSDLThreadRun( void )
 {
-	// see wlroots xwayland startup and how wl_event_loop_add_signal works
-	sigset_t mask;
-	sigemptyset(&mask);
-	sigaddset(&mask, SIGUSR1);
-	sigprocmask(SIG_BLOCK, &mask, NULL);
-
 	SDL_Event event;
 	SDL_Keymod mod;
 	uint32_t key;
