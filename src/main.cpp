@@ -18,8 +18,8 @@
 int ac;
 char **av;
 
-int g_nNestedWidth = 1280;
-int g_nNestedHeight = 720;
+int g_nNestedWidth = 0;
+int g_nNestedHeight = 0;
 int g_nNestedRefresh = 0;
 int g_nNestedUnfocusedRefresh = 0;
 
@@ -173,8 +173,6 @@ int main(int argc, char **argv)
 		g_bIsNested = true;
 	}
 
-	wlserver_init(argc, argv, g_bIsNested == true );
-
 	if ( initOutput() != 0 )
 	{
 		fprintf( stderr, "Failed to initialize output\n" );
@@ -183,6 +181,13 @@ int main(int argc, char **argv)
 
 	// Prevent our clients from connecting to the parent compositor
 	unsetenv("WAYLAND_DISPLAY");
+
+	if ( g_nNestedWidth == 0 )
+		g_nNestedWidth = g_nOutputWidth;
+	if ( g_nNestedHeight == 0 )
+		g_nNestedHeight = g_nOutputHeight;
+
+	wlserver_init(argc, argv, g_bIsNested == true );
 
 	wlserver_run();
 }
