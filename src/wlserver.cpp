@@ -27,6 +27,7 @@ extern "C" {
 #include <wlr/interfaces/wlr_input_device.h>
 #include <wlr/interfaces/wlr_keyboard.h>
 #include <wlr/render/wlr_renderer.h>
+#include <wlr/types/wlr_drm.h>
 #include <wlr/types/wlr_keyboard.h>
 #include <wlr/types/wlr_pointer.h>
 #include <wlr/types/wlr_touch.h>
@@ -663,6 +664,7 @@ bool wlserver_init( void ) {
 	wlserver.wlr.renderer = vulkan_renderer_create( headless_renderer );
 
 	wlr_renderer_init_wl_display(wlserver.wlr.renderer, wlserver.display);
+	wlr_drm_create(wlserver.display, wlserver.wlr.renderer);
 
 	wlserver.wlr.compositor = wlr_compositor_create(wlserver.display, wlserver.wlr.renderer);
 

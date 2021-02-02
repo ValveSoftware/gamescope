@@ -2362,11 +2362,6 @@ static struct wlr_texture *renderer_texture_from_pixels( struct wlr_renderer *wl
 static bool renderer_init_wl_display( struct wlr_renderer *wlr_renderer, struct wl_display *wl_display )
 {
 	VulkanRenderer_t *renderer = (VulkanRenderer_t *) wlr_renderer;
-	struct wlr_egl *egl = wlr_gles2_renderer_get_egl( renderer->parent );
-	if ( !wlr_egl_bind_display( egl, wl_display ) )
-	{
-		return false;
-	}
 	if ( wlr_linux_dmabuf_v1_create( wl_display, wlr_renderer ) == nullptr )
 	{
 		return false;
@@ -2388,24 +2383,6 @@ static struct wlr_texture *renderer_texture_from_dmabuf( struct wlr_renderer *wl
 	return &tex->base;
 }
 
-static bool renderer_resource_is_wl_drm_buffer( struct wlr_renderer *wlr_renderer, struct wl_resource *resource )
-{
-	VulkanRenderer_t *renderer = (VulkanRenderer_t *) wlr_renderer;
-	return wlr_renderer_resource_is_wl_drm_buffer( renderer->parent, resource );
-}
-
-static void renderer_wl_drm_buffer_get_size( struct wlr_renderer *wlr_renderer, struct wl_resource *resource, int *width, int *height )
-{
-	VulkanRenderer_t *renderer = (VulkanRenderer_t *) wlr_renderer;
-	return wlr_renderer_wl_drm_buffer_get_size( renderer->parent, resource, width, height );
-}
-
-struct wlr_texture *renderer_texture_from_wl_drm( struct wlr_renderer *wlr_renderer, struct wl_resource *resource )
-{
-	VulkanRenderer_t *renderer = (VulkanRenderer_t *) wlr_renderer;
-	return wlr_texture_from_wl_drm( renderer->parent, resource );
-}
-
 static const struct wlr_renderer_impl renderer_impl = {
 	.begin = renderer_begin,
 	.end = renderer_end,
@@ -2414,11 +2391,8 @@ static const struct wlr_renderer_impl renderer_impl = {
 	.render_subtexture_with_matrix = renderer_render_subtexture_with_matrix,
 	.render_quad_with_matrix = renderer_render_quad_with_matrix,
 	.get_shm_texture_formats = renderer_get_shm_texture_formats,
-	.resource_is_wl_drm_buffer = renderer_resource_is_wl_drm_buffer,
-	.wl_drm_buffer_get_size = renderer_wl_drm_buffer_get_size,
 	.get_dmabuf_texture_formats = renderer_get_dmabuf_texture_formats,
 	.texture_from_pixels = renderer_texture_from_pixels,
-	.texture_from_wl_drm = renderer_texture_from_wl_drm,
 	.texture_from_dmabuf = renderer_texture_from_dmabuf,
 	.init_wl_display = renderer_init_wl_display,
 	.get_render_buffer_caps = renderer_get_render_buffer_caps,
