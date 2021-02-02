@@ -5,6 +5,8 @@
 #include <unistd.h>
 #include <array>
 
+#include <sys/syscall.h>
+
 #include "rendervulkan.hpp"
 #include "main.hpp"
 #include "steamcompmgr.hpp"
@@ -216,6 +218,24 @@ int32_t findMemoryType( VkMemoryPropertyFlags properties, uint32_t requiredTypeB
 	return -1;
 }
 
+// Copied from <linux/kcmp.h>
+#define KCMP_FILE 0
+
+static bool allFileDescriptorsEqual( wlr_dmabuf_attributes *pDMA )
+{
+	pid_t pid = getpid();
+	
+	for ( int i = 1; i < pDMA->n_planes; ++i )
+	{
+		// kcmp returns -1 for failures, 0 for equal, >0 for different
+		if ( pDMA->fd[0] != pDMA->fd[i] &&
+		     syscall( SYS_kcmp, pid, pid, KCMP_FILE, pDMA->fd[0], pDMA->fd[i] ) > 0 )
+			return false;
+	}
+	
+	return true;
+}
+
 bool CVulkanTexture::BInit( uint32_t width, uint32_t height, VkFormat format, createFlags flags, wlr_dmabuf_attributes *pDMA /* = nullptr */ )
 {
 	VkResult res = VK_ERROR_INITIALIZATION_FAILED;
@@ -378,7 +398,8 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, VkFormat format, cr
 	
 	if ( pDMA != nullptr )
 	{
-		assert( pDMA->n_planes == 1 || tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT );
+		assert( pDMA->n_planes == 1 ||
+		        ( tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT && allFileDescriptorsEqual( pDMA ) ) );
 
 		// Importing memory from a FD transfers ownership of the FD
 		int fd = dup( pDMA->fd[0] );
