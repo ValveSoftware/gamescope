@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="gamescope_xwayland">
+
+  <copyright>
+    Copyright © 2021 Valve Corporation
+
+    Permission is hereby granted, free of charge, to any person obtaining a
+    copy of this software and associated documentation files (the "Software"),
+    to deal in the Software without restriction, including without limitation
+    the rights to use, copy, modify, merge, publish, distribute, sublicense,
+    and/or sell copies of the Software, and to permit persons to whom the
+    Software is furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice (including the next
+    paragraph) shall be included in all copies or substantial portions of the
+    Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+    THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+    DEALINGS IN THE SOFTWARE.
+  </copyright>
+
+  <description summary="gamescope-specific xwayland protocol">
+    This is a private Gamescope protocol. Regular Wayland clients must not use
+    it.
+  </description>
+
+  <interface name="gamescope_xwayland" version="1">
+    <request name="destroy" type="destructor"></request>
+
+    <request name="override_window_content">
+      <description summary="override an X11's window wl_surface">
+        Xwayland creates a wl_surface for each X11 window. It sends a
+        WL_SURFACE_ID client message to indicate the mapping between the X11
+        windows and the wl_surface objects.
+
+        This request overrides this mapping for a given X11 window, allowing an
+        X11 client to submit buffers via the Wayland protocol. The override
+        only affects buffer submission. Everything else (e.g. input events)
+        still uses Xwayland's WL_SURFACE_ID.
+      </description>
+      <arg name="surface" type="object" interface="wl_surface" summary="Wayland surface"/>
+      <arg name="x11_window" type="uint" summary="X11 window ID"/>
+    </request>
+  </interface>
+</protocol>

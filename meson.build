@@ -77,6 +77,8 @@ else
   liftoff_dep = dependency('libliftoff')
 endif
 
+subdir('protocol')
+
 executable(
     'gamescope',
     'src/steamcompmgr.cpp',
@@ -86,6 +88,7 @@ executable(
 	'src/sdlwindow.cpp',
 	'src/vblankmanager.cpp',
 	[ 'src/rendervulkan.cpp', spirv_shader ],
+	gamescope_xwayland_proto_files,
     dependencies : [
         dep_x11, dep_xdamage, dep_xcomposite, dep_xrender, dep_xext, dep_xfixes,
         dep_xxf86vm, dep_xres, drm_dep, wayland_server, wayland_protos,
