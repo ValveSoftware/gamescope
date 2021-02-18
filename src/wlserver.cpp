@@ -9,6 +9,8 @@
 #include <string.h> 
 #include <sys/epoll.h>
 
+#include <map>
+
 #include <linux/input-event-codes.h>
 
 #include <X11/extensions/XTest.h>
@@ -34,6 +36,8 @@ extern "C" {
 #undef class
 }
 
+#include "gamescope-xwayland-protocol.h"
+
 #include "wlserver.hpp"
 #include "drm.hpp"
 #include "main.hpp"
@@ -46,6 +50,14 @@ struct wlserver_t wlserver;
 Display *g_XWLDpy;
 
 bool run = true;
+
+struct wlserver_content_override {
+	struct wlr_surface *surface;
+	uint32_t x11_window;
+	struct wl_listener surface_destroy_listener;
+};
+
+std::map<uint32_t, struct wlserver_content_override *> content_overrides;
 
 // O = hover, 1/2/3 = left/right/middle, 4 = touch passthrough
 int g_nTouchClickMode = 1;
@@ -423,7 +435,7 @@ static void wlserver_new_surface(struct wl_listener *l, void *data)
 	struct wlserver_surface *s, *tmp;
 	wl_list_for_each_safe(s, tmp, &pending_surfaces, pending_link)
 	{
-		if (s->wl_id == id)
+		if (s->wl_id == id && s->wlr == nullptr)
 		{
 			wlserver_surface_set_wlr( s, wlr_surf );
 		}
@@ -431,6 +443,57 @@ static void wlserver_new_surface(struct wl_listener *l, void *data)
 }
 
 struct wl_listener new_surface_listener = { .notify = wlserver_new_surface };
+
+static void destroy_content_override( struct wlserver_content_override *co )
+{
+	wl_list_remove( &co->surface_destroy_listener.link );
+	content_overrides.erase( co->x11_window );
+	free( co );
+}
+
+static void content_override_handle_surface_destroy( struct wl_listener *listener, void *data )
+{
+	struct wlserver_content_override *co = wl_container_of( listener, co, surface_destroy_listener );
+	destroy_content_override( co );
+}
+
+static void gamescope_xwayland_handle_override_window_content( struct wl_client *client, struct wl_resource *resource, struct wl_resource *surface_resource, uint32_t x11_window )
+{
+	struct wlr_surface *surface = wlr_surface_from_resource( surface_resource );
+
+	if ( content_overrides.count( x11_window ) ) {
+		destroy_content_override( content_overrides[ x11_window ] );
+	}
+
+	struct wlserver_content_override *co = (struct wlserver_content_override *)calloc(1, sizeof(*co));
+	co->surface = surface;
+	co->x11_window = x11_window;
+	co->surface_destroy_listener.notify = content_override_handle_surface_destroy;
+	wl_signal_add( &surface->events.destroy, &co->surface_destroy_listener );
+	content_overrides[ x11_window ] = co;
+}
+
+static void gamescope_xwayland_handle_destroy( struct wl_client *client, struct wl_resource *resource )
+{
+	wl_resource_destroy( resource );
+}
+
+static const struct gamescope_xwayland_interface gamescope_xwayland_impl = {
+	.destroy = gamescope_xwayland_handle_destroy,
+	.override_window_content = gamescope_xwayland_handle_override_window_content,
+};
+
+static void gamescope_xwayland_bind( struct wl_client *client, void *data, uint32_t version, uint32_t id )
+{
+	struct wl_resource *resource = wl_resource_create( client, &gamescope_xwayland_interface, version, id );
+	wl_resource_set_implementation( resource, &gamescope_xwayland_impl, NULL, NULL );
+}
+
+static void create_gamescope_xwayland( void )
+{
+	uint32_t version = 1;
+	wl_global_create( wlserver.wl_display, &gamescope_xwayland_interface, version, NULL, gamescope_xwayland_bind );
+}
 
 int wlserver_init(int argc, char **argv, bool bIsNested) {
 	bool bIsDRM = bIsNested == false;
@@ -491,6 +554,8 @@ int wlserver_init(int argc, char **argv, bool bIsNested) {
 	wlserver.wlr.compositor = wlr_compositor_create(wlserver.wl_display, wlserver.wlr.renderer);
 
 	wl_signal_add( &wlserver.wlr.compositor->events.new_surface, &new_surface_listener );
+
+	create_gamescope_xwayland();
 	
 	struct wlr_xwayland_server_options xwayland_options = {
 		.lazy = false,
@@ -669,7 +734,7 @@ static void handle_surface_destroy( struct wl_listener *l, void *data )
 {
 	struct wlserver_surface *surf = wl_container_of( l, surf, destroy );
 	wlserver_surface_finish( surf );
-	wlserver_surface_init( surf );
+	wlserver_surface_init( surf, surf->x11_id );
 }
 
 static void wlserver_surface_set_wlr( struct wlserver_surface *surf, struct wlr_surface *wlr_surf )
@@ -690,9 +755,10 @@ static void wlserver_surface_set_wlr( struct wlserver_surface *surf, struct wlr_
 	}
 }
 
-void wlserver_surface_init( struct wlserver_surface *surf )
+void wlserver_surface_init( struct wlserver_surface *surf, long x11_id )
 {
 	surf->wl_id = 0;
+	surf->x11_id = x11_id;
 	surf->wlr = nullptr;
 	wl_list_init( &surf->pending_link );
 	wl_list_init( &surf->destroy.link );
@@ -708,11 +774,20 @@ void wlserver_surface_set_wl_id( struct wlserver_surface *surf, long id )
 	wl_list_insert( &pending_surfaces, &surf->pending_link );
 	wl_list_init( &surf->destroy.link );
 
-	struct wl_resource *resource = wl_client_get_object(wlserver.wlr.xwayland_server->client, id);
-	if ( resource != nullptr )
+	struct wlr_surface *wlr_surf = nullptr;
+	if ( content_overrides.count( surf->x11_id ) )
 	{
-		wlserver_surface_set_wlr( surf, wlr_surface_from_resource(resource) );
+		wlr_surf = content_overrides[ surf->x11_id ]->surface;
 	}
+	else
+	{
+		struct wl_resource *resource = wl_client_get_object( wlserver.wlr.xwayland_server->client, id );
+		if ( resource != nullptr )
+			wlr_surf = wlr_surface_from_resource( resource );
+	}
+
+	if ( wlr_surf != nullptr )
+		wlserver_surface_set_wlr( surf, wlr_surf );
 }
 
 void wlserver_surface_finish( struct wlserver_surface *surf )

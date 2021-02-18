@@ -1922,7 +1922,7 @@ add_win (Display *dpy, Window id, Window prev, unsigned long sequence)
 
 	new_win->mouseMoved = False;
 
-	wlserver_surface_init( &new_win->surface );
+	wlserver_surface_init( &new_win->surface, id );
 
 	new_win->next = *p;
 	*p = new_win;
