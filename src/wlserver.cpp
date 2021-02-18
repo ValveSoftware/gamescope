@@ -587,6 +587,8 @@ int wlserver_init(int argc, char **argv, bool bIsNested) {
 
 	wlr_log(WLR_INFO, "Running compositor on wayland display '%s'", wayland_display_name);
 
+	setenv("GAMESCOPE_WAYLAND_DISPLAY", wayland_display_name, 1);
+
 	if (!wlr_backend_start( wlserver.wlr.multi_backend ))
 	{
 		wlr_log(WLR_ERROR, "Failed to start backend");
