@@ -75,7 +75,7 @@ liftoff_proj = subproject('libliftoff', required: false, default_options:
 if liftoff_proj.found()
   liftoff_dep = liftoff_proj.get_variable('liftoff')
 else
-  liftoff_dep = dependency('liftoff')
+  liftoff_dep = dependency('libliftoff')
 endif
 
 executable(
