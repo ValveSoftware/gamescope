@@ -236,6 +236,35 @@ static bool allFileDescriptorsEqual( wlr_dmabuf_attributes *pDMA )
 	return true;
 }
 
+static VkResult getModifierProps( const VkImageCreateInfo *imageInfo, uint64_t modifier, VkExternalImageFormatProperties *externalFormatProps)
+{
+	VkPhysicalDeviceImageDrmFormatModifierInfoEXT modifierFormatInfo = {};
+	VkPhysicalDeviceExternalImageFormatInfo externalImageFormatInfo = {};
+	VkPhysicalDeviceImageFormatInfo2 imageFormatInfo = {};
+	VkImageFormatProperties2 imageProps = {};
+
+	modifierFormatInfo.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_DRM_FORMAT_MODIFIER_INFO_EXT;
+	modifierFormatInfo.drmFormatModifier = modifier;
+	modifierFormatInfo.sharingMode = imageInfo->sharingMode;
+
+	externalImageFormatInfo.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_IMAGE_FORMAT_INFO;
+	externalImageFormatInfo.pNext = &modifierFormatInfo;
+	externalImageFormatInfo.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
+
+	imageFormatInfo.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2;
+	imageFormatInfo.pNext = &externalImageFormatInfo;
+	imageFormatInfo.format = imageInfo->format;
+	imageFormatInfo.type = imageInfo->imageType;
+	imageFormatInfo.tiling = VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT;
+	imageFormatInfo.usage = imageInfo->usage;
+	imageFormatInfo.flags = imageInfo->flags;
+
+	imageProps.sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2;
+	imageProps.pNext = externalFormatProps;
+
+	return vkGetPhysicalDeviceImageFormatProperties2(physicalDevice, &imageFormatInfo, &imageProps);
+}
+
 bool CVulkanTexture::BInit( uint32_t width, uint32_t height, VkFormat format, createFlags flags, wlr_dmabuf_attributes *pDMA /* = nullptr */ )
 {
 	VkResult res = VK_ERROR_INITIALIZATION_FAILED;
@@ -268,6 +297,7 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, VkFormat format, cr
 	VkExternalMemoryImageCreateInfo externalImageCreateInfo = {};
 	VkImageDrmFormatModifierExplicitCreateInfoEXT modifierInfo = {};
 	VkSubresourceLayout modifierPlaneLayouts[4] = {};
+	VkImageDrmFormatModifierListCreateInfoEXT modifierListInfo = {};
 	
 	VkImageCreateInfo imageInfo = {};
 	imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -283,42 +313,20 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, VkFormat format, cr
 	imageInfo.usage = usage;
 	imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
 	imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-	
+
 	if ( pDMA != nullptr )
 	{
 		assert( format == DRMFormatToVulkan( pDMA->format ) );
 	}
-	
+
 	if ( g_vulkanSupportsModifiers && pDMA && pDMA->modifier != DRM_FORMAT_MOD_INVALID )
 	{
-		VkPhysicalDeviceImageDrmFormatModifierInfoEXT modifierFormatInfo = {};
-		VkPhysicalDeviceExternalImageFormatInfo externalImageFormatInfo = {};
-		VkPhysicalDeviceImageFormatInfo2 imageFormatInfo = {};
 		VkExternalImageFormatProperties externalImageProperties = {};
-		VkImageFormatProperties2 imageProperties = {};
-		
-		modifierFormatInfo.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_DRM_FORMAT_MODIFIER_INFO_EXT;
-		modifierFormatInfo.drmFormatModifier = pDMA->modifier;
-		modifierFormatInfo.sharingMode = imageInfo.sharingMode;
-
-		externalImageFormatInfo.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_IMAGE_FORMAT_INFO;
-		externalImageFormatInfo.pNext = &modifierFormatInfo;
-		externalImageFormatInfo.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
-
-		imageFormatInfo.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2;
-		imageFormatInfo.pNext = &externalImageFormatInfo;
-		imageFormatInfo.format = imageInfo.format;
-		imageFormatInfo.type = imageInfo.imageType;
-		imageFormatInfo.tiling = VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT;
-		imageFormatInfo.usage = imageInfo.usage;
-		imageFormatInfo.flags = imageInfo.flags;
-		
 		externalImageProperties.sType = VK_STRUCTURE_TYPE_EXTERNAL_IMAGE_FORMAT_PROPERTIES;
-
-		imageProperties.sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2;
-		imageProperties.pNext = &externalImageProperties;
-		
-		if ( vkGetPhysicalDeviceImageFormatProperties2(physicalDevice, &imageFormatInfo, &imageProperties) == VK_SUCCESS &&
+		res = getModifierProps( &imageInfo, pDMA->modifier, &externalImageProperties );
+		if ( res != VK_SUCCESS && res != VK_ERROR_FORMAT_NOT_SUPPORTED )
+			return false;
+		if ( res == VK_SUCCESS &&
 		     ( externalImageProperties.externalMemoryProperties.externalMemoryFeatures & VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT ) )
 		{
 			modifierInfo.sType = VK_STRUCTURE_TYPE_IMAGE_DRM_FORMAT_MODIFIER_EXPLICIT_CREATE_INFO_EXT;
@@ -326,19 +334,57 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, VkFormat format, cr
 			modifierInfo.drmFormatModifier = pDMA->modifier;
 			modifierInfo.drmFormatModifierPlaneCount = pDMA->n_planes;
 			modifierInfo.pPlaneLayouts = modifierPlaneLayouts;
-		
+
 			for ( int i = 0; i < pDMA->n_planes; ++i )
 			{
 				modifierPlaneLayouts[i].offset = pDMA->offset[i];
 				modifierPlaneLayouts[i].rowPitch = pDMA->stride[i];
 			}
-		
+
 			imageInfo.pNext = &modifierInfo;
-		
+
 			imageInfo.tiling = tiling = VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT;
 		}
 	}
-	
+
+	std::vector<uint64_t> modifiers = {};
+	if ( flags.bFlippable == true && g_vulkanSupportsModifiers && !pDMA )
+	{
+		uint32_t drmFormat = VulkanFormatToDRM( format );
+		assert( drmFormat != DRM_FORMAT_INVALID );
+		const struct wlr_drm_format *drmFormatDesc = wlr_drm_format_set_get( &g_DRM.plane_formats, drmFormat );
+		assert( drmFormatDesc != nullptr );
+
+		for ( size_t i = 0; i < drmFormatDesc->len; i++ )
+		{
+			uint64_t modifier = drmFormatDesc->modifiers[i];
+
+			VkExternalImageFormatProperties externalFormatProps = {};
+			externalFormatProps.sType = VK_STRUCTURE_TYPE_EXTERNAL_IMAGE_FORMAT_PROPERTIES;
+			res = getModifierProps( &imageInfo, modifier, &externalFormatProps );
+			if ( res == VK_ERROR_FORMAT_NOT_SUPPORTED )
+				continue;
+			else if ( res != VK_SUCCESS )
+				return false;
+
+			if ( !( externalFormatProps.externalMemoryProperties.externalMemoryFeatures & VK_EXTERNAL_MEMORY_FEATURE_EXPORTABLE_BIT ) )
+				continue;
+
+			modifiers.push_back( modifier );
+		}
+
+		assert( modifiers.size() > 0 );
+
+		modifierListInfo.sType = VK_STRUCTURE_TYPE_IMAGE_DRM_FORMAT_MODIFIER_LIST_CREATE_INFO_EXT;
+		modifierListInfo.pNext = imageInfo.pNext;
+		modifierListInfo.pDrmFormatModifiers = modifiers.data();
+		modifierListInfo.drmFormatModifierCount = modifiers.size();
+
+		imageInfo.pNext = &modifierListInfo;
+
+		imageInfo.tiling = tiling = VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT;
+	}
+
 	if ( flags.bFlippable == true && tiling != VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT )
 	{
 		// We want to scan-out the image
