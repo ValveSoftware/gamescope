@@ -450,8 +450,7 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, VkFormat format, cr
 	{
 		// TODO: multi-planar DISTINCT DMA-BUFs support (see vkBindImageMemory2
 		// and VkBindImagePlaneMemoryInfo)
-		assert( pDMA->n_planes == 1 ||
-		        ( tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT && allFileDescriptorsEqual( pDMA ) ) );
+		assert( pDMA->n_planes == 1 || allFileDescriptorsEqual( pDMA ) );
 
 		// Importing memory from a FD transfers ownership of the FD
 		int fd = dup( pDMA->fd[0] );
