@@ -5,8 +5,6 @@
 #include <unistd.h>
 #include <array>
 
-#include <sys/syscall.h>
-
 #include "rendervulkan.hpp"
 #include "main.hpp"
 #include "steamcompmgr.hpp"
@@ -218,21 +216,24 @@ int32_t findMemoryType( VkMemoryPropertyFlags properties, uint32_t requiredTypeB
 	return -1;
 }
 
-// Copied from <linux/kcmp.h>
-#define KCMP_FILE 0
-
-static bool allFileDescriptorsEqual( wlr_dmabuf_attributes *pDMA )
+static bool allPlaneHandlesEqual( struct wlr_dmabuf_attributes *pDMA )
 {
-	pid_t pid = getpid();
-	
-	for ( int i = 1; i < pDMA->n_planes; ++i )
+	uint32_t handle = 0;
+
+	for ( int i = 0; i < pDMA->n_planes; ++i )
 	{
-		// kcmp returns -1 for failures, 0 for equal, >0 for different
-		if ( pDMA->fd[0] != pDMA->fd[i] &&
-		     syscall( SYS_kcmp, pid, pid, KCMP_FILE, pDMA->fd[0], pDMA->fd[i] ) > 0 )
+		// TODO: cleanup handles, but need to be careful wrt. handle
+		// ref'counting
+		uint32_t h = 0;
+		if ( drmPrimeFDToHandle( g_DRM.fd, pDMA->fd[i], &h ) != 0 )
+			return false;
+
+		if ( handle == 0 )
+			handle = h;
+		else if ( handle != h )
 			return false;
 	}
-	
+
 	return true;
 }
 
@@ -401,7 +402,7 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, VkFormat format, cr
 		// TODO: multi-planar DISTINCT DMA-BUFs support (see vkBindImageMemory2
 		// and VkBindImagePlaneMemoryInfo)
 		assert( pDMA->n_planes == 1 ||
-		        ( tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT && allFileDescriptorsEqual( pDMA ) ) );
+		        ( tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT && allPlaneHandlesEqual( pDMA ) ) );
 
 		// Importing memory from a FD transfers ownership of the FD
 		int fd = dup( pDMA->fd[0] );
