@@ -1339,8 +1339,11 @@ is_focus_priority_greater( win *a, win *b )
 	if ( !win_skip_taskbar_and_pager( a ) && win_skip_taskbar_and_pager ( b ) )
 		return true;
 
-	if ( a->damage_sequence > b->damage_sequence )
-		return true;
+	if ( a->gameID)
+	{
+		if (a->damage_sequence > b->damage_sequence)
+			return true;
+	}
 
 	return false;
 }
