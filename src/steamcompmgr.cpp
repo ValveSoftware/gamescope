@@ -1307,6 +1307,12 @@ check_wlr_surface_deleted ( win *w )
 }
 
 static bool
+win_has_game_id( win *w )
+{
+	return w->gameID != 0;
+}
+
+static bool
 win_is_override_redirect( win *w )
 {
 	return w->a.override_redirect && !w->ignoreOverrideRedirect;
@@ -1318,31 +1324,43 @@ win_skip_taskbar_and_pager( win *w )
 	return w->skipTaskbar && w->skipPager;
 }
 
-// Returns true if a's focus priority > b's.
+/* Returns true if a's focus priority > b's.
+ *
+ * This function establishes a list of criteria to decide which window should
+ * have focus. The first criteria has higher priority. If the first criteria
+ * is a tie, fallback to the second one, then the third, and so on.
+ *
+ * The general workflow is:
+ *
+ *     if ( windows don't have the same criteria value )
+ *         return true if a should be focused;
+ *     // This is a tie, fallback to the next criteria
+ */
 static bool
 is_focus_priority_greater( win *a, win *b )
 {
-	if ( !a->gameID && b->gameID )
-		return false;
+	if ( win_has_game_id( a ) != win_has_game_id ( b ) )
+		return win_has_game_id( a );
 
 	// We allow using an override redirect window in some cases, but if we have
 	// a choice between two windows we always prefer the non-override redirect
 	// one.
-	if ( win_is_override_redirect( a ) && !win_is_override_redirect( b ) )
-		return false;
+	if ( win_is_override_redirect( a ) != win_is_override_redirect( b ) )
+		return !win_is_override_redirect( a );
 
-	if ( a->wantsUnfocus && !b->wantsUnfocus )
-		return false;
+	if ( a->wantsUnfocus != b->wantsUnfocus )
+		return !a->wantsUnfocus;
 
 	// Wine sets SKIP_TASKBAR and SKIP_PAGER hints for WS_EX_NOACTIVATE windows.
 	// See https://github.com/Plagman/gamescope/issues/87
-	if ( win_skip_taskbar_and_pager( a ) && !win_skip_taskbar_and_pager ( b ) )
-		return false;
+	if ( win_skip_taskbar_and_pager( a ) != win_skip_taskbar_and_pager ( b ) )
+		return !win_skip_taskbar_and_pager( a );
 
-	if ( a->damage_sequence < b->damage_sequence )
-		return false;
+	// The damage sequences are only relevant for game windows.
+	if ( win_has_game_id( a ) && a->damage_sequence != b->damage_sequence )
+		return a->damage_sequence > b->damage_sequence;
 
-	return true;
+	return false;
 }
 
 static void
