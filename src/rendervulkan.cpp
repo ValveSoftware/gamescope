@@ -117,6 +117,8 @@ std::vector< VulkanSamplerCacheEntry_t > g_vecVulkanSamplerCache;
 
 VulkanTexture_t g_emptyTex;
 
+static struct wlr_drm_format_set sampledDRMFormats = {};
+
 #define MAX_DEVICE_COUNT 8
 #define MAX_QUEUE_COUNT 8
 
@@ -628,6 +630,76 @@ CVulkanTexture::~CVulkanTexture( void )
 	m_bInitialized = false;
 }
 
+void init_formats()
+{
+	for ( size_t i = 0; s_DRMVKFormatTable[i].DRMFormat != DRM_FORMAT_INVALID; i++ )
+	{
+		VkFormat format = s_DRMVKFormatTable[i].vkFormat;
+		uint32_t drmFormat = s_DRMVKFormatTable[i].DRMFormat;
+
+		// First, check whether the Vulkan format is supported
+		VkPhysicalDeviceImageFormatInfo2 imageFormatInfo = {};
+		imageFormatInfo.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2;
+		imageFormatInfo.format = format;
+		imageFormatInfo.type = VK_IMAGE_TYPE_2D;
+		imageFormatInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+		imageFormatInfo.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
+		imageFormatInfo.flags = 0;
+		VkImageFormatProperties2 imageFormatProps = {};
+		imageFormatProps.sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2;
+		VkResult res = vkGetPhysicalDeviceImageFormatProperties2( physicalDevice, &imageFormatInfo, &imageFormatProps );
+		if ( res == VK_ERROR_FORMAT_NOT_SUPPORTED )
+		{
+			continue;
+		}
+		else if ( res != VK_SUCCESS )
+		{
+			fprintf( stderr, "vkGetPhysicalDeviceImageFormatProperties2 failed for DRM format 0x%" PRIX32 "\n", drmFormat );
+			continue;
+		}
+
+		if ( !g_vulkanSupportsModifiers )
+		{
+			if ( BIsNested() == false && !wlr_drm_format_set_has( &g_DRM.formats, drmFormat, DRM_FORMAT_MOD_INVALID ) )
+			{
+				continue;
+			}
+			wlr_drm_format_set_add( &sampledDRMFormats, drmFormat, DRM_FORMAT_MOD_INVALID );
+			continue;
+		}
+
+		// Then, collect the list of modifiers supported for sampled usage
+		VkDrmFormatModifierPropertiesListEXT modifierPropList = {};
+		modifierPropList.sType = VK_STRUCTURE_TYPE_DRM_FORMAT_MODIFIER_PROPERTIES_LIST_EXT;
+		VkFormatProperties2 formatProps = {};
+		formatProps.sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2;
+		formatProps.pNext = &modifierPropList;
+		vkGetPhysicalDeviceFormatProperties2( physicalDevice, format, &formatProps );
+
+		if ( modifierPropList.drmFormatModifierCount == 0 )
+		{
+			fprintf( stderr, "vkGetPhysicalDeviceFormatProperties2 returned zero modifiers for DRM format 0x%" PRIX32 "\n", drmFormat );
+			continue;
+		}
+
+		std::vector<VkDrmFormatModifierPropertiesEXT> modifierProps(modifierPropList.drmFormatModifierCount);
+		modifierPropList.pDrmFormatModifierProperties = modifierProps.data();
+		vkGetPhysicalDeviceFormatProperties2( physicalDevice, format, &formatProps );
+
+		for ( size_t j = 0; j < modifierProps.size(); j++ )
+		{
+			if ( ( modifierProps[j].drmFormatModifierTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT ) == 0 )
+			{
+				continue;
+			}
+			if ( BIsNested() == false && !wlr_drm_format_set_has( &g_DRM.formats, drmFormat, modifierProps[j].drmFormatModifier ) )
+			{
+				continue;
+			}
+			wlr_drm_format_set_add( &sampledDRMFormats, drmFormat, modifierProps[j].drmFormatModifier );
+		}
+	}
+}
 
 int init_device()
 {
@@ -699,6 +771,8 @@ retry:
 		     VK_EXT_IMAGE_DRM_FORMAT_MODIFIER_EXTENSION_NAME) == 0 )
 			g_vulkanSupportsModifiers = true;
 	}
+
+	init_formats();
 
 	float queuePriorities = 1.0f;
 
@@ -2005,4 +2079,102 @@ int vulkan_get_texture_fence( VulkanTexture_t vulkanTex )
 	}
 
 	return pTex->m_FD;
+}
+
+
+static void renderer_begin( struct wlr_renderer *renderer, uint32_t width, uint32_t height )
+{
+	abort(); // unreachable
+}
+
+static void renderer_end( struct wlr_renderer *renderer )
+{
+	abort(); // unreachable
+}
+
+static void renderer_clear( struct wlr_renderer *renderer, const float color[4] )
+{
+	abort(); // unreachable
+}
+
+static void renderer_scissor( struct wlr_renderer *renderer, struct wlr_box *box )
+{
+	abort(); // unreachable
+}
+
+static bool renderer_render_subtexture_with_matrix( struct wlr_renderer *renderer, struct wlr_texture *texture, const struct wlr_fbox *box, const float matrix[9], float alpha )
+{
+	abort(); // unreachable
+}
+
+static void renderer_render_quad_with_matrix( struct wlr_renderer *renderer, const float color[4], const float matrix[9] )
+{
+	abort(); // unreachable
+}
+
+static void renderer_render_ellipse_with_matrix( struct wlr_renderer *renderer, const float color[4], const float matrix[9] )
+{
+	abort(); // unreachable
+}
+
+static const enum wl_shm_format *renderer_get_shm_texture_formats( struct wlr_renderer *wlr_renderer, size_t *len
+ )
+{
+	VulkanRenderer_t *renderer = (VulkanRenderer_t *) wlr_renderer;
+	return wlr_renderer_get_shm_texture_formats( renderer->parent, len );
+}
+
+static struct wlr_texture *renderer_texture_from_pixels( struct wlr_renderer *wlr_renderer, enum wl_shm_format shmFormat, uint32_t stride, uint32_t width, uint32_t height, const void *src )
+{
+	VulkanRenderer_t *renderer = (VulkanRenderer_t *) wlr_renderer;
+	return wlr_texture_from_pixels( renderer->parent, shmFormat, stride, width, height, src );
+}
+
+static bool renderer_init_wl_display( struct wlr_renderer *wlr_renderer, struct wl_display *wl_display )
+{
+	VulkanRenderer_t *renderer = (VulkanRenderer_t *) wlr_renderer;
+	struct wlr_egl *egl = wlr_gles2_renderer_get_egl( renderer->parent );
+	if ( !wlr_egl_bind_display( egl, wl_display ) )
+	{
+		return false;
+	}
+	if ( wlr_linux_dmabuf_v1_create( wl_display, wlr_renderer ) == nullptr )
+	{
+		return false;
+	}
+	return true;
+}
+
+static const struct wlr_drm_format_set *renderer_get_dmabuf_texture_formats( struct wlr_renderer *wlr_renderer )
+{
+	return &sampledDRMFormats;
+}
+
+static struct wlr_texture *renderer_texture_from_dmabuf( struct wlr_renderer *wlr_renderer, struct wlr_dmabuf_attributes *dmabuf )
+{
+	VulkanRenderer_t *renderer = (VulkanRenderer_t *) wlr_renderer;
+	return wlr_texture_from_dmabuf( renderer->parent, dmabuf );
+}
+
+static const struct wlr_renderer_impl renderer_impl = {
+	.begin = renderer_begin,
+	.end = renderer_end,
+	.clear = renderer_clear,
+	.scissor = renderer_scissor,
+	.render_subtexture_with_matrix = renderer_render_subtexture_with_matrix,
+	.render_quad_with_matrix = renderer_render_quad_with_matrix,
+	.render_ellipse_with_matrix = renderer_render_ellipse_with_matrix,
+	.get_shm_texture_formats = renderer_get_shm_texture_formats,
+	.get_dmabuf_texture_formats = renderer_get_dmabuf_texture_formats,
+	.texture_from_pixels = renderer_texture_from_pixels,
+	.texture_from_dmabuf = renderer_texture_from_dmabuf,
+	.init_wl_display = renderer_init_wl_display,
+};
+
+struct wlr_renderer *vulkan_renderer_create( struct wlr_renderer *parent )
+{
+	VulkanRenderer_t *renderer = new VulkanRenderer_t();
+	wlr_renderer_init(&renderer->base, &renderer_impl);
+	renderer->parent = parent;
+	return &renderer->base;
 }

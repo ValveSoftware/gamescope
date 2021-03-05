@@ -49,11 +49,22 @@ struct Composite_t
 #include <vector>
 
 extern "C" {
+#define static
+#include <wlr/types/wlr_linux_dmabuf_v1.h>
 #include <wlr/render/dmabuf.h>
+#include <wlr/render/gles2.h>
+#include <wlr/render/interface.h>
+#undef static
 }
 
 #include <vulkan/vulkan.h>
 #include <drm_fourcc.h>
+
+struct VulkanRenderer_t
+{
+	struct wlr_renderer base;
+	struct wlr_renderer *parent;
+};
 
 class CVulkanTexture
 {
@@ -122,3 +133,5 @@ void vulkan_present_to_window( void );
 
 void vulkan_garbage_collect( void );
 bool vulkan_remake_swapchain( void );
+
+struct wlr_renderer *vulkan_renderer_create( struct wlr_renderer *parent );
