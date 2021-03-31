@@ -539,7 +539,7 @@ int init_drm(struct drm_t *drm, const char *device, const char *mode_str, unsign
 	}
 
 	if (g_bUseLayers) {
-		liftoff_log_init(g_bDebugLayers ? LIFTOFF_DEBUG : LIFTOFF_ERROR, NULL);
+		liftoff_log_set_priority(g_bDebugLayers ? LIFTOFF_DEBUG : LIFTOFF_ERROR);
 	}
 
 	drm->lo_device = liftoff_device_create( drm->fd );
