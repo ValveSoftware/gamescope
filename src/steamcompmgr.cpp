@@ -133,8 +133,7 @@ typedef struct _win {
 
 	Bool mouseMoved;
 
-	long int WLsurfaceID;
-	struct wlr_surface *wlrsurface;
+	struct wlserver_surface surface;
 
 	std::vector< commit_t > commit_queue;
 } win;
@@ -270,8 +269,6 @@ static Bool		useXRes = False;
 
 std::mutex wayland_commit_lock;
 std::vector<ResListEntry_t> wayland_commit_queue;
-
-std::vector< wlr_surface * > wayland_surfaces_deleted;
 
 // poor man's semaphore
 class sem
@@ -546,7 +543,7 @@ static win * find_win( struct wlr_surface *surf )
 
 	for (w = list; w; w = w->next)
 	{
-		if ( w->wlrsurface == surf )
+		if ( w->surface.wlr == surf )
 			return w;
 	}
 
@@ -1296,21 +1293,6 @@ paint_all(Display *dpy, MouseCursor *cursor)
 	gpuvis_trace_printf( "paint_all %i layers, composite %i", (int)composite.nLayerCount, bDoComposite );
 }
 
-static void
-check_wlr_surface_deleted ( win *w )
-{
-	for ( uint32_t i = 0; i < wayland_surfaces_deleted.size(); i++ )
-	{
-		if ( wayland_surfaces_deleted[ i ] == w->wlrsurface )
-		{
-			wayland_surfaces_deleted.erase( wayland_surfaces_deleted.begin() + i );
-			w->wlrsurface = nullptr;
-
-			break;
-		}
-	}
-}
-
 static bool
 win_has_game_id( win *w )
 {
@@ -1502,16 +1484,14 @@ determine_and_apply_focus (Display *dpy, MouseCursor *cursor)
 			set_win_hidden( dpy, find_win(dpy, currentInputFocusWindow), True );
 		}
 
-		if ( focus->wlrsurface != nullptr )
+		if ( focus->surface.wlr != nullptr )
 		{
 			wlserver_lock();
 
-			check_wlr_surface_deleted( focus );
-
-			if ( focus->wlrsurface != nullptr )
+			if ( focus->surface.wlr != nullptr )
 			{
-				wlserver_keyboardfocus( focus->wlrsurface );
-				wlserver_mousefocus( focus->wlrsurface );
+				wlserver_keyboardfocus( focus->surface.wlr );
+				wlserver_mousefocus( focus->surface.wlr );
 			}
 
 			wlserver_unlock();
@@ -1942,8 +1922,7 @@ add_win (Display *dpy, Window id, Window prev, unsigned long sequence)
 
 	new_win->mouseMoved = False;
 
-	new_win->WLsurfaceID = 0;
-	new_win->wlrsurface = NULL;
+	wlserver_surface_init( &new_win->surface );
 
 	new_win->next = *p;
 	*p = new_win;
@@ -2074,14 +2053,9 @@ finish_destroy_win (Display *dpy, Window id, Bool gone)
 				w->damage = None;
 			}
 
-			if ( w->wlrsurface != nullptr )
-			{
-				wlserver_lock();
-
-				check_wlr_surface_deleted( w );
-
-				wlserver_unlock();
-			}
+			wlserver_lock();
+			wlserver_surface_finish( &w->surface );
+			wlserver_unlock();
 
 			free(w->title);
 			delete w;
@@ -2142,24 +2116,13 @@ handle_wl_surface_id(win *w, long surfaceID)
 
 	wlserver_lock();
 
-	surface = wlserver_get_surface( surfaceID );
+	wlserver_surface_set_id( &w->surface, surfaceID );
 
+	surface = w->surface.wlr;
 	if ( surface == NULL )
 	{
-		// We'll retry next time
-		w->WLsurfaceID = surfaceID;
-
 		wlserver_unlock();
 		return;
-	}
-
-	for ( uint32_t i = 0; i < wayland_surfaces_deleted.size(); i++ )
-	{
-		if ( wayland_surfaces_deleted[ i ] == surface )
-		{
-			wayland_surfaces_deleted.erase( wayland_surfaces_deleted.begin() + i );
-			w->WLsurfaceID = 0;
-		}
 	}
 
 	// If we already focused on our side and are handling this late,
@@ -2174,8 +2137,6 @@ handle_wl_surface_id(win *w, long surfaceID)
 	xwayland_surface_role_commit( surface );
 
 	wlserver_unlock();
-
-	w->wlrsurface = surface;
 }
 
 static void
@@ -3227,23 +3188,6 @@ steamcompmgr_main (int argc, char **argv)
 				currentOutputHeight = g_nOutputHeight;
 			}
 
-			// See if we have surfaceIDs we need to handle late
-			for (win *w = list; w; w = w->next)
-			{
-				if ( w->wlrsurface == NULL && w->WLsurfaceID != 0 )
-				{
-					handle_wl_surface_id( w, w->WLsurfaceID );
-
-					if ( w->wlrsurface != NULL )
-					{
-						// Got it now.
-						w->WLsurfaceID = 0;
-
-						fprintf ( stderr, "handled late WLSurfaceID\n" );
-					}
-				}
-			}
-
 			handle_done_commits();
 
 			check_new_wayland_res();
@@ -3274,16 +3218,14 @@ steamcompmgr_main (int argc, char **argv)
 			{
 				for (win *w = list; w; w = w->next)
 				{
-					if ( w->wlrsurface != nullptr )
+					if ( w->surface.wlr != nullptr )
 					{
 						// Acknowledge commit once.
 						wlserver_lock();
 
-						check_wlr_surface_deleted( w );
-
-						if ( w->wlrsurface != nullptr )
+						if ( w->surface.wlr != nullptr )
 						{
-							wlserver_send_frame_done(w->wlrsurface, &now);
+							wlserver_send_frame_done(w->surface.wlr, &now);
 						}
 
 						wlserver_unlock();

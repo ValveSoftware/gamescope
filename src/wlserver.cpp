@@ -50,6 +50,10 @@ bool run = true;
 // O = hover, 1/2/3 = left/right/middle, 4 = touch passthrough
 int g_nTouchClickMode = 1;
 
+static struct wl_list pending_surfaces = {0};
+
+static void wlserver_surface_set_wlr( struct wlserver_surface *surf, struct wlr_surface *wlr_surf );
+
 void sig_handler(int signal)
 {
 	if ( signal == SIGUSR2 )
@@ -411,18 +415,27 @@ static void wlserver_new_input(struct wl_listener *listener, void *data)
 
 struct wl_listener new_input_listener = { .notify = wlserver_new_input };
 
-static void wlserver_surface_destroy( struct wl_listener *listener, void *data )
+static void wlserver_new_surface(struct wl_listener *l, void *data)
 {
-	wlr_surface *surf = (wlr_surface*)data;
-	wayland_surfaces_deleted.push_back( surf );
+	struct wlr_surface *wlr_surf = (struct wlr_surface *)data;
+	uint32_t id = wl_resource_get_id(wlr_surf->resource);
 
-	wl_list_remove( &listener->link );
-	delete listener;
-	surf->data = nullptr;
+	struct wlserver_surface *s, *tmp;
+	wl_list_for_each_safe(s, tmp, &pending_surfaces, pending_link)
+	{
+		if (s->id == id)
+		{
+			wlserver_surface_set_wlr( s, wlr_surf );
+		}
+	}
 }
+
+struct wl_listener new_surface_listener = { .notify = wlserver_new_surface };
 
 int wlserver_init(int argc, char **argv, bool bIsNested) {
 	bool bIsDRM = bIsNested == false;
+
+	wl_list_init(&pending_surfaces);
 
 	wlr_log_init(WLR_DEBUG, NULL);
 	wlserver.wl_display = wl_display_create();
@@ -476,6 +489,8 @@ int wlserver_init(int argc, char **argv, bool bIsNested) {
 	wlr_renderer_init_wl_display(wlserver.wlr.renderer, wlserver.wl_display);
 
 	wlserver.wlr.compositor = wlr_compositor_create(wlserver.wl_display, wlserver.wlr.renderer);
+
+	wl_signal_add( &wlserver.wlr.compositor->events.new_surface, &new_surface_listener );
 	
 	struct wlr_xwayland_server_options xwayland_options = {
 		.lazy = false,
@@ -645,37 +660,65 @@ void wlserver_send_frame_done( struct wlr_surface *surf, const struct timespec *
 	wlr_surface_send_frame_done( surf, when );
 }
 
-struct wlr_surface *wlserver_get_surface( long surfaceID )
-{
-	struct wlr_surface *ret = NULL;
-
-	struct wl_resource *resource = wl_client_get_object(wlserver.wlr.xwayland_server->client, surfaceID);
-	if (resource) {
-		ret = wlr_surface_from_resource(resource);
-	}
-	else
-	{
-		return NULL;
-	}
-	
-	if ( !wlr_surface_set_role(ret, &xwayland_surface_role, NULL, NULL, 0 ) )
-	{
-		fprintf (stderr, "Failed to set xwayland surface role");
-		return NULL;
-	}
-
-	struct wl_listener *pListener = new struct wl_listener;
-	pListener->notify = wlserver_surface_destroy;
-	pListener->link.next = nullptr;
-	pListener->link.prev = nullptr;
-
-	wl_signal_add( &ret->events.destroy, pListener );
-	ret->data = pListener;
-	
-	return ret;
-}
-
 const char *wlserver_get_nested_display( void )
 {
 	return wlserver.wlr.xwayland_server->display_name;
+}
+
+static void handle_surface_destroy( struct wl_listener *l, void *data )
+{
+	struct wlserver_surface *surf = wl_container_of( l, surf, destroy );
+	wlserver_surface_finish( surf );
+	wlserver_surface_init( surf );
+}
+
+static void wlserver_surface_set_wlr( struct wlserver_surface *surf, struct wlr_surface *wlr_surf )
+{
+	assert( surf->id != 0 );
+
+	wl_list_remove( &surf->pending_link );
+	wl_list_init( &surf->pending_link );
+
+	surf->destroy.notify = handle_surface_destroy;
+	wl_signal_add( &wlr_surf->events.destroy, &surf->destroy );
+
+	surf->wlr = wlr_surf;
+
+	if ( !wlr_surface_set_role(wlr_surf, &xwayland_surface_role, NULL, NULL, 0 ) )
+	{
+		fprintf (stderr, "Failed to set xwayland surface role");
+	}
+}
+
+void wlserver_surface_init( struct wlserver_surface *surf )
+{
+	surf->id = 0;
+	surf->wlr = nullptr;
+	wl_list_init( &surf->pending_link );
+	wl_list_init( &surf->destroy.link );
+}
+
+void wlserver_surface_set_id( struct wlserver_surface *surf, long id )
+{
+	assert( surf->id == 0 );
+
+	surf->id = id;
+	surf->wlr = nullptr;
+
+	wl_list_insert( &pending_surfaces, &surf->pending_link );
+	wl_list_init( &surf->destroy.link );
+
+	struct wl_resource *resource = wl_client_get_object(wlserver.wlr.xwayland_server->client, id);
+	if ( resource != nullptr )
+	{
+		wlserver_surface_set_wlr( surf, wlr_surface_from_resource(resource) );
+	}
+}
+
+void wlserver_surface_finish( struct wlserver_surface *surf )
+{
+	surf->id = 0;
+	surf->wlr = nullptr;
+	wl_list_remove( &surf->pending_link );
+	wl_list_remove( &surf->destroy.link );
 }

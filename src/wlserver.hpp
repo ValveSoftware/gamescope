@@ -3,6 +3,7 @@
 #pragma once
 
 #include <wayland-server-core.h>
+#include <atomic>
 
 #define WLSERVER_BUTTON_COUNT 4
 #define WLSERVER_TOUCH_COUNT 11 // Ten fingers + nose ought to be enough for anyone
@@ -82,6 +83,19 @@ void wlserver_mousebutton( int button, bool press, uint32_t time );
 void wlserver_mousewheel( int x, int y, uint32_t time );
 
 void wlserver_send_frame_done( struct wlr_surface *surf, const struct timespec *when );
-struct wlr_surface *wlserver_get_surface( long surfaceID );
 
 const char *wlserver_get_nested_display( void );
+
+struct wlserver_surface
+{
+	std::atomic<struct wlr_surface *> wlr;
+
+	// owned by wlserver
+	long id;
+	struct wl_list pending_link;
+	struct wl_listener destroy;
+};
+
+void wlserver_surface_init( struct wlserver_surface *surf );
+void wlserver_surface_set_id( struct wlserver_surface *surf, long id );
+void wlserver_surface_finish( struct wlserver_surface *surf );
