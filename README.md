@@ -13,7 +13,7 @@ It also runs on top of a regular desktop, the 'nested' usecase steamcompmgr didn
 
 It runs on Mesa+AMDGPU, and could be made to run on other Mesa/DRM drivers with minimal work. Can support NVIDIA if/when they support accelerated Xwayland.
 
-If running RadeonSI clients with older cards (GFX8 and below), currently have to set `R600_DEBUG=nodcc`, or corruption will be observed until the stack picks up DRM modifiers support.
+If running RadeonSI clients with older cards (GFX8 and below) or older Mesa version (21.0 and below), currently have to set `R600_DEBUG=nodcc`, or corruption will be observed until the stack picks up DRM modifiers support.
 
 ## Building
 
