@@ -2116,7 +2116,7 @@ handle_wl_surface_id(win *w, long surfaceID)
 
 	wlserver_lock();
 
-	wlserver_surface_set_id( &w->surface, surfaceID );
+	wlserver_surface_set_wl_id( &w->surface, surfaceID );
 
 	surface = w->surface.wlr;
 	if ( surface == NULL )

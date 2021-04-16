@@ -91,11 +91,11 @@ struct wlserver_surface
 	std::atomic<struct wlr_surface *> wlr;
 
 	// owned by wlserver
-	long id;
+	long wl_id;
 	struct wl_list pending_link;
 	struct wl_listener destroy;
 };
 
 void wlserver_surface_init( struct wlserver_surface *surf );
-void wlserver_surface_set_id( struct wlserver_surface *surf, long id );
+void wlserver_surface_set_wl_id( struct wlserver_surface *surf, long id );
 void wlserver_surface_finish( struct wlserver_surface *surf );

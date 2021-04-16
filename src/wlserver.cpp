@@ -423,7 +423,7 @@ static void wlserver_new_surface(struct wl_listener *l, void *data)
 	struct wlserver_surface *s, *tmp;
 	wl_list_for_each_safe(s, tmp, &pending_surfaces, pending_link)
 	{
-		if (s->id == id)
+		if (s->wl_id == id)
 		{
 			wlserver_surface_set_wlr( s, wlr_surf );
 		}
@@ -674,7 +674,7 @@ static void handle_surface_destroy( struct wl_listener *l, void *data )
 
 static void wlserver_surface_set_wlr( struct wlserver_surface *surf, struct wlr_surface *wlr_surf )
 {
-	assert( surf->id != 0 );
+	assert( surf->wl_id != 0 );
 
 	wl_list_remove( &surf->pending_link );
 	wl_list_init( &surf->pending_link );
@@ -692,17 +692,17 @@ static void wlserver_surface_set_wlr( struct wlserver_surface *surf, struct wlr_
 
 void wlserver_surface_init( struct wlserver_surface *surf )
 {
-	surf->id = 0;
+	surf->wl_id = 0;
 	surf->wlr = nullptr;
 	wl_list_init( &surf->pending_link );
 	wl_list_init( &surf->destroy.link );
 }
 
-void wlserver_surface_set_id( struct wlserver_surface *surf, long id )
+void wlserver_surface_set_wl_id( struct wlserver_surface *surf, long id )
 {
-	assert( surf->id == 0 );
+	assert( surf->wl_id == 0 );
 
-	surf->id = id;
+	surf->wl_id = id;
 	surf->wlr = nullptr;
 
 	wl_list_insert( &pending_surfaces, &surf->pending_link );
@@ -717,7 +717,7 @@ void wlserver_surface_set_id( struct wlserver_surface *surf, long id )
 
 void wlserver_surface_finish( struct wlserver_surface *surf )
 {
-	surf->id = 0;
+	surf->wl_id = 0;
 	surf->wlr = nullptr;
 	wl_list_remove( &surf->pending_link );
 	wl_list_remove( &surf->destroy.link );
