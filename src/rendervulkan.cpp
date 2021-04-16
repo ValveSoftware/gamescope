@@ -825,6 +825,9 @@ retry:
 			g_vulkanSupportsModifiers = true;
 	}
 
+	fprintf( stderr, "Vulkan %s DRM format modifiers\n",
+			g_vulkanSupportsModifiers ? "supports" : "does not support" );
+
 	init_formats();
 
 	float queuePriorities = 1.0f;
