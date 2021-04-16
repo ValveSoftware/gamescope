@@ -674,7 +674,7 @@ static void handle_surface_destroy( struct wl_listener *l, void *data )
 
 static void wlserver_surface_set_wlr( struct wlserver_surface *surf, struct wlr_surface *wlr_surf )
 {
-	assert( surf->wl_id != 0 );
+	assert( surf->wlr == nullptr );
 
 	wl_list_remove( &surf->pending_link );
 	wl_list_init( &surf->pending_link );
