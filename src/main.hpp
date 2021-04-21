@@ -1,6 +1,6 @@
 #pragma once
 
-#define GAMESCOPE_OPTIONS ":R:T:C:w:h:W:H:r:o:NFSvVecsdlnbfx"
+#define GAMESCOPE_OPTIONS ":R:T:C:w:h:W:H:r:o:NFSvVecsdLnbfx"
 
 int initOutput(void);
 

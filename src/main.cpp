@@ -92,8 +92,8 @@ int main(int argc, char **argv)
 			case 's':
 				bSleepAtStartup = true;
 				break;
-			case 'l':
-				g_bUseLayers = true;
+			case 'L':
+				g_bUseLayers = false;
 				break;
 			case 'd':
 				g_bDebugLayers = true;
