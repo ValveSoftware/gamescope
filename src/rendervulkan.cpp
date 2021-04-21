@@ -938,11 +938,7 @@ retry:
 			k_nMaxSets * 1,
 		},
 		{
-			VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-			k_nMaxSets * k_nMaxLayers,
-		},
-		{
-			VK_DESCRIPTOR_TYPE_SAMPLER,
+			VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 			k_nMaxSets * k_nMaxLayers,
 		},
 	};
@@ -975,29 +971,23 @@ retry:
 	vecLayoutBindings.push_back( descriptorSetLayoutBindings ); // first binding is target storage image
 	
 	descriptorSetLayoutBindings.binding = 1;
+	descriptorSetLayoutBindings.descriptorCount = 1;
 	descriptorSetLayoutBindings.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
 	
 	vecLayoutBindings.push_back( descriptorSetLayoutBindings ); // second binding is composite description buffer
 	
-	for ( uint32_t i = 0; i < k_nMaxLayers; i++ )
-	{
-		descriptorSetLayoutBindings.binding = 2 + ( i * 2 );
-		descriptorSetLayoutBindings.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-		
-		vecLayoutBindings.push_back( descriptorSetLayoutBindings );
-		
-		descriptorSetLayoutBindings.binding = 2 + ( i * 2 ) + 1;
-		descriptorSetLayoutBindings.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
-		
-		vecLayoutBindings.push_back( descriptorSetLayoutBindings );
-	}
+	descriptorSetLayoutBindings.binding = 2;
+	descriptorSetLayoutBindings.descriptorCount = k_nMaxLayers;
+	descriptorSetLayoutBindings.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+
+	vecLayoutBindings.push_back( descriptorSetLayoutBindings );
 	
 	VkDescriptorSetLayoutCreateInfo descriptorSetLayoutCreateInfo =
 	{
 		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
 		.pNext = nullptr,
 		.flags = 0,
-		.bindingCount = 2 + ( k_nMaxLayers * 2 ),
+		.bindingCount = (uint32_t)vecLayoutBindings.size(),
 		.pBindings = vecLayoutBindings.data()
 	};
 	
@@ -1785,6 +1775,7 @@ void vulkan_update_descriptor( struct VulkanPipeline_t *pPipeline )
 		vkUpdateDescriptorSets(device, 1, &writeDescriptorSet, 0, nullptr);
 	}
 	
+	std::array< VkDescriptorImageInfo, k_nMaxLayers > imageDescriptors;
 	for ( uint32_t i = 0; i < k_nMaxLayers; i++ )
 	{
 		VkSampler sampler = VK_NULL_HANDLE;
@@ -1824,48 +1815,29 @@ void vulkan_update_descriptor( struct VulkanPipeline_t *pPipeline )
 
 		{
 			VkDescriptorImageInfo imageInfo = {
+				.sampler = sampler,
 				.imageView = pTex->m_vkImageView,
-				// TODO figure out what it is exactly for the wayland surfaces
 				.imageLayout = VK_IMAGE_LAYOUT_GENERAL,
 			};
-			
-			VkWriteDescriptorSet writeDescriptorSet = {
-				.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-				.pNext = nullptr,
-				.dstSet = descriptorSet,
-				.dstBinding = 2 + (i * 2),
-				.dstArrayElement = 0,
-				.descriptorCount = 1,
-				.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-				.pImageInfo = &imageInfo,
-				.pBufferInfo = nullptr,
-				.pTexelBufferView = nullptr,
-			};
-			
-			vkUpdateDescriptorSets(device, 1, &writeDescriptorSet, 0, nullptr);
-		}
-		
-		{
-			VkDescriptorImageInfo imageInfo = {
-				.sampler = sampler,
-			};
-			
-			VkWriteDescriptorSet writeDescriptorSet = {
-				.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-				.pNext = nullptr,
-				.dstSet = descriptorSet,
-				.dstBinding = 2 + (i * 2) + 1,
-				.dstArrayElement = 0,
-				.descriptorCount = 1,
-				.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER,
-				.pImageInfo = &imageInfo,
-				.pBufferInfo = nullptr,
-				.pTexelBufferView = nullptr,
-			};
-			
-			vkUpdateDescriptorSets(device, 1, &writeDescriptorSet, 0, nullptr);
+
+			imageDescriptors[ i ] = imageInfo;
 		}
 	}
+
+	VkWriteDescriptorSet writeDescriptorSet = {
+		.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+		.pNext = nullptr,
+		.dstSet = descriptorSet,
+		.dstBinding = 2,
+		.dstArrayElement = 0,
+		.descriptorCount = imageDescriptors.size(),
+		.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+		.pImageInfo = imageDescriptors.data(),
+		.pBufferInfo = nullptr,
+		.pTexelBufferView = nullptr,
+	};
+
+	vkUpdateDescriptorSets(device, 1, &writeDescriptorSet, 0, nullptr);
 }
 
 bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *pPipeline, bool bScreenshot )

@@ -61,7 +61,7 @@ shadercompiler = find_program('glslangValidator')
 
 spirv_shader = custom_target('shader_target',
   output : 'composite.h',
-  input : 'src/composite.comp.hlsl',
+  input : 'src/composite.comp',
   command : [
     shadercompiler, '-V', '-e', 'main', '--vn',
     'composite_spv', '@INPUT@', '-o', '@OUTPUT@'

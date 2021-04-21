@@ -1,0 +1,58 @@
+#version 450
+
+#extension GL_EXT_scalar_block_layout : require
+
+layout(
+  local_size_x = 8,
+  local_size_y = 8,
+  local_size_z = 1) in;
+
+const int MaxLayers = 4;
+
+layout(constant_id = 0) const int  c_layerCount   = 1;
+layout(constant_id = 1) const bool c_swapChannels = false;
+
+layout(binding = 0, rgba8) writeonly uniform image2D dst;
+
+layout(std430, binding = 1)
+uniform layers_t {
+    vec2 u_scale[MaxLayers];
+    vec2 u_offset[MaxLayers];
+    float u_opacity[MaxLayers];
+};
+
+layout(binding = 2) uniform sampler2D s_samplers[MaxLayers];
+
+vec4 sampleLayer(uint layerIdx, vec2 uv) {
+    vec2 coord = (uv + u_offset[layerIdx]) * u_scale[layerIdx];
+    return texture(s_samplers[layerIdx], coord);
+}
+
+void main() {
+    uvec2 coord = uvec2(gl_GlobalInvocationID.x, gl_GlobalInvocationID.y);
+    uvec2 outSize = imageSize(dst);
+
+    if (coord.x >= outSize.x || coord.y >= outSize.y)
+        return;
+
+    vec2 uv = vec2(coord);
+    vec4 outputValue = vec4(0.0f);
+
+    if (c_layerCount > 0)
+        outputValue = sampleLayer(0, uv);
+
+    for (int i = 1; i < c_layerCount; i++) {
+        vec4 layerColor = sampleLayer(i, uv);
+        float layerAlpha = u_opacity[i] * layerColor.a;
+        outputValue = layerColor * layerAlpha + outputValue * (1.0f - layerAlpha);
+    }
+
+    if (c_swapChannels)
+        outputValue = outputValue.bgra;
+
+    imageStore(dst, ivec2(coord), outputValue);
+
+    // Indicator to quickly tell if we're in the compositing path or not.
+    if (false && coord.x > 50 && coord.x < 100 && coord.y > 50 && coord.y < 100)
+        imageStore(dst, ivec2(coord), vec4(1.0f, 0.0f, 1.0f, 1.0f));
+}
