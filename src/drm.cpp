@@ -856,10 +856,10 @@ drm_prepare_basic( struct drm_t *drm, struct Composite_t *pComposite, struct Vul
 						 pPipeline->layerBindings[ 0 ].surfaceWidth,
 						 pPipeline->layerBindings[ 0 ].surfaceHeight );
 
-	int64_t crtcX = pComposite->data.layers[ 0 ].flOffsetX * -1;
-	int64_t crtcY = pComposite->data.layers[ 0 ].flOffsetY * -1;
-	int64_t crtcW = pPipeline->layerBindings[ 0 ].surfaceWidth / pComposite->data.layers[ 0 ].flScaleX;
-	int64_t crtcH = pPipeline->layerBindings[ 0 ].surfaceHeight / pComposite->data.layers[ 0 ].flScaleY;
+	int64_t crtcX = pComposite->data.vOffset[ 0 ].x * -1;
+	int64_t crtcY = pComposite->data.vOffset[ 0 ].y * -1;
+	int64_t crtcW = pPipeline->layerBindings[ 0 ].surfaceWidth / pComposite->data.vScale[ 0 ].x;
+	int64_t crtcH = pPipeline->layerBindings[ 0 ].surfaceHeight / pComposite->data.vScale[ 0 ].y;
 
 	if ( g_bRotated )
 	{
@@ -905,11 +905,11 @@ drm_prepare_liftoff( struct drm_t *drm, struct Composite_t *pComposite, struct V
 			drm->fbids_in_req.push_back( pPipeline->layerBindings[ i ].fbid );
 
 			liftoff_layer_set_property( drm->lo_layers[ i ], "zpos", pPipeline->layerBindings[ i ].zpos );
-			liftoff_layer_set_property( drm->lo_layers[ i ], "alpha", pComposite->data.layers[ i ].flOpacity * 0xffff);
+			liftoff_layer_set_property( drm->lo_layers[ i ], "alpha", pComposite->data.flOpacity[ i ] * 0xffff);
 
 			if ( pPipeline->layerBindings[ i ].zpos == 0 )
 			{
-				assert( ( pComposite->data.layers[ i ].flOpacity * 0xffff ) == 0xffff );
+				assert( ( pComposite->data.flOpacity[ i ] * 0xffff ) == 0xffff );
 			}
 
 			const uint16_t srcWidth = pPipeline->layerBindings[ i ].surfaceWidth;
@@ -920,10 +920,10 @@ drm_prepare_liftoff( struct drm_t *drm, struct Composite_t *pComposite, struct V
 			liftoff_layer_set_property( drm->lo_layers[ i ], "SRC_W", srcWidth << 16);
 			liftoff_layer_set_property( drm->lo_layers[ i ], "SRC_H", srcHeight << 16);
 
-			int32_t crtcX = -pComposite->data.layers[ i ].flOffsetX;
-			int32_t crtcY = -pComposite->data.layers[ i ].flOffsetY;
-			uint64_t crtcW = srcWidth / pComposite->data.layers[ i ].flScaleX;
-			uint64_t crtcH = srcHeight / pComposite->data.layers[ i ].flScaleY;
+			int32_t crtcX = -pComposite->data.vOffset[ i ].x;
+			int32_t crtcY = -pComposite->data.vOffset[ i ].y;
+			uint64_t crtcW = srcWidth / pComposite->data.vScale[ i ].x;
+			uint64_t crtcH = srcHeight / pComposite->data.vScale[ i ].y;
 
 			if (g_bRotated) {
 				const int32_t x = crtcX;

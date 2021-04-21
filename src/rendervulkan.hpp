@@ -27,19 +27,21 @@ struct VulkanPipeline_t
 	} layerBindings[ k_nMaxLayers ];
 };
 
+struct vec2_t
+{
+	float x, y;
+};
+
 struct Composite_t
 {
 	int nLayerCount;
 	int nSwapChannels;
-	
+
 	struct CompositeData_t
 	{
-		struct
-		{
-			float flScaleX, flScaleY;
-			float flOffsetX, flOffsetY;
-			float flOpacity;
-		} layers[ k_nMaxLayers ];
+		vec2_t vScale[k_nMaxLayers];
+		vec2_t vOffset[k_nMaxLayers];
+		float flOpacity[k_nMaxLayers];
 	} data;
 };
 

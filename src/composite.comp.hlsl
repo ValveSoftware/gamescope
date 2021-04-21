@@ -4,26 +4,25 @@
 {
     float flScale0X;
     float flScale0Y;
-	float flOffset0X;
-	float flOffset0Y;
-	float flOpacity0;
-
     float flScale1X;
     float flScale1Y;
-	float flOffset1X;
-	float flOffset1Y;
-	float flOpacity1;
-
     float flScale2X;
     float flScale2Y;
-	float flOffset2X;
-	float flOffset2Y;
-	float flOpacity2;
-
     float flScale3X;
     float flScale3Y;
+
+	float flOffset0X;
+	float flOffset0Y;
+	float flOffset1X;
+	float flOffset1Y;
+	float flOffset2X;
+	float flOffset2Y;
 	float flOffset3X;
 	float flOffset3Y;
+
+	float flOpacity0;
+	float flOpacity1;
+	float flOpacity2;
 	float flOpacity3;
 }
 
