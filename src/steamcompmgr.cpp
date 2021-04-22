@@ -3175,9 +3175,10 @@ steamcompmgr_main (int argc, char **argv)
 			{
 				if ( BIsNested() == true )
 				{
-					bool bRet = vulkan_remake_swapchain();
+					vulkan_remake_swapchain();
 
-					assert( bRet == true );
+					while ( !acquire_next_image() )
+						vulkan_remake_swapchain();
 				}
 				else
 				{

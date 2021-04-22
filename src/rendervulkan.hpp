@@ -134,5 +134,6 @@ void vulkan_present_to_window( void );
 
 void vulkan_garbage_collect( void );
 bool vulkan_remake_swapchain( void );
+bool acquire_next_image( void );
 
 struct wlr_renderer *vulkan_renderer_create( struct wlr_renderer *parent );

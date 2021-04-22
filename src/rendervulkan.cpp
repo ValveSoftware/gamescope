@@ -1175,9 +1175,10 @@ void fini_device()
 	vkDestroyDevice(device, 0);
 }
 
-void acquire_next_image( void )
+bool acquire_next_image( void )
 {
-	vkAcquireNextImageKHR( device, g_output.swapChain, UINT64_MAX, VK_NULL_HANDLE, VK_NULL_HANDLE, &g_output.nSwapChainImageIndex );
+	VkResult res = vkAcquireNextImageKHR( device, g_output.swapChain, UINT64_MAX, VK_NULL_HANDLE, VK_NULL_HANDLE, &g_output.nSwapChainImageIndex );
+	return res == VK_SUCCESS || res == VK_SUBOPTIMAL_KHR;
 }
 
 void vulkan_present_to_window( void )
@@ -1193,9 +1194,11 @@ void vulkan_present_to_window( void )
 	
 	presentInfo.pImageIndices = &g_output.nSwapChainImageIndex;
 	
-	vkQueuePresentKHR( queue, &presentInfo );
+	if ( vkQueuePresentKHR( queue, &presentInfo ) != VK_SUCCESS )
+		vulkan_remake_swapchain();
 	
-	acquire_next_image();
+	while ( !acquire_next_image() )
+		vulkan_remake_swapchain();
 }
 
 bool vulkan_make_swapchain( VulkanOutput_t *pOutput )
@@ -1267,8 +1270,6 @@ bool vulkan_make_swapchain( VulkanOutput_t *pOutput )
 			return false;
 	}
 	
-	acquire_next_image();
-	
 	return true;
 }
 
@@ -1296,7 +1297,9 @@ bool vulkan_remake_swapchain( void )
 		pOutput->pScreenshotImage = nullptr;
 	}
 	
-	return ( vulkan_make_swapchain( &g_output ) );
+	bool bRet = vulkan_make_swapchain( &g_output );
+	assert( bRet ); // Something has gone horribly wrong!
+	return bRet;
 }
 
 bool vulkan_make_output( VulkanOutput_t *pOutput )
@@ -1353,9 +1356,11 @@ bool vulkan_make_output( VulkanOutput_t *pOutput )
 				return false;
 		}
 		
-		bool bRet = vulkan_make_swapchain( pOutput );
-		
-		assert( bRet == true );
+		if ( !vulkan_make_swapchain( pOutput ) )
+			return false;
+
+		while ( !acquire_next_image() )
+			vulkan_remake_swapchain();
 	}
 	else
 	{
