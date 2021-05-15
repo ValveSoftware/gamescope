@@ -7,6 +7,7 @@
 typedef uint32_t VulkanTexture_t;
 
 #define k_nMaxLayers 4
+#define k_nMaxYcbcrMask 16
 
 // These two structs are horrible
 struct VulkanPipeline_t
@@ -36,6 +37,7 @@ struct Composite_t
 {
 	int nLayerCount;
 	int nSwapChannels;
+	int nYCBCRMask;
 
 	struct CompositeData_t
 	{
@@ -112,6 +114,8 @@ public:
 	VulkanTexture_t handle = 0;
 
 	void *m_pMappedData = nullptr;
+
+	VkFormat m_format = VK_FORMAT_UNDEFINED;
 };
 
 extern std::vector< const char * > g_vecSDLInstanceExts;

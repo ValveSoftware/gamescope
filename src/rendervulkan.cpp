@@ -80,7 +80,7 @@ VkDescriptorSetLayout descriptorSetLayout;
 VkPipelineLayout pipelineLayout;
 VkDescriptorSet descriptorSet;
 
-std::array<std::array<VkPipeline, 2>, k_nMaxLayers> pipelines;
+std::array<std::array<std::array<VkPipeline, k_nMaxYcbcrMask>, 2>, k_nMaxLayers> pipelines;
 
 VkBuffer uploadBuffer;
 VkDeviceMemory uploadBufferMemory;
@@ -429,6 +429,8 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, VkFormat format, cr
 		imageInfo.pNext = &externalImageCreateInfo;
 	}
 	
+	m_format = imageInfo.format;
+
 	if (vkCreateImage(device, &imageInfo, nullptr, &m_vkImage) != VK_SUCCESS) {
 		fprintf( stderr, "vkCreateImage failed\n" );
 		return false;
@@ -986,7 +988,7 @@ retry:
 		},
 		{
 			VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-			k_nMaxSets * k_nMaxLayers,
+			2 * k_nMaxSets * k_nMaxLayers,
 		},
 	};
 	
@@ -1005,6 +1007,56 @@ retry:
 	{
 		return false;
 	}
+
+	VkFormatProperties nv12Properties;
+	vkGetPhysicalDeviceFormatProperties(physicalDevice, VK_FORMAT_G8_B8R8_2PLANE_420_UNORM, &nv12Properties);
+	bool cosited = nv12Properties.optimalTilingFeatures & VK_FORMAT_FEATURE_COSITED_CHROMA_SAMPLES_BIT;
+
+	VkSamplerYcbcrConversionCreateInfo ycbcrSamplerConversionCreateInfo = 
+	{
+		.sType = VK_STRUCTURE_TYPE_SAMPLER_YCBCR_CONVERSION_CREATE_INFO,
+		.pNext = nullptr,
+		.format = VK_FORMAT_G8_B8R8_2PLANE_420_UNORM,
+		.ycbcrModel = VK_SAMPLER_YCBCR_MODEL_CONVERSION_YCBCR_709,
+		.ycbcrRange = VK_SAMPLER_YCBCR_RANGE_ITU_NARROW,
+		.xChromaOffset = cosited ? VK_CHROMA_LOCATION_COSITED_EVEN : VK_CHROMA_LOCATION_MIDPOINT,
+		.yChromaOffset = cosited ? VK_CHROMA_LOCATION_COSITED_EVEN : VK_CHROMA_LOCATION_MIDPOINT,
+		.chromaFilter = VK_FILTER_LINEAR,
+		.forceExplicitReconstruction = VK_FALSE,
+	};
+
+	VkSamplerYcbcrConversion ycbcrConversion;
+	vkCreateSamplerYcbcrConversion( device, &ycbcrSamplerConversionCreateInfo, nullptr, &ycbcrConversion );
+
+	VkSampler ycbcrSampler = VK_NULL_HANDLE;
+
+	VkSamplerYcbcrConversionInfo ycbcrSamplerConversionInfo = {
+		.sType = VK_STRUCTURE_TYPE_SAMPLER_YCBCR_CONVERSION_INFO,
+		.pNext = nullptr,
+		.conversion = ycbcrConversion,
+	};
+
+	VkSamplerCreateInfo ycbcrSamplerInfo = {
+		.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+		.pNext = &ycbcrSamplerConversionInfo,
+		.magFilter = VK_FILTER_LINEAR,
+		.minFilter = VK_FILTER_LINEAR,
+		// Using clamp to edge here for now, otherwise we end up with a
+		// 1/2 pixel of green on the left and top of the screen due to
+		// the texel replacement happening before the YCbCr conversion.
+
+		// TODO: Find out why we are even hitting the border in the first place,
+		// maybe there is some weird half-texel stuff somewhere in Gamescope causing this,
+		// I imagine if this was more obvious it would affect games too.
+		.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+		.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+		.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK,
+		.unnormalizedCoordinates = VK_TRUE,
+	};
+	
+	vkCreateSampler( device, &ycbcrSamplerInfo, nullptr, &ycbcrSampler );
+
+	std::array<VkSampler, k_nMaxLayers> ycbcrSamplers = {ycbcrSampler, ycbcrSampler, ycbcrSampler, ycbcrSampler};
 	
 	std::vector< VkDescriptorSetLayoutBinding > vecLayoutBindings;
 	VkDescriptorSetLayoutBinding descriptorSetLayoutBindings =
@@ -1026,6 +1078,13 @@ retry:
 	descriptorSetLayoutBindings.binding = 2;
 	descriptorSetLayoutBindings.descriptorCount = k_nMaxLayers;
 	descriptorSetLayoutBindings.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+
+	vecLayoutBindings.push_back( descriptorSetLayoutBindings );
+
+	descriptorSetLayoutBindings.binding = 6;
+	descriptorSetLayoutBindings.descriptorCount = k_nMaxLayers;
+	descriptorSetLayoutBindings.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+	descriptorSetLayoutBindings.pImmutableSamplers = ycbcrSamplers.data();
 
 	vecLayoutBindings.push_back( descriptorSetLayoutBindings );
 	
@@ -1062,7 +1121,7 @@ retry:
 		return false;
 	}
 
-	const std::array<VkSpecializationMapEntry, 2> specializationEntries = {{
+	const std::array<VkSpecializationMapEntry, 3> specializationEntries = {{
 		{
 			.constantID = 0,
 			.offset     = 0,
@@ -1073,46 +1132,55 @@ retry:
 			.offset     = sizeof(uint32_t),
 			.size       = sizeof(VkBool32)
 		},
+		{
+			.constantID = 2,
+			.offset     = sizeof(uint32_t) + sizeof(uint32_t),
+			.size       = sizeof(uint32_t)
+		},
 	}};
 	
 	for (uint32_t layerCount = 0; layerCount < k_nMaxLayers; layerCount++) {
 		for (VkBool32 swapChannels = 0; swapChannels < 2; swapChannels++) {
-			struct {
-				uint32_t layerCount;
-				VkBool32 swapChannels;
-			} specializationData = {
-				.layerCount   = layerCount + 1,
-				.swapChannels = swapChannels
-			};
+			for (uint32_t ycbcrMask = 0; ycbcrMask < k_nMaxYcbcrMask; ycbcrMask++) {
+				struct {
+					uint32_t layerCount;
+					VkBool32 swapChannels;
+					uint32_t ycbcrMask;
+				} specializationData = {
+					.layerCount   = layerCount + 1,
+					.swapChannels = swapChannels,
+					.ycbcrMask    = ycbcrMask,
+				};
 
-			VkSpecializationInfo specializationInfo = {
-				.mapEntryCount = uint32_t(specializationEntries.size()),
-				.pMapEntries   = specializationEntries.data(),
-				.dataSize      = sizeof(specializationData),
-				.pData		   = &specializationData,
-			};
+				VkSpecializationInfo specializationInfo = {
+					.mapEntryCount = uint32_t(specializationEntries.size()),
+					.pMapEntries   = specializationEntries.data(),
+					.dataSize      = sizeof(specializationData),
+					.pData		   = &specializationData,
+				};
 
-			VkComputePipelineCreateInfo computePipelineCreateInfo = {
-				VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
-				0,
-				0,
-				{
-					VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+				VkComputePipelineCreateInfo computePipelineCreateInfo = {
+					VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
 					0,
 					0,
-					VK_SHADER_STAGE_COMPUTE_BIT,
-					shaderModule,
-					"main",
-					&specializationInfo
-				},
-				pipelineLayout,
-				0,
-				0
-			};
+					{
+						VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+						0,
+						0,
+						VK_SHADER_STAGE_COMPUTE_BIT,
+						shaderModule,
+						"main",
+						&specializationInfo
+					},
+					pipelineLayout,
+					0,
+					0
+				};
 
-			res = vkCreateComputePipelines(device, 0, 1, &computePipelineCreateInfo, 0, &pipelines[layerCount][swapChannels]);
-			if (res != VK_SUCCESS)
-				return false;
+				res = vkCreateComputePipelines(device, 0, 1, &computePipelineCreateInfo, 0, &pipelines[layerCount][swapChannels][ycbcrMask]);
+				if (res != VK_SUCCESS)
+					return false;
+			}
 		}
 	}
 	
@@ -1793,7 +1861,7 @@ VkSampler vulkan_make_sampler( struct VulkanPipeline_t::LayerBinding_t *pBinding
 	return ret;
 }
 
-void vulkan_update_descriptor( struct VulkanPipeline_t *pPipeline )
+void vulkan_update_descriptor( struct VulkanPipeline_t *pPipeline, int nYCBCRMask )
 {
 	{
 		VkImageView targetImageView;
@@ -1877,7 +1945,9 @@ void vulkan_update_descriptor( struct VulkanPipeline_t *pPipeline )
 		}
 	}
 
-	VkWriteDescriptorSet writeDescriptorSet = {
+	std::array< VkWriteDescriptorSet, 2 > writeDescriptorSets;
+
+	writeDescriptorSets[0] = {
 		.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 		.pNext = nullptr,
 		.dstSet = descriptorSet,
@@ -1890,7 +1960,36 @@ void vulkan_update_descriptor( struct VulkanPipeline_t *pPipeline )
 		.pTexelBufferView = nullptr,
 	};
 
-	vkUpdateDescriptorSets(device, 1, &writeDescriptorSet, 0, nullptr);
+	if ( nYCBCRMask != 0 )
+	{
+		// Duplicate image descriptors for ycbcr.
+		std::array< VkDescriptorImageInfo, k_nMaxLayers > ycbcrImageDescriptors;
+		for (uint32_t i = 0; i < k_nMaxLayers; i++)
+		{
+			ycbcrImageDescriptors[i] = imageDescriptors[i];
+			// We use immutable samplers.
+			ycbcrImageDescriptors[i].sampler = VK_NULL_HANDLE;
+		}
+
+		writeDescriptorSets[1] = {
+			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+			.pNext = nullptr,
+			.dstSet = descriptorSet,
+			.dstBinding = 6,
+			.dstArrayElement = 0,
+			.descriptorCount = ycbcrImageDescriptors.size(),
+			.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+			.pImageInfo = ycbcrImageDescriptors.data(),
+			.pBufferInfo = nullptr,
+			.pTexelBufferView = nullptr,
+		};
+
+		vkUpdateDescriptorSets(device, 2, writeDescriptorSets.data(), 0, nullptr);
+	}
+	else
+	{
+		vkUpdateDescriptorSets(device, 1, writeDescriptorSets.data(), 0, nullptr);
+	}
 }
 
 bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *pPipeline, bool bScreenshot )
@@ -1911,6 +2010,17 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 		}
 	}
 	
+	pComposite->nYCBCRMask = 0;
+	for (uint32_t i = 0; i < k_nMaxLayers; i++)
+	{
+		if ( pPipeline->layerBindings[ i ].tex != 0 )
+		{
+			CVulkanTexture *pTex = g_mapVulkanTextures[ pPipeline->layerBindings[ i ].tex ];
+			if (pTex->m_format == VK_FORMAT_G8_B8R8_2PLANE_420_UNORM)
+				pComposite->nYCBCRMask |= 1 << i;
+		}
+	}
+
 	// Sample a bit closer to texel centers in most cases
 	// TODO: probably actually need to apply a general scale/bias to properly
 	// sample from the center in all four corners in all scaling scenarios
@@ -1925,7 +2035,7 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 	
 	assert ( g_output.fence == VK_NULL_HANDLE );
 	
-	vulkan_update_descriptor( pPipeline );
+	vulkan_update_descriptor( pPipeline, pComposite->nYCBCRMask );
 	
 	VkCommandBuffer curCommandBuffer = g_output.commandBuffers[ g_output.nCurCmdBuffer ];
 	
@@ -1950,7 +2060,7 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 		return false;
 	}
 	
-	vkCmdBindPipeline(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelines[pComposite->nLayerCount - 1][pComposite->nSwapChannels]);
+	vkCmdBindPipeline(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelines[pComposite->nLayerCount - 1][pComposite->nSwapChannels][pComposite->nYCBCRMask]);
 	
 	vkCmdBindDescriptorSets(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE,
 							pipelineLayout, 0, 1, &descriptorSet, 0, 0);

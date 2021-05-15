@@ -11,6 +11,7 @@ const int MaxLayers = 4;
 
 layout(constant_id = 0) const int  c_layerCount   = 1;
 layout(constant_id = 1) const bool c_swapChannels = false;
+layout(constant_id = 2) const uint c_ycbcrMask    = 0;
 
 layout(binding = 0, rgba8) writeonly uniform image2D dst;
 
@@ -23,9 +24,15 @@ uniform layers_t {
 
 layout(binding = 2) uniform sampler2D s_samplers[MaxLayers];
 
+layout(binding = 6) uniform sampler2D s_ycbcr_samplers[MaxLayers];
+
 vec4 sampleLayer(uint layerIdx, vec2 uv) {
     vec2 coord = (uv + u_offset[layerIdx]) * u_scale[layerIdx];
-    return texture(s_samplers[layerIdx], coord);
+
+    if ((c_ycbcrMask & (1 << layerIdx)) != 0)
+        return texture(s_ycbcr_samplers[layerIdx], coord);
+    else
+        return texture(s_samplers[layerIdx], coord);
 }
 
 void main() {
