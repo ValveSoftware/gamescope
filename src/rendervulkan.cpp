@@ -24,7 +24,7 @@ const VkApplicationInfo appInfo = {
 	.applicationVersion = VK_MAKE_VERSION(1, 0, 0),
 	.pEngineName = "just some code",
 	.engineVersion = VK_MAKE_VERSION(1, 0, 0),
-	.apiVersion = VK_API_VERSION_1_0,
+	.apiVersion = VK_API_VERSION_1_1,
 };
 
 std::vector< const char * > g_vecSDLInstanceExts;
@@ -801,6 +801,14 @@ void init_formats()
 	fprintf( stderr, "\n" );
 }
 
+static bool is_vulkan_1_1_device(VkPhysicalDevice device)
+{
+	VkPhysicalDeviceProperties properties;
+	vkGetPhysicalDeviceProperties(device, &properties);
+
+	return properties.apiVersion >= VK_API_VERSION_1_1;
+}
+
 int init_device()
 {
 	uint32_t physicalDeviceCount = 0;
@@ -823,6 +831,9 @@ int init_device()
 retry:
 	for (uint32_t i = 0; i < physicalDeviceCount; ++i)
 	{
+		if (!is_vulkan_1_1_device(deviceHandles[i]))
+			continue;
+
 		uint32_t queueFamilyCount = 0;
 		vkGetPhysicalDeviceQueueFamilyProperties(deviceHandles[i], &queueFamilyCount, NULL);
 		queueFamilyCount = queueFamilyCount > MAX_QUEUE_COUNT ? MAX_QUEUE_COUNT : queueFamilyCount;
@@ -910,11 +921,9 @@ retry:
 		vecEnabledDeviceExtensions.push_back( VK_EXT_IMAGE_DRM_FORMAT_MODIFIER_EXTENSION_NAME );
 	}
 
-	vecEnabledDeviceExtensions.push_back( VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME );
 	vecEnabledDeviceExtensions.push_back( VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME );
 	vecEnabledDeviceExtensions.push_back( VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME );
 
-	vecEnabledDeviceExtensions.push_back( VK_KHR_EXTERNAL_FENCE_EXTENSION_NAME );
 	vecEnabledDeviceExtensions.push_back( VK_KHR_EXTERNAL_FENCE_FD_EXTENSION_NAME );
 	
 	VkDeviceCreateInfo deviceCreateInfo = {
@@ -1510,10 +1519,6 @@ int vulkan_init(void)
 	VkResult result = VK_ERROR_INITIALIZATION_FAILED;
 	
 	std::vector< const char * > vecEnabledInstanceExtensions;
-	vecEnabledInstanceExtensions.push_back( VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME );
-	vecEnabledInstanceExtensions.push_back( VK_KHR_EXTERNAL_MEMORY_CAPABILITIES_EXTENSION_NAME );
-	vecEnabledInstanceExtensions.push_back( VK_KHR_EXTERNAL_FENCE_CAPABILITIES_EXTENSION_NAME );
-	
 	vecEnabledInstanceExtensions.insert( vecEnabledInstanceExtensions.end(), g_vecSDLInstanceExts.begin(), g_vecSDLInstanceExts.end() );
 	
 	const VkInstanceCreateInfo createInfo = {
