@@ -602,17 +602,22 @@ release_commit( commit_t &commit )
 }
 
 static bool
-import_commit( struct wlr_buffer *buf, struct wlr_dmabuf_attributes *dmabuf, commit_t &commit )
+import_commit ( struct wlr_buffer *buf, commit_t &commit )
 {
 	commit.buf = buf;
 
-	if ( BIsNested() == false )
-	{
-		commit.fb_id = drm_fbid_from_dmabuf( &g_DRM, buf, dmabuf );
-	}
-
-	commit.vulkanTex = vulkan_create_texture_from_dmabuf( dmabuf );
+	commit.vulkanTex = vulkan_create_texture_from_wlr_buffer( buf );
 	assert( commit.vulkanTex != 0 );
+
+	struct wlr_dmabuf_attributes dmabuf = {0};
+	if ( BIsNested() == false && wlr_buffer_get_dmabuf( buf, &dmabuf ) )
+	{
+		commit.fb_id = drm_fbid_from_dmabuf( &g_DRM, buf, &dmabuf );
+	}
+	else
+	{
+		commit.fb_id = 0;
+	}
 
 	return true;
 }
@@ -3091,25 +3096,10 @@ void check_new_wayland_res( void )
 			continue;
 		}
 
-		struct wlr_dmabuf_attributes dmabuf = {};
-		bool result = false;
-		if ( wlr_buffer_get_dmabuf( buf, &dmabuf ) ) {
-			result = true;
-			for ( int i = 0; i < dmabuf.n_planes; i++ ) {
-				dmabuf.fd[i] = dup( dmabuf.fd[i] );
-				assert( dmabuf.fd[i] >= 0 );
-			}
-		} else {
-			struct wlr_client_buffer *client_buf = (struct wlr_client_buffer *) buf;
-			result = wlr_texture_to_dmabuf( client_buf->texture, &dmabuf );
-		}
-		assert( result == true );
-
 		commit_t newCommit = {};
-		int fence = dup( dmabuf.fd[ 0 ] );
-		assert( fence >= 0 );
-		bool bSuccess = import_commit( buf, &dmabuf, newCommit );
-		wlr_dmabuf_attributes_finish( &dmabuf );
+		int fence = -1; // TODO
+		//assert( fence >= 0 );
+		bool bSuccess = import_commit( buf, newCommit );
 
 		if ( bSuccess == true )
 		{

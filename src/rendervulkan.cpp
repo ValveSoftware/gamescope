@@ -2307,6 +2307,7 @@ uint32_t vulkan_texture_get_fbid( VulkanTexture_t vulkanTex )
 static void texture_destroy( struct wlr_texture *wlr_texture )
 {
 	VulkanWlrTexture_t *tex = (VulkanWlrTexture_t *)wlr_texture;
+	wlr_buffer_unlock( tex->buf );
 	delete tex;
 }
 
@@ -2356,23 +2357,18 @@ static const uint32_t *renderer_get_shm_texture_formats( struct wlr_renderer *wl
 	return sampledShmFormats.data();
 }
 
-static struct wlr_texture *renderer_texture_from_pixels( struct wlr_renderer *wlr_renderer, uint32_t shmFormat, uint32_t stride, uint32_t width, uint32_t height, const void *src )
-{
-	VulkanRenderer_t *renderer = (VulkanRenderer_t *) wlr_renderer;
-	return wlr_texture_from_pixels( renderer->parent, shmFormat, stride, width, height, src );
-}
-
 static const struct wlr_drm_format_set *renderer_get_dmabuf_texture_formats( struct wlr_renderer *wlr_renderer )
 {
 	return &sampledDRMFormats;
 }
 
-static struct wlr_texture *renderer_texture_from_dmabuf( struct wlr_renderer *wlr_renderer, struct wlr_dmabuf_attributes *dmabuf )
+static struct wlr_texture *renderer_texture_from_buffer( struct wlr_renderer *wlr_renderer, struct wlr_buffer *buf )
 {
 	VulkanWlrTexture_t *tex = new VulkanWlrTexture_t();
-	wlr_texture_init( &tex->base, &texture_impl, dmabuf->width, dmabuf->height );
+	wlr_texture_init( &tex->base, &texture_impl, buf->width, buf->height );
+	tex->buf = wlr_buffer_lock( buf );
 	// TODO: check format/modifier
-	// TODO: try importing it into Vulkan
+	// TODO: if DMA-BUF, try importing it into Vulkan
 	return &tex->base;
 }
 
@@ -2385,9 +2381,8 @@ static const struct wlr_renderer_impl renderer_impl = {
 	.render_quad_with_matrix = renderer_render_quad_with_matrix,
 	.get_shm_texture_formats = renderer_get_shm_texture_formats,
 	.get_dmabuf_texture_formats = renderer_get_dmabuf_texture_formats,
-	.texture_from_pixels = renderer_texture_from_pixels,
-	.texture_from_dmabuf = renderer_texture_from_dmabuf,
 	.get_render_buffer_caps = renderer_get_render_buffer_caps,
+	.texture_from_buffer = renderer_texture_from_buffer,
 };
 
 struct wlr_renderer *vulkan_renderer_create( struct wlr_renderer *parent )
@@ -2396,4 +2391,120 @@ struct wlr_renderer *vulkan_renderer_create( struct wlr_renderer *parent )
 	wlr_renderer_init(&renderer->base, &renderer_impl);
 	renderer->parent = parent;
 	return &renderer->base;
+}
+
+VulkanTexture_t vulkan_create_texture_from_wlr_buffer( struct wlr_buffer *buf )
+{
+
+	struct wlr_dmabuf_attributes dmabuf = {0};
+	if ( wlr_buffer_get_dmabuf( buf, &dmabuf ) )
+	{
+		return vulkan_create_texture_from_dmabuf( &dmabuf );
+	}
+
+	VkResult result;
+
+	void *src;
+	uint32_t drmFormat;
+	size_t stride;
+	if ( wlr_buffer_begin_data_ptr_access( buf, WLR_BUFFER_DATA_PTR_ACCESS_READ, &src, &drmFormat, &stride ) )
+	{
+		return 0;
+	}
+
+	VkFormat format = DRMFormatToVulkan( drmFormat );
+	uint32_t width = buf->width;
+	uint32_t height = buf->height;
+
+	VkBufferCreateInfo bufferCreateInfo = {};
+	bufferCreateInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+	bufferCreateInfo.size = stride * height;
+	bufferCreateInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+	VkBuffer buffer;
+	result = vkCreateBuffer( device, &bufferCreateInfo, nullptr, &buffer );
+	if ( result != VK_SUCCESS )
+	{
+		wlr_buffer_end_data_ptr_access( buf );
+		return 0;
+	}
+
+	VkMemoryRequirements memRequirements;
+	vkGetBufferMemoryRequirements(device, buffer, &memRequirements);
+
+	int memTypeIndex =  findMemoryType(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT|VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, memRequirements.memoryTypeBits );
+	if ( memTypeIndex == -1 )
+	{
+		wlr_buffer_end_data_ptr_access( buf );
+		return 0;
+	}
+
+	VkMemoryAllocateInfo allocInfo = {};
+	allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+	allocInfo.allocationSize = memRequirements.size;
+	allocInfo.memoryTypeIndex = memTypeIndex;
+
+	VkDeviceMemory bufferMemory;
+	result = vkAllocateMemory( device, &allocInfo, nullptr, &bufferMemory);
+	if ( result != VK_SUCCESS )
+	{
+		wlr_buffer_end_data_ptr_access( buf );
+		return 0;
+	}
+
+	result = vkBindBufferMemory( device, buffer, bufferMemory, 0 );
+	if ( result != VK_SUCCESS )
+	{
+		wlr_buffer_end_data_ptr_access( buf );
+		return 0;
+	}
+
+	void *dst;
+	result = vkMapMemory( device, bufferMemory, 0, VK_WHOLE_SIZE, 0, &dst );
+	if ( result != VK_SUCCESS )
+	{
+		wlr_buffer_end_data_ptr_access( buf );
+		return 0;
+	}
+
+	memcpy( dst, src, stride * height );
+
+	vkUnmapMemory( device, bufferMemory );
+
+	wlr_buffer_end_data_ptr_access( buf );
+
+	CVulkanTexture *pTex = new CVulkanTexture();
+	CVulkanTexture::createFlags texCreateFlags = {};
+	texCreateFlags.bTextureable = true;
+	texCreateFlags.bTransferDst = true;
+	if ( pTex->BInit( width, height, format, texCreateFlags ) == false )
+	{
+		delete pTex;
+		return 0;
+	}
+
+	VkCommandBuffer commandBuffer;
+	uint32_t handle = get_command_buffer( commandBuffer, nullptr );
+
+	VkBufferImageCopy region = {};
+	region.imageSubresource = {
+		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+		.layerCount = 1
+	};
+	region.imageExtent = {
+		.width = width,
+		.height = height,
+		.depth = 1
+	};
+	vkCmdCopyBufferToImage( commandBuffer, buffer, pTex->m_vkImage, VK_IMAGE_LAYOUT_GENERAL, 1, &region );
+
+	std::vector<CVulkanTexture *> refs;
+	refs.push_back( pTex );
+
+	submit_command_buffer( handle, refs );
+
+	VulkanTexture_t texid = ++g_nMaxVulkanTexHandle;
+	pTex->handle = texid;
+	g_mapVulkanTextures[ texid ] = pTex;
+
+	return texid;
 }
