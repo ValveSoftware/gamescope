@@ -2362,16 +2362,6 @@ static struct wlr_texture *renderer_texture_from_pixels( struct wlr_renderer *wl
 	return wlr_texture_from_pixels( renderer->parent, shmFormat, stride, width, height, src );
 }
 
-static bool renderer_init_wl_display( struct wlr_renderer *wlr_renderer, struct wl_display *wl_display )
-{
-	VulkanRenderer_t *renderer = (VulkanRenderer_t *) wlr_renderer;
-	if ( wlr_linux_dmabuf_v1_create( wl_display, wlr_renderer ) == nullptr )
-	{
-		return false;
-	}
-	return true;
-}
-
 static const struct wlr_drm_format_set *renderer_get_dmabuf_texture_formats( struct wlr_renderer *wlr_renderer )
 {
 	return &sampledDRMFormats;
@@ -2397,7 +2387,6 @@ static const struct wlr_renderer_impl renderer_impl = {
 	.get_dmabuf_texture_formats = renderer_get_dmabuf_texture_formats,
 	.texture_from_pixels = renderer_texture_from_pixels,
 	.texture_from_dmabuf = renderer_texture_from_dmabuf,
-	.init_wl_display = renderer_init_wl_display,
 	.get_render_buffer_caps = renderer_get_render_buffer_caps,
 };
 

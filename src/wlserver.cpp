@@ -665,6 +665,7 @@ bool wlserver_init( void ) {
 
 	wlr_renderer_init_wl_display(wlserver.wlr.renderer, wlserver.display);
 	wlr_drm_create(wlserver.display, wlserver.wlr.renderer);
+	wlr_linux_dmabuf_v1_create(wlserver.display, wlserver.wlr.renderer);
 
 	wlserver.wlr.compositor = wlr_compositor_create(wlserver.display, wlserver.wlr.renderer);
 
