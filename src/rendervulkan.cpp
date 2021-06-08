@@ -2341,11 +2341,6 @@ static void renderer_render_quad_with_matrix( struct wlr_renderer *renderer, con
 	abort(); // unreachable
 }
 
-static void renderer_render_ellipse_with_matrix( struct wlr_renderer *renderer, const float color[4], const float matrix[9] )
-{
-	abort(); // unreachable
-}
-
 static const uint32_t *renderer_get_shm_texture_formats( struct wlr_renderer *wlr_renderer, size_t *len
  )
 {
@@ -2413,7 +2408,6 @@ static const struct wlr_renderer_impl renderer_impl = {
 	.scissor = renderer_scissor,
 	.render_subtexture_with_matrix = renderer_render_subtexture_with_matrix,
 	.render_quad_with_matrix = renderer_render_quad_with_matrix,
-	.render_ellipse_with_matrix = renderer_render_ellipse_with_matrix,
 	.get_shm_texture_formats = renderer_get_shm_texture_formats,
 	.resource_is_wl_drm_buffer = renderer_resource_is_wl_drm_buffer,
 	.wl_drm_buffer_get_size = renderer_wl_drm_buffer_get_size,
