@@ -79,12 +79,13 @@ extern const struct wlr_surface_role xwayland_surface_role;
 void xwayland_surface_role_commit(struct wlr_surface *wlr_surface) {
 	assert(wlr_surface->role == &xwayland_surface_role);
 
-	if ( wlr_surface->buffer == NULL )
+	VulkanWlrTexture_t *tex = (VulkanWlrTexture_t *) wlr_surface_get_texture( wlr_surface );
+	if ( tex == NULL )
 	{
 		return;
 	}
 
-	struct wlr_buffer *buf = wlr_buffer_lock( &wlr_surface->buffer->base );
+	struct wlr_buffer *buf = wlr_buffer_lock( tex->buf );
 
 	gpuvis_trace_printf( "xwayland_surface_role_commit wlr_surface %p", wlr_surface );
 
