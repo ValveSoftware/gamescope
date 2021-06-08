@@ -2311,6 +2311,11 @@ static const struct wlr_texture_impl texture_impl = {
 	.destroy = texture_destroy,
 };
 
+static uint32_t renderer_get_render_buffer_caps( struct wlr_renderer *renderer )
+{
+	return 0;
+}
+
 static void renderer_begin( struct wlr_renderer *renderer, uint32_t width, uint32_t height )
 {
 	abort(); // unreachable
@@ -2416,6 +2421,7 @@ static const struct wlr_renderer_impl renderer_impl = {
 	.texture_from_wl_drm = renderer_texture_from_wl_drm,
 	.texture_from_dmabuf = renderer_texture_from_dmabuf,
 	.init_wl_display = renderer_init_wl_display,
+	.get_render_buffer_caps = renderer_get_render_buffer_caps,
 };
 
 struct wlr_renderer *vulkan_renderer_create( struct wlr_renderer *parent )
