@@ -2304,6 +2304,25 @@ uint32_t vulkan_texture_get_fbid( VulkanTexture_t vulkanTex )
 	return ret;
 }
 
+int vulkan_texture_get_fence( VulkanTexture_t vulkanTex )
+{
+	assert ( vulkanTex != 0 );
+
+	const VkMemoryGetFdInfoKHR memory_get_fd_info = {
+		.sType = VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR,
+		.pNext = NULL,
+		.memory = g_mapVulkanTextures[ vulkanTex ]->m_vkImageMemory,
+		.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT,
+	};
+	int fence = -1;
+	VkResult res = dyn_vkGetMemoryFdKHR(device, &memory_get_fd_info, &fence);
+	if ( res != VK_SUCCESS ) {
+		fprintf( stderr, "vkGetMemoryFdKHR failed\n" );
+	}
+
+	return fence;
+}
+
 static void texture_destroy( struct wlr_texture *wlr_texture )
 {
 	VulkanWlrTexture_t *tex = (VulkanWlrTexture_t *)wlr_texture;

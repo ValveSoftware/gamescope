@@ -3097,12 +3097,21 @@ void check_new_wayland_res( void )
 		}
 
 		commit_t newCommit = {};
-		int fence = -1; // TODO
-		//assert( fence >= 0 );
 		bool bSuccess = import_commit( buf, newCommit );
 
+		int fence = -1;
 		if ( bSuccess == true )
 		{
+			struct wlr_dmabuf_attributes dmabuf = {0};
+			if ( wlr_buffer_get_dmabuf( buf, &dmabuf ) )
+			{
+				fence = dup( dmabuf.fd[0] );
+			}
+			else
+			{
+				fence = vulkan_texture_get_fence( newCommit.vulkanTex );
+			}
+
 			newCommit.commitID = ++maxCommmitID;
 			w->commit_queue.push_back( newCommit );
 		}
