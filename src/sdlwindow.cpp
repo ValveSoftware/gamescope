@@ -13,8 +13,11 @@
 
 #include "sdlscancodetable.hpp"
 
-bool g_bSDLInitOK = false;
+#include <condition_variable>
+
+int g_iSDLInitOK = 0;
 std::mutex g_SDLInitLock;
+std::condition_variable g_SDLCondVar;
 
 bool g_bWindowShown = false;
 
@@ -64,6 +67,7 @@ void updateOutputRefresh( void )
 
 void inputSDLThreadRun( void )
 {
+	g_SDLInitLock.lock();
 	SDL_Event event;
 	SDL_Keymod mod;
 	uint32_t key;
@@ -71,7 +75,9 @@ void inputSDLThreadRun( void )
 	if ( SDL_Init( SDL_INIT_VIDEO | SDL_INIT_EVENTS ) != 0 )
 	{
 		fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
+		g_iSDLInitOK = -1;
 		g_SDLInitLock.unlock();
+		g_SDLCondVar.notify_one();
 		return;
 	}
 
@@ -102,7 +108,9 @@ void inputSDLThreadRun( void )
 	if ( g_SDLWindow == nullptr )
 	{
 		fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
+		g_iSDLInitOK = -1;
 		g_SDLInitLock.unlock();
+		g_SDLCondVar.notify_one();
 		return;
 	}
 
@@ -117,8 +125,9 @@ void inputSDLThreadRun( void )
 
 	g_nOldNestedRefresh = g_nNestedRefresh;
 	
-	g_bSDLInitOK = true;
+	g_iSDLInitOK = 1;
 	g_SDLInitLock.unlock();
+	g_SDLCondVar.notify_one();
 	
 	while( SDL_WaitEvent( &event ) )
 	{
@@ -210,15 +219,14 @@ client:
 
 bool sdlwindow_init( void )
 {
-	g_SDLInitLock.lock();
+	std::unique_lock lock(g_SDLInitLock);
 
 	std::thread inputSDLThread( inputSDLThreadRun );
 	inputSDLThread.detach();
-	
-	// When this returns SDL_Init should be over
-	g_SDLInitLock.lock();
 
-	return g_bSDLInitOK;
+	g_SDLCondVar.wait(lock, []{ return g_iSDLInitOK != 0; });
+	
+	return g_iSDLInitOK == 1;
 }
 
 void sdlwindow_update( void )
