@@ -598,9 +598,10 @@ void wlserver_lock(void)
 	pthread_mutex_lock(&waylock);
 }
 
-void wlserver_unlock(void)
+void wlserver_unlock( bool bFlush )
 {
-	wl_display_flush_clients(wlserver.wl_display);
+	if ( bFlush )
+		wl_display_flush_clients(wlserver.wl_display);
 	pthread_mutex_unlock(&waylock);
 }
 

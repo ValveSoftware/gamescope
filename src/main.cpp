@@ -166,6 +166,12 @@ int main(int argc, char **argv)
 		g_bIsNested = true;
 	}
 
+	// We need to lock the wlserver before making the SDL2 output,
+	// because we can have a race where we start recieving SDL2 events before
+	// we have initialized the server (or the application ended instantly ie. vulkaninfo)
+	// and SDL2 is trying to send events to the non-existant server.
+	// We unlock after actually initializing the wlserver.
+	wlserver_lock();
 	if ( initOutput() != 0 )
 	{
 		fprintf( stderr, "Failed to initialize output\n" );
@@ -205,6 +211,7 @@ int main(int argc, char **argv)
 		g_nNestedHeight = g_nOutputHeight;
 
 	wlserver_init(argc, argv, g_bIsNested == true );
+	wlserver_unlock(false);
 
 	wlserver_run();
 }

@@ -79,7 +79,7 @@ int wlserver_init( int argc, char **argv, bool bIsNested );
 int wlserver_run(void);
 
 void wlserver_lock(void);
-void wlserver_unlock(void);
+void wlserver_unlock( bool bFlush = true );
 
 void wlserver_keyboardfocus( struct wlr_surface *surface );
 void wlserver_key( uint32_t key, bool press, uint32_t time );
