@@ -103,6 +103,8 @@ struct drm_t {
 	std::mutex flip_lock;
 	
 	std::atomic < uint64_t > flipcount;
+
+	std::atomic < bool > paused;
 };
 
 extern struct drm_t g_DRM;

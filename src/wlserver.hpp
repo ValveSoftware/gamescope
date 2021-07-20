@@ -34,6 +34,8 @@ struct wlserver_t {
 	
 	bool button_held[ WLSERVER_BUTTON_COUNT ];
 	bool touch_down[ WLSERVER_TOUCH_COUNT ];
+
+	struct wl_listener session_active;
 };
 
 struct wlserver_keyboard {

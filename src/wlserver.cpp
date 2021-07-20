@@ -481,6 +481,12 @@ static void create_gamescope_xwayland( void )
 	wl_global_create( wlserver.wl_display, &gamescope_xwayland_interface, version, NULL, gamescope_xwayland_bind );
 }
 
+static void handle_session_active( struct wl_listener *listener, void *data )
+{
+	g_DRM.paused = !wlserver.wlr.session->active;
+	fprintf(stderr, "wlserver: session %s\n", g_DRM.paused ? "paused" : "restored");
+}
+
 int wlserver_init(int argc, char **argv, bool bIsNested) {
 	bool bIsDRM = bIsNested == false;
 
@@ -502,6 +508,9 @@ int wlserver_init(int argc, char **argv, bool bIsNested) {
 
 	assert( wlserver.wl_display && wlserver.wl_event_loop && wlserver.wlr.multi_backend );
 	assert( !bIsDRM || wlserver.wlr.session );
+
+	wlserver.session_active.notify = handle_session_active;
+	wl_signal_add( &wlserver.wlr.session->events.active, &wlserver.session_active );
 
 	wl_signal_add( &wlserver.wlr.multi_backend->events.new_input, &new_input_listener );
 
