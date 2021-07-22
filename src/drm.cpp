@@ -454,8 +454,6 @@ static const drmModeModeInfo *get_matching_mode( const drmModeConnector *connect
 
 int init_drm(struct drm_t *drm, const char *device)
 {
-	int ret;
-
 	if (device) {
 		drm->fd = open(device, O_RDWR | O_CLOEXEC);
 		if (!drmIsKMS(drm->fd)) {
@@ -548,14 +546,6 @@ int init_drm(struct drm_t *drm, const char *device)
 			drm->crtc_index = i;
 			break;
 		}
-	}
-
-	// Disable all CRTCs. This ensures the CRTC we've selected isn't being used
-	// by another connector.
-	for (size_t i = 0; i < drm->crtcs.size(); i++) {
-		ret = drmModeSetCrtc(drm->fd, drm->crtcs[i].id, 0, 0, 0, nullptr, 0, nullptr);
-		if (ret != 0)
-			fprintf(stderr, "failed to disable CRTC %" PRIu32 ": %s", drm->crtcs[i].id, strerror(-ret));
 	}
 
 	// Fetch formats which can be scanned out
@@ -1026,12 +1016,32 @@ bool drm_prepare( struct drm_t *drm, const struct Composite_t *pComposite, const
 	if ( drm->pending.mode_id != drm->mode_id ) {
 		flags |= DRM_MODE_ATOMIC_ALLOW_MODESET;
 
+		// Disable all connectors and CRTCs
+
+		for ( size_t i = 0; i < drm->connectors.size(); i++ ) {
+			if ( add_connector_property( drm, drm->req, &drm->connectors[i], "CRTC_ID", 0 ) < 0 )
+				return false;
+		}
+		for ( size_t i = 0; i < drm->crtcs.size(); i++ ) {
+			// We can't disable a CRTC if it's already disabled, or else the
+			// kernel will error out with "requesting event but off".
+			// TODO: use current prop value, required for output switching support
+			if (drm->crtcs[i].initial_prop_values["ACTIVE"] == 0)
+				continue;
+
+			if (add_crtc_property(drm, drm->req, &drm->crtcs[i], "MODE_ID", 0) < 0)
+				return false;
+			if (add_crtc_property(drm, drm->req, &drm->crtcs[i], "ACTIVE", 0) < 0)
+				return false;
+		}
+
+		// Then enable the ones we've picked
+
 		if (add_connector_property(drm, drm->req, drm->connector, "CRTC_ID", drm->crtc->id) < 0)
 			return false;
 
 		if (add_crtc_property(drm, drm->req, drm->crtc, "MODE_ID", drm->pending.mode_id) < 0)
 			return false;
-
 		if (add_crtc_property(drm, drm->req, drm->crtc, "ACTIVE", 1) < 0)
 			return false;
 	}
