@@ -219,10 +219,12 @@ static struct plane *find_primary_plane(struct drm_t *drm)
 
 static void drm_free_fb( struct drm_t *drm, struct fb *fb );
 
-static void page_flip_handler(int fd, unsigned int frame,
-							  unsigned int sec, unsigned int usec, void *data)
+static void page_flip_handler(int fd, unsigned int frame, unsigned int sec, unsigned int usec, unsigned int crtc_id, void *data)
 {
 	uint64_t flipcount = (uint64_t)data;
+
+	if ( g_DRM.crtc->id != crtc_id )
+		return;
 
 	vblank_mark_possible_vblank();
 
@@ -286,8 +288,8 @@ void flip_handler_thread_run(void)
 		}
 
 		drmEventContext evctx = {
-			.version = 2,
-			.page_flip_handler = page_flip_handler,
+			.version = 3,
+			.page_flip_handler2 = page_flip_handler,
 		};
 		drmHandleEvent(g_DRM.fd, &evctx);
 	}
