@@ -19,6 +19,10 @@
 #include "wlserver.hpp"
 #include "gpuvis_trace_utils.h"
 
+#if HAVE_PIPEWIRE
+#include "pipewire.hpp"
+#endif
+
 std::atomic< bool > g_bRun{true};
 
 int g_nNestedWidth = 0;
@@ -254,6 +258,13 @@ int main(int argc, char **argv)
 
 	setenv("DISPLAY", wlserver_get_nested_display_name(), 1);
 	setenv("GAMESCOPE_WAYLAND_DISPLAY", wlserver_get_wl_display_name(), 1);
+
+#if HAVE_PIPEWIRE
+	if ( !init_pipewire() )
+	{
+		fprintf( stderr, "Warning: failed to setup PipeWire, screen capture won't be available\n" );
+	}
+#endif
 
 	std::thread steamCompMgrThread( steamCompMgrThreadRun, argc, argv );
 	steamCompMgrThread.detach();

@@ -35,6 +35,7 @@ xkbcommon = dependency('xkbcommon')
 thread_dep = dependency('threads')
 cap_dep = dependency('libcap')
 sdl_dep = dependency('SDL2')
+pipewire_dep = dependency('libpipewire-0.3', required: get_option('pipewire'))
 
 wlroots_dep = dependency(
   'wlroots',
@@ -67,28 +68,39 @@ liftoff_dep = dependency(
   default_options: ['default_library=static'],
 )
 
+add_project_arguments(
+  '-DHAVE_PIPEWIRE=@0@'.format(pipewire_dep.found().to_int()),
+  language: 'cpp',
+)
+
 subdir('protocol')
+
+src = [
+  'src/steamcompmgr.cpp',
+  'src/main.cpp',
+  'src/wlserver.cpp',
+  'src/drm.cpp',
+  'src/cvt.cpp',
+  'src/sdlwindow.cpp',
+  'src/vblankmanager.cpp',
+  'src/rendervulkan.cpp',
+  'src/log.cpp',
+  spirv_shader,
+  gamescope_xwayland_proto_files,
+]
+
+if pipewire_dep.found()
+  src += 'src/pipewire.cpp'
+endif
 
 executable(
   'gamescope',
-  [
-    'src/steamcompmgr.cpp',
-    'src/main.cpp',
-    'src/wlserver.cpp',
-    'src/drm.cpp',
-    'src/cvt.cpp',
-    'src/sdlwindow.cpp',
-    'src/vblankmanager.cpp',
-    'src/rendervulkan.cpp',
-    'src/log.cpp',
-    spirv_shader,
-    gamescope_xwayland_proto_files,
-  ],
+  src,
   dependencies: [
     dep_x11, dep_xdamage, dep_xcomposite, dep_xrender, dep_xext, dep_xfixes,
     dep_xxf86vm, dep_xres, drm_dep, wayland_server, wayland_protos,
     xkbcommon, thread_dep, sdl_dep, wlroots_dep,
-    vulkan_dep, liftoff_dep, dep_xtst, cap_dep
+    vulkan_dep, liftoff_dep, dep_xtst, cap_dep, pipewire_dep,
   ],
   install: true,
 )

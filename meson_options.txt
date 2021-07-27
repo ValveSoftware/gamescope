@@ -1,0 +1,1 @@
+option('pipewire', type: 'feature', description: 'Screen capture via PipeWire')
