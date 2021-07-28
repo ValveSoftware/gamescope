@@ -1351,11 +1351,19 @@ paint_all(Display *dpy, MouseCursor *cursor)
 			assert( pCaptureTexture != nullptr );
 			assert( pCaptureTexture->m_format == VK_FORMAT_B8G8R8A8_UNORM );
 
-			// TODO: avoid this memcpy by using multiple capture textures
-			int bpp = 4;
-			for ( unsigned int i = 0; i < currentOutputHeight; i++ )
+			if ( pw_buffer->video_info.size.width != currentOutputWidth || pw_buffer->video_info.size.height != currentOutputHeight )
 			{
-				memcpy( pw_buffer->data + i * pw_buffer->stride, (uint8_t *) pCaptureTexture->m_pMappedData + i * pCaptureTexture->m_unRowPitch, bpp * currentOutputWidth );
+				// Push black frames until the PipeWire thread realizes the stream size has changed
+				memset( pw_buffer->data, 0, pw_buffer->stride * pw_buffer->video_info.size.height );
+			}
+			else
+			{
+				// TODO: avoid this memcpy by using multiple capture textures
+				int bpp = 4;
+				for ( unsigned int i = 0; i < currentOutputHeight; i++ )
+				{
+					memcpy( pw_buffer->data + i * pw_buffer->stride, (uint8_t *) pCaptureTexture->m_pMappedData + i * pCaptureTexture->m_unRowPitch, bpp * currentOutputWidth );
+				}
 			}
 
 			push_pipewire_buffer(pw_buffer);
@@ -3662,6 +3670,10 @@ steamcompmgr_main (int argc, char **argv)
 
 				currentOutputWidth = g_nOutputWidth;
 				currentOutputHeight = g_nOutputHeight;
+
+#if HAVE_PIPEWIRE
+				nudge_pipewire();
+#endif
 			}
 
 			handle_done_commits();

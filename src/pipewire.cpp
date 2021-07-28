@@ -16,6 +16,19 @@ static int nudgePipe[2] = { -1, -1 };
 static std::atomic<struct pipewire_buffer *> out_buffer;
 static std::atomic<struct pipewire_buffer *> in_buffer;
 
+static const struct spa_pod *get_format_param(struct spa_pod_builder *builder) {
+	struct spa_rectangle size = SPA_RECTANGLE(g_nOutputWidth, g_nOutputHeight);
+	struct spa_fraction framerate = SPA_FRACTION(0, 1);
+
+	return (const struct spa_pod *) spa_pod_builder_add_object(builder,
+		SPA_TYPE_OBJECT_Format, SPA_PARAM_EnumFormat,
+		SPA_FORMAT_mediaType, SPA_POD_Id(SPA_MEDIA_TYPE_video),
+		SPA_FORMAT_mediaSubtype, SPA_POD_Id(SPA_MEDIA_SUBTYPE_raw),
+		SPA_FORMAT_VIDEO_format, SPA_POD_Id(SPA_VIDEO_FORMAT_BGRx),
+		SPA_FORMAT_VIDEO_size, SPA_POD_Rectangle(&size),
+		SPA_FORMAT_VIDEO_framerate, SPA_POD_Fraction(&framerate));
+}
+
 static void request_buffer(struct pipewire_state *state)
 {
 	struct pw_buffer *pw_buffer = pw_stream_dequeue_buffer(state->stream);
@@ -59,6 +72,18 @@ static void dispatch_nudge(struct pipewire_state *state, int fd)
 			if (errno != EAGAIN)
 				perror("pipewire: dispatch_nudge: read failed");
 			break;
+		}
+	}
+
+	if (g_nOutputWidth != state->video_info.size.width || g_nOutputHeight != state->video_info.size.height) {
+		fprintf(stderr, "pipewire: renegociating stream params (size: %dx%d)\n", g_nOutputWidth, g_nOutputHeight);
+
+		uint8_t buf[1024];
+		struct spa_pod_builder builder = SPA_POD_BUILDER_INIT(buf, sizeof(buf));
+		const struct spa_pod *format_param = get_format_param(&builder);
+		int ret = pw_stream_update_params(state->stream, &format_param, 1);
+		if (ret < 0) {
+			fprintf(stderr, "pipewire: pw_stream_update_params failed\n");
 		}
 	}
 
@@ -114,6 +139,8 @@ static void stream_handle_param_changed(void *data, uint32_t id, const struct sp
 		return;
 	}
 	state->stride = SPA_ROUND_UP_N(state->video_info.size.width * bpp, 4);
+
+	fprintf(stderr, "pipewire: format changed (size: %dx%d)\n", state->video_info.size.width, state->video_info.size.height);
 
 	uint8_t buf[1024];
 	struct spa_pod_builder builder = SPA_POD_BUILDER_INIT(buf, sizeof(buf));
@@ -246,19 +273,9 @@ bool init_pipewire(void)
 	static struct spa_hook stream_hook;
 	pw_stream_add_listener(state.stream, &stream_hook, &stream_events, &state);
 
-	struct spa_rectangle size = SPA_RECTANGLE(g_nOutputWidth, g_nOutputHeight);
-	struct spa_fraction framerate = SPA_FRACTION(0, 1);
-
 	uint8_t buf[1024];
 	struct spa_pod_builder builder = SPA_POD_BUILDER_INIT(buf, sizeof(buf));
-	const struct spa_pod *format_param =
-		(const struct spa_pod *)spa_pod_builder_add_object(&builder,
-		SPA_TYPE_OBJECT_Format, SPA_PARAM_EnumFormat,
-		SPA_FORMAT_mediaType, SPA_POD_Id(SPA_MEDIA_TYPE_video),
-		SPA_FORMAT_mediaSubtype, SPA_POD_Id(SPA_MEDIA_SUBTYPE_raw),
-		SPA_FORMAT_VIDEO_format, SPA_POD_Id(SPA_VIDEO_FORMAT_BGRx),
-		SPA_FORMAT_VIDEO_size, SPA_POD_Rectangle(&size),
-		SPA_FORMAT_VIDEO_framerate, SPA_POD_Fraction(&framerate));
+	const struct spa_pod *format_param = get_format_param(&builder);
 
 	// TODO: PW_STREAM_FLAG_ALLOC_BUFFERS
 	enum pw_stream_flags flags = (enum pw_stream_flags)(PW_STREAM_FLAG_DRIVER | PW_STREAM_FLAG_MAP_BUFFERS);
@@ -293,7 +310,11 @@ void push_pipewire_buffer(struct pipewire_buffer *buffer)
 {
 	struct pipewire_buffer *old = in_buffer.exchange(buffer);
 	assert(old == nullptr);
+	nudge_pipewire();
+}
 
+void nudge_pipewire(void)
+{
 	if (write(nudgePipe[1], "\n", 1) < 0)
-		perror("pipewire: push_buffer: write failed");
+		perror("pipewire: nudge_pipewire: write failed");
 }
