@@ -75,6 +75,10 @@
 #include "vblankmanager.hpp"
 #include "sdlwindow.hpp"
 
+#if HAVE_PIPEWIRE
+#include "pipewire.hpp"
+#endif
+
 #define GPUVIS_TRACE_IMPLEMENTATION
 #include "gpuvis_trace_utils.h"
 
@@ -1252,7 +1256,14 @@ paint_all(Display *dpy, MouseCursor *cursor)
 	// Handoff from whatever thread to this one since we check ours twice
 	bool takeScreenshot = g_bTakeScreenshot.exchange(false);
 
-	if ( BIsNested() == false && alwaysComposite == False && takeScreenshot == False )
+	struct pipewire_buffer *pw_buffer = nullptr;
+#if HAVE_PIPEWIRE
+	pw_buffer = dequeue_pipewire_buffer();
+#endif
+
+	bool bCapture = takeScreenshot || pw_buffer != nullptr;
+
+	if ( BIsNested() == false && alwaysComposite == False && bCapture == false )
 	{
 		int ret = drm_prepare( &g_DRM, &composite, &pipeline );
 		if ( ret == 0 )
@@ -1263,9 +1274,9 @@ paint_all(Display *dpy, MouseCursor *cursor)
 
 	if ( bDoComposite == true )
 	{
-		CVulkanTexture *pScreenshotTexture = nullptr;
+		CVulkanTexture *pCaptureTexture = nullptr;
 
-		bool bResult = vulkan_composite( &composite, &pipeline, takeScreenshot ? &pScreenshotTexture : nullptr );
+		bool bResult = vulkan_composite( &composite, &pipeline, bCapture ? &pCaptureTexture : nullptr );
 
 		if ( bResult != true )
 		{
@@ -1310,15 +1321,15 @@ paint_all(Display *dpy, MouseCursor *cursor)
 
 		if ( takeScreenshot )
 		{
-			assert( pScreenshotTexture != nullptr );
-			assert( pScreenshotTexture->m_format == VK_FORMAT_B8G8R8A8_UNORM );
+			assert( pCaptureTexture != nullptr );
+			assert( pCaptureTexture->m_format == VK_FORMAT_B8G8R8A8_UNORM );
 
 			uint32_t redMask = 0x00ff0000;
 			uint32_t greenMask = 0x0000ff00;
 			uint32_t blueMask = 0x000000ff;
 			uint32_t alphaMask = 0;
 
-			SDL_Surface *pSDLSurface = SDL_CreateRGBSurfaceFrom( pScreenshotTexture->m_pMappedData, currentOutputWidth, currentOutputHeight, 32, pScreenshotTexture->m_unRowPitch, redMask, greenMask, blueMask, alphaMask );
+			SDL_Surface *pSDLSurface = SDL_CreateRGBSurfaceFrom( pCaptureTexture->m_pMappedData, currentOutputWidth, currentOutputHeight, 32, pCaptureTexture->m_unRowPitch, redMask, greenMask, blueMask, alphaMask );
 
 			static char pTimeBuffer[1024];
 
@@ -1333,6 +1344,25 @@ paint_all(Display *dpy, MouseCursor *cursor)
 			fprintf(stderr, "Screenshot saved to %s\n", pTimeBuffer);
 			takeScreenshot = False;
 		}
+
+#if HAVE_PIPEWIRE
+		if ( pw_buffer != nullptr )
+		{
+			assert( pCaptureTexture != nullptr );
+			assert( pCaptureTexture->m_format == VK_FORMAT_B8G8R8A8_UNORM );
+
+			// TODO: avoid this memcpy by using multiple capture textures
+			int bpp = 4;
+			for ( unsigned int i = 0; i < currentOutputHeight; i++ )
+			{
+				memcpy( pw_buffer->data + i * pw_buffer->stride, (uint8_t *) pCaptureTexture->m_pMappedData + i * pCaptureTexture->m_unRowPitch, bpp * currentOutputWidth );
+			}
+
+			push_pipewire_buffer(pw_buffer);
+			// TODO: make sure the buffer isn't lost in one of the failure
+			// code-paths above
+		}
+#endif
 	}
 	else
 	{
