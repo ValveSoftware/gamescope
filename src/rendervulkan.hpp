@@ -139,7 +139,7 @@ uint32_t vulkan_texture_get_fbid( VulkanTexture_t vulkanTex );
 
 void vulkan_free_texture( VulkanTexture_t vulkanTex );
 
-bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *pPipeline, bool bScreenshot );
+bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *pPipeline, CVulkanTexture **pScreenshotTexture );
 uint32_t vulkan_get_last_composite_fbid( void );
 
 void vulkan_present_to_window( void );

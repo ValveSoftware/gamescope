@@ -2088,7 +2088,7 @@ void vulkan_update_descriptor( struct VulkanPipeline_t *pPipeline, int nYCBCRMas
 	}
 }
 
-bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *pPipeline, bool bScreenshot )
+bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *pPipeline, CVulkanTexture **pScreenshotTexture )
 {
 	VkImage compositeImage;
 
@@ -2190,7 +2190,7 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 	vkCmdPipelineBarrier( curCommandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
 						  0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
 
-	if ( bScreenshot == true )
+	if ( pScreenshotTexture != nullptr )
 	{
 		if ( g_output.pScreenshotImage == nullptr )
 		{
@@ -2248,6 +2248,8 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 		};
 
 		vkCmdCopyImage( curCommandBuffer, compositeImage, VK_IMAGE_LAYOUT_GENERAL, g_output.pScreenshotImage->m_vkImage, VK_IMAGE_LAYOUT_GENERAL, 1, &region );
+
+		*pScreenshotTexture = g_output.pScreenshotImage;
 	}
 	
 	res = vkEndCommandBuffer( curCommandBuffer );
@@ -2316,29 +2318,6 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 	
 	vkQueueWaitIdle( queue );
 
-	if ( bScreenshot )
-	{
-		uint32_t redMask = 0x00ff0000;
-		uint32_t greenMask = 0x0000ff00;
-		uint32_t blueMask = 0x000000ff;
-		uint32_t alphaMask = 0;
-
-		SDL_Surface *pSDLSurface = SDL_CreateRGBSurfaceFrom( g_output.pScreenshotImage->m_pMappedData, currentOutputWidth, currentOutputHeight, 32,
-															 g_output.pScreenshotImage->m_unRowPitch, redMask, greenMask, blueMask, alphaMask );
-
-		static char pTimeBuffer[1024];
-
-		time_t currentTime = time(0);
-		struct tm *localTime = localtime( &currentTime );
-		strftime( pTimeBuffer, sizeof( pTimeBuffer ), "/tmp/gamescope_%Y-%m-%d_%H-%M-%S.bmp", localTime );
-
-		SDL_SaveBMP( pSDLSurface, pTimeBuffer );
-
-		SDL_FreeSurface( pSDLSurface );
-
-		vk_log.infof("screenshot saved to %s", pTimeBuffer);
-	}
-	
 	if ( BIsNested() == false )
 	{
 		g_output.nOutImage = !g_output.nOutImage;

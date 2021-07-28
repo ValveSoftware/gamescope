@@ -1266,13 +1266,14 @@ paint_all(Display *dpy, MouseCursor *cursor)
 
 	if ( bDoComposite == true )
 	{
-		bool bResult = vulkan_composite( &composite, &pipeline, takeScreenshot );
+		CVulkanTexture *pScreenshotTexture = nullptr;
 
-		takeScreenshot = False;
+		bool bResult = vulkan_composite( &composite, &pipeline, takeScreenshot ? &pScreenshotTexture : nullptr );
 
 		if ( bResult != true )
 		{
 			fprintf( stderr, "composite alarm!!!\n" );
+			return;
 		}
 
 		if ( BIsNested() == True )
@@ -1308,6 +1309,32 @@ paint_all(Display *dpy, MouseCursor *cursor)
 			assert( ret == 0 );
 
 			drm_commit( &g_DRM, &composite, &pipeline );
+		}
+
+		if ( takeScreenshot )
+		{
+			assert( pScreenshotTexture != nullptr );
+			assert( pScreenshotTexture->m_format == VK_FORMAT_B8G8R8A8_UNORM );
+
+			uint32_t redMask = 0x00ff0000;
+			uint32_t greenMask = 0x0000ff00;
+			uint32_t blueMask = 0x000000ff;
+			uint32_t alphaMask = 0;
+
+			SDL_Surface *pSDLSurface = SDL_CreateRGBSurfaceFrom( pScreenshotTexture->m_pMappedData, currentOutputWidth, currentOutputHeight, 32, pScreenshotTexture->m_unRowPitch, redMask, greenMask, blueMask, alphaMask );
+
+			static char pTimeBuffer[1024];
+
+			time_t currentTime = time(0);
+			struct tm *localTime = localtime( &currentTime );
+			strftime( pTimeBuffer, sizeof( pTimeBuffer ), "/tmp/gamescope_%Y-%m-%d_%H-%M-%S.bmp", localTime );
+
+			SDL_SaveBMP( pSDLSurface, pTimeBuffer );
+
+			SDL_FreeSurface( pSDLSurface );
+
+			fprintf(stderr, "Screenshot saved to %s\n", pTimeBuffer);
+			takeScreenshot = False;
 		}
 	}
 	else
