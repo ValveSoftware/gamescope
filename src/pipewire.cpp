@@ -33,7 +33,8 @@ static void request_buffer(struct pipewire_state *state)
 {
 	struct pw_buffer *pw_buffer = pw_stream_dequeue_buffer(state->stream);
 	if (!pw_buffer) {
-		fprintf(stderr, "pipewire: out of buffers\n");
+		fprintf(stderr, "pipewire: warning: out of buffers\n");
+		state->needs_buffer = true;
 		return;
 	}
 
@@ -170,10 +171,21 @@ static void stream_handle_param_changed(void *data, uint32_t id, const struct sp
 	}
 }
 
+static void stream_handle_process(void *data)
+{
+	struct pipewire_state *state = (struct pipewire_state *) data;
+
+	if (state->needs_buffer) {
+		state->needs_buffer = false;
+		request_buffer(state);
+	}
+}
+
 static const struct pw_stream_events stream_events = {
 	.version = PW_VERSION_STREAM_EVENTS,
 	.state_changed = stream_handle_state_changed,
 	.param_changed = stream_handle_param_changed,
+	.process = stream_handle_process,
 	//.add_buffer = stream_handle_add_buffer,
 	//.remove_buffer = stream_handle_remove_buffer,
 };

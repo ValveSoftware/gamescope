@@ -12,6 +12,7 @@ struct pipewire_state {
 	struct pw_stream *stream;
 	uint32_t stream_node_id;
 	bool streaming;
+	bool needs_buffer;
 	struct spa_video_info_raw video_info;
 	int stride;
 	uint64_t seq;
