@@ -276,11 +276,12 @@ static Bool		drawDebugInfo = False;
 static Bool		debugEvents = False;
 static Bool		steamMode = False;
 static Bool		alwaysComposite = False;
-static Bool		takeScreenshot = False;
 static Bool		useXRes = True;
 
 std::mutex wayland_commit_lock;
 std::vector<ResListEntry_t> wayland_commit_queue;
+
+static std::atomic< bool > g_bTakeScreenshot{false};
 
 static int g_nudgePipe[2];
 
@@ -1249,11 +1250,7 @@ paint_all(Display *dpy, MouseCursor *cursor)
 	bool bDoComposite = true;
 
 	// Handoff from whatever thread to this one since we check ours twice
-	if ( g_bTakeScreenshot == true )
-	{
-		takeScreenshot = true;
-		g_bTakeScreenshot = false;
-	}
+	bool takeScreenshot = g_bTakeScreenshot.exchange(false);
 
 	if ( BIsNested() == false && alwaysComposite == False && takeScreenshot == False )
 	{
@@ -2911,6 +2908,11 @@ void nudge_steamcompmgr( void )
 {
 	if ( write( g_nudgePipe[ 1 ], "\n", 1 ) < 0 )
 		perror( "nudge_steamcompmgr: write failed" );
+}
+
+void take_screenshot( void )
+{
+	g_bTakeScreenshot = true;
 }
 
 void check_new_wayland_res( void )

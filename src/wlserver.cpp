@@ -71,7 +71,7 @@ void sig_handler(int signal)
 {
 	if ( signal == SIGUSR2 )
 	{
-		g_bTakeScreenshot = true;
+		take_screenshot();
 		return;
 	}
 

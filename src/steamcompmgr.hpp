@@ -89,3 +89,4 @@ extern float focusedWindowOffsetX;
 extern float focusedWindowOffsetY;
 
 void nudge_steamcompmgr( void );
+void take_screenshot( void );

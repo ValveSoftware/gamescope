@@ -23,8 +23,6 @@ extern bool g_bFilterGameWindow;
 
 extern bool g_bBorderlessOutputWindow;
 
-extern bool g_bTakeScreenshot;
-
 extern bool g_bNiceCap;
 extern int g_nOldNice;
 extern int g_nNewNice;

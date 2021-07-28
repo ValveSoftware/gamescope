@@ -160,7 +160,7 @@ void inputSDLThreadRun( void )
 							g_bFilterGameWindow = !g_bFilterGameWindow;
 							break;
 						case KEY_S:
-							g_bTakeScreenshot = true;
+							take_screenshot();
 							break;
 						default:
 							handled = false;

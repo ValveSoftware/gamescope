@@ -42,8 +42,6 @@ bool g_bFilterGameWindow = true;
 
 bool g_bBorderlessOutputWindow = false;
 
-bool g_bTakeScreenshot = false;
-
 bool g_bNiceCap = false;
 int g_nOldNice = 0;
 int g_nNewNice = 0;
