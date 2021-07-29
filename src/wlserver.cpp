@@ -39,11 +39,16 @@ extern "C" {
 }
 
 #include "gamescope-xwayland-protocol.h"
+#include "gamescope-pipewire-protocol.h"
 
 #include "wlserver.hpp"
 #include "drm.hpp"
 #include "main.hpp"
 #include "steamcompmgr.hpp"
+
+#if HAVE_PIPEWIRE
+#include "pipewire.hpp"
+#endif
 
 #include "gpuvis_trace_utils.h"
 
@@ -474,6 +479,33 @@ static void create_gamescope_xwayland( void )
 	wl_global_create( wlserver.display, &gamescope_xwayland_interface, version, NULL, gamescope_xwayland_bind );
 }
 
+static void gamescope_pipewire_handle_destroy( struct wl_client *client, struct wl_resource *resource )
+{
+	wl_resource_destroy( resource );
+}
+
+static const struct gamescope_pipewire_interface gamescope_pipewire_impl = {
+	.destroy = gamescope_pipewire_handle_destroy,
+};
+
+static void gamescope_pipewire_bind( struct wl_client *client, void *data, uint32_t version, uint32_t id )
+{
+	struct wl_resource *resource = wl_resource_create( client, &gamescope_pipewire_interface, version, id );
+	wl_resource_set_implementation( resource, &gamescope_pipewire_impl, NULL, NULL );
+
+#if HAVE_PIPEWIRE
+	gamescope_pipewire_send_stream_node( resource, get_pipewire_stream_node_id() );
+#else
+	assert( 0 ); // unreachable
+#endif
+}
+
+static void create_gamescope_pipewire( void )
+{
+	uint32_t version = 1;
+	wl_global_create( wlserver.display, &gamescope_pipewire_interface, version, NULL, gamescope_pipewire_bind );
+}
+
 static void handle_session_active( struct wl_listener *listener, void *data )
 {
 	if (wlserver.wlr.session->active) {
@@ -611,6 +643,10 @@ int wlserver_init(int argc, char **argv, bool bIsNested) {
 	wl_signal_add( &wlserver.wlr.compositor->events.new_surface, &new_surface_listener );
 
 	create_gamescope_xwayland();
+
+#if HAVE_PIPEWIRE
+	create_gamescope_pipewire();
+#endif
 
 	int result = -1;
 	int display_slot = 0;

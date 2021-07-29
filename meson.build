@@ -73,8 +73,6 @@ add_project_arguments(
   language: 'cpp',
 )
 
-subdir('protocol')
-
 src = [
   'src/steamcompmgr.cpp',
   'src/main.cpp',
@@ -86,12 +84,13 @@ src = [
   'src/rendervulkan.cpp',
   'src/log.cpp',
   spirv_shader,
-  gamescope_xwayland_proto_files,
 ]
 
 if pipewire_dep.found()
   src += 'src/pipewire.cpp'
 endif
+
+subdir('protocol')
 
 executable(
   'gamescope',

@@ -26,6 +26,7 @@ struct pipewire_buffer {
 };
 
 bool init_pipewire(void);
+uint32_t get_pipewire_stream_node_id(void);
 struct pipewire_buffer *dequeue_pipewire_buffer(void);
 void push_pipewire_buffer(struct pipewire_buffer *buffer);
 void nudge_pipewire(void);

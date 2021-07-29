@@ -11,6 +11,7 @@
 #include "main.hpp"
 #include "pipewire.hpp"
 
+static struct pipewire_state pipewire_state = { .stream_node_id = SPA_ID_INVALID };
 static int nudgePipe[2] = { -1, -1 };
 
 static std::atomic<struct pipewire_buffer *> out_buffer;
@@ -246,44 +247,44 @@ static void run_pipewire(struct pipewire_state *state)
 
 bool init_pipewire(void)
 {
-	pw_init(nullptr, nullptr);
+	struct pipewire_state *state = &pipewire_state;
 
-	static struct pipewire_state state = { .stream_node_id = SPA_ID_INVALID };
+	pw_init(nullptr, nullptr);
 
 	if (pipe2(nudgePipe, O_CLOEXEC | O_NONBLOCK) != 0) {
 		perror("pipewire: pipe2 failed");
 		return false;
 	}
 
-	state.loop = pw_loop_new(nullptr);
-	if (!state.loop) {
+	state->loop = pw_loop_new(nullptr);
+	if (!state->loop) {
 		fprintf(stderr, "pipewire: pw_loop_new failed\n");
 		return false;
 	}
 
-	state.context = pw_context_new(state.loop, nullptr, 0);
-	if (!state.context) {
+	state->context = pw_context_new(state->loop, nullptr, 0);
+	if (!state->context) {
 		fprintf(stderr, "pipewire: pw_context_new failed\n");
 		return false;
 	}
 
-	state.core = pw_context_connect(state.context, nullptr, 0);
-	if (!state.core) {
+	state->core = pw_context_connect(state->context, nullptr, 0);
+	if (!state->core) {
 		fprintf(stderr, "pipewire: pw_context_connect failed\n");
 		return false;
 	}
 
-	state.stream = pw_stream_new(state.core, "gamescope",
+	state->stream = pw_stream_new(state->core, "gamescope",
 		pw_properties_new(
 			PW_KEY_MEDIA_CLASS, "Video/Source",
 			nullptr));
-	if (!state.stream) {
+	if (!state->stream) {
 		fprintf(stderr, "pipewire: pw_stream_new failed\n");
 		return false;
 	}
 
 	static struct spa_hook stream_hook;
-	pw_stream_add_listener(state.stream, &stream_hook, &stream_events, &state);
+	pw_stream_add_listener(state->stream, &stream_hook, &stream_events, state);
 
 	uint8_t buf[1024];
 	struct spa_pod_builder builder = SPA_POD_BUILDER_INIT(buf, sizeof(buf));
@@ -291,26 +292,31 @@ bool init_pipewire(void)
 
 	// TODO: PW_STREAM_FLAG_ALLOC_BUFFERS
 	enum pw_stream_flags flags = (enum pw_stream_flags)(PW_STREAM_FLAG_DRIVER | PW_STREAM_FLAG_MAP_BUFFERS);
-	int ret = pw_stream_connect(state.stream, PW_DIRECTION_OUTPUT, PW_ID_ANY, flags, &format_param, 1);
+	int ret = pw_stream_connect(state->stream, PW_DIRECTION_OUTPUT, PW_ID_ANY, flags, &format_param, 1);
 	if (ret != 0) {
 		fprintf(stderr, "pipewire: pw_stream_connect failed\n");
 		return false;
 	}
 
-	while (state.stream_node_id == SPA_ID_INVALID) {
-		int ret = pw_loop_iterate(state.loop, -1);
+	while (state->stream_node_id == SPA_ID_INVALID) {
+		int ret = pw_loop_iterate(state->loop, -1);
 		if (ret < 0) {
 			fprintf(stderr, "pipewire: pw_loop_iterate failed\n");
 			return false;
 		}
 	}
 
-	fprintf(stderr, "pipewire: stream available on node ID: %u\n", state.stream_node_id);
+	fprintf(stderr, "pipewire: stream available on node ID: %u\n", state->stream_node_id);
 
-	std::thread thread(run_pipewire, &state);
+	std::thread thread(run_pipewire, state);
 	thread.detach();
 
 	return true;
+}
+
+uint32_t get_pipewire_stream_node_id(void)
+{
+	return pipewire_state.stream_node_id;
 }
 
 struct pipewire_buffer *dequeue_pipewire_buffer(void)
