@@ -16,7 +16,6 @@ struct wlserver_t {
 	struct {
 		struct wlr_backend *multi_backend;
 		struct wlr_backend *noop_backend;
-		struct wlr_backend *headless_backend;
 		struct wlr_backend *libinput_backend;
 
 		struct wlr_renderer *renderer;

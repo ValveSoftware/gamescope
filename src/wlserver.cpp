@@ -622,13 +622,6 @@ bool wlserver_init( void ) {
 
 	wl_signal_add( &wlserver.wlr.multi_backend->events.new_input, &new_input_listener );
 
-	wlserver.wlr.headless_backend = wlr_headless_backend_create( wlserver.display );
-	if ( wlserver.wlr.headless_backend == NULL )
-	{
-		return false;
-	}
-	wlr_multi_backend_add( wlserver.wlr.multi_backend, wlserver.wlr.headless_backend );
-
 	wlserver.wlr.noop_backend = wlr_noop_backend_create( wlserver.display );
 	wlr_multi_backend_add( wlserver.wlr.multi_backend, wlserver.wlr.noop_backend );
 
