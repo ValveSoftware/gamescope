@@ -55,7 +55,6 @@ struct Composite_t
 
 extern "C" {
 #define static
-#include <wlr/types/wlr_linux_dmabuf_v1.h>
 #include <wlr/render/dmabuf.h>
 #include <wlr/render/gles2.h>
 #include <wlr/render/interface.h>
