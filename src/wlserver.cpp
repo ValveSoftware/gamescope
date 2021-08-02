@@ -659,9 +659,7 @@ bool wlserver_init( void ) {
 		// We need to wait for the backend to be started before adding the device
 	}
 
-	struct wlr_renderer *headless_renderer = wlr_backend_get_renderer( wlserver.wlr.multi_backend );
-	assert( headless_renderer );
-	wlserver.wlr.renderer = vulkan_renderer_create( headless_renderer );
+	wlserver.wlr.renderer = vulkan_renderer_create();
 
 	wlr_renderer_init_wl_display(wlserver.wlr.renderer, wlserver.display);
 

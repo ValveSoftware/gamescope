@@ -2486,11 +2486,10 @@ static const struct wlr_renderer_impl renderer_impl = {
 	.texture_from_buffer = renderer_texture_from_buffer,
 };
 
-struct wlr_renderer *vulkan_renderer_create( struct wlr_renderer *parent )
+struct wlr_renderer *vulkan_renderer_create( void )
 {
 	VulkanRenderer_t *renderer = new VulkanRenderer_t();
 	wlr_renderer_init(&renderer->base, &renderer_impl);
-	renderer->parent = parent;
 	return &renderer->base;
 }
 

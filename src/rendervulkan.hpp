@@ -68,7 +68,6 @@ extern "C" {
 struct VulkanRenderer_t
 {
 	struct wlr_renderer base;
-	struct wlr_renderer *parent;
 };
 
 struct VulkanWlrTexture_t
@@ -152,4 +151,4 @@ bool vulkan_remake_swapchain( void );
 bool vulkan_remake_output_images( void );
 bool acquire_next_image( void );
 
-struct wlr_renderer *vulkan_renderer_create( struct wlr_renderer *parent );
+struct wlr_renderer *vulkan_renderer_create( void );
