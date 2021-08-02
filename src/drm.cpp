@@ -571,10 +571,10 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 	drm->preferred_refresh = refresh;
 
 	char *device_name = nullptr;
-	if (g_vulkanHasDrmDevId) {
-		device_name = find_drm_node_by_devid(g_vulkanDrmDevId);
+	if (g_vulkanHasDrmPrimaryDevId) {
+		device_name = find_drm_node_by_devid(g_vulkanDrmPrimaryDevId);
 		if (device_name == nullptr) {
-			drm_log.errorf("Failed to find DRM device with device ID %" PRIu64, (uint64_t)g_vulkanDrmDevId);
+			drm_log.errorf("Failed to find DRM device with device ID %" PRIu64, (uint64_t)g_vulkanDrmPrimaryDevId);
 			return false;
 		}
 		drm_log.infof("opening DRM node '%s'", device_name);

@@ -1,5 +1,6 @@
 // Initialize Vulkan and composite stuff with a compute queue
 
+#include <fcntl.h>
 #include <unistd.h>
 #include <stdio.h>
 #include <string.h>
@@ -70,8 +71,10 @@ VkDescriptorPool descriptorPool;
 
 bool g_vulkanSupportsModifiers;
 
-bool g_vulkanHasDrmDevId = false;
-dev_t g_vulkanDrmDevId = 0;
+bool g_vulkanHasDrmPrimaryDevId = false;
+dev_t g_vulkanDrmPrimaryDevId = 0;
+
+static int g_drmRenderFd = -1;
 
 VkDescriptorSetLayout descriptorSetLayout;
 VkPipelineLayout pipelineLayout;
@@ -917,9 +920,10 @@ retry:
 	std::vector<VkExtensionProperties> vecSupportedExtensions(supportedExtensionCount);
 	vkEnumerateDeviceExtensionProperties( physicalDevice, NULL, &supportedExtensionCount, vecSupportedExtensions.data() );
 
-	bool supportsForeignQueue = false;
-
 	g_vulkanSupportsModifiers = false;
+	bool hasDrmProps = false;
+	bool hasPciBusProps = false;
+	bool supportsForeignQueue = false;
 	for ( uint32_t i = 0; i < supportedExtensionCount; ++i )
 	{
 		if ( strcmp(vecSupportedExtensions[i].extensionName,
@@ -928,7 +932,11 @@ retry:
 
 		if ( strcmp(vecSupportedExtensions[i].extensionName,
 		            VK_EXT_PHYSICAL_DEVICE_DRM_EXTENSION_NAME) == 0 )
-			g_vulkanHasDrmDevId = true;
+			hasDrmProps = true;
+
+		if ( strcmp(vecSupportedExtensions[i].extensionName,
+		            VK_EXT_PCI_BUS_INFO_EXTENSION_NAME) == 0 )
+			hasPciBusProps = true;
 
 		if ( strcmp(vecSupportedExtensions[i].extensionName,
 		     VK_EXT_QUEUE_FAMILY_FOREIGN_EXTENSION_NAME) == 0 )
@@ -937,7 +945,7 @@ retry:
 
 	vk_log.infof( "physical device %s DRM format modifiers", g_vulkanSupportsModifiers ? "supports" : "does not support" );
 
-	if ( g_vulkanHasDrmDevId ) {
+	if ( hasDrmProps ) {
 		VkPhysicalDeviceDrmPropertiesEXT drmProps = {
 			.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRM_PROPERTIES_EXT,
 		};
@@ -946,11 +954,79 @@ retry:
 			.pNext = &drmProps,
 		};
 		vkGetPhysicalDeviceProperties2( physicalDevice, &props2 );
-		if ( !drmProps.hasPrimary ) {
+
+		if ( !BIsNested() && !drmProps.hasPrimary ) {
 			vk_log.errorf( "physical device has no primary node" );
 			return false;
 		}
-		g_vulkanDrmDevId = makedev( drmProps.primaryMajor, drmProps.primaryMinor );
+		if ( !drmProps.hasRender ) {
+			vk_log.errorf( "physical device has no render node" );
+			return false;
+		}
+
+		dev_t renderDevId = makedev( drmProps.renderMajor, drmProps.renderMinor );
+		char *renderName = find_drm_node_by_devid( renderDevId );
+		if ( renderName == nullptr ) {
+			vk_log.errorf( "failed to find DRM node" );
+			return false;
+		}
+
+		g_drmRenderFd = open( renderName, O_RDWR | O_CLOEXEC );
+		if ( g_drmRenderFd < 0 ) {
+			vk_log.errorf_errno( "failed to open DRM render node" );
+			return false;
+		}
+
+		if ( drmProps.hasPrimary ) {
+			g_vulkanHasDrmPrimaryDevId = true;
+			g_vulkanDrmPrimaryDevId = makedev( drmProps.primaryMajor, drmProps.primaryMinor );
+		}
+	} else if ( hasPciBusProps ) {
+		// TODO: drop this logic once VK_EXT_physical_device_drm support is widespread
+
+		VkPhysicalDevicePCIBusInfoPropertiesEXT pciBusProps = {
+			.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PCI_BUS_INFO_PROPERTIES_EXT,
+		};
+		VkPhysicalDeviceProperties2 props2 = {
+			.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
+			.pNext = &pciBusProps,
+		};
+		vkGetPhysicalDeviceProperties2( physicalDevice, &props2 );
+
+		drmDevice *drmDevices[32];
+		int drmDevicesLen = drmGetDevices2(0, drmDevices, sizeof(drmDevices) / sizeof(drmDevices[0]));
+		if (drmDevicesLen < 0) {
+			vk_log.errorf_errno("drmGetDevices2 failed");
+			return false;
+		}
+
+		drmDevice *match = nullptr;
+		for ( int i = 0; i < drmDevicesLen; i++ ) {
+			drmDevice *drmDev = drmDevices[ i ];
+			if ( !( drmDev->available_nodes & ( 1 << DRM_NODE_RENDER ) ) )
+				continue;
+			if ( drmDev->bustype != DRM_BUS_PCI )
+				continue;
+
+			if ( pciBusProps.pciDevice == drmDev->businfo.pci->dev && pciBusProps.pciBus == drmDev->businfo.pci->bus && pciBusProps.pciDomain == drmDev->businfo.pci->domain && pciBusProps.pciFunction == drmDev->businfo.pci->func ) {
+				match = drmDev;
+				break;
+			}
+		}
+		if (match == nullptr) {
+			vk_log.errorf("failed to find DRM device from PCI bus info");
+		}
+
+		g_drmRenderFd = open( match->nodes[ DRM_NODE_RENDER ], O_RDWR | O_CLOEXEC );
+		if ( g_drmRenderFd < 0 ) {
+			vk_log.errorf_errno( "failed to open DRM render node" );
+			return false;
+		}
+
+		drmFreeDevices( drmDevices, drmDevicesLen );
+	} else {
+		vk_log.errorf( "physical device doesn't support VK_EXT_physical_device_drm nor VK_EXT_pci_bus_info" );
+		return false;
 	}
 
 	if ( g_vulkanSupportsModifiers && !supportsForeignQueue && !BIsNested() ) {
@@ -2381,6 +2457,11 @@ static const struct wlr_drm_format_set *renderer_get_dmabuf_texture_formats( str
 	return &sampledDRMFormats;
 }
 
+static int renderer_get_drm_fd( struct wlr_renderer *wlr_renderer )
+{
+	return g_drmRenderFd;
+}
+
 static struct wlr_texture *renderer_texture_from_buffer( struct wlr_renderer *wlr_renderer, struct wlr_buffer *buf )
 {
 	VulkanWlrTexture_t *tex = new VulkanWlrTexture_t();
@@ -2400,6 +2481,7 @@ static const struct wlr_renderer_impl renderer_impl = {
 	.render_quad_with_matrix = renderer_render_quad_with_matrix,
 	.get_shm_texture_formats = renderer_get_shm_texture_formats,
 	.get_dmabuf_texture_formats = renderer_get_dmabuf_texture_formats,
+	.get_drm_fd = renderer_get_drm_fd,
 	.get_render_buffer_caps = renderer_get_render_buffer_caps,
 	.texture_from_buffer = renderer_texture_from_buffer,
 };

@@ -126,8 +126,8 @@ public:
 
 extern bool g_vulkanSupportsModifiers;
 
-extern bool g_vulkanHasDrmDevId;
-extern dev_t g_vulkanDrmDevId;
+extern bool g_vulkanHasDrmPrimaryDevId;
+extern dev_t g_vulkanDrmPrimaryDevId;
 
 bool vulkan_init(void);
 bool vulkan_init_formats(void);
