@@ -47,6 +47,8 @@ static void request_buffer(struct pipewire_state *state)
 	uint8_t *data = (uint8_t *) spa_buffer->datas[0].data;
 	assert(data != nullptr);
 
+	struct pipewire_buffer *buffer = (struct pipewire_buffer *) pw_buffer->user_data;
+
 	struct spa_meta_header *header = (struct spa_meta_header *) spa_buffer_find_meta_data(spa_buffer, SPA_META_Header, sizeof(*header));
 	if (header != nullptr) {
 		header->pts = -1;
@@ -59,12 +61,6 @@ static void request_buffer(struct pipewire_state *state)
 	chunk->offset = 0;
 	chunk->size = state->video_info.size.height * state->stride;
 	chunk->stride = state->stride;
-
-	struct pipewire_buffer *buffer = new pipewire_buffer();
-	buffer->buffer = pw_buffer;
-	buffer->video_info = state->video_info;
-	buffer->stride = state->stride;
-	buffer->data = data;
 
 	struct pipewire_buffer *old = out_buffer.exchange(buffer);
 	assert(old == nullptr);
@@ -96,7 +92,6 @@ static void dispatch_nudge(struct pipewire_state *state, int fd)
 	struct pipewire_buffer *buffer = in_buffer.exchange(nullptr);
 	if (buffer != nullptr) {
 		pw_stream_queue_buffer(state->stream, buffer->buffer);
-		delete buffer;
 
 		if (state->streaming) {
 			request_buffer(state);
@@ -249,6 +244,14 @@ static void stream_handle_add_buffer(void *user_data, struct pw_buffer *pw_buffe
 		return;
 	}
 
+	struct pipewire_buffer *buffer = new pipewire_buffer();
+	buffer->buffer = pw_buffer;
+	buffer->video_info = state->video_info;
+	buffer->stride = state->stride;
+	buffer->data = (uint8_t *) data;
+
+	pw_buffer->user_data = buffer;
+
 	spa_data->type = SPA_DATA_MemFd;
 	spa_data->flags = SPA_DATA_FLAG_READABLE;
 	spa_data->fd = fd;
@@ -261,7 +264,9 @@ static void stream_handle_remove_buffer(void *data, struct pw_buffer *pw_buffer)
 {
 	struct spa_buffer *spa_buffer = pw_buffer->buffer;
 	struct spa_data *spa_data = &spa_buffer->datas[0];
+	struct pipewire_buffer *buffer = (struct pipewire_buffer *) pw_buffer->user_data;
 
+	delete buffer;
 	munmap(spa_data->data, spa_data->maxsize);
 	close(spa_data->fd);
 }
