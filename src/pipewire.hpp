@@ -18,6 +18,11 @@ struct pipewire_state {
 	uint64_t seq;
 };
 
+/**
+ * PipeWire buffers are allocated by the PipeWire thread, and are temporarily
+ * shared with the steamcompmgr thread (via dequeue_pipewire_buffer and
+ * push_pipewire_buffer) for copying.
+ */
 struct pipewire_buffer {
 	struct spa_video_info_raw video_info;
 	int stride;
