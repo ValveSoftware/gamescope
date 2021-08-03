@@ -19,10 +19,18 @@ struct pipewire_state {
 };
 
 struct pipewire_buffer {
-	struct pw_buffer *buffer;
 	struct spa_video_info_raw video_info;
 	int stride;
 	uint8_t *data;
+	int fd;
+
+	// The following fields are not thread-safe
+
+	// The PipeWire buffer, or nullptr if it's been destroyed.
+	struct pw_buffer *buffer;
+	// We pass the buffer to the steamcompmgr thread for copying. This is set
+	// to true if the buffer is currently owned by the steamcompmgr thread.
+	bool copying;
 };
 
 bool init_pipewire(void);

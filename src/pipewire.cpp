@@ -21,6 +21,15 @@ static int nudgePipe[2] = { -1, -1 };
 static std::atomic<struct pipewire_buffer *> out_buffer;
 static std::atomic<struct pipewire_buffer *> in_buffer;
 
+static void destroy_buffer(struct pipewire_buffer *buffer) {
+	assert(!buffer->copying);
+	assert(buffer->buffer == nullptr);
+
+	munmap(buffer->data, buffer->stride * buffer->video_info.size.height);
+	close(buffer->fd);
+	delete buffer;
+}
+
 static const struct spa_pod *get_format_param(struct spa_pod_builder *builder) {
 	struct spa_rectangle size = SPA_RECTANGLE(g_nOutputWidth, g_nOutputHeight);
 	struct spa_fraction framerate = SPA_FRACTION(0, 1);
@@ -44,9 +53,6 @@ static void request_buffer(struct pipewire_state *state)
 	}
 
 	struct spa_buffer *spa_buffer = pw_buffer->buffer;
-	uint8_t *data = (uint8_t *) spa_buffer->datas[0].data;
-	assert(data != nullptr);
-
 	struct pipewire_buffer *buffer = (struct pipewire_buffer *) pw_buffer->user_data;
 
 	struct spa_meta_header *header = (struct spa_meta_header *) spa_buffer_find_meta_data(spa_buffer, SPA_META_Header, sizeof(*header));
@@ -62,6 +68,10 @@ static void request_buffer(struct pipewire_state *state)
 	chunk->size = state->video_info.size.height * state->stride;
 	chunk->stride = state->stride;
 
+	buffer->copying = true;
+
+	// Past this exchange, the PipeWire thread shares the buffer with the
+	// steamcompmgr thread
 	struct pipewire_buffer *old = out_buffer.exchange(buffer);
 	assert(old == nullptr);
 }
@@ -91,7 +101,16 @@ static void dispatch_nudge(struct pipewire_state *state, int fd)
 
 	struct pipewire_buffer *buffer = in_buffer.exchange(nullptr);
 	if (buffer != nullptr) {
-		pw_stream_queue_buffer(state->stream, buffer->buffer);
+		// We now completely own the buffer, it's no longer shared with the
+		// steamcompmgr thread.
+
+		buffer->copying = false;
+
+		if (buffer->buffer != nullptr) {
+			pw_stream_queue_buffer(state->stream, buffer->buffer);
+		} else {
+			destroy_buffer(buffer);
+		}
 
 		if (state->streaming) {
 			request_buffer(state);
@@ -249,6 +268,7 @@ static void stream_handle_add_buffer(void *user_data, struct pw_buffer *pw_buffe
 	buffer->video_info = state->video_info;
 	buffer->stride = state->stride;
 	buffer->data = (uint8_t *) data;
+	buffer->fd = fd;
 
 	pw_buffer->user_data = buffer;
 
@@ -262,13 +282,13 @@ static void stream_handle_add_buffer(void *user_data, struct pw_buffer *pw_buffe
 
 static void stream_handle_remove_buffer(void *data, struct pw_buffer *pw_buffer)
 {
-	struct spa_buffer *spa_buffer = pw_buffer->buffer;
-	struct spa_data *spa_data = &spa_buffer->datas[0];
 	struct pipewire_buffer *buffer = (struct pipewire_buffer *) pw_buffer->user_data;
 
-	delete buffer;
-	munmap(spa_data->data, spa_data->maxsize);
-	close(spa_data->fd);
+	buffer->buffer = nullptr;
+
+	if (!buffer->copying) {
+		destroy_buffer(buffer);
+	}
 }
 
 static const struct pw_stream_events stream_events = {
