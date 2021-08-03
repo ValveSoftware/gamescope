@@ -2,6 +2,7 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <stdio.h>
+#include <sys/mman.h>
 #include <unistd.h>
 
 #include <atomic>
@@ -152,7 +153,7 @@ static void stream_handle_param_changed(void *data, uint32_t id, const struct sp
 
 	int buffers = 4;
 	int size = state->stride * state->video_info.size.height;
-	int data_type = 1 << SPA_DATA_MemPtr;
+	int data_type = 1 << SPA_DATA_MemFd;
 
 	const struct spa_pod *buffers_param =
 		(const struct spa_pod *) spa_pod_builder_add_object(&builder,
@@ -185,13 +186,93 @@ static void stream_handle_process(void *data)
 	}
 }
 
+static void randname(char *buf)
+{
+	struct timespec ts;
+	clock_gettime(CLOCK_REALTIME, &ts);
+	long r = ts.tv_nsec;
+	for (int i = 0; i < 6; ++i) {
+		buf[i] = 'A'+(r&15)+(r&16)*2;
+		r >>= 5;
+	}
+}
+
+static int anonymous_shm_open(void)
+{
+	char name[] = "/gamescope-pw-XXXXXX";
+	int retries = 100;
+
+	do {
+		randname(name + strlen(name) - 6);
+
+		--retries;
+		// shm_open guarantees that O_CLOEXEC is set
+		int fd = shm_open(name, O_RDWR | O_CREAT | O_EXCL, 0600);
+		if (fd >= 0) {
+			shm_unlink(name);
+			return fd;
+		}
+	} while (retries > 0 && errno == EEXIST);
+
+	return -1;
+}
+
+static void stream_handle_add_buffer(void *user_data, struct pw_buffer *pw_buffer)
+{
+	struct pipewire_state *state = (struct pipewire_state *) user_data;
+
+	struct spa_buffer *spa_buffer = pw_buffer->buffer;
+	struct spa_data *spa_data = &spa_buffer->datas[0];
+
+	if ((spa_data->type & (1 << SPA_DATA_MemFd)) == 0) {
+		log.errorf("unsupported data type");
+		return;
+	}
+
+	int fd = anonymous_shm_open();
+	if (fd < 0) {
+		log.errorf("failed to create shm file");
+		return;
+	}
+
+	off_t size = state->stride * state->video_info.size.height;
+	if (ftruncate(fd, size) != 0) {
+		log.errorf_errno("ftruncate failed");
+		close(fd);
+		return;
+	}
+
+	void *data = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+	if (data == MAP_FAILED) {
+		log.errorf_errno("mmap failed");
+		close(fd);
+		return;
+	}
+
+	spa_data->type = SPA_DATA_MemFd;
+	spa_data->flags = SPA_DATA_FLAG_READABLE;
+	spa_data->fd = fd;
+	spa_data->mapoffset = 0;
+	spa_data->maxsize = size;
+	spa_data->data = data;
+}
+
+static void stream_handle_remove_buffer(void *data, struct pw_buffer *pw_buffer)
+{
+	struct spa_buffer *spa_buffer = pw_buffer->buffer;
+	struct spa_data *spa_data = &spa_buffer->datas[0];
+
+	munmap(spa_data->data, spa_data->maxsize);
+	close(spa_data->fd);
+}
+
 static const struct pw_stream_events stream_events = {
 	.version = PW_VERSION_STREAM_EVENTS,
 	.state_changed = stream_handle_state_changed,
 	.param_changed = stream_handle_param_changed,
+	.add_buffer = stream_handle_add_buffer,
+	.remove_buffer = stream_handle_remove_buffer,
 	.process = stream_handle_process,
-	//.add_buffer = stream_handle_add_buffer,
-	//.remove_buffer = stream_handle_remove_buffer,
 };
 
 enum event_type {
@@ -293,8 +374,7 @@ bool init_pipewire(void)
 	struct spa_pod_builder builder = SPA_POD_BUILDER_INIT(buf, sizeof(buf));
 	const struct spa_pod *format_param = get_format_param(&builder);
 
-	// TODO: PW_STREAM_FLAG_ALLOC_BUFFERS
-	enum pw_stream_flags flags = (enum pw_stream_flags)(PW_STREAM_FLAG_DRIVER | PW_STREAM_FLAG_MAP_BUFFERS);
+	enum pw_stream_flags flags = (enum pw_stream_flags)(PW_STREAM_FLAG_DRIVER | PW_STREAM_FLAG_ALLOC_BUFFERS);
 	int ret = pw_stream_connect(state->stream, PW_DIRECTION_OUTPUT, PW_ID_ANY, flags, &format_param, 1);
 	if (ret != 0) {
 		log.errorf("pw_stream_connect failed");
