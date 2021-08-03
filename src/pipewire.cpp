@@ -107,7 +107,10 @@ static void dispatch_nudge(struct pipewire_state *state, int fd)
 		buffer->copying = false;
 
 		if (buffer->buffer != nullptr) {
-			pw_stream_queue_buffer(state->stream, buffer->buffer);
+			int ret = pw_stream_queue_buffer(state->stream, buffer->buffer);
+			if (ret < 0) {
+				log.errorf("pw_stream_queue_buffer failed");
+			}
 		} else {
 			destroy_buffer(buffer);
 		}
