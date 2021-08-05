@@ -17,7 +17,7 @@ jobs:
           pacman -S --noconfirm git meson clang glslang libcap wlroots \
             sdl2 vulkan-headers libx11 libxcomposite libxrender libxres \
             libxtst libxkbcommon libdrm libinput wayland-protocols \
-            xorg-xwayland
+            xorg-xwayland pipewire
       - uses: actions/checkout@v2
         with:
           submodules: recursive
