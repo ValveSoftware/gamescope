@@ -21,6 +21,8 @@ bool g_bWindowShown = false;
 int g_nOldNestedRefresh = 0;
 bool g_bWindowFocused = true;
 
+bool g_bMouseRelative = true;
+
 SDL_Window *g_SDLWindow;
 uint32_t g_unSDLUserEventID;
 SDL_Event g_SDLUserEvent;
@@ -113,7 +115,8 @@ void inputSDLThreadRun( void )
 
 	SDL_Vulkan_GetInstanceExtensions( g_SDLWindow, &extCount, g_vecSDLInstanceExts.data() );
 
-	SDL_SetRelativeMouseMode(SDL_TRUE);
+		SDL_SetRelativeMouseMode( (SDL_bool)g_bMouseRelative );
+		SDL_ShowCursor( SDL_DISABLE );
 
 	g_nOldNestedRefresh = g_nNestedRefresh;
 	
@@ -126,7 +129,16 @@ void inputSDLThreadRun( void )
 		{
 			case SDL_MOUSEMOTION:
 				wlserver_lock();
-				wlserver_mousemotion( event.motion.xrel, event.motion.yrel, event.motion.timestamp );
+				if( g_bMouseRelative )
+				{
+					wlserver_mousemotion( event.motion.xrel, event.motion.yrel,
+							event.motion.timestamp );
+				}
+				else
+				{
+					wlserver_absmousemotion( event.motion.x, event.motion.y,
+							event.motion.timestamp );
+				}
 				wlserver_unlock();
 				break;
 			case SDL_MOUSEBUTTONDOWN:
@@ -161,6 +173,10 @@ void inputSDLThreadRun( void )
 							break;
 						case KEY_S:
 							g_bTakeScreenshot = true;
+							break;
+						 case KEY_SCROLLLOCK:
+							g_bMouseRelative = !g_bMouseRelative;
+							SDL_SetRelativeMouseMode( (SDL_bool)g_bMouseRelative );
 							break;
 						default:
 							handled = false;

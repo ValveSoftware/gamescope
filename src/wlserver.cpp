@@ -766,6 +766,27 @@ void wlserver_mousemotion( int x, int y, uint32_t time )
 	}
 }
 
+void wlserver_absmousemotion( int x, int y, uint32_t time )
+{
+	if( g_XWLDpy != NULL )
+	{
+
+		float scale =
+			fmax(
+					(float)wlserver.mouse_focus_surface->current.height / g_nOutputHeight,
+					(float)wlserver.mouse_focus_surface->current.width / g_nOutputWidth
+				);
+
+		int nestedY = scale * ( y - g_nOutputHeight / 2.0 ) +
+			wlserver.mouse_focus_surface->current.height / 2.0;
+		int nestedX = scale * ( x - g_nOutputWidth / 2.0 ) +
+			wlserver.mouse_focus_surface->current.width / 2.0;
+
+		XTestFakeMotionEvent( g_XWLDpy, -1, nestedX, nestedY, CurrentTime );
+		XFlush( g_XWLDpy );
+	}
+}
+
 void wlserver_mousebutton( int button, bool press, uint32_t time )
 {
 	wlr_seat_pointer_notify_button( wlserver.wlr.seat, time, button, press ? WLR_BUTTON_PRESSED : WLR_BUTTON_RELEASED );
