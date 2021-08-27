@@ -15,7 +15,7 @@ layout(constant_id = 2) const uint c_ycbcrMask    = 0;
 
 layout(binding = 0, rgba8) writeonly uniform image2D dst;
 
-layout(std430, binding = 1)
+layout(std430, push_constant)
 uniform layers_t {
     vec2 u_scale[MaxLayers];
     vec2 u_offset[MaxLayers];
@@ -23,9 +23,9 @@ uniform layers_t {
     float u_borderAlpha[MaxLayers];
 };
 
-layout(binding = 2) uniform sampler2D s_samplers[MaxLayers];
+layout(binding = 1) uniform sampler2D s_samplers[MaxLayers];
 
-layout(binding = 6) uniform sampler2D s_ycbcr_samplers[MaxLayers];
+layout(binding = 5) uniform sampler2D s_ycbcr_samplers[MaxLayers];
 
 vec4 sampleLayer(sampler2D layerSampler, uint layerIdx, vec2 uv) {
     vec2 coord = ((uv + u_offset[layerIdx]) * u_scale[layerIdx]);

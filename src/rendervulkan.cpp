@@ -54,10 +54,6 @@ struct VulkanOutput_t
 
 	int nCurCmdBuffer;
 	VkCommandBuffer commandBuffers[2]; // ping/pong command buffers as well
-	
-	VkBuffer constantBuffer;
-	VkDeviceMemory bufferMemory;
-	Composite_t::CompositeData_t *pCompositeBuffer;
 
 	VkFence fence;
 	int fenceFD;
@@ -1036,10 +1032,6 @@ retry:
 			k_nMaxSets * 1,
 		},
 		{
-			VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-			k_nMaxSets * 1,
-		},
-		{
 			VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 			2 * k_nMaxSets * k_nMaxLayers,
 		},
@@ -1116,18 +1108,12 @@ retry:
 	vecLayoutBindings.push_back( descriptorSetLayoutBindings ); // first binding is target storage image
 	
 	descriptorSetLayoutBindings.binding = 1;
-	descriptorSetLayoutBindings.descriptorCount = 1;
-	descriptorSetLayoutBindings.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-	
-	vecLayoutBindings.push_back( descriptorSetLayoutBindings ); // second binding is composite description buffer
-	
-	descriptorSetLayoutBindings.binding = 2;
 	descriptorSetLayoutBindings.descriptorCount = k_nMaxLayers;
 	descriptorSetLayoutBindings.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 
 	vecLayoutBindings.push_back( descriptorSetLayoutBindings );
 
-	descriptorSetLayoutBindings.binding = 6;
+	descriptorSetLayoutBindings.binding = 5;
 	descriptorSetLayoutBindings.descriptorCount = k_nMaxLayers;
 	descriptorSetLayoutBindings.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 	descriptorSetLayoutBindings.pImmutableSamplers = ycbcrSamplers.data();
@@ -1149,6 +1135,12 @@ retry:
 		vk_errorf( res, "vkCreateDescriptorSetLayout failed" );
 		return false;
 	}
+
+	VkPushConstantRange pushConstantRange = {
+		.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+		.offset = 0,
+		.size = sizeof(Composite_t::CompositeData_t)
+	};
 	
 	VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo = {
 		VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
@@ -1156,8 +1148,8 @@ retry:
 		0,
 		1,
 		&descriptorSetLayout,
-		0,
-		0
+		1,
+		&pushConstantRange
 	};
 	
 	res = vkCreatePipelineLayout(device, &pipelineLayoutCreateInfo, 0, &pipelineLayout);
@@ -1585,47 +1577,6 @@ bool vulkan_make_output( VulkanOutput_t *pOutput )
 			return false;
 	}
 
-	// Make and map constant buffer
-	
-	VkBufferCreateInfo bufferCreateInfo = {};
-	bufferCreateInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-	bufferCreateInfo.pNext = nullptr;
-	bufferCreateInfo.size = sizeof( Composite_t::CompositeData_t );
-	bufferCreateInfo.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
-	
-	result = vkCreateBuffer( device, &bufferCreateInfo, nullptr, &pOutput->constantBuffer );
-	if ( result != VK_SUCCESS )
-	{
-		vk_errorf( result, "vkCreateBuffer failed for constant buffer" );
-		return false;
-	}
-	
-	VkMemoryRequirements memRequirements;
-	vkGetBufferMemoryRequirements(device, pOutput->constantBuffer, &memRequirements);
-	
-	int memTypeIndex =  findMemoryType(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT|VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, memRequirements.memoryTypeBits );
-	
-	if ( memTypeIndex == -1 )
-	{
-		vk_log.errorf( "failed to find memory type for constant buffer" );
-		return false;
-	}
-	
-	VkMemoryAllocateInfo allocInfo = {};
-	allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-	allocInfo.allocationSize = memRequirements.size;
-	allocInfo.memoryTypeIndex = memTypeIndex;
-	
-	vkAllocateMemory( device, &allocInfo, nullptr, &pOutput->bufferMemory );
-	
-	vkBindBufferMemory( device, pOutput->constantBuffer, pOutput->bufferMemory, 0 );
-	result = vkMapMemory( device, pOutput->bufferMemory, 0, VK_WHOLE_SIZE, 0, (void**)&pOutput->pCompositeBuffer );
-	if ( result != VK_SUCCESS )
-	{
-		vk_errorf( result, "vkMapMemory failed for constant buffer" );
-		return false;
-	}
-	
 	// Make command buffers
 	
 	VkCommandBufferAllocateInfo commandBufferAllocateInfo = {
@@ -1647,28 +1598,6 @@ bool vulkan_make_output( VulkanOutput_t *pOutput )
 	
 	pOutput->fence = VK_NULL_HANDLE;
 	pOutput->fenceFD = -1;
-	
-	// Write the constant buffer itno descriptor set
-	VkDescriptorBufferInfo bufferInfo = {
-		.buffer = g_output.constantBuffer,
-		.offset = 0,
-		.range = VK_WHOLE_SIZE
-	};
-	
-	VkWriteDescriptorSet writeDescriptorSet = {
-		.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-		.pNext = nullptr,
-		.dstSet = descriptorSet,
-		.dstBinding = 1,
-		.dstArrayElement = 0,
-		.descriptorCount = 1,
-		.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-		.pImageInfo = nullptr,
-		.pBufferInfo = &bufferInfo,
-		.pTexelBufferView = nullptr,
-	};
-	
-	vkUpdateDescriptorSets(device, 1, &writeDescriptorSet, 0, nullptr);
 	
 	return true;
 }
@@ -2034,7 +1963,7 @@ void vulkan_update_descriptor( struct VulkanPipeline_t *pPipeline, int nYCBCRMas
 		.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 		.pNext = nullptr,
 		.dstSet = descriptorSet,
-		.dstBinding = 2,
+		.dstBinding = 1,
 		.dstArrayElement = 0,
 		.descriptorCount = imageDescriptors.size(),
 		.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
@@ -2058,7 +1987,7 @@ void vulkan_update_descriptor( struct VulkanPipeline_t *pPipeline, int nYCBCRMas
 			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 			.pNext = nullptr,
 			.dstSet = descriptorSet,
-			.dstBinding = 6,
+			.dstBinding = 5,
 			.dstArrayElement = 0,
 			.descriptorCount = ycbcrImageDescriptors.size(),
 			.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
@@ -2104,8 +2033,6 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 		}
 	}
 
-	*g_output.pCompositeBuffer = pComposite->data;
-	// XXX maybe flush something?
 	
 	assert ( g_output.fence == VK_NULL_HANDLE );
 	
@@ -2138,6 +2065,8 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 	
 	vkCmdBindDescriptorSets(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE,
 							pipelineLayout, 0, 1, &descriptorSet, 0, 0);
+
+	vkCmdPushConstants(curCommandBuffer, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pComposite->data), &pComposite->data);
 	
 	uint32_t nGroupCountX = currentOutputWidth % 8 ? currentOutputWidth / 8 + 1: currentOutputWidth / 8;
 	uint32_t nGroupCountY = currentOutputHeight % 8 ? currentOutputHeight / 8 + 1: currentOutputHeight / 8;
