@@ -914,6 +914,8 @@ void MouseCursor::paint(win *window, struct Composite_t *pComposite,
 	pComposite->data.vOffset[ curLayer ].x = -scaledX;
 	pComposite->data.vOffset[ curLayer ].y = -scaledY;
 
+	pComposite->data.flBorderAlpha[ curLayer ] = 0.0f;
+
 	pPipeline->layerBindings[ curLayer ].surfaceWidth = m_width;
 	pPipeline->layerBindings[ curLayer ].surfaceHeight = m_height;
 
@@ -924,7 +926,6 @@ void MouseCursor::paint(win *window, struct Composite_t *pComposite,
 															  vulkan_texture_get_fbid(m_texture);
 
 	pPipeline->layerBindings[ curLayer ].bFilter = false;
-	pPipeline->layerBindings[ curLayer ].bBlackBorder = false;
 
 	pComposite->nLayerCount += 1;
 }
@@ -1005,11 +1006,15 @@ paint_window (Display *dpy, win *w, struct Composite_t *pComposite,
 
 		pComposite->data.vOffset[ curLayer ].x = (currentOutputWidth - xOffset - width) * -1.0f;
 		pComposite->data.vOffset[ curLayer ].y = (currentOutputHeight - yOffset - height) * -1.0f;
+
+		pComposite->data.flBorderAlpha[ curLayer ] = 0.0f;
 	}
 	else
 	{
 		pComposite->data.vOffset[ curLayer ].x = -drawXOffset;
 		pComposite->data.vOffset[ curLayer ].y = -drawYOffset;
+
+		pComposite->data.flBorderAlpha[ curLayer ] = 1.0f;
 	}
 
 	pPipeline->layerBindings[ curLayer ].surfaceWidth = w->a.width;
@@ -1026,7 +1031,6 @@ paint_window (Display *dpy, win *w, struct Composite_t *pComposite,
 	pPipeline->layerBindings[ curLayer ].fbid = lastCommit.fb_id;
 
 	pPipeline->layerBindings[ curLayer ].bFilter = w->isOverlay ? true : g_bFilterGameWindow;
-	pPipeline->layerBindings[ curLayer ].bBlackBorder = notificationMode ? false : true;
 
 	pComposite->nLayerCount += 1;
 }

@@ -20,19 +20,28 @@ uniform layers_t {
     vec2 u_scale[MaxLayers];
     vec2 u_offset[MaxLayers];
     float u_opacity[MaxLayers];
+    float u_borderAlpha[MaxLayers];
 };
 
 layout(binding = 2) uniform sampler2D s_samplers[MaxLayers];
 
 layout(binding = 6) uniform sampler2D s_ycbcr_samplers[MaxLayers];
 
-vec4 sampleLayer(uint layerIdx, vec2 uv) {
-    vec2 coord = (uv + u_offset[layerIdx]) * u_scale[layerIdx];
+vec4 sampleLayer(sampler2D layerSampler, uint layerIdx, vec2 uv) {
+    vec2 coord = ((uv + u_offset[layerIdx]) * u_scale[layerIdx]);
+    vec2 texSize = textureSize(layerSampler, 0);
 
+    if (coord.x < 0.0f       || coord.y < 0.0f ||
+        coord.x >= texSize.x || coord.y >= texSize.y )
+        return vec4(0.0f, 0.0f, 0.0f, u_borderAlpha[layerIdx]);
+
+    return texture(layerSampler, coord);
+}
+
+vec4 sampleLayer(uint layerIdx, vec2 uv) {
     if ((c_ycbcrMask & (1 << layerIdx)) != 0)
-        return texture(s_ycbcr_samplers[layerIdx], coord);
-    else
-        return texture(s_samplers[layerIdx], coord);
+        return sampleLayer(s_ycbcr_samplers[layerIdx], layerIdx, uv);
+    return sampleLayer(s_samplers[layerIdx], layerIdx, uv);
 }
 
 void main() {

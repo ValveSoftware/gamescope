@@ -24,7 +24,6 @@ struct VulkanPipeline_t
 
 		// These fields below count for the sampler cache
 		bool bFilter;
-		bool bBlackBorder;
 	} layerBindings[ k_nMaxLayers ];
 };
 
@@ -44,6 +43,7 @@ struct Composite_t
 		vec2_t vScale[k_nMaxLayers];
 		vec2_t vOffset[k_nMaxLayers];
 		float flOpacity[k_nMaxLayers];
+		float flBorderAlpha[k_nMaxLayers];
 	} data;
 };
 

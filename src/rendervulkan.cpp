@@ -1094,13 +1094,6 @@ retry:
 		.pNext = &ycbcrSamplerConversionInfo,
 		.magFilter = VK_FILTER_LINEAR,
 		.minFilter = VK_FILTER_LINEAR,
-		// Using clamp to edge here for now, otherwise we end up with a
-		// 1/2 pixel of green on the left and top of the screen due to
-		// the texel replacement happening before the YCbCr conversion.
-
-		// TODO: Find out why we are even hitting the border in the first place,
-		// maybe there is some weird half-texel stuff somewhere in Gamescope causing this,
-		// I imagine if this was more obvious it would affect games too.
 		.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
 		.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
 		.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK,
@@ -1931,9 +1924,6 @@ bool operator==(const struct VulkanPipeline_t::LayerBinding_t& lhs, struct Vulka
 	if ( lhs.bFilter != rhs.bFilter )
 		return false;
 
-	if ( lhs.bBlackBorder != rhs.bBlackBorder )
-		return false;
-
 	return true;
 }
 
@@ -1946,9 +1936,9 @@ VkSampler vulkan_make_sampler( struct VulkanPipeline_t::LayerBinding_t *pBinding
 		.pNext = nullptr,
 		.magFilter = pBinding->bFilter ? VK_FILTER_LINEAR : VK_FILTER_NEAREST,
 		.minFilter = pBinding->bFilter ? VK_FILTER_LINEAR : VK_FILTER_NEAREST,
-		.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
-		.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
-		.borderColor = pBinding->bBlackBorder ? VK_BORDER_COLOR_INT_OPAQUE_BLACK : VK_BORDER_COLOR_INT_TRANSPARENT_BLACK,
+		.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+		.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+		.borderColor = VK_BORDER_COLOR_INT_TRANSPARENT_BLACK,
 		.unnormalizedCoordinates = VK_TRUE,
 	};
 	
@@ -2005,9 +1995,6 @@ void vulkan_update_descriptor( struct VulkanPipeline_t *pPipeline, int nYCBCRMas
 		else
 		{
 			pTex = g_mapVulkanTextures[ g_emptyTex ];
-
-			// Switch the border to transparent black
-			pPipeline->layerBindings[ i ].bBlackBorder = false;
 		}
 		
 		// First try to look up the sampler in the cache.
@@ -2115,15 +2102,6 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 			if (pTex->m_format == VK_FORMAT_G8_B8R8_2PLANE_420_UNORM)
 				pComposite->nYCBCRMask |= 1 << i;
 		}
-	}
-
-	// Sample a bit closer to texel centers in most cases
-	// TODO: probably actually need to apply a general scale/bias to properly
-	// sample from the center in all four corners in all scaling scenarios
-	for ( int i = 0; i < pComposite->nLayerCount; i++ )
-	{
-		pComposite->data.vOffset[ i ].x += 0.5f;
-		pComposite->data.vOffset[ i ].y += 0.5f;
 	}
 
 	*g_output.pCompositeBuffer = pComposite->data;
