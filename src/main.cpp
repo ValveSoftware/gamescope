@@ -9,6 +9,7 @@
 
 #include <signal.h>
 #include <unistd.h>
+#include <float.h>
 
 #include "main.hpp"
 #include "steamcompmgr.hpp"
@@ -42,6 +43,8 @@ bool g_bTakeScreenshot = false;
 bool g_bNiceCap = false;
 int g_nOldNice = 0;
 int g_nNewNice = 0;
+
+float g_flMaxWindowScale = FLT_MAX;
 
 pthread_t g_mainThread;
 
@@ -77,6 +80,9 @@ int main(int argc, char **argv)
 				break;
 			case 'o':
 				g_nNestedUnfocusedRefresh = atoi( optarg );
+				break;
+			case 'm':
+				g_flMaxWindowScale = atof( optarg );
 				break;
 			case 's':
 				bSleepAtStartup = true;

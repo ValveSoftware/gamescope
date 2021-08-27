@@ -197,6 +197,8 @@ win				fadeOutWindow;
 Bool			fadeOutWindowGone;
 unsigned int	fadeOutStartTime;
 
+extern float g_flMaxWindowScale;
+
 #define			FADE_OUT_DURATION 200
 
 /* find these once and be done with it */
@@ -886,6 +888,7 @@ void MouseCursor::paint(win *window, struct Composite_t *pComposite,
 	int cursorOffsetX, cursorOffsetY;
 
 	currentScaleRatio = (XRatio < YRatio) ? XRatio : YRatio;
+	currentScaleRatio = std::min(g_flMaxWindowScale, currentScaleRatio);
 
 	cursorOffsetX = (currentOutputWidth - window->a.width * currentScaleRatio * globalScaleRatio) / 2.0f;
 	cursorOffsetY = (currentOutputHeight - window->a.height * currentScaleRatio * globalScaleRatio) / 2.0f;
@@ -971,6 +974,7 @@ paint_window (Display *dpy, win *w, struct Composite_t *pComposite,
 		float YRatio = (float)currentOutputHeight / sourceHeight;
 
 		currentScaleRatio = (XRatio < YRatio) ? XRatio : YRatio;
+		currentScaleRatio = std::min(g_flMaxWindowScale, currentScaleRatio);
 		currentScaleRatio *= globalScaleRatio;
 
 		drawXOffset = ((int)currentOutputWidth - (int)sourceWidth * currentScaleRatio) / 2.0f;
