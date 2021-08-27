@@ -45,6 +45,7 @@ int g_nOldNice = 0;
 int g_nNewNice = 0;
 
 float g_flMaxWindowScale = FLT_MAX;
+bool g_bIntegerScale = false;
 
 pthread_t g_mainThread;
 
@@ -83,6 +84,9 @@ int main(int argc, char **argv)
 				break;
 			case 'm':
 				g_flMaxWindowScale = atof( optarg );
+				break;
+			case 'i':
+				g_bIntegerScale = true;
 				break;
 			case 's':
 				bSleepAtStartup = true;
