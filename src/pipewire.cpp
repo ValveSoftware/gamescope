@@ -10,6 +10,9 @@
 
 #include "main.hpp"
 #include "pipewire.hpp"
+#include "log.hpp"
+
+static LogScope log("pipewire");
 
 static struct pipewire_state pipewire_state = { .stream_node_id = SPA_ID_INVALID };
 static int nudgePipe[2] = { -1, -1 };
@@ -34,7 +37,7 @@ static void request_buffer(struct pipewire_state *state)
 {
 	struct pw_buffer *pw_buffer = pw_stream_dequeue_buffer(state->stream);
 	if (!pw_buffer) {
-		fprintf(stderr, "pipewire: warning: out of buffers\n");
+		log.errorf("warning: out of buffers");
 		state->needs_buffer = true;
 		return;
 	}
@@ -72,20 +75,20 @@ static void dispatch_nudge(struct pipewire_state *state, int fd)
 		static char buf[1024];
 		if (read(fd, buf, sizeof(buf)) < 0) {
 			if (errno != EAGAIN)
-				perror("pipewire: dispatch_nudge: read failed");
+				log.errorf_errno("dispatch_nudge: read failed");
 			break;
 		}
 	}
 
 	if (g_nOutputWidth != state->video_info.size.width || g_nOutputHeight != state->video_info.size.height) {
-		fprintf(stderr, "pipewire: renegociating stream params (size: %dx%d)\n", g_nOutputWidth, g_nOutputHeight);
+		log.debugf("renegociating stream params (size: %dx%d)", g_nOutputWidth, g_nOutputHeight);
 
 		uint8_t buf[1024];
 		struct spa_pod_builder builder = SPA_POD_BUILDER_INIT(buf, sizeof(buf));
 		const struct spa_pod *format_param = get_format_param(&builder);
 		int ret = pw_stream_update_params(state->stream, &format_param, 1);
 		if (ret < 0) {
-			fprintf(stderr, "pipewire: pw_stream_update_params failed\n");
+			log.errorf("pw_stream_update_params failed");
 		}
 	}
 
@@ -104,7 +107,7 @@ static void stream_handle_state_changed(void *data, enum pw_stream_state old_str
 {
 	struct pipewire_state *state = (struct pipewire_state *) data;
 
-	fprintf(stderr, "pipewire: stream state changed: %s\n", pw_stream_state_as_string(stream_state));
+	log.debugf("stream state changed: %s", pw_stream_state_as_string(stream_state));
 
 	switch (stream_state) {
 	case PW_STREAM_STATE_PAUSED:
@@ -137,12 +140,12 @@ static void stream_handle_param_changed(void *data, uint32_t id, const struct sp
 	int bpp = 4;
 	int ret = spa_format_video_raw_parse(param, &state->video_info);
 	if (ret < 0) {
-		fprintf(stderr, "pipewire: spa_format_video_raw_parse failed\n");
+		log.errorf("spa_format_video_raw_parse failed");
 		return;
 	}
 	state->stride = SPA_ROUND_UP_N(state->video_info.size.width * bpp, 4);
 
-	fprintf(stderr, "pipewire: format changed (size: %dx%d)\n", state->video_info.size.width, state->video_info.size.height);
+	log.debugf("format changed (size: %dx%d)", state->video_info.size.width, state->video_info.size.height);
 
 	uint8_t buf[1024];
 	struct spa_pod_builder builder = SPA_POD_BUILDER_INIT(buf, sizeof(buf));
@@ -168,7 +171,7 @@ static void stream_handle_param_changed(void *data, uint32_t id, const struct sp
 
 	ret = pw_stream_update_params(state->stream, params, sizeof(params) / sizeof(params[0]));
 	if (ret != 0) {
-		fprintf(stderr, "pipewire: pw_stream_update_params failed\n");
+		log.errorf("pw_stream_update_params failed");
 	}
 }
 
@@ -214,12 +217,12 @@ static void run_pipewire(struct pipewire_state *state)
 	while (state->running) {
 		int ret = poll(pollfds, EVENT_COUNT, -1);
 		if (ret < 0) {
-			perror("pipewire: poll failed");
+			log.errorf_errno("poll failed");
 			break;
 		}
 
 		if (pollfds[EVENT_PIPEWIRE].revents & POLLHUP) {
-			fprintf(stderr, "pipewire: lost connection to server\n");
+			log.errorf("lost connection to server");
 			break;
 		}
 
@@ -228,7 +231,7 @@ static void run_pipewire(struct pipewire_state *state)
 		if (pollfds[EVENT_PIPEWIRE].revents & POLLIN) {
 			ret = pw_loop_iterate(state->loop, -1);
 			if (ret < 0) {
-				fprintf(stderr, "pipewire: pw_loop_iterate failed\n");
+				log.errorf("pw_loop_iterate failed");
 				break;
 			}
 		}
@@ -238,7 +241,7 @@ static void run_pipewire(struct pipewire_state *state)
 		}
 	}
 
-	fprintf(stderr, "pipewire: exiting\n");
+	log.infof("exiting");
 	pw_stream_destroy(state->stream);
 	pw_core_disconnect(state->core);
 	pw_context_destroy(state->context);
@@ -252,25 +255,25 @@ bool init_pipewire(void)
 	pw_init(nullptr, nullptr);
 
 	if (pipe2(nudgePipe, O_CLOEXEC | O_NONBLOCK) != 0) {
-		perror("pipewire: pipe2 failed");
+		log.errorf_errno("pipe2 failed");
 		return false;
 	}
 
 	state->loop = pw_loop_new(nullptr);
 	if (!state->loop) {
-		fprintf(stderr, "pipewire: pw_loop_new failed\n");
+		log.errorf("pw_loop_new failed");
 		return false;
 	}
 
 	state->context = pw_context_new(state->loop, nullptr, 0);
 	if (!state->context) {
-		fprintf(stderr, "pipewire: pw_context_new failed\n");
+		log.errorf("pw_context_new failed");
 		return false;
 	}
 
 	state->core = pw_context_connect(state->context, nullptr, 0);
 	if (!state->core) {
-		fprintf(stderr, "pipewire: pw_context_connect failed\n");
+		log.errorf("pw_context_connect failed");
 		return false;
 	}
 
@@ -279,7 +282,7 @@ bool init_pipewire(void)
 			PW_KEY_MEDIA_CLASS, "Video/Source",
 			nullptr));
 	if (!state->stream) {
-		fprintf(stderr, "pipewire: pw_stream_new failed\n");
+		log.errorf("pw_stream_new failed");
 		return false;
 	}
 
@@ -294,19 +297,19 @@ bool init_pipewire(void)
 	enum pw_stream_flags flags = (enum pw_stream_flags)(PW_STREAM_FLAG_DRIVER | PW_STREAM_FLAG_MAP_BUFFERS);
 	int ret = pw_stream_connect(state->stream, PW_DIRECTION_OUTPUT, PW_ID_ANY, flags, &format_param, 1);
 	if (ret != 0) {
-		fprintf(stderr, "pipewire: pw_stream_connect failed\n");
+		log.errorf("pw_stream_connect failed");
 		return false;
 	}
 
 	while (state->stream_node_id == SPA_ID_INVALID) {
 		int ret = pw_loop_iterate(state->loop, -1);
 		if (ret < 0) {
-			fprintf(stderr, "pipewire: pw_loop_iterate failed\n");
+			log.errorf("pw_loop_iterate failed");
 			return false;
 		}
 	}
 
-	fprintf(stderr, "pipewire: stream available on node ID: %u\n", state->stream_node_id);
+	log.infof("stream available on node ID: %u", state->stream_node_id);
 
 	std::thread thread(run_pipewire, state);
 	thread.detach();
@@ -334,5 +337,5 @@ void push_pipewire_buffer(struct pipewire_buffer *buffer)
 void nudge_pipewire(void)
 {
 	if (write(nudgePipe[1], "\n", 1) < 0)
-		perror("pipewire: nudge_pipewire: write failed");
+		log.errorf_errno("nudge_pipewire: write failed");
 }
