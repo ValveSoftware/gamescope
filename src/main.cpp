@@ -48,6 +48,7 @@ const struct option *gamescope_options = (struct option[]){
 	{ "prefer-output", no_argument, nullptr, 'O' },
 
 	// steamcompmgr options
+	{ "cursor", required_argument, nullptr, 'a' },
 	{ "ready-fd", required_argument, nullptr, 'R' },
 	{ "stats-path", required_argument, nullptr, 'T' },
 	{ "hide-cursor-delay", required_argument, nullptr, 'C' },

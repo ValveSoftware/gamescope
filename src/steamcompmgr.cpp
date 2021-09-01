@@ -79,6 +79,9 @@
 #include "pipewire.hpp"
 #endif
 
+#define STB_IMAGE_IMPLEMENTATION
+#include "../subprojects/stb/stb_image.h"
+
 #define GPUVIS_TRACE_IMPLEMENTATION
 #include "gpuvis_trace_utils.h"
 
@@ -3407,12 +3410,40 @@ dispatch_nudge( int fd )
 	}
 }
 
+struct rgba_t
+{
+	uint8_t r,g,b,a;
+};
+
+static bool
+load_mouse_cursor( MouseCursor *cursor, const char *path )
+{
+	int w, h, channels;
+	rgba_t* data = (rgba_t*)stbi_load(path, &w, &h, &channels, STBI_rgb_alpha);
+	if (!data)
+	{
+		fprintf(stderr, "Failed to open/load cursor file\n");
+		return false;
+	}
+
+	std::transform(data, data + w * h, data, [](rgba_t x) {
+		if (x.a == 0)
+			return rgba_t{};
+		return rgba_t{ x.b, x.g, x.r, x.a };
+	});
+
+	// Data is freed by XDestroyImage in setCursorImage.
+	return cursor->setCursorImage((char*)data, w, h);
+}
+
 enum event_type {
 	EVENT_X11,
 	EVENT_VBLANK,
 	EVENT_NUDGE,
 	EVENT_COUNT // keep last
 };
+
+const char* g_customCursorPath = nullptr;
 
 void
 steamcompmgr_main (int argc, char **argv)
@@ -3470,6 +3501,9 @@ steamcompmgr_main (int argc, char **argv)
 				break;
 			case 'x':
 				useXRes = False;
+				break;
+			case 'a':
+				g_customCursorPath = optarg;
 				break;
 			default:
 				break;
@@ -3635,6 +3669,11 @@ steamcompmgr_main (int argc, char **argv)
 	XF86VidModeLockModeSwitch(dpy, scr, True);
 
 	std::unique_ptr<MouseCursor> cursor(new MouseCursor(dpy));
+	if (g_customCursorPath)
+	{
+		if (!load_mouse_cursor(cursor.get(), g_customCursorPath))
+			fprintf(stderr, "Failed to load mouse cursor: %s.\n", g_customCursorPath);
+	}
 
 	gamesRunningCount = get_prop(dpy, root, gamesRunningAtom, 0);
 	overscanScaleRatio = get_prop(dpy, root, screenScaleAtom, 0xFFFFFFFF) / (double)0xFFFFFFFF;
