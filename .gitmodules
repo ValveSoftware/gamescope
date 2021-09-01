@@ -4,3 +4,6 @@
 [submodule "subprojects/libliftoff"]
 	path = subprojects/libliftoff
 	url = https://github.com/emersion/libliftoff.git
+[submodule "subprojects/stb"]
+	path = subprojects/stb
+	url = https://github.com/nothings/stb
