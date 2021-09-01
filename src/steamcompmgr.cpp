@@ -713,6 +713,79 @@ void MouseCursor::setDirty()
 	m_dirty = true;
 }
 
+bool MouseCursor::setCursorImage(char *data, int w, int h)
+{
+	XRenderPictFormat *pictformat;
+	Picture picture;
+	XImage* ximage;
+	Pixmap pixmap;
+	Cursor cursor;
+	GC gc;
+
+	if (!(ximage = XCreateImage(
+		m_display,
+		DefaultVisual(m_display, DefaultScreen(m_display)),
+		32, ZPixmap,
+		0,
+		data,
+		w, h,
+		32, 0)))
+	{
+		fprintf(stderr, "Failed to make ximage for cursor.\n");
+		goto error_image;
+	}
+
+	if (!(pixmap = XCreatePixmap(m_display, DefaultRootWindow(m_display), w, h, 32)))
+	{
+		fprintf(stderr, "Failed to make pixmap for cursor\n");
+		goto error_pixmap;
+	}
+
+	if (!(gc = XCreateGC(m_display, pixmap, 0, NULL)))
+	{
+		fprintf(stderr, "Failed to make gc for cursor\n");
+		goto error_gc;
+	}
+
+	XPutImage(m_display, pixmap, gc, ximage, 0, 0, 0, 0, w, h);	
+
+	if (!(pictformat = XRenderFindStandardFormat(m_display, PictStandardARGB32)))
+	{
+		fprintf(stderr, "Failed to create pictformat for cursor\n");
+		goto error_pictformat;
+	}
+
+	if (!(picture = XRenderCreatePicture(m_display, pixmap, pictformat, 0, NULL)))
+	{
+		fprintf(stderr, "Failed to create picture for cursor\n");
+		goto error_picture;
+	}
+
+	if (!(cursor = XRenderCreateCursor(m_display, picture, 0, 0)))
+	{
+		fprintf(stderr, "Failed to create cursor\n");
+		goto error_cursor;
+	}
+
+	XDefineCursor(m_display, DefaultRootWindow(m_display), cursor);
+	XFlush(m_display);
+	setDirty();
+	return true;
+
+error_cursor:
+	XRenderFreePicture(m_display, picture);
+error_picture:
+error_pictformat:
+	XFreeGC(m_display, gc);
+error_gc:
+	XFreePixmap(m_display, pixmap);
+error_pixmap:
+	// XDestroyImage frees the data.
+	XDestroyImage(ximage);
+error_image:
+	return false;
+}
+
 void MouseCursor::constrainPosition()
 {
 	int i;

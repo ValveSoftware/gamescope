@@ -49,6 +49,9 @@ public:
 			   struct VulkanPipeline_t *pPipeline);
 	void setDirty();
 
+	// Will take ownership of data.
+	bool setCursorImage(char *data, int w, int h);
+
 private:
 	void warp(int x, int y);
 	void checkSuspension();
