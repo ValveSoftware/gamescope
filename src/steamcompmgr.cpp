@@ -837,7 +837,7 @@ bool MouseCursor::getTexture()
 		for (int j = 0; j < image->width; j++) {
 			cursorBuffer[i * m_width + j] = image->pixels[i * image->width + j];
 
-			if ( cursorBuffer[i * m_width + j] & 0x000000ff ) {
+			if ( cursorBuffer[i * m_width + j] & 0xff000000 ) {
 				bNoCursor = false;
 			}
 		}
