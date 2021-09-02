@@ -561,6 +561,8 @@ static void kms_device_handle_change( struct wl_listener *listener, void *data )
 {
 	g_DRM.out_of_date = true;
 	wl_log.infof( "Got change event for KMS device" );
+
+	nudge_steamcompmgr();
 }
 
 int wlsession_open_kms( const char *device_name ) {

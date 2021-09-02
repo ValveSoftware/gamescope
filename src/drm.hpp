@@ -127,7 +127,7 @@ extern const char *g_sOutputName;
 int init_drm(struct drm_t *drm, const char *device);
 int drm_commit(struct drm_t *drm, struct Composite_t *pComposite, struct VulkanPipeline_t *pPipeline );
 int drm_prepare( struct drm_t *drm, const struct Composite_t *pComposite, const struct VulkanPipeline_t *pPipeline );
-void drm_poll_state(struct drm_t *drm);
+bool drm_poll_state(struct drm_t *drm);
 uint32_t drm_fbid_from_dmabuf( struct drm_t *drm, struct wlr_buffer *buf, struct wlr_dmabuf_attributes *dma_buf );
 void drm_drop_fbid( struct drm_t *drm, uint32_t fbid );
 bool drm_set_connector( struct drm_t *drm, struct connector *conn );

@@ -1063,15 +1063,17 @@ int drm_prepare( struct drm_t *drm, const struct Composite_t *pComposite, const 
 	return ret;
 }
 
-void drm_poll_state( struct drm_t *drm )
+bool drm_poll_state( struct drm_t *drm )
 {
 	bool out_of_date = drm->out_of_date.exchange(false);
 	if ( !out_of_date )
-		return;
+		return false;
 
 	refresh_state( drm );
 
 	setup_best_connector(drm);
+
+	return true;
 }
 
 static bool drm_set_crtc( struct drm_t *drm, struct crtc *crtc )

@@ -3756,7 +3756,10 @@ steamcompmgr_main (int argc, char **argv)
 		// If our DRM state is out-of-date, refresh it. This might update
 		// the output size.
 		if ( BIsNested() == false )
-			drm_poll_state( &g_DRM );
+		{
+			if ( drm_poll_state( &g_DRM ) )
+				hasRepaint = true;
+		}
 
 		// Pick our width/height for this potential frame, regardless of how it might change later
 		// At some point we might even add proper locking so we get real updates atomically instead
