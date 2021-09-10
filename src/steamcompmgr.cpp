@@ -81,7 +81,7 @@
 #endif
 
 #define STB_IMAGE_IMPLEMENTATION
-#include "../subprojects/stb/stb_image.h"
+#include <stb_image.h>
 
 #define GPUVIS_TRACE_IMPLEMENTATION
 #include "gpuvis_trace_utils.h"
