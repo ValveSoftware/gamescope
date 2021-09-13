@@ -345,14 +345,18 @@ static void wlserver_new_input(struct wl_listener *listener, void *data)
 		case WLR_INPUT_DEVICE_KEYBOARD:
 		{
 			struct wlserver_keyboard *pKB = (struct wlserver_keyboard *) calloc( 1, sizeof( struct wlserver_keyboard ) );
-			
+
 			pKB->device = device;
-			
 			struct xkb_rule_names rules = { 0 };
 			struct xkb_context *context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
-			struct xkb_keymap *keymap = xkb_map_new_from_names(context, &rules,
+			rules.rules = getenv("XKB_DEFAULT_RULES");
+			rules.model = getenv("XKB_DEFAULT_MODEL");
+			rules.layout = getenv("XKB_DEFAULT_LAYOUT");
+			rules.variant = getenv("XKB_DEFAULT_VARIANT");
+			rules.options = getenv("XKB_DEFAULT_OPTIONS");
+			struct xkb_keymap *keymap = xkb_keymap_new_from_names(context, &rules,
 															   XKB_KEYMAP_COMPILE_NO_FLAGS);
-			
+
 			wlr_keyboard_set_keymap(device->keyboard, keymap);
 			xkb_keymap_unref(keymap);
 			xkb_context_unref(context);
