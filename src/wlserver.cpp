@@ -174,7 +174,6 @@ static void wlserver_handle_pointer_motion(struct wl_listener *listener, void *d
 		wlserver_movecursor( event->unaccel_dx, event->unaccel_dy );
 
 		wlr_seat_pointer_notify_motion( wlserver.wlr.seat, event->time_msec, wlserver.mouse_surface_cursorx, wlserver.mouse_surface_cursory );
-		wlr_seat_pointer_notify_frame( wlserver.wlr.seat );
 	}
 }
 
@@ -184,6 +183,18 @@ static void wlserver_handle_pointer_button(struct wl_listener *listener, void *d
 	struct wlr_event_pointer_button *event = (struct wlr_event_pointer_button *) data;
 	
 	wlr_seat_pointer_notify_button( wlserver.wlr.seat, event->time_msec, event->button, event->state );
+}
+
+static void wlserver_handle_pointer_axis(struct wl_listener *listener, void *data)
+{
+	struct wlserver_pointer *pointer = wl_container_of( listener, pointer, axis );
+	struct wlr_event_pointer_axis *event = (struct wlr_event_pointer_axis *) data;
+
+	wlr_seat_pointer_notify_axis( wlserver.wlr.seat, event->time_msec, event->orientation, event->delta, event->delta_discrete, event->source );
+}
+
+static void wlserver_handle_pointer_frame(struct wl_listener *listener, void *data)
+{
 	wlr_seat_pointer_notify_frame( wlserver.wlr.seat );
 }
 
@@ -377,6 +388,10 @@ static void wlserver_new_input(struct wl_listener *listener, void *data)
 			wl_signal_add( &device->pointer->events.motion, &pointer->motion );
 			pointer->button.notify = wlserver_handle_pointer_button;
 			wl_signal_add( &device->pointer->events.button, &pointer->button );
+			pointer->axis.notify = wlserver_handle_pointer_axis;
+			wl_signal_add( &device->pointer->events.axis, &pointer->axis);
+			pointer->frame.notify = wlserver_handle_pointer_frame;
+			wl_signal_add( &device->pointer->events.frame, &pointer->frame);
 		}
 		break;
 		case WLR_INPUT_DEVICE_TOUCH:

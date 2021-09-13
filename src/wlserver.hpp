@@ -49,6 +49,8 @@ struct wlserver_pointer {
 	
 	struct wl_listener motion;
 	struct wl_listener button;
+	struct wl_listener axis;
+	struct wl_listener frame;
 };
 
 struct wlserver_touch {
