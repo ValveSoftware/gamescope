@@ -104,6 +104,7 @@ subdir('protocol')
 executable(
   'gamescope',
   src,
+  include_directories: ['./subprojects/wlroots/protocol/'],
   dependencies: [
     dep_x11, dep_xdamage, dep_xcomposite, dep_xrender, dep_xext, dep_xfixes,
     dep_xxf86vm, dep_xres, drm_dep, wayland_server, wayland_protos,

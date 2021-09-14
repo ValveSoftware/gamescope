@@ -4,6 +4,9 @@
 
 #include <wayland-server-core.h>
 #include <atomic>
+extern "C" {
+#include <wlr/util/region.h>
+}
 
 #define WLSERVER_BUTTON_COUNT 4
 #define WLSERVER_TOUCH_COUNT 11 // Ten fingers + nose ought to be enough for anyone
@@ -27,6 +30,19 @@ struct wlserver_t {
 
 		// Used to simulate key events when nested
 		struct wlr_input_device *virtual_keyboard_device;
+
+		struct wlr_relative_pointer_manager_v1 *relative_pointer_manager;
+		struct wl_listener relative_pointer_listener;
+
+		struct wlr_pointer_constraints_v1 *pointer_constraints;
+		struct wl_listener pointer_constraints_listener;
+
+		struct {
+			struct wlr_pointer_constraint_v1 *active;
+			pixman_region32_t confine; // invalid if active == NULL
+			struct wl_listener commit;
+		} constraint;
+
 	} wlr;
 	
 	struct wlr_surface *mouse_focus_surface;
