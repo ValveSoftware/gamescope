@@ -914,6 +914,8 @@ retry:
 	std::vector<VkExtensionProperties> vecSupportedExtensions(supportedExtensionCount);
 	vkEnumerateDeviceExtensionProperties( physicalDevice, NULL, &supportedExtensionCount, vecSupportedExtensions.data() );
 
+	bool supportsForeignQueue = false;
+
 	g_vulkanSupportsModifiers = false;
 	for ( uint32_t i = 0; i < supportedExtensionCount; ++i )
 	{
@@ -924,6 +926,10 @@ retry:
 		if ( strcmp(vecSupportedExtensions[i].extensionName,
 		            VK_EXT_PHYSICAL_DEVICE_DRM_EXTENSION_NAME) == 0 )
 			g_vulkanHasDrmDevId = true;
+
+		if ( strcmp(vecSupportedExtensions[i].extensionName,
+		     VK_EXT_QUEUE_FAMILY_FOREIGN_EXTENSION_NAME) == 0 )
+			supportsForeignQueue = true;
 	}
 
 	vk_log.infof( "physical device %s DRM format modifiers", g_vulkanSupportsModifiers ? "supports" : "does not support" );
@@ -942,6 +948,12 @@ retry:
 			return false;
 		}
 		g_vulkanDrmDevId = makedev( drmProps.primaryMajor, drmProps.primaryMinor );
+	}
+
+	if ( g_vulkanSupportsModifiers && !supportsForeignQueue && !BIsNested() ) {
+		vk_log.infof( "The vulkan driver does not support foreign queues,"
+		              " disabling modifier support.");
+		g_vulkanSupportsModifiers = false;
 	}
 
 	float queuePriorities = 1.0f;
@@ -976,6 +988,9 @@ retry:
 	{
 		vecEnabledDeviceExtensions.push_back( VK_EXT_IMAGE_DRM_FORMAT_MODIFIER_EXTENSION_NAME );
 		vecEnabledDeviceExtensions.push_back( VK_KHR_IMAGE_FORMAT_LIST_EXTENSION_NAME ); // Required.
+
+		if ( !BIsNested() )
+			vecEnabledDeviceExtensions.push_back( VK_EXT_QUEUE_FAMILY_FOREIGN_EXTENSION_NAME );
 	}
 
 	vecEnabledDeviceExtensions.push_back( VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME );
@@ -2090,22 +2105,6 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 		.layerCount = 1
 	};
 
-	VkImageMemoryBarrier memoryBarrier =
-	{
-		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-		.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
-		.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT, // ?
-		.oldLayout = VK_IMAGE_LAYOUT_GENERAL,
-		.newLayout = VK_IMAGE_LAYOUT_GENERAL, // does it flush more to transntion to PRESENT_SRC?
-		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-		.image = compositeImage,
-		.subresourceRange = subResRange
-	};
-	
-	vkCmdPipelineBarrier( curCommandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-						  0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
-
 	if ( pScreenshotTexture != nullptr )
 	{
 		if ( g_output.pScreenshotImage == nullptr )
@@ -2145,6 +2144,22 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 								  0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
 		}
 
+		VkImageMemoryBarrier memoryBarrier =
+		{
+			.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+			.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+			.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+			.oldLayout = VK_IMAGE_LAYOUT_GENERAL,
+			.newLayout = VK_IMAGE_LAYOUT_GENERAL,
+			.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+			.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+			.image = compositeImage,
+			.subresourceRange = subResRange
+		};
+	
+		vkCmdPipelineBarrier( curCommandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+				      0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
+
 		VkImageCopy region = {};
 
 		region.srcSubresource = {
@@ -2167,6 +2182,29 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 
 		*pScreenshotTexture = g_output.pScreenshotImage;
 	}
+
+	bool useForeignQueue = !BIsNested() && g_vulkanSupportsModifiers;
+
+	/* The non-foreign path is very hinky, and for the foreign path the acquire
+	 * barriers are still missing (but are unlikely to do anything on radv). Also
+	 * missing is the initial pipeline barrier from VK_IMAGE_LAYOUT_UNDEFINED. */
+	VkImageMemoryBarrier memoryBarrier =
+	{
+		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+		.srcAccessMask = pScreenshotTexture ? VK_ACCESS_TRANSFER_READ_BIT : VK_ACCESS_SHADER_WRITE_BIT,
+		.dstAccessMask = useForeignQueue ? 0u : VK_ACCESS_MEMORY_READ_BIT,
+		.oldLayout = VK_IMAGE_LAYOUT_GENERAL,
+		.newLayout = VK_IMAGE_LAYOUT_GENERAL,
+		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.dstQueueFamilyIndex = useForeignQueue ? VK_QUEUE_FAMILY_FOREIGN_EXT
+						       : VK_QUEUE_FAMILY_IGNORED,
+		.image = compositeImage,
+		.subresourceRange = subResRange
+	};
+	
+	vkCmdPipelineBarrier( curCommandBuffer, pScreenshotTexture ? VK_PIPELINE_STAGE_TRANSFER_BIT : VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+			      useForeignQueue ? 0 : VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+			      0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
 	
 	res = vkEndCommandBuffer( curCommandBuffer );
 	
