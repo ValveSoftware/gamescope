@@ -130,6 +130,7 @@ extern bool g_vulkanHasDrmDevId;
 extern dev_t g_vulkanDrmDevId;
 
 bool vulkan_init(void);
+bool vulkan_init_formats(void);
 bool vulkan_make_output(void);
 
 VulkanTexture_t vulkan_create_texture_from_dmabuf( struct wlr_dmabuf_attributes *pDMA );

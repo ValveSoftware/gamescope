@@ -731,7 +731,7 @@ CVulkanTexture::~CVulkanTexture( void )
 	m_bInitialized = false;
 }
 
-void init_formats()
+bool vulkan_init_formats()
 {
 	for ( size_t i = 0; s_DRMVKFormatTable[i].DRMFormat != DRM_FORMAT_INVALID; i++ )
 	{
@@ -823,6 +823,17 @@ void init_formats()
 		uint32_t fmt = sampledDRMFormats.formats[ i ]->format;
 		vk_log.infof( "  0x%" PRIX32, fmt );
 	}
+
+	CVulkanTexture::createFlags texCreateFlags;
+	uint32_t bits = 0;
+	g_emptyTex = vulkan_create_texture_from_bits( 1, 1, VK_FORMAT_R8G8B8A8_UNORM, texCreateFlags, &bits );
+
+	if ( g_emptyTex == 0 )
+	{
+		return false;
+	}
+
+	return true;
 }
 
 static bool is_vulkan_1_1_device(VkPhysicalDevice device)
@@ -932,8 +943,6 @@ retry:
 		}
 		g_vulkanDrmDevId = makedev( drmProps.primaryMajor, drmProps.primaryMinor );
 	}
-
-	init_formats();
 
 	float queuePriorities = 1.0f;
 
@@ -1649,15 +1658,6 @@ bool vulkan_init( void )
 		return false;
 
 	dyn_vkGetImageDrmFormatModifierPropertiesEXT = (PFN_vkGetImageDrmFormatModifierPropertiesEXT)vkGetDeviceProcAddr( device, "vkGetImageDrmFormatModifierPropertiesEXT" );
-	
-	CVulkanTexture::createFlags texCreateFlags;
-	uint32_t bits = 0;
-	g_emptyTex = vulkan_create_texture_from_bits( 1, 1, VK_FORMAT_R8G8B8A8_UNORM, texCreateFlags, &bits );
-
-	if ( g_emptyTex == 0 )
-	{
-		return false;
-	}
 	
 	return true;
 }

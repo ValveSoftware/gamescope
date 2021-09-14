@@ -312,6 +312,12 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
+	if ( !vulkan_init_formats() )
+	{
+		fprintf( stderr, "vulkan_init_formats failed\n" );
+		return 1;
+	}
+
 	if ( !vulkan_make_output() )
 	{
 		fprintf( stderr, "vulkan_make_output failed\n" );
