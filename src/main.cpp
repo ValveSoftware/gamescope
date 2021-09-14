@@ -296,7 +296,7 @@ int main(int argc, char **argv)
 		if ( SDL_Init( SDL_INIT_VIDEO | SDL_INIT_EVENTS ) != 0 )
 		{
 			fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
-			return false;
+			return 1;
 		}
 	}
 
