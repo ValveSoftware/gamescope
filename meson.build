@@ -92,6 +92,7 @@ src = [
   'src/vblankmanager.cpp',
   'src/rendervulkan.cpp',
   'src/log.cpp',
+  'src/ime.cpp',
   spirv_shader,
 ]
 

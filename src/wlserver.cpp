@@ -44,6 +44,7 @@ extern "C" {
 #include "main.hpp"
 #include "steamcompmgr.hpp"
 #include "log.hpp"
+#include "ime.hpp"
 
 #if HAVE_PIPEWIRE
 #include "pipewire.hpp"
@@ -417,7 +418,7 @@ static void wlserver_new_input(struct wl_listener *listener, void *data)
 	}
 }
 
-struct wl_listener new_input_listener = { .notify = wlserver_new_input };
+static struct wl_listener new_input_listener = { .notify = wlserver_new_input };
 
 static void wlserver_new_surface(struct wl_listener *l, void *data)
 {
@@ -434,7 +435,7 @@ static void wlserver_new_surface(struct wl_listener *l, void *data)
 	}
 }
 
-struct wl_listener new_surface_listener = { .notify = wlserver_new_surface };
+static struct wl_listener new_surface_listener = { .notify = wlserver_new_surface };
 
 static void destroy_content_override( struct wlserver_content_override *co )
 {
@@ -657,6 +658,8 @@ bool wlserver_init( void ) {
 	wlserver.wlr.compositor = wlr_compositor_create(wlserver.display, wlserver.wlr.renderer);
 
 	wl_signal_add( &wlserver.wlr.compositor->events.new_surface, &new_surface_listener );
+
+	create_ime_manager( &wlserver );
 
 	create_gamescope_xwayland();
 
