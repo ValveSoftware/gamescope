@@ -2192,7 +2192,7 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 	{
 		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
 		.srcAccessMask = pScreenshotTexture ? VK_ACCESS_TRANSFER_READ_BIT : VK_ACCESS_SHADER_WRITE_BIT,
-		.dstAccessMask = useForeignQueue ? 0u : VK_ACCESS_MEMORY_READ_BIT,
+		.dstAccessMask = useForeignQueue ? (VkAccessFlagBits)0 : VK_ACCESS_MEMORY_READ_BIT,
 		.oldLayout = VK_IMAGE_LAYOUT_GENERAL,
 		.newLayout = VK_IMAGE_LAYOUT_GENERAL,
 		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
