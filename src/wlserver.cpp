@@ -427,7 +427,7 @@ static void wlserver_new_surface(struct wl_listener *l, void *data)
 	struct wlserver_surface *s, *tmp;
 	wl_list_for_each_safe(s, tmp, &pending_surfaces, pending_link)
 	{
-		if (s->wl_id == id && s->wlr == nullptr)
+		if (s->wl_id == (long)id && s->wlr == nullptr)
 		{
 			wlserver_surface_set_wlr( s, wlr_surf );
 		}
