@@ -184,8 +184,8 @@ static void page_flip_handler(int fd, unsigned int frame, unsigned int sec, unsi
 
 	// TODO: get the fbids_queued instance from data if we ever have more than one in flight
 
-	drm_verbose_log.debugf("page_flip_handler %lu", flipcount);
-	gpuvis_trace_printf("page_flip_handler %lu", flipcount);
+	drm_verbose_log.debugf("page_flip_handler %" PRIu64, flipcount);
+	gpuvis_trace_printf("page_flip_handler %" PRIu64, flipcount);
 
 	for ( uint32_t i = 0; i < g_DRM.fbids_on_screen.size(); i++ )
 	{
@@ -774,8 +774,8 @@ int drm_commit(struct drm_t *drm, struct Composite_t *pComposite, struct VulkanP
 
 	g_DRM.flipcount++;
 
-	drm_verbose_log.debugf("flip commit %lu", (uint64_t)g_DRM.flipcount);
-	gpuvis_trace_printf( "flip commit %lu", (uint64_t)g_DRM.flipcount );
+	drm_verbose_log.debugf("flip commit %" PRIu64, (uint64_t)g_DRM.flipcount);
+	gpuvis_trace_printf( "flip commit %" PRIu64, (uint64_t)g_DRM.flipcount );
 
 	ret = drmModeAtomicCommit(drm->fd, drm->req, drm->flags, (void*)(uint64_t)g_DRM.flipcount );
 	if ( ret != 0 )
