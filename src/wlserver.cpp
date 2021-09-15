@@ -487,6 +487,7 @@ static void create_gamescope_xwayland( void )
 	wl_global_create( wlserver.display, &gamescope_xwayland_interface, version, NULL, gamescope_xwayland_bind );
 }
 
+#if HAVE_PIPEWIRE
 static void gamescope_pipewire_handle_destroy( struct wl_client *client, struct wl_resource *resource )
 {
 	wl_resource_destroy( resource );
@@ -501,11 +502,7 @@ static void gamescope_pipewire_bind( struct wl_client *client, void *data, uint3
 	struct wl_resource *resource = wl_resource_create( client, &gamescope_pipewire_interface, version, id );
 	wl_resource_set_implementation( resource, &gamescope_pipewire_impl, NULL, NULL );
 
-#if HAVE_PIPEWIRE
 	gamescope_pipewire_send_stream_node( resource, get_pipewire_stream_node_id() );
-#else
-	assert( 0 ); // unreachable
-#endif
 }
 
 static void create_gamescope_pipewire( void )
@@ -513,6 +510,7 @@ static void create_gamescope_pipewire( void )
 	uint32_t version = 1;
 	wl_global_create( wlserver.display, &gamescope_pipewire_interface, version, NULL, gamescope_pipewire_bind );
 }
+#endif
 
 static void handle_session_active( struct wl_listener *listener, void *data )
 {
