@@ -2057,6 +2057,12 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 		}
 	}
 
+	for ( int i = 0; i < pComposite->nLayerCount; i++ )
+	{
+		pComposite->data.vOffset[ i ].x += pComposite->data.vScale[ i ].x / 2.0f;
+		pComposite->data.vOffset[ i ].y += pComposite->data.vScale[ i ].y / 2.0f;
+	}
+
 	
 	assert ( g_output.fence == VK_NULL_HANDLE );
 	
