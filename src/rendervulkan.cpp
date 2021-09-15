@@ -109,6 +109,7 @@ struct VulkanSamplerCacheEntry_t
 {
 	VulkanPipeline_t::LayerBinding_t key;
 	VkSampler sampler;
+	bool bForceNearest;
 };
 
 std::vector< VulkanSamplerCacheEntry_t > g_vecVulkanSamplerCache;
@@ -1879,15 +1880,15 @@ bool operator==(const struct VulkanPipeline_t::LayerBinding_t& lhs, struct Vulka
 	return true;
 }
 
-VkSampler vulkan_make_sampler( struct VulkanPipeline_t::LayerBinding_t *pBinding )
+VkSampler vulkan_make_sampler( struct VulkanPipeline_t::LayerBinding_t *pBinding, bool bForceNearest )
 {
 	VkSampler ret = VK_NULL_HANDLE;
 
 	VkSamplerCreateInfo samplerCreateInfo = {
 		.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
 		.pNext = nullptr,
-		.magFilter = pBinding->bFilter ? VK_FILTER_LINEAR : VK_FILTER_NEAREST,
-		.minFilter = pBinding->bFilter ? VK_FILTER_LINEAR : VK_FILTER_NEAREST,
+		.magFilter = (pBinding->bFilter && !bForceNearest) ? VK_FILTER_LINEAR : VK_FILTER_NEAREST,
+		.minFilter = (pBinding->bFilter && !bForceNearest) ? VK_FILTER_LINEAR : VK_FILTER_NEAREST,
 		.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
 		.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
 		.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
@@ -1900,7 +1901,12 @@ VkSampler vulkan_make_sampler( struct VulkanPipeline_t::LayerBinding_t *pBinding
 	return ret;
 }
 
-void vulkan_update_descriptor( struct VulkanPipeline_t *pPipeline, int nYCBCRMask )
+bool float_is_integer(float x)
+{
+	return fabsf(ceilf(x) - x) <= 0.0001f;
+}
+
+void vulkan_update_descriptor( struct Composite_t *pComposite, struct VulkanPipeline_t *pPipeline, int nYCBCRMask )
 {
 	{
 		VkImageView targetImageView;
@@ -1940,6 +1946,10 @@ void vulkan_update_descriptor( struct VulkanPipeline_t *pPipeline, int nYCBCRMas
 	{
 		VkSampler sampler = VK_NULL_HANDLE;
 		CVulkanTexture *pTex = nullptr;
+		bool bForceNearest = pComposite->data.vScale[i].x == 1.0f &&
+							 pComposite->data.vScale[i].y == 1.0f &&
+							 float_is_integer(pComposite->data.vOffset[i].x);
+							 float_is_integer(pComposite->data.vOffset[i].y);
 
 		if ( pPipeline->layerBindings[ i ].tex != 0 )
 		{
@@ -1953,7 +1963,8 @@ void vulkan_update_descriptor( struct VulkanPipeline_t *pPipeline, int nYCBCRMas
 		// First try to look up the sampler in the cache.
 		for ( uint32_t j = 0; j < g_vecVulkanSamplerCache.size(); j++ )
 		{
-			if ( g_vecVulkanSamplerCache[ j ].key == pPipeline->layerBindings[ i ] )
+			if ( g_vecVulkanSamplerCache[ j ].key == pPipeline->layerBindings[ i ] &&
+				 g_vecVulkanSamplerCache[ j ].bForceNearest == bForceNearest )
 			{
 				sampler = g_vecVulkanSamplerCache[ j ].sampler;
 				break;
@@ -1962,11 +1973,11 @@ void vulkan_update_descriptor( struct VulkanPipeline_t *pPipeline, int nYCBCRMas
 		
 		if ( sampler == VK_NULL_HANDLE )
 		{
-			sampler = vulkan_make_sampler( &pPipeline->layerBindings[ i ] );
+			sampler = vulkan_make_sampler( &pPipeline->layerBindings[ i ], bForceNearest );
 			
 			assert( sampler != VK_NULL_HANDLE );
 			
-			VulkanSamplerCacheEntry_t entry = { pPipeline->layerBindings[ i ], sampler };
+			VulkanSamplerCacheEntry_t entry = { pPipeline->layerBindings[ i ], sampler, bForceNearest };
 			g_vecVulkanSamplerCache.push_back( entry );
 		}
 
@@ -2057,6 +2068,8 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 		}
 	}
 
+	vulkan_update_descriptor( pComposite, pPipeline, pComposite->nYCBCRMask );
+
 	for ( int i = 0; i < pComposite->nLayerCount; i++ )
 	{
 		pComposite->data.vOffset[ i ].x += pComposite->data.vScale[ i ].x / 2.0f;
@@ -2065,8 +2078,6 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 
 	
 	assert ( g_output.fence == VK_NULL_HANDLE );
-	
-	vulkan_update_descriptor( pPipeline, pComposite->nYCBCRMask );
 	
 	VkCommandBuffer curCommandBuffer = g_output.commandBuffers[ g_output.nCurCmdBuffer ];
 	
