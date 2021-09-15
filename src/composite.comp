@@ -35,7 +35,7 @@ vec4 sampleLayer(sampler2D layerSampler, uint layerIdx, vec2 uv) {
         coord.x >= texSize.x || coord.y >= texSize.y )
         return vec4(0.0f, 0.0f, 0.0f, u_borderAlpha[layerIdx]);
 
-    return texture(layerSampler, coord);
+    return textureLod(layerSampler, coord, 0.0f);
 }
 
 vec4 sampleLayer(uint layerIdx, vec2 uv) {
