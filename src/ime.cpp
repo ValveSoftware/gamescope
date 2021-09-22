@@ -135,7 +135,12 @@ static struct xkb_keymap *generate_keymap(struct wlserver_input_method *ime)
 		xkb_keysym_t keysym = kv.second.keysym;
 
 		char keysym_name[256];
-		xkb_keysym_get_name(keysym, keysym_name, sizeof(keysym_name));
+		int ret = xkb_keysym_get_name(keysym, keysym_name, sizeof(keysym_name));
+		if (ret <= 0) {
+			ime_log.errorf("xkb_keysym_get_name failed for keysym %u", keysym);
+			return nullptr;
+		}
+
 		fprintf(f, "	key <K%u> {[ %s ]};\n", keycode, keysym_name);
 	}
 
