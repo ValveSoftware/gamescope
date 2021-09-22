@@ -160,6 +160,9 @@ static void type_text(struct wlserver_input_method *ime, const char *text)
 {
 	ime->keys.clear();
 
+	xkb_keycode_t void_keycode = 1;
+	ime->keys[0] = (struct wlserver_input_method_key){ void_keycode, XKB_KEY_VoidSymbol };
+
 	std::vector<xkb_keycode_t> keycodes;
 	while (text[0] != '\0') {
 		uint32_t ch = utf8_decode(&text);
@@ -183,6 +186,15 @@ static void type_text(struct wlserver_input_method *ime, const char *text)
 
 	struct wlr_seat *seat = ime->server->wlr.seat;
 	wlr_seat_set_keyboard(seat, &ime->keyboard_device);
+
+	// Note: Xwayland doesn't care about the time field of the events
+
+	// Hack: Chromium doesn't accept some characters like "#" or "é" when
+	// they're the first one of the string. Send a void keysym to workaround
+	// this.
+	wlr_seat_keyboard_notify_key(seat, 0, void_keycode, WL_KEYBOARD_KEY_STATE_PRESSED);
+	wlr_seat_keyboard_notify_key(seat, 0, void_keycode, WL_KEYBOARD_KEY_STATE_RELEASED);
+
 	for (size_t i = 0; i < keycodes.size(); i++) {
 		wlr_seat_keyboard_notify_key(seat, 0, keycodes[i], WL_KEYBOARD_KEY_STATE_PRESSED);
 		wlr_seat_keyboard_notify_key(seat, 0, keycodes[i], WL_KEYBOARD_KEY_STATE_RELEASED);
