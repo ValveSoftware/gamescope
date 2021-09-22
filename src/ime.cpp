@@ -246,6 +246,8 @@ static void wlserver_new_input_method(struct wl_listener *l, void *data)
 	wlr_input_device_init(&ime->keyboard_device, WLR_INPUT_DEVICE_KEYBOARD, &keyboard_device_impl, "ime", 0, 0);
 	ime->keyboard_device.keyboard = &ime->keyboard;
 
+	wlr_keyboard_set_repeat_info(&ime->keyboard, 0, 0);
+
 	wlr_input_method_v2_send_activate(wlr_ime);
 	wlr_input_method_v2_send_done(wlr_ime);
 
