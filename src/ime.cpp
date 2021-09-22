@@ -136,12 +136,6 @@ static struct xkb_keymap *generate_keymap(struct wlserver_input_method *ime)
 
 		char keysym_name[256];
 		xkb_keysym_get_name(keysym, keysym_name, sizeof(keysym_name));
-
-		if (keysym_name[0] == '0' && keysym_name[1] == 'x') {
-			// Unicode keysyms need special handling
-			snprintf(keysym_name, sizeof(keysym_name), "U%04x", keysym);
-		}
-
 		fprintf(f, "	key <K%u> {[ %s ]};\n", keycode, keysym_name);
 	}
 
