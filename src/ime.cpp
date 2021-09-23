@@ -7,6 +7,8 @@
 #include <unordered_map>
 #include <vector>
 
+#include <linux/input-event-codes.h>
+
 extern "C" {
 #define delete delete_
 #include <wlr/interfaces/wlr_input_device.h>
@@ -57,8 +59,19 @@ static uint32_t utf8_decode(const char **str_ptr)
 	return ret;
 }
 
+/* Some clients assume keycodes are coming from evdev and interpret them. Only
+ * use keys that would normally produce characters for our emulated events. */
+static const uint32_t allow_keycodes[] = {
+	KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6, KEY_7, KEY_8, KEY_9, KEY_0, KEY_MINUS, KEY_EQUAL,
+	KEY_Q, KEY_W, KEY_E, KEY_R, KEY_T, KEY_Y, KEY_U, KEY_I, KEY_O, KEY_P, KEY_LEFTBRACE, KEY_RIGHTBRACE,
+	KEY_A, KEY_S, KEY_D, KEY_F, KEY_G, KEY_H, KEY_J, KEY_K, KEY_L, KEY_SEMICOLON, KEY_APOSTROPHE, KEY_GRAVE, KEY_BACKSLASH,
+	KEY_Z, KEY_X, KEY_C, KEY_V, KEY_B, KEY_N, KEY_M, KEY_COMMA, KEY_DOT, KEY_SLASH,
+};
+
+static const size_t allow_keycodes_len = sizeof(allow_keycodes) / sizeof(allow_keycodes[0]);
+
 struct wlserver_input_method_key {
-	xkb_keycode_t keycode;
+	uint32_t keycode;
 	xkb_keysym_t keysym;
 };
 
@@ -79,7 +92,7 @@ static LogScope ime_log("ime");
 
 static struct wlserver_input_method *active_input_method = nullptr;
 
-static xkb_keycode_t keycode_from_ch(struct wlserver_input_method *ime, uint32_t ch)
+static uint32_t keycode_from_ch(struct wlserver_input_method *ime, uint32_t ch)
 {
 	if (ime->keys.count(ch) > 0) {
 		return ime->keys[ch].keycode;
@@ -90,8 +103,13 @@ static xkb_keycode_t keycode_from_ch(struct wlserver_input_method *ime, uint32_t
 		return XKB_KEYCODE_INVALID;
 	}
 
-	// Add 1 because some clients don't handle correctly zero keycodes
-	xkb_keycode_t keycode = ime->keys.size() + 1;
+	if (ime->keys.size() >= allow_keycodes_len) {
+		// TODO: maybe use keycodes above KEY_MAX?
+		ime_log.errorf("Key codes exhausted!");
+		return XKB_KEYCODE_INVALID;
+	}
+
+	uint32_t keycode = allow_keycodes[ime->keys.size()];
 	ime->keys[ch] = (struct wlserver_input_method_key){ keycode, keysym };
 	return keycode;
 }
@@ -104,18 +122,20 @@ static struct xkb_keymap *generate_keymap(struct wlserver_input_method *ime)
 	size_t str_size = 0;
 	FILE *f = open_memstream(&str, &str_size);
 
+	uint32_t min_keycode = allow_keycodes[0];
+	uint32_t max_keycode = allow_keycodes[ime->keys.size()];
 	fprintf(f,
 		"xkb_keymap {\n"
 		"\n"
 		"xkb_keycodes \"(unnamed)\" {\n"
 		"	minimum = %u;\n"
-		"	maximum = %lu;\n",
-		keycode_offset + 1,
-		ime->keys.size() + keycode_offset + 1
+		"	maximum = %u;\n",
+		keycode_offset + min_keycode,
+		keycode_offset + max_keycode
 	);
 
 	for (const auto kv : ime->keys) {
-		xkb_keycode_t keycode = kv.second.keycode;
+		uint32_t keycode = kv.second.keycode;
 		fprintf(f, "	<K%u> = %u;\n", keycode, keycode + keycode_offset);
 	}
 
@@ -131,7 +151,7 @@ static struct xkb_keymap *generate_keymap(struct wlserver_input_method *ime)
 	);
 
 	for (const auto kv : ime->keys) {
-		xkb_keycode_t keycode = kv.second.keycode;
+		uint32_t keycode = kv.second.keycode;
 		xkb_keysym_t keysym = kv.second.keysym;
 
 		char keysym_name[256];
@@ -165,9 +185,6 @@ static void type_text(struct wlserver_input_method *ime, const char *text)
 {
 	ime->keys.clear();
 
-	xkb_keycode_t void_keycode = 1;
-	ime->keys[0] = (struct wlserver_input_method_key){ void_keycode, XKB_KEY_VoidSymbol };
-
 	std::vector<xkb_keycode_t> keycodes;
 	while (text[0] != '\0') {
 		uint32_t ch = utf8_decode(&text);
@@ -193,12 +210,6 @@ static void type_text(struct wlserver_input_method *ime, const char *text)
 	wlr_seat_set_keyboard(seat, &ime->keyboard_device);
 
 	// Note: Xwayland doesn't care about the time field of the events
-
-	// Hack: Chromium doesn't accept some characters like "#" or "é" when
-	// they're the first one of the string. Send a void keysym to workaround
-	// this.
-	wlr_seat_keyboard_notify_key(seat, 0, void_keycode, WL_KEYBOARD_KEY_STATE_PRESSED);
-	wlr_seat_keyboard_notify_key(seat, 0, void_keycode, WL_KEYBOARD_KEY_STATE_RELEASED);
 
 	for (size_t i = 0; i < keycodes.size(); i++) {
 		wlr_seat_keyboard_notify_key(seat, 0, keycodes[i], WL_KEYBOARD_KEY_STATE_PRESSED);
