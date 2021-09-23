@@ -139,7 +139,9 @@ static struct xkb_keymap *generate_keymap(struct wlserver_input_method *ime)
 		fprintf(f, "	<K%u> = %u;\n", keycode, keycode + keycode_offset);
 	}
 
-	// TODO: should we really be including "complete" here?
+	// TODO: should we really be including "complete" here? squeekboard seems
+	// to get away with some other workarounds:
+	// https://gitlab.gnome.org/World/Phosh/squeekboard/-/blob/fc411d680b0138042b95b8a630401607726113d4/src/keyboard.rs#L180
 	fprintf(f,
 		"};\n"
 		"\n"
@@ -215,6 +217,12 @@ static void type_text(struct wlserver_input_method *ime, const char *text)
 		wlr_seat_keyboard_notify_key(seat, 0, keycodes[i], WL_KEYBOARD_KEY_STATE_PRESSED);
 		wlr_seat_keyboard_notify_key(seat, 0, keycodes[i], WL_KEYBOARD_KEY_STATE_RELEASED);
 	}
+
+	// Steam's virtual keyboard is based on XTest and relies on the keymap to
+	// be reset. However, resetting it immediately is racy: clients will
+	// interpret the keycodes we've just sent with the new keymap. To
+	// workaround these issues, wait for a bit before resetting the keymap.
+	wl_event_source_timer_update(ime->server->ime_reset_keyboard_event_source, 100 /* ms */);
 }
 
 static void ime_handle_commit(struct wl_listener *l, void *data)
@@ -282,10 +290,25 @@ static void wlserver_new_input_method(struct wl_listener *l, void *data)
 	active_input_method = ime;
 }
 
+static int reset_keyboard(void *data)
+{
+	struct wlserver_t *wlserver = (struct wlserver_t *)data;
+
+	// Reset the keyboard if it's not set or set to an IME's
+	struct wlr_seat *seat = wlserver->wlr.seat;
+	if (seat->keyboard_state.keyboard == nullptr || seat->keyboard_state.keyboard->data == nullptr) {
+		wlr_seat_set_keyboard(seat, wlserver->wlr.virtual_keyboard_device);
+	}
+
+	return 0;
+}
+
 void create_ime_manager(struct wlserver_t *wlserver)
 {
 	struct wlr_input_method_manager_v2 *ime_manager = wlr_input_method_manager_v2_create(wlserver->display);
 
 	wlserver->new_input_method.notify = wlserver_new_input_method;
 	wl_signal_add(&ime_manager->events.input_method, &wlserver->new_input_method);
+
+	wlserver->ime_reset_keyboard_event_source = wl_event_loop_add_timer(wlserver->event_loop, reset_keyboard, wlserver);
 }

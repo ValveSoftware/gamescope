@@ -376,6 +376,8 @@ static void wlserver_new_input(struct wl_listener *listener, void *data)
 			xkb_context_unref(context);
 			wlr_keyboard_set_repeat_info(device->keyboard, 25, 600);
 
+			device->keyboard->data = pKB;
+
 			pKB->modifiers.notify = wlserver_handle_modifiers;
 			wl_signal_add( &device->keyboard->events.modifiers, &pKB->modifiers );
 
@@ -626,7 +628,6 @@ bool wlserver_init( void ) {
 
 	wlserver.wlr.output = wlr_noop_add_output( wlserver.wlr.noop_backend );
 
-	struct wlr_input_device *kbd_dev = nullptr;
 	if ( bIsDRM == True )
 	{
 		wlserver.wlr.libinput_backend = wlr_libinput_backend_create( wlserver.display, wlserver.wlr.session );
@@ -636,20 +637,17 @@ bool wlserver_init( void ) {
 		}
 		wlr_multi_backend_add( wlserver.wlr.multi_backend, wlserver.wlr.libinput_backend );
 	}
-	else
-	{
-		// Create a stub wlr_keyboard only used to set the keymap
-		struct wlr_keyboard *kbd = (struct wlr_keyboard *) calloc(1, sizeof(*kbd));
-		wlr_keyboard_init(kbd, nullptr);
 
-		kbd_dev = (struct wlr_input_device *) calloc(1, sizeof(*kbd_dev));
-		wlr_input_device_init(kbd_dev, WLR_INPUT_DEVICE_KEYBOARD, nullptr, "noop", 0, 0);
-		kbd_dev->keyboard = kbd;
+	// Create a stub wlr_keyboard only used to set the keymap
+	// We need to wait for the backend to be started before adding the device
+	struct wlr_keyboard *kbd = (struct wlr_keyboard *) calloc(1, sizeof(*kbd));
+	wlr_keyboard_init(kbd, nullptr);
 
-		wlserver.wlr.virtual_keyboard_device = kbd_dev;
+	struct wlr_input_device *kbd_dev = (struct wlr_input_device *) calloc(1, sizeof(*kbd_dev));
+	wlr_input_device_init(kbd_dev, WLR_INPUT_DEVICE_KEYBOARD, nullptr, "virtual", 0, 0);
+	kbd_dev->keyboard = kbd;
 
-		// We need to wait for the backend to be started before adding the device
-	}
+	wlserver.wlr.virtual_keyboard_device = kbd_dev;
 
 	wlserver.wlr.renderer = vulkan_renderer_create();
 
@@ -697,8 +695,7 @@ bool wlserver_init( void ) {
 		return false;
 	}
 
-	if ( kbd_dev != nullptr )
-		wl_signal_emit( &wlserver.wlr.multi_backend->events.new_input, kbd_dev );
+	wl_signal_emit( &wlserver.wlr.multi_backend->events.new_input, kbd_dev );
 
 	int refresh = g_nNestedRefresh;
 	if (refresh == 0) {

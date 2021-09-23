@@ -25,7 +25,7 @@ struct wlserver_t {
 		struct wlr_seat *seat;
 		struct wlr_output *output;
 
-		// Used to simulate key events when nested
+		// Used to simulate key events and set the keymap
 		struct wlr_input_device *virtual_keyboard_device;
 	} wlr;
 	
@@ -35,6 +35,8 @@ struct wlserver_t {
 	
 	bool button_held[ WLSERVER_BUTTON_COUNT ];
 	bool touch_down[ WLSERVER_TOUCH_COUNT ];
+
+	struct wl_event_source *ime_reset_keyboard_event_source;
 
 	struct wl_listener session_active;
 	struct wl_listener new_input_method;
