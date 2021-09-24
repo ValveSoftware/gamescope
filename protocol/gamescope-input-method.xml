@@ -148,5 +148,30 @@
       </description>
       <arg name="text" type="string" summary="text to insert"/>
     </request>
+
+    <enum name="action">
+      <description summary="action">
+        A possible action to perform on a text input.
+
+        The backspace and delete actions should be handled in a similar manner
+        to backpace and delete keys being pressed on a keyboard.
+      </description>
+      <entry name="none" value="0" summary="no action"/>
+      <entry name="submit" value="1" summary="submit"/>
+      <entry name="delete_left" value="2" summary="delete one unit before the cursor"/>
+      <entry name="delete_right" value="3" summary="delete one unit after the cursor"/>
+      <entry name="move_left" value="4" summary="move the cursor to the left by one unit"/>
+      <entry name="move_right" value="5" summary="move the cursor to the right by one unit"/>
+    </enum>
+
+    <request name="set_action">
+      <description summary="perform an action">
+        Set the action to be performed on commit.
+
+        Values set with this event are double-buffered. They must be applied
+        and reset to initial on the next gamescope_text_input.commit request.
+      </description>
+      <arg name="action" type="uint" enum="action" summary="action performed"/>
+    </request>
   </interface>
 </protocol>

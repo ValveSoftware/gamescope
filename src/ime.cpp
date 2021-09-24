@@ -80,6 +80,14 @@ struct wlserver_input_method_key {
 	xkb_keysym_t keysym;
 };
 
+static std::unordered_map<enum gamescope_input_method_action, struct wlserver_input_method_key> actions = {
+	{ GAMESCOPE_INPUT_METHOD_ACTION_SUBMIT, { KEY_ENTER, XKB_KEY_Return } },
+	{ GAMESCOPE_INPUT_METHOD_ACTION_DELETE_LEFT, { KEY_BACKSPACE, XKB_KEY_BackSpace } },
+	{ GAMESCOPE_INPUT_METHOD_ACTION_DELETE_RIGHT, { KEY_DELETE, XKB_KEY_Delete } },
+	{ GAMESCOPE_INPUT_METHOD_ACTION_MOVE_LEFT, { KEY_LEFT, XKB_KEY_Left } },
+	{ GAMESCOPE_INPUT_METHOD_ACTION_MOVE_RIGHT, { KEY_RIGHT, XKB_KEY_Right } },
+};
+
 struct wlserver_input_method {
 	struct wl_resource *resource;
 	struct wlserver_input_method_manager *manager;
@@ -87,6 +95,7 @@ struct wlserver_input_method {
 
 	struct {
 		char *string;
+		enum gamescope_input_method_action action;
 	} pending;
 
 	// Used to send emulated input events
@@ -207,7 +216,7 @@ static void type_text(struct wlserver_input_method *ime, const char *text)
 
 		xkb_keycode_t keycode = keycode_from_ch(ime, ch);
 		if (keycode == XKB_KEYCODE_INVALID) {
-			ime_log.errorf("warning: cannot type character U+%X\n", ch);
+			ime_log.errorf("warning: cannot type character U+%X", ch);
 			continue;
 		}
 
@@ -216,7 +225,7 @@ static void type_text(struct wlserver_input_method *ime, const char *text)
 
 	struct xkb_keymap *keymap = generate_keymap(ime);
 	if (keymap == nullptr) {
-		ime_log.errorf("failed to generate keymap\n");
+		ime_log.errorf("failed to generate keymap");
 		return;
 	}
 	wlr_keyboard_set_keymap(&ime->keyboard, keymap);
@@ -226,17 +235,38 @@ static void type_text(struct wlserver_input_method *ime, const char *text)
 	wlr_seat_set_keyboard(seat, &ime->keyboard_device);
 
 	// Note: Xwayland doesn't care about the time field of the events
-
 	for (size_t i = 0; i < keycodes.size(); i++) {
 		wlr_seat_keyboard_notify_key(seat, 0, keycodes[i], WL_KEYBOARD_KEY_STATE_PRESSED);
 		wlr_seat_keyboard_notify_key(seat, 0, keycodes[i], WL_KEYBOARD_KEY_STATE_RELEASED);
 	}
+}
 
-	// Steam's virtual keyboard is based on XTest and relies on the keymap to
-	// be reset. However, resetting it immediately is racy: clients will
-	// interpret the keycodes we've just sent with the new keymap. To
-	// workaround these issues, wait for a bit before resetting the keymap.
-	wl_event_source_timer_update(ime->manager->ime_reset_keyboard_event_source, 100 /* ms */);
+static void perform_action(struct wlserver_input_method *ime, enum gamescope_input_method_action action)
+{
+	ime->keys.clear();
+
+	if (actions.count(action) == 0) {
+		ime_log.errorf("unsupported action %d", action);
+		return;
+	}
+
+	struct wlserver_input_method_key key = actions[action];
+	ime->keys[0] = key;
+
+	struct xkb_keymap *keymap = generate_keymap(ime);
+	if (keymap == nullptr) {
+		ime_log.errorf("failed to generate keymap");
+		return;
+	}
+	wlr_keyboard_set_keymap(&ime->keyboard, keymap);
+	xkb_keymap_unref(keymap);
+
+	struct wlr_seat *seat = ime->manager->server->wlr.seat;
+	wlr_seat_set_keyboard(seat, &ime->keyboard_device);
+
+	// Note: Xwayland doesn't care about the time field of the events
+	wlr_seat_keyboard_notify_key(seat, 0, key.keycode, WL_KEYBOARD_KEY_STATE_PRESSED);
+	wlr_seat_keyboard_notify_key(seat, 0, key.keycode, WL_KEYBOARD_KEY_STATE_RELEASED);
 }
 
 static void ime_handle_commit(struct wl_client *client, struct wl_resource *ime_resource, uint32_t serial)
@@ -250,9 +280,19 @@ static void ime_handle_commit(struct wl_client *client, struct wl_resource *ime_
 	if (ime->pending.string != nullptr) {
 		type_text(ime, ime->pending.string);
 	}
+	if (ime->pending.action != GAMESCOPE_INPUT_METHOD_ACTION_NONE) {
+		perform_action(ime, ime->pending.action);
+	}
 
 	free(ime->pending.string);
 	ime->pending.string = nullptr;
+	ime->pending.action = GAMESCOPE_INPUT_METHOD_ACTION_NONE;
+
+	// Steam's virtual keyboard is based on XTest and relies on the keymap to
+	// be reset. However, resetting it immediately is racy: clients will
+	// interpret the keycodes we've just sent with the new keymap. To
+	// workaround these issues, wait for a bit before resetting the keymap.
+	wl_event_source_timer_update(ime->manager->ime_reset_keyboard_event_source, 100 /* ms */);
 }
 
 static void ime_handle_set_string(struct wl_client *client, struct wl_resource *ime_resource, const char *text)
@@ -260,6 +300,12 @@ static void ime_handle_set_string(struct wl_client *client, struct wl_resource *
 	struct wlserver_input_method *ime = (struct wlserver_input_method *)wl_resource_get_user_data(ime_resource);
 	free(ime->pending.string);
 	ime->pending.string = strdup(text);
+}
+
+static void ime_handle_set_action(struct wl_client *client, struct wl_resource *ime_resource, uint32_t action)
+{
+	struct wlserver_input_method *ime = (struct wlserver_input_method *)wl_resource_get_user_data(ime_resource);
+	ime->pending.action = (enum gamescope_input_method_action)action;
 }
 
 static void ime_handle_destroy(struct wl_client *client, struct wl_resource *ime_resource)
@@ -271,6 +317,7 @@ static const struct gamescope_input_method_interface ime_impl = {
 	.destroy = ime_handle_destroy,
 	.commit = ime_handle_commit,
 	.set_string = ime_handle_set_string,
+	.set_action = ime_handle_set_action,
 };
 
 static void ime_handle_resource_destroy(struct wl_resource *ime_resource)
