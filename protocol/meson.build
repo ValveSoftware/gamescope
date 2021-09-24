@@ -5,6 +5,7 @@ wayland_scanner = find_program(wayland_scanner_path, native: true)
 protocols = [
 	'gamescope-xwayland',
 	'gamescope-pipewire',
+	'gamescope-input-method',
 ]
 
 foreach name : protocols

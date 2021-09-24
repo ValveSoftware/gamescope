@@ -3,6 +3,7 @@
 #include "log.hpp"
 
 #include <unistd.h>
+#include <string.h>
 
 #include <unordered_map>
 #include <vector>
@@ -13,10 +14,12 @@ extern "C" {
 #define delete delete_
 #include <wlr/interfaces/wlr_input_device.h>
 #include <wlr/interfaces/wlr_keyboard.h>
-#include <wlr/types/wlr_input_method_v2.h>
 #include <wlr/types/wlr_keyboard.h>
+#include <wlr/types/wlr_seat.h>
 #undef delete
 }
+
+#include "gamescope-input-method-protocol.h"
 
 /* The C/C++ standard library doesn't expose a reliable way to decode UTF-8,
  * so we need to ship our own implementation. Yay for locales. */
@@ -59,6 +62,8 @@ static uint32_t utf8_decode(const char **str_ptr)
 	return ret;
 }
 
+#define IME_MANAGER_VERSION 1
+
 /* Some clients assume keycodes are coming from evdev and interpret them. Only
  * use keys that would normally produce characters for our emulated events. */
 static const uint32_t allow_keycodes[] = {
@@ -76,16 +81,25 @@ struct wlserver_input_method_key {
 };
 
 struct wlserver_input_method {
-	struct wlr_input_method_v2 *input_method;
-	struct wlserver_t *server;
+	struct wl_resource *resource;
+	struct wlserver_input_method_manager *manager;
+	uint32_t serial;
+
+	struct {
+		char *string;
+	} pending;
 
 	// Used to send emulated input events
 	struct wlr_keyboard keyboard;
 	struct wlr_input_device keyboard_device;
 	std::unordered_map<uint32_t, struct wlserver_input_method_key> keys;
+};
 
-	struct wl_listener commit;
-	struct wl_listener destroy;
+struct wlserver_input_method_manager {
+	struct wl_global *global;
+	struct wlserver_t *server;
+
+	struct wl_event_source *ime_reset_keyboard_event_source;
 };
 
 static LogScope ime_log("ime");
@@ -208,7 +222,7 @@ static void type_text(struct wlserver_input_method *ime, const char *text)
 	wlr_keyboard_set_keymap(&ime->keyboard, keymap);
 	xkb_keymap_unref(keymap);
 
-	struct wlr_seat *seat = ime->server->wlr.seat;
+	struct wlr_seat *seat = ime->manager->server->wlr.seat;
 	wlr_seat_set_keyboard(seat, &ime->keyboard_device);
 
 	// Note: Xwayland doesn't care about the time field of the events
@@ -222,29 +236,53 @@ static void type_text(struct wlserver_input_method *ime, const char *text)
 	// be reset. However, resetting it immediately is racy: clients will
 	// interpret the keycodes we've just sent with the new keymap. To
 	// workaround these issues, wait for a bit before resetting the keymap.
-	wl_event_source_timer_update(ime->server->ime_reset_keyboard_event_source, 100 /* ms */);
+	wl_event_source_timer_update(ime->manager->ime_reset_keyboard_event_source, 100 /* ms */);
 }
 
-static void ime_handle_commit(struct wl_listener *l, void *data)
+static void ime_handle_commit(struct wl_client *client, struct wl_resource *ime_resource, uint32_t serial)
 {
-	struct wlserver_input_method *ime = wl_container_of(l, ime, commit);
+	struct wlserver_input_method *ime = (struct wlserver_input_method *)wl_resource_get_user_data(ime_resource);
 
-	const char *text = ime->input_method->current.commit_text;
-	if (text != nullptr) {
-		type_text(ime, text);
+	if (serial != ime->serial) {
+		return;
 	}
+
+	if (ime->pending.string != nullptr) {
+		type_text(ime, ime->pending.string);
+	}
+
+	free(ime->pending.string);
+	ime->pending.string = nullptr;
 }
 
-static void ime_handle_destroy(struct wl_listener *l, void *data)
+static void ime_handle_set_string(struct wl_client *client, struct wl_resource *ime_resource, const char *text)
 {
-	struct wlserver_input_method *ime = wl_container_of(l, ime, destroy);
+	struct wlserver_input_method *ime = (struct wlserver_input_method *)wl_resource_get_user_data(ime_resource);
+	free(ime->pending.string);
+	ime->pending.string = strdup(text);
+}
+
+static void ime_handle_destroy(struct wl_client *client, struct wl_resource *ime_resource)
+{
+	wl_resource_destroy(ime_resource);
+}
+
+static const struct gamescope_input_method_interface ime_impl = {
+	.destroy = ime_handle_destroy,
+	.commit = ime_handle_commit,
+	.set_string = ime_handle_set_string,
+};
+
+static void ime_handle_resource_destroy(struct wl_resource *ime_resource)
+{
+	struct wlserver_input_method *ime = (struct wlserver_input_method *)wl_resource_get_user_data(ime_resource);
+	if (ime == nullptr)
+		return;
 
 	active_input_method = nullptr;
 
 	wlr_input_device_destroy(&ime->keyboard_device);
 
-	wl_list_remove(&ime->commit.link);
-	wl_list_remove(&ime->destroy.link);
 	delete ime;
 }
 
@@ -260,23 +298,23 @@ static const struct wlr_input_device_impl keyboard_device_impl = {
 	.destroy = keyboard_device_destroy,
 };
 
-static void wlserver_new_input_method(struct wl_listener *l, void *data)
+static void manager_handle_create_input_method(struct wl_client *client, struct wl_resource *manager_resource, struct wl_resource *seat_resource, uint32_t id)
 {
-	struct wlserver_t *wlserver = wl_container_of(l, wlserver, new_input_method);
-	struct wlr_input_method_v2 *wlr_ime = (struct wlr_input_method_v2 *)data;
+	struct wlserver_input_method_manager *manager = (struct wlserver_input_method_manager *)wl_resource_get_user_data(manager_resource);
+
+	uint32_t version = wl_resource_get_version(manager_resource);
+	struct wl_resource *ime_resource = wl_resource_create(client, &gamescope_input_method_interface, version, id);
+	wl_resource_set_implementation(ime_resource, &ime_impl, nullptr, ime_handle_resource_destroy);
 
 	if (active_input_method != nullptr) {
-		wlr_input_method_v2_send_unavailable(wlr_ime);
+		gamescope_input_method_send_unavailable(ime_resource);
 		return;
 	}
 
 	struct wlserver_input_method *ime = new wlserver_input_method();
-	ime->input_method = wlr_ime;
-	ime->server = wlserver;
-	ime->commit.notify = ime_handle_commit;
-	wl_signal_add(&wlr_ime->events.commit, &ime->commit);
-	ime->destroy.notify = ime_handle_destroy;
-	wl_signal_add(&wlr_ime->events.destroy, &ime->destroy);
+	ime->resource = ime_resource;
+	ime->manager = manager;
+	ime->serial = 1;
 
 	wlr_keyboard_init(&ime->keyboard, &keyboard_impl);
 	wlr_input_device_init(&ime->keyboard_device, WLR_INPUT_DEVICE_KEYBOARD, &keyboard_device_impl, "ime", 0, 0);
@@ -284,10 +322,28 @@ static void wlserver_new_input_method(struct wl_listener *l, void *data)
 
 	wlr_keyboard_set_repeat_info(&ime->keyboard, 0, 0);
 
-	wlr_input_method_v2_send_activate(wlr_ime);
-	wlr_input_method_v2_send_done(wlr_ime);
+	wl_resource_set_user_data(ime->resource, ime);
+	gamescope_input_method_send_done(ime->resource, ime->serial);
 
 	active_input_method = ime;
+}
+
+static void manager_handle_destroy(struct wl_client *client, struct wl_resource *manager_resource)
+{
+	wl_resource_destroy(manager_resource);
+}
+
+static const struct gamescope_input_method_manager_interface manager_impl = {
+	.destroy = manager_handle_destroy,
+	.create_input_method = manager_handle_create_input_method,
+};
+
+static void manager_bind(struct wl_client *client, void *data, uint32_t version, uint32_t id)
+{
+	struct wlserver_input_method_manager *manager = (struct wlserver_input_method_manager *)data;
+
+	struct wl_resource *resource = wl_resource_create(client, &gamescope_input_method_manager_interface, version, id);
+	wl_resource_set_implementation(resource, &manager_impl, manager, nullptr);
 }
 
 static int reset_keyboard(void *data)
@@ -305,10 +361,8 @@ static int reset_keyboard(void *data)
 
 void create_ime_manager(struct wlserver_t *wlserver)
 {
-	struct wlr_input_method_manager_v2 *ime_manager = wlr_input_method_manager_v2_create(wlserver->display);
-
-	wlserver->new_input_method.notify = wlserver_new_input_method;
-	wl_signal_add(&ime_manager->events.input_method, &wlserver->new_input_method);
-
-	wlserver->ime_reset_keyboard_event_source = wl_event_loop_add_timer(wlserver->event_loop, reset_keyboard, wlserver);
+	struct wlserver_input_method_manager *manager = new wlserver_input_method_manager();
+	manager->server = wlserver;
+	manager->global = wl_global_create(wlserver->display, &gamescope_input_method_manager_interface, IME_MANAGER_VERSION, manager, manager_bind);
+	manager->ime_reset_keyboard_event_source = wl_event_loop_add_timer(wlserver->event_loop, reset_keyboard, wlserver);
 }

@@ -1,0 +1,152 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="gamescope_input_method">
+
+  <copyright>
+    Copyright © 2008-2011 Kristian Høgsberg
+    Copyright © 2010-2011 Intel Corporation
+    Copyright © 2012-2013 Collabora, Ltd.
+    Copyright © 2012, 2013 Intel Corporation
+    Copyright © 2015, 2016 Jan Arne Petersen
+    Copyright © 2017, 2018 Red Hat, Inc.
+    Copyright © 2018       Purism SPC
+    Copyright © 2021       Valve Corporation
+
+    Permission is hereby granted, free of charge, to any person obtaining a
+    copy of this software and associated documentation files (the "Software"),
+    to deal in the Software without restriction, including without limitation
+    the rights to use, copy, modify, merge, publish, distribute, sublicense,
+    and/or sell copies of the Software, and to permit persons to whom the
+    Software is furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice (including the next
+    paragraph) shall be included in all copies or substantial portions of the
+    Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+    THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+    DEALINGS IN THE SOFTWARE.
+  </copyright>
+
+  <description summary="Protocol for creating input methods">
+    This protocol allows applications to act as input methods for compositors.
+
+    An input method context is used to manage the state of the input method.
+
+    Text strings are UTF-8 encoded, their indices and lengths are in bytes.
+
+    This iteration of the protocol is a subset of this work-in-progress proposal:
+    https://gitlab.freedesktop.org/wayland/wayland-protocols/-/merge_requests/112
+
+    This is a private Gamescope protocol. Regular Wayland clients must not use
+    it.
+  </description>
+
+  <interface name="gamescope_input_method_manager" version="1">
+    <description summary="input method manager">
+      The input method manager allows the client to become the input method on
+      a chosen seat.
+
+      No more than one input method must be associated with any seat at any
+      given time.
+    </description>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the input method manager">
+        Destroys the gamescope_input_method_manager object.
+
+        The gamescope_input_method objects originating from it remain valid.
+      </description>
+    </request>
+
+    <request name="create_input_method">
+      <description summary="create an input method object">
+        Create a new gamescope_input_method object associated with a given
+        seat.
+      </description>
+      <arg name="seat" type="object" interface="wl_seat"/>
+      <arg name="input_method" type="new_id" interface="gamescope_input_method"/>
+    </request>
+  </interface>
+
+  <interface name="gamescope_input_method" version="1">
+    <description summary="input method">
+      An input method object allows for clients to compose text.
+
+      The objects connects the client to a text input in an application, and
+      lets the client to serve as an input method for a seat.
+
+      There must be no more than one input method object per seat.
+    </description>
+
+    <event name="unavailable">
+      <description summary="input method unavailable">
+        The input method ceased to be available.
+
+        The compositor must issue this event as the only event on the object if
+        there was another input_method object associated with the same seat at
+        the time of its creation.
+
+        The compositor must issue this request when the object is no longer
+        useable, e.g. due to seat removal.
+
+        The input method context becomes inert and should be destroyed. Any
+        further requests and events except for the destroy request must be
+        ignored.
+      </description>
+    </event>
+
+    <event name="done">
+      <description summary="compositor state change notification">
+        Notify the client that the compositor state has changed.
+
+        The serial is used to synchronize compositor state changes and client
+        state changes. The serial allows the compositor to ignore requests
+        meant for a previous text input.
+
+        In the future, will be used to atomically apply compositor state
+        changes sent to the client (but currently there's no such state).
+      </description>
+      <arg name="serial" type="uint"/>
+    </event>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the text input">
+        Destroys the gamescope_text_input object.
+      </description>
+    </request>
+
+    <request name="commit">
+      <description summary="apply state">
+        Apply state changes from set_string and set_action requests.
+
+        The state relating to these events is double-buffered, and each one
+        modifies the pending state. This request replaces the current state
+        with the pending state.
+
+        The client must set the serial to the last received serial in the done
+        event.
+      </description>
+      <arg name="serial" type="uint" summary="last received serial"/>
+    </request>
+
+    <request name="set_string">
+      <description summary="set string to be committed">
+        Send the string text for insertion to the application.
+
+        Inserts a string at current cursor position (see commit event
+        sequence). The string to commit could be either just a single character
+        after a key press or the result of some composing.
+
+        Values set with this event are double-buffered. They must be applied
+        and reset to initial on the next gamescope_text_input.commit request.
+
+        The initial value of text is an empty string.
+      </description>
+      <arg name="text" type="string" summary="text to insert"/>
+    </request>
+  </interface>
+</protocol>
