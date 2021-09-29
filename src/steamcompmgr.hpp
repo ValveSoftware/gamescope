@@ -49,6 +49,7 @@ public:
 			   struct VulkanPipeline_t *pPipeline);
 	void setDirty();
 
+	bool setCursorImageByName(char const* name);
 	// Will take ownership of data.
 	bool setCursorImage(char *data, int w, int h);
 

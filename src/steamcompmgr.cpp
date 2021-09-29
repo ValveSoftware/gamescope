@@ -66,6 +66,7 @@
 #include <X11/extensions/XRes.h>
 #include <X11/extensions/shape.h>
 #include <X11/extensions/xf86vmode.h>
+#include <X11/Xmu/CurUtil.h>
 
 #include "main.hpp"
 #include "wlserver.hpp"
@@ -724,6 +725,43 @@ void MouseCursor::setDirty()
 	// We can't prove it's empty until checking again
 	m_imageEmpty = false;
 	m_dirty = true;
+}
+
+bool MouseCursor::setCursorImageByName(char const *name)
+{
+	XColor fg, bg;
+	Font fid = 0;
+	Cursor cursor = 0;
+	bool ret = false;
+	int screen = DefaultScreen(m_display);
+
+	fg.pixel = BlackPixel(m_display, screen);
+	XQueryColor(m_display, DefaultColormap(m_display, screen), &fg);
+
+	bg.pixel = WhitePixel(m_display, screen);
+	XQueryColor(m_display, DefaultColormap(m_display, screen), &bg);
+
+	int cursor_index = XmuCursorNameToIndex(name);
+	if (cursor_index == -1)
+		goto exit;
+
+	fid = XLoadFont(m_display, "cursor");
+	if (!fid)
+		goto exit;
+
+	cursor = XCreateGlyphCursor (m_display, fid, fid,
+				     cursor_index, cursor_index+1, &fg, &bg);
+	XDefineCursor (m_display, DefaultRootWindow(m_display), cursor);
+	XFlush(m_display);
+	setDirty();
+	ret = true;
+
+ exit:
+	if (cursor)
+		XFreeCursor (m_display, cursor);
+	if (fid)
+		XUnloadFont(m_display, fid);
+	return ret;
 }
 
 bool MouseCursor::setCursorImage(char *data, int w, int h)
@@ -3482,6 +3520,7 @@ enum event_type {
 };
 
 const char* g_customCursorPath = nullptr;
+const char* g_defaultCursorName = nullptr;
 
 void
 steamcompmgr_main(int argc, char **argv)
@@ -3539,6 +3578,8 @@ steamcompmgr_main(int argc, char **argv)
 					debugEvents = true;
 				} else if (strcmp(opt_name, "cursor") == 0) {
 					g_customCursorPath = optarg;
+				} else if (strcmp(opt_name, "cursor-name") == 0) {
+					g_defaultCursorName = optarg;
 				}
 				break;
 			case '?':
@@ -3712,6 +3753,11 @@ steamcompmgr_main(int argc, char **argv)
 	{
 		if (!load_mouse_cursor(cursor.get(), g_customCursorPath))
 			xwm_log.errorf("Failed to load mouse cursor: %s", g_customCursorPath);
+	}
+	else if (g_defaultCursorName)
+	{
+		if (!cursor->setCursorImageByName(g_defaultCursorName))
+			xwm_log.errorf("Failed to set default mouse cursor: %s", g_defaultCursorName);
 	}
 
 	gamesRunningCount = get_prop(dpy, root, gamesRunningAtom, 0);

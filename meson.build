@@ -30,6 +30,7 @@ dep_xfixes = dependency('xfixes')
 dep_xxf86vm = dependency('xxf86vm')
 dep_xtst = dependency('xtst')
 dep_xres = dependency('xres')
+dep_xmu = dependency('xmu')
 
 drm_dep = dependency('libdrm', version: '>= 2.4.105')
 vulkan_dep = dependency('vulkan')
@@ -106,7 +107,7 @@ executable(
   src,
   dependencies: [
     dep_x11, dep_xdamage, dep_xcomposite, dep_xrender, dep_xext, dep_xfixes,
-    dep_xxf86vm, dep_xres, drm_dep, wayland_server, wayland_protos,
+    dep_xxf86vm, dep_xres, dep_xmu, drm_dep, wayland_server, wayland_protos,
     xkbcommon, thread_dep, sdl_dep, wlroots_dep,
     vulkan_dep, liftoff_dep, dep_xtst, cap_dep, pipewire_dep, stb_dep,
   ],
