@@ -128,6 +128,8 @@ extern bool g_vulkanSupportsModifiers;
 extern bool g_vulkanHasDrmPrimaryDevId;
 extern dev_t g_vulkanDrmPrimaryDevId;
 
+extern bool g_bIsCompositeDebug;
+
 bool vulkan_init(void);
 bool vulkan_init_formats(void);
 bool vulkan_make_output(void);

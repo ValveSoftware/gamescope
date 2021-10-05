@@ -59,6 +59,7 @@ const struct option *gamescope_options = (struct option[]){
 	{ "debug-events", no_argument, nullptr, 0 },
 	{ "steam", no_argument, nullptr, 'e' },
 	{ "force-composition", no_argument, nullptr, 'c' },
+	{ "composite-debug", no_argument, nullptr, 0 },
 	{ "disable-xres", no_argument, nullptr, 'x' },
 
 	{} // keep last
@@ -100,6 +101,7 @@ const char usage[] =
 	"  --debug-hud                    paint HUD with debug info\n"
 	"  --debug-events                 debug X11 events\n"
 	"  --force-composition            disable direct scan-out\n"
+	"  --composite-debug              draw frame markers on alternating corners of the screen when compositing\n"
 	"  --disable-xres                 disable XRes for PID lookup\n"
 	"\n"
 	"Keyboard shortcuts:\n"
@@ -237,6 +239,8 @@ int main(int argc, char **argv)
 					g_bUseLayers = false;
 				} else if (strcmp(opt_name, "debug-layers") == 0) {
 					g_bDebugLayers = true;
+				} else if (strcmp(opt_name, "composite-debug") == 0) {
+					g_bIsCompositeDebug = true;
 				} else if (strcmp(opt_name, "default-touch-mode") == 0) {
 					g_nDefaultTouchClickMode = (enum wlserver_touch_click_mode) atoi( optarg );
 					g_nTouchClickMode = g_nDefaultTouchClickMode;
