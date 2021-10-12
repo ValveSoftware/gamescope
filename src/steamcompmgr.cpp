@@ -1415,32 +1415,40 @@ paint_all(Display *dpy, MouseCursor *cursor)
 			assert( pCaptureTexture != nullptr );
 			assert( pCaptureTexture->m_format == VK_FORMAT_B8G8R8A8_UNORM );
 
-			const uint8_t *mappedData = reinterpret_cast<const uint8_t *>(pCaptureTexture->m_pMappedData);
+			pCaptureTexture->nLockRefs++;
+			auto screenshotThread = std::thread([=] {
+				const uint8_t *mappedData = reinterpret_cast<const uint8_t *>(pCaptureTexture->m_pMappedData);
 
-			// Make our own copy of the image to remove the alpha channel.
-			auto imageData = std::vector<uint8_t>(currentOutputWidth * currentOutputHeight * 4);
-			const uint32_t comp = 4;
-			const uint32_t pitch = currentOutputWidth * comp;
-			for (uint32_t y = 0; y < currentOutputHeight; y++)
-			{
-				for (uint32_t x = 0; x < currentOutputWidth; x++)
+				// Make our own copy of the image to remove the alpha channel.
+				auto imageData = std::vector<uint8_t>(currentOutputWidth * currentOutputHeight * 4);
+				const uint32_t comp = 4;
+				const uint32_t pitch = currentOutputWidth * comp;
+				for (uint32_t y = 0; y < currentOutputHeight; y++)
 				{
-					// BGR...
-					imageData[y * pitch + x * comp + 0] = mappedData[y * pCaptureTexture->m_unRowPitch + x * comp + 2];
-					imageData[y * pitch + x * comp + 1] = mappedData[y * pCaptureTexture->m_unRowPitch + x * comp + 1];
-					imageData[y * pitch + x * comp + 2] = mappedData[y * pCaptureTexture->m_unRowPitch + x * comp + 0];
-					imageData[y * pitch + x * comp + 3] = 255;
+					for (uint32_t x = 0; x < currentOutputWidth; x++)
+					{
+						// BGR...
+						imageData[y * pitch + x * comp + 0] = mappedData[y * pCaptureTexture->m_unRowPitch + x * comp + 2];
+						imageData[y * pitch + x * comp + 1] = mappedData[y * pCaptureTexture->m_unRowPitch + x * comp + 1];
+						imageData[y * pitch + x * comp + 2] = mappedData[y * pCaptureTexture->m_unRowPitch + x * comp + 0];
+						imageData[y * pitch + x * comp + 3] = 255;
+					}
 				}
-			}
 
-			char pTimeBuffer[1024];
-			time_t currentTime = time(0);
-			struct tm *localTime = localtime( &currentTime );
-			strftime( pTimeBuffer, sizeof( pTimeBuffer ), "/tmp/gamescope_%Y-%m-%d_%H-%M-%S.png", localTime );
+				char pTimeBuffer[1024];
+				time_t currentTime = time(0);
+				struct tm *localTime = localtime( &currentTime );
+				strftime( pTimeBuffer, sizeof( pTimeBuffer ), "/tmp/gamescope_%Y-%m-%d_%H-%M-%S.png", localTime );
 
-			stbi_write_png(pTimeBuffer, currentOutputWidth, currentOutputHeight, 4, imageData.data(), pitch);
+				stbi_write_png(pTimeBuffer, currentOutputWidth, currentOutputHeight, 4, imageData.data(), pitch);
 
-			xwm_log.infof("Screenshot saved to %s", pTimeBuffer);
+				pCaptureTexture->nLockRefs--;
+
+				xwm_log.infof("Screenshot saved to %s", pTimeBuffer);
+			});
+
+			screenshotThread.detach();
+
 			takeScreenshot = false;
 		}
 

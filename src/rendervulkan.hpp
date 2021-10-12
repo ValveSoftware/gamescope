@@ -51,6 +51,7 @@ struct Composite_t
 
 #include <unordered_map>
 #include <vector>
+#include <atomic>
 #include <wayland-server-core.h>
 
 extern "C" {
@@ -121,6 +122,8 @@ public:
 	void *m_pMappedData = nullptr;
 
 	VkFormat m_format = VK_FORMAT_UNDEFINED;
+
+	std::atomic<uint32_t> nLockRefs;
 };
 
 extern bool g_vulkanSupportsModifiers;

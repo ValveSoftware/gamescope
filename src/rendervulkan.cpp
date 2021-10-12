@@ -6,6 +6,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <array>
+#include <memory>
 
 #include "rendervulkan.hpp"
 #include "main.hpp"
@@ -57,7 +58,7 @@ struct VulkanOutput_t
 	VkFence fence;
 	int fenceFD;
 
-	CVulkanTexture *pScreenshotImage;
+	std::array<std::unique_ptr<CVulkanTexture>, 8> pScreenshotImages;
 };
 
 
@@ -1539,11 +1540,8 @@ bool vulkan_remake_swapchain( void )
 	pOutput->nSwapChainImageIndex = 0;
 
 	// Delete screenshot image to be remade if needed
-	if ( pOutput->pScreenshotImage != nullptr )
-	{
-		delete pOutput->pScreenshotImage;
-		pOutput->pScreenshotImage = nullptr;
-	}
+	for (auto& pScreenshotImage : pOutput->pScreenshotImages)
+		pScreenshotImage = nullptr;
 	
 	bool bRet = vulkan_make_swapchain( pOutput );
 	assert( bRet ); // Something has gone horribly wrong!
@@ -1585,11 +1583,8 @@ bool vulkan_remake_output_images( void )
 	pOutput->nOutImage = 0;
 
 	// Delete screenshot image to be remade if needed
-	if ( pOutput->pScreenshotImage != nullptr )
-	{
-		delete pOutput->pScreenshotImage;
-		pOutput->pScreenshotImage = nullptr;
-	}
+	for (auto& pScreenshotImage : pOutput->pScreenshotImages)
+		pScreenshotImage = nullptr;
 
 	bool bRet = vulkan_make_output_images( pOutput );
 	assert( bRet );
@@ -2202,41 +2197,52 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 
 	if ( pScreenshotTexture != nullptr )
 	{
-		if ( g_output.pScreenshotImage == nullptr )
+		CVulkanTexture *pFoundScreenshotImage = nullptr;
+
+		for (auto& pScreenshotImage : g_output.pScreenshotImages)
 		{
-			g_output.pScreenshotImage = new CVulkanTexture;
-
-			CVulkanTexture::createFlags screenshotImageFlags;
-			screenshotImageFlags.bMappable = true;
-			screenshotImageFlags.bTransferDst = true;
-
-			bool bSuccess = g_output.pScreenshotImage->BInit( currentOutputWidth, currentOutputHeight, g_output.outputFormat, screenshotImageFlags );
-
-			assert( bSuccess );
-
-			// Transition it to GENERAL
-			VkImageSubresourceRange subResRange =
+			if (pScreenshotImage == nullptr)
 			{
-				.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-				.levelCount = 1,
-				.layerCount = 1
-			};
+				pScreenshotImage = std::make_unique<CVulkanTexture>();
 
-			VkImageMemoryBarrier memoryBarrier =
-			{
-				.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-				.srcAccessMask = 0,
-				.dstAccessMask = 0,
-				.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-				.newLayout = VK_IMAGE_LAYOUT_GENERAL,
-				.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-				.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-				.image = g_output.pScreenshotImage->m_vkImage,
-				.subresourceRange = subResRange
-			};
+				CVulkanTexture::createFlags screenshotImageFlags;
+				screenshotImageFlags.bMappable = true;
+				screenshotImageFlags.bTransferDst = true;
 
-			vkCmdPipelineBarrier( curCommandBuffer, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-								  0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
+				bool bSuccess = pScreenshotImage->BInit( currentOutputWidth, currentOutputHeight, g_output.outputFormat, screenshotImageFlags );
+
+				assert( bSuccess );
+
+				// Transition it to GENERAL
+				VkImageSubresourceRange subResRange =
+				{
+					.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+					.levelCount = 1,
+					.layerCount = 1
+				};
+
+				VkImageMemoryBarrier memoryBarrier =
+				{
+					.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+					.srcAccessMask = 0,
+					.dstAccessMask = 0,
+					.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+					.newLayout = VK_IMAGE_LAYOUT_GENERAL,
+					.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+					.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+					.image = pScreenshotImage->m_vkImage,
+					.subresourceRange = subResRange
+				};
+
+				vkCmdPipelineBarrier( curCommandBuffer, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+									0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
+			}
+
+			if (pScreenshotImage->nLockRefs)
+				continue;
+
+			pFoundScreenshotImage = pScreenshotImage.get();
+			break;
 		}
 
 		VkImageMemoryBarrier memoryBarrier =
@@ -2273,9 +2279,9 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 			.depth = 1
 		};
 
-		vkCmdCopyImage( curCommandBuffer, compositeImage, VK_IMAGE_LAYOUT_GENERAL, g_output.pScreenshotImage->m_vkImage, VK_IMAGE_LAYOUT_GENERAL, 1, &region );
+		vkCmdCopyImage( curCommandBuffer, compositeImage, VK_IMAGE_LAYOUT_GENERAL, pFoundScreenshotImage->m_vkImage, VK_IMAGE_LAYOUT_GENERAL, 1, &region );
 
-		*pScreenshotTexture = g_output.pScreenshotImage;
+		*pScreenshotTexture = pFoundScreenshotImage;
 	}
 
 	bool useForeignQueue = !BIsNested() && g_vulkanSupportsModifiers;
