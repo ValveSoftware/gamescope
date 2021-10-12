@@ -1434,17 +1434,21 @@ paint_all(Display *dpy, MouseCursor *cursor)
 						imageData[y * pitch + x * comp + 3] = 255;
 					}
 				}
+				pCaptureTexture->nLockRefs--;
 
 				char pTimeBuffer[1024];
 				time_t currentTime = time(0);
 				struct tm *localTime = localtime( &currentTime );
 				strftime( pTimeBuffer, sizeof( pTimeBuffer ), "/tmp/gamescope_%Y-%m-%d_%H-%M-%S.png", localTime );
 
-				stbi_write_png(pTimeBuffer, currentOutputWidth, currentOutputHeight, 4, imageData.data(), pitch);
-
-				pCaptureTexture->nLockRefs--;
-
-				xwm_log.infof("Screenshot saved to %s", pTimeBuffer);
+				if ( stbi_write_png(pTimeBuffer, currentOutputWidth, currentOutputHeight, 4, imageData.data(), pitch) )
+				{
+					xwm_log.infof("Screenshot saved to %s", pTimeBuffer);
+				}
+				else
+				{
+					xwm_log.errorf( "Failed to save screenshot to %s", pTimeBuffer );
+				}
 			});
 
 			screenshotThread.detach();
