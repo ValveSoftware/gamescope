@@ -83,6 +83,9 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include <stb_image_write.h>
+
 #define GPUVIS_TRACE_IMPLEMENTATION
 #include "gpuvis_trace_utils.h"
 
@@ -1413,24 +1416,35 @@ paint_all(Display *dpy, MouseCursor *cursor)
 			assert( pCaptureTexture != nullptr );
 			assert( pCaptureTexture->m_format == VK_FORMAT_B8G8R8A8_UNORM );
 
-			uint32_t redMask = 0x00ff0000;
-			uint32_t greenMask = 0x0000ff00;
-			uint32_t blueMask = 0x000000ff;
-			uint32_t alphaMask = 0;
-
-			SDL_Surface *pSDLSurface = SDL_CreateRGBSurfaceFrom( pCaptureTexture->m_pMappedData, currentOutputWidth, currentOutputHeight, 32, pCaptureTexture->m_unRowPitch, redMask, greenMask, blueMask, alphaMask );
-
 			static char pTimeBuffer[1024];
-
 			time_t currentTime = time(0);
 			struct tm *localTime = localtime( &currentTime );
-			strftime( pTimeBuffer, sizeof( pTimeBuffer ), "/tmp/gamescope_%Y-%m-%d_%H-%M-%S.bmp", localTime );
+			strftime( pTimeBuffer, sizeof( pTimeBuffer ), "/tmp/gamescope_%Y-%m-%d_%H-%M-%S.png", localTime );
 
-			SDL_SaveBMP( pSDLSurface, pTimeBuffer );
+			int bpp = 4;
+			std::vector< uint8_t > vecDstData( bpp * currentOutputWidth * currentOutputHeight );
+			for ( unsigned int i = 0; i < currentOutputHeight; i++ )
+			{
+				for ( unsigned int j = 0; j < currentOutputWidth; j++ )
+				{
+					uint8_t *pSrcPixel = (uint8_t *) pCaptureTexture->m_pMappedData + i * pCaptureTexture->m_unRowPitch + j * bpp;
+					uint8_t *pDstPixel = vecDstData.data() + bpp * (i * currentOutputWidth + j);
+					pDstPixel[0] = pSrcPixel[2];
+					pDstPixel[1] = pSrcPixel[1];
+					pDstPixel[2] = pSrcPixel[0];
+					pDstPixel[3] = pSrcPixel[3];
+				}
+			}
 
-			SDL_FreeSurface( pSDLSurface );
+			if ( stbi_write_png( pTimeBuffer, currentOutputWidth, currentOutputHeight, bpp, vecDstData.data(), bpp * currentOutputWidth ) )
+			{
+				xwm_log.infof( "Screenshot saved to %s", pTimeBuffer );
+			}
+			else
+			{
+				xwm_log.errorf( "Failed to save screenshot to %s", pTimeBuffer );
+			}
 
-			xwm_log.infof("Screenshot saved to %s", pTimeBuffer);
 			takeScreenshot = false;
 		}
 
