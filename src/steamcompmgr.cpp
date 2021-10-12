@@ -81,7 +81,9 @@
 #endif
 
 #define STB_IMAGE_IMPLEMENTATION
+#define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb_image.h>
+#include <stb_image_write.h>
 
 #define GPUVIS_TRACE_IMPLEMENTATION
 #include "gpuvis_trace_utils.h"
@@ -1413,22 +1415,30 @@ paint_all(Display *dpy, MouseCursor *cursor)
 			assert( pCaptureTexture != nullptr );
 			assert( pCaptureTexture->m_format == VK_FORMAT_B8G8R8A8_UNORM );
 
-			uint32_t redMask = 0x00ff0000;
-			uint32_t greenMask = 0x0000ff00;
-			uint32_t blueMask = 0x000000ff;
-			uint32_t alphaMask = 0;
+			const uint8_t *mappedData = reinterpret_cast<const uint8_t *>(pCaptureTexture->m_pMappedData);
 
-			SDL_Surface *pSDLSurface = SDL_CreateRGBSurfaceFrom( pCaptureTexture->m_pMappedData, currentOutputWidth, currentOutputHeight, 32, pCaptureTexture->m_unRowPitch, redMask, greenMask, blueMask, alphaMask );
+			// Make our own copy of the image to remove the alpha channel.
+			auto imageData = std::vector<uint8_t>(currentOutputWidth * currentOutputHeight * 4);
+			const uint32_t comp = 4;
+			const uint32_t pitch = currentOutputWidth * comp;
+			for (uint32_t y = 0; y < currentOutputHeight; y++)
+			{
+				for (uint32_t x = 0; x < currentOutputWidth; x++)
+				{
+					// BGR...
+					imageData[y * pitch + x * comp + 0] = mappedData[y * pCaptureTexture->m_unRowPitch + x * comp + 2];
+					imageData[y * pitch + x * comp + 1] = mappedData[y * pCaptureTexture->m_unRowPitch + x * comp + 1];
+					imageData[y * pitch + x * comp + 2] = mappedData[y * pCaptureTexture->m_unRowPitch + x * comp + 0];
+					imageData[y * pitch + x * comp + 3] = 255;
+				}
+			}
 
-			static char pTimeBuffer[1024];
-
+			char pTimeBuffer[1024];
 			time_t currentTime = time(0);
 			struct tm *localTime = localtime( &currentTime );
-			strftime( pTimeBuffer, sizeof( pTimeBuffer ), "/tmp/gamescope_%Y-%m-%d_%H-%M-%S.bmp", localTime );
+			strftime( pTimeBuffer, sizeof( pTimeBuffer ), "/tmp/gamescope_%Y-%m-%d_%H-%M-%S.png", localTime );
 
-			SDL_SaveBMP( pSDLSurface, pTimeBuffer );
-
-			SDL_FreeSurface( pSDLSurface );
+			stbi_write_png(pTimeBuffer, currentOutputWidth, currentOutputHeight, 4, imageData.data(), pitch);
 
 			xwm_log.infof("Screenshot saved to %s", pTimeBuffer);
 			takeScreenshot = false;
