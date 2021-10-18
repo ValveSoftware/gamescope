@@ -298,6 +298,8 @@ std::vector<ResListEntry_t> wayland_commit_queue;
 struct wlr_buffer_map_entry {
 	struct wl_listener listener;
 	struct wlr_buffer *buf;
+	VulkanTexture_t vulkanTex;
+	uint32_t fb_id;
 };
 
 static std::mutex wlr_buffer_map_lock;
@@ -599,6 +601,16 @@ destroy_buffer( struct wl_listener *listener, void * )
 	std::lock_guard<std::mutex> lock( wlr_buffer_map_lock );
 	wlr_buffer_map_entry *entry = wl_container_of( listener, entry, listener );
 
+	if ( entry->fb_id != 0 )
+	{
+		drm_drop_fbid( &g_DRM, entry->fb_id );
+	}
+
+	if ( entry->vulkanTex != 0 )
+	{
+		vulkan_free_texture( entry->vulkanTex );
+	}
+
 	wl_list_remove( &entry->listener.link );
 
 	/* Has to be the last thing we do as this deletes *entry. */
@@ -610,14 +622,8 @@ release_commit( commit_t &commit )
 {
 	if ( commit.fb_id != 0 )
 	{
-		drm_drop_fbid( &g_DRM, commit.fb_id );
+		drm_unlock_fbid( &g_DRM, commit.fb_id );
 		commit.fb_id = 0;
-	}
-
-	if ( commit.vulkanTex != 0 )
-	{
-		vulkan_free_texture( commit.vulkanTex );
-		commit.vulkanTex = 0;
 	}
 
 	wlserver_lock();
@@ -628,9 +634,26 @@ release_commit( commit_t &commit )
 static bool
 import_commit ( struct wlr_buffer *buf, commit_t &commit )
 {
+	/* Keep this locked during the entire function so we
+	 * avoid racing the creation of the commit. Unlikely to
+	 * come up with the current callers but a safe default. */
 	std::lock_guard<std::mutex> lock( wlr_buffer_map_lock );
 
 	commit.buf = buf;
+
+	auto it = wlr_buffer_map.find( buf );
+	if ( it != wlr_buffer_map.end() )
+	{
+		commit.vulkanTex = it->second.vulkanTex;
+		commit.fb_id = it->second.fb_id;
+
+		if (commit.fb_id)
+		{
+			drm_lock_fbid( &g_DRM, commit.fb_id );
+		}
+
+		return true;
+	}
 
 	commit.vulkanTex = vulkan_create_texture_from_wlr_buffer( buf );
 	assert( commit.vulkanTex != 0 );
@@ -639,23 +662,27 @@ import_commit ( struct wlr_buffer *buf, commit_t &commit )
 	if ( BIsNested() == false && wlr_buffer_get_dmabuf( buf, &dmabuf ) )
 	{
 		commit.fb_id = drm_fbid_from_dmabuf( &g_DRM, buf, &dmabuf );
+
+		if ( commit.fb_id )
+		{
+			drm_lock_fbid( &g_DRM, commit.fb_id );
+		}
 	}
 	else
 	{
 		commit.fb_id = 0;
 	}
 
-	auto it = wlr_buffer_map.find( buf );
-	if ( it == wlr_buffer_map.end() )
-	{
-		wlr_buffer_map_entry& entry = wlr_buffer_map[buf];
-		entry.listener.notify = destroy_buffer;
-		entry.buf = buf;
+	wlr_buffer_map_entry& entry = wlr_buffer_map[buf];
+	entry.listener.notify = destroy_buffer;
+	entry.buf = buf;
+	entry.vulkanTex = commit.vulkanTex;
+	entry.fb_id = commit.fb_id;
 
-		wlserver_lock();
-		wl_signal_add( &buf->events.destroy, &entry.listener );
-		wlserver_unlock();
-	}
+	wlserver_lock();
+	wl_signal_add( &buf->events.destroy, &entry.listener );
+	wlserver_unlock();
+
 	return true;
 }
 

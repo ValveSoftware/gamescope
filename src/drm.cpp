@@ -177,7 +177,7 @@ static struct plane *find_primary_plane(struct drm_t *drm)
 	return primary;
 }
 
-static void drm_free_fb( struct drm_t *drm, struct fb *fb );
+static void drm_unlock_fb_internal( struct drm_t *drm, struct fb *fb );
 
 static void page_flip_handler(int fd, unsigned int frame, unsigned int sec, unsigned int usec, unsigned int crtc_id, void *data)
 {
@@ -208,13 +208,26 @@ static void page_flip_handler(int fd, unsigned int frame, unsigned int sec, unsi
 			// we flipped away from this previous fbid, now safe to delete
 			std::lock_guard<std::mutex> lock( g_DRM.free_queue_lock );
 
+			for ( uint32_t i = 0; i < g_DRM.fbid_unlock_queue.size(); i++ )
+			{
+				if ( g_DRM.fbid_unlock_queue[ i ] == previous_fbid )
+				{
+					drm_verbose_log.debugf("deferred unlock %u", previous_fbid);
+
+					drm_unlock_fb_internal( &g_DRM, &get_fb( g_DRM, previous_fbid ) );
+
+					g_DRM.fbid_unlock_queue.erase( g_DRM.fbid_unlock_queue.begin() + i );
+					break;
+				}
+			}
+
 			for ( uint32_t i = 0; i < g_DRM.fbid_free_queue.size(); i++ )
 			{
 				if ( g_DRM.fbid_free_queue[ i ] == previous_fbid )
 				{
-					drm_verbose_log.debugf("deferred free %u", previous_fbid);
+					drm_verbose_log.debugf( "deferred free %u", previous_fbid );
 
-					drm_free_fb( &g_DRM, &previous_fb );
+					drm_drop_fbid( &g_DRM, previous_fbid );
 
 					g_DRM.fbid_free_queue.erase( g_DRM.fbid_free_queue.begin() + i );
 					break;
@@ -895,20 +908,13 @@ uint32_t drm_fbid_from_dmabuf( struct drm_t *drm, struct wlr_buffer *buf, struct
 
 	drm_verbose_log.debugf("make fbid %u", fb_id);
 
-	if ( buf != nullptr )
-	{
-		wlserver_lock();
-		buf = wlr_buffer_lock( buf );
-		wlserver_unlock();
-	}
-
 	/* Nested scope so fb doesn't end up in the out: label */
 	{
 		struct fb &fb = get_fb( *drm, fb_id );
 		assert( fb.held == false );
 		fb.id = fb_id;
 		fb.buf = buf;
-		fb.held = true;
+		fb.held = !buf;
 		fb.n_refs = 0;
 	}
 
@@ -937,15 +943,32 @@ out:
 	return fb_id;
 }
 
-static void drm_free_fb( struct drm_t *drm, struct fb *fb )
+void drm_drop_fbid( struct drm_t *drm, uint32_t fbid )
 {
-	assert( !fb->held );
-	assert( fb->n_refs == 0 );
+	struct fb &fb = get_fb( *drm, fbid );
+	assert( fb.held == false ||
+	        fb.buf == nullptr );
 
-	if ( drmModeRmFB( drm->fd, fb->id ) != 0 )
+	fb.held = false;
+
+	if ( fb.n_refs != 0  )
+	{
+		std::lock_guard<std::mutex> lock( drm->free_queue_lock );
+
+		drm->fbid_free_queue.push_back( fbid );
+		return;
+	}
+
+	if (drmModeRmFB( drm->fd, fbid ) != 0 )
 	{
 		drm_log.errorf_errno( "drmModeRmFB failed" );
 	}
+}
+
+static void drm_unlock_fb_internal( struct drm_t *drm, struct fb *fb )
+{
+	assert( !fb->held );
+	assert( fb->n_refs == 0 );
 
 	if ( fb->buf != nullptr )
 	{
@@ -953,11 +976,24 @@ static void drm_free_fb( struct drm_t *drm, struct fb *fb )
 		wlr_buffer_unlock( fb->buf );
 		wlserver_unlock();
 	}
-
-	fb = {};
 }
 
-void drm_drop_fbid( struct drm_t *drm, uint32_t fbid )
+void drm_lock_fbid( struct drm_t *drm, uint32_t fbid )
+{
+	struct fb &fb = get_fb( *drm, fbid );
+	assert( fb.held == false );
+	assert( fb.n_refs == 0 );
+	fb.held = true;
+
+	if ( fb.buf != nullptr )
+	{
+		wlserver_lock();
+		wlr_buffer_lock( fb.buf );
+		wlserver_unlock();
+	}
+}
+
+void drm_unlock_fbid( struct drm_t *drm, uint32_t fbid )
 {
 	struct fb &fb = get_fb( *drm, fbid );
 	
@@ -968,13 +1004,13 @@ void drm_drop_fbid( struct drm_t *drm, uint32_t fbid )
 	{
 		/* FB isn't being used in any page-flip, free it immediately */
 		drm_verbose_log.debugf("free fbid %u", fbid);
-		drm_free_fb( drm, &fb );
+		drm_unlock_fb_internal( drm, &fb );
 	}
 	else
 	{
 		std::lock_guard<std::mutex> lock( drm->free_queue_lock );
 
-		drm->fbid_free_queue.push_back( fbid );
+		drm->fbid_unlock_queue.push_back( fbid );
 	}
 }
 
