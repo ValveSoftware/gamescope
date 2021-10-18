@@ -295,6 +295,14 @@ static bool		useXRes = true;
 std::mutex wayland_commit_lock;
 std::vector<ResListEntry_t> wayland_commit_queue;
 
+struct wlr_buffer_map_entry {
+	struct wl_listener listener;
+	struct wlr_buffer *buf;
+};
+
+static std::mutex wlr_buffer_map_lock;
+static std::unordered_map<struct wlr_buffer*, wlr_buffer_map_entry> wlr_buffer_map;
+
 static std::atomic< bool > g_bTakeScreenshot{false};
 
 static int g_nudgePipe[2] = {-1, -1};
@@ -586,6 +594,18 @@ static win * find_win( struct wlr_surface *surf )
 }
 
 static void
+destroy_buffer( struct wl_listener *listener, void * )
+{
+	std::lock_guard<std::mutex> lock( wlr_buffer_map_lock );
+	wlr_buffer_map_entry *entry = wl_container_of( listener, entry, listener );
+
+	wl_list_remove( &entry->listener.link );
+
+	/* Has to be the last thing we do as this deletes *entry. */
+	wlr_buffer_map.erase( wlr_buffer_map.find( entry->buf ) );
+}
+
+static void
 release_commit( commit_t &commit )
 {
 	if ( commit.fb_id != 0 )
@@ -608,6 +628,8 @@ release_commit( commit_t &commit )
 static bool
 import_commit ( struct wlr_buffer *buf, commit_t &commit )
 {
+	std::lock_guard<std::mutex> lock( wlr_buffer_map_lock );
+
 	commit.buf = buf;
 
 	commit.vulkanTex = vulkan_create_texture_from_wlr_buffer( buf );
@@ -623,6 +645,17 @@ import_commit ( struct wlr_buffer *buf, commit_t &commit )
 		commit.fb_id = 0;
 	}
 
+	auto it = wlr_buffer_map.find( buf );
+	if ( it == wlr_buffer_map.end() )
+	{
+		wlr_buffer_map_entry& entry = wlr_buffer_map[buf];
+		entry.listener.notify = destroy_buffer;
+		entry.buf = buf;
+
+		wlserver_lock();
+		wl_signal_add( &buf->events.destroy, &entry.listener );
+		wlserver_unlock();
+	}
 	return true;
 }
 
