@@ -336,6 +336,8 @@ bool imageWaitThreadRun = true;
 
 void imageWaitThreadMain( void )
 {
+	pthread_setname_np( pthread_self(), "gamescope-img" );
+
 wait:
 	waitListSem.wait();
 
@@ -398,6 +400,7 @@ bool statsThreadRun;
 
 void statsThreadMain( void )
 {
+	pthread_setname_np( pthread_self(), "gamescope-stats" );
 	signal(SIGPIPE, SIG_IGN);
 
 	while ( statsPipeFD == -1 )
@@ -3233,6 +3236,8 @@ spawn_client( char **argv )
 	}
 
 	std::thread waitThread([]() {
+		pthread_setname_np( pthread_self(), "gamescope-wait" );
+
 		// Because we've set PR_SET_CHILD_SUBREAPER above, we'll get process
 		// status notifications for all of our child processes, even if our
 		// direct child exits. Wait until all have exited.

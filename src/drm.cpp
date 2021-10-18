@@ -223,6 +223,8 @@ static void page_flip_handler(int fd, unsigned int frame, unsigned int sec, unsi
 
 void flip_handler_thread_run(void)
 {
+	pthread_setname_np( pthread_self(), "gamescope-kms" );
+
 	struct pollfd pollfd = {
 		.fd = g_DRM.fd,
 		.events = POLLIN,

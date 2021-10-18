@@ -313,6 +313,8 @@ enum event_type {
 
 static void run_pipewire(struct pipewire_state *state)
 {
+	pthread_setname_np( pthread_self(), "gamescope-pw" );
+
 	struct pollfd pollfds[] = {
 		[EVENT_PIPEWIRE] = {
 			.fd = pw_loop_get_fd(state->loop),

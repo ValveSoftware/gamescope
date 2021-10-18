@@ -394,6 +394,8 @@ int main(int argc, char **argv)
 
 static void steamCompMgrThreadRun(int argc, char **argv)
 {
+	pthread_setname_np( pthread_self(), "gamescope-xwm" );
+
 	steamcompmgr_main( argc, argv );
 
 	pthread_kill( g_mainThread, SIGINT );
