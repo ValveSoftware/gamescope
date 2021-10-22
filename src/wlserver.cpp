@@ -110,6 +110,9 @@ const struct wlr_surface_role xwayland_surface_role = {
 static void xwayland_ready(struct wl_listener *listener, void *data)
 {
 	bXwaylandReady = true;
+
+	if (!wlserver.wlr.xwayland_server->options.no_touch_pointer_emulation)
+		wl_log.infof("Xwayland doesn't support -noTouchPointerEmulation, touch events might get duplicated");
 }
 
 struct wl_listener xwayland_ready_listener = { .notify = xwayland_ready };
@@ -734,6 +737,7 @@ bool wlserver_init( void ) {
 	struct wlr_xwayland_server_options xwayland_options = {
 		.lazy = false,
 		.enable_wm = false,
+		.no_touch_pointer_emulation = true,
 	};
 	wlserver.wlr.xwayland_server = wlr_xwayland_server_create(wlserver.display, &xwayland_options);
 	wl_signal_add(&wlserver.wlr.xwayland_server->events.ready, &xwayland_ready_listener);
