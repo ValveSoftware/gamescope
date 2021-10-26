@@ -126,6 +126,13 @@ extern bool g_bRotated;
 extern bool g_bDebugLayers;
 extern const char *g_sOutputName;
 
+enum drm_mode_generation {
+	DRM_MODE_GENERATE_CVT,
+	DRM_MODE_GENERATE_FIXED,
+};
+
+extern enum drm_mode_generation g_drmModeGeneration;
+
 bool init_drm(struct drm_t *drm, int width, int height, int refresh);
 void finish_drm(struct drm_t *drm);
 int drm_commit(struct drm_t *drm, struct Composite_t *pComposite, struct VulkanPipeline_t *pPipeline );

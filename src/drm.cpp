@@ -17,9 +17,9 @@ extern "C" {
 #include <wlr/types/wlr_buffer.h>
 }
 
-#include "cvt.hpp"
 #include "drm.hpp"
 #include "main.hpp"
+#include "modegen.hpp"
 #include "vblankmanager.hpp"
 #include "wlserver.hpp"
 #include "log.hpp"
@@ -37,6 +37,8 @@ bool g_bRotated = false;
 bool g_bUseLayers = true;
 bool g_bDebugLayers = false;
 const char *g_sOutputName = nullptr;
+
+enum drm_mode_generation g_drmModeGeneration = DRM_MODE_GENERATE_CVT;
 
 static LogScope drm_log("drm");
 static LogScope drm_verbose_log("drm", LOG_SILENT);
@@ -1304,7 +1306,16 @@ bool drm_set_refresh( struct drm_t *drm, int refresh )
 	else
 	{
 		/* TODO: check refresh is within the EDID limits */
-		generate_cvt_mode( &mode, width, height, refresh, true, false );
+		switch ( g_drmModeGeneration )
+		{
+		case DRM_MODE_GENERATE_CVT:
+			generate_cvt_mode( &mode, width, height, refresh, true, false );
+			break;
+		case DRM_MODE_GENERATE_FIXED:
+			const drmModeModeInfo *preferred_mode = find_mode(connector, 0, 0, 0);
+			generate_fixed_mode( &mode, preferred_mode, refresh );
+			break;
+		}
 	}
 
 	mode.type = DRM_MODE_TYPE_USERDEF;
