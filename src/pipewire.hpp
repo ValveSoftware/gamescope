@@ -16,6 +16,7 @@ struct pipewire_state {
 	uint32_t stream_node_id;
 	bool streaming;
 	struct spa_video_info_raw video_info;
+	bool dmabuf;
 	int shm_stride;
 	uint64_t seq;
 };
@@ -26,9 +27,11 @@ struct pipewire_state {
  * push_pipewire_buffer) for copying.
  */
 struct pipewire_buffer {
+	enum spa_data_type type; // SPA_DATA_MemFd or SPA_DATA_DmaBuf
 	struct spa_video_info_raw video_info;
 	std::shared_ptr<CVulkanTexture> texture;
 
+	// Only used for SPA_DATA_MemFd
 	struct {
 		int stride;
 		uint8_t *data;
