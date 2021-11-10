@@ -67,6 +67,8 @@
 #include <X11/extensions/shape.h>
 #include <X11/extensions/xf86vmode.h>
 
+#include <linux/input-event-codes.h>
+
 #include "main.hpp"
 #include "wlserver.hpp"
 #include "drm.hpp"
@@ -172,6 +174,7 @@ uint32_t		currentInputFocusMode;
 static Window 	currentKeyboardFocusWindow;
 static Window	currentOverlayWindow;
 static Window	currentNotificationWindow;
+static Window	currentOverrideWindow;
 
 bool hasFocusWindow;
 
@@ -1209,6 +1212,7 @@ paint_all(Display *dpy, MouseCursor *cursor)
 	win	*overlay;
 	win	*notification;
 	win *input;
+	win *override;
 
 	unsigned int currentTime = get_time_in_milliseconds();
 	bool fadingOut = ((currentTime - fadeOutStartTime) < FADE_OUT_DURATION && fadeOutWindow.id != None);
@@ -1217,6 +1221,7 @@ paint_all(Display *dpy, MouseCursor *cursor)
 	overlay = find_win(dpy, currentOverlayWindow);
 	notification = find_win(dpy, currentNotificationWindow);
 	input = find_win(dpy, currentInputFocusWindow);
+	override = find_win(dpy, currentOverrideWindow);
 
 	if ( !w )
 	{
@@ -1307,6 +1312,11 @@ paint_all(Display *dpy, MouseCursor *cursor)
 			fadeOutWindow.id = None;
 		}
 	}
+
+	// TODO: We want to paint this at the same scale as the normal window and probably
+	// with an offset.
+	if (override)
+		paint_window(dpy, override, &composite, &pipeline, false, cursor);
 
 	int touchInputFocusLayer = composite.nLayerCount - 1;
 
@@ -1605,7 +1615,7 @@ is_focus_priority_greater( win *a, win *b )
 static void
 determine_and_apply_focus(Display *dpy, MouseCursor *cursor)
 {
-	win *w, *focus = NULL;
+	win *w, *focus = NULL, *override_focus = NULL;
 	win *inputFocus = NULL;
 
 	gameFocused = false;
@@ -1731,12 +1741,22 @@ found:
 		gameFocused = focus->appID != 0;
 	}
 
+
+	for ( size_t i = 0; i < vecPossibleFocusWindows.size(); i++ ) {
+		if (win_is_override_redirect(vecPossibleFocusWindows[i]) && vecPossibleFocusWindows[i] != focus) {
+			override_focus = vecPossibleFocusWindows[i];
+			break;
+		}
+	}
+
+	currentOverrideWindow = override_focus ? override_focus->id : None;
+
 	unsigned long focusedWindow = 0;
 	unsigned long focusedAppId = 0;
 
 	if ( inputFocus == NULL )
 	{
-		inputFocus = focus;
+		inputFocus = override_focus ? override_focus : focus;
 	}
 
 	if ( focus )
@@ -1835,8 +1855,13 @@ found:
 		{
 			wlserver_lock();
 
-			if ( inputFocus->surface.wlr != nullptr )
+			if ( inputFocus->surface.wlr != nullptr ) {
+				// Instantly stop pressing left mouse before transitioning to a new window.
+				// for focus.
+				// Fixes dropdowns not working.
+				wlserver_mousebutton( BTN_LEFT, false, 0 );
 				wlserver_mousefocus( inputFocus->surface.wlr, cursor->x(), cursor->y() );
+			}
 
 			if ( keyboardFocusWin->surface.wlr != nullptr )
 				wlserver_keyboardfocus( keyboardFocusWin->surface.wlr );
