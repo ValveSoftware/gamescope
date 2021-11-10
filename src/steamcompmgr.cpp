@@ -842,7 +842,8 @@ void MouseCursor::constrainPosition()
 	int rootX, rootY;
 	queryGlobalPosition(rootX, rootY);
 
-	if (rootX >= window->a.width || rootY >= window->a.height) {
+	if (rootX - window->a.x >= window->a.width || rootY - window->a.y >= window->a.height ||
+		rootX - window->a.x < 0 || rootY - window->a.y < 0 ) {
 		warp(window->a.width / 2, window->a.height / 2);
 	}
 }
