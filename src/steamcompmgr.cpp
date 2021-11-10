@@ -164,6 +164,7 @@ static int		composite_opcode;
 
 uint32_t		currentOutputWidth, currentOutputHeight;
 
+static win*		currentMainWin;
 static Window	currentFocusWindow;
 static win*		currentFocusWin;
 static Window	currentInputFocusWindow;
@@ -1204,6 +1205,7 @@ paint_all(Display *dpy, MouseCursor *cursor)
 	paintID++;
 	gpuvis_trace_begin_ctx_printf( paintID, "paint_all" );
 	win	*w;
+	win *focus;
 	win	*overlay;
 	win	*notification;
 	win *input;
@@ -1211,7 +1213,8 @@ paint_all(Display *dpy, MouseCursor *cursor)
 	unsigned int currentTime = get_time_in_milliseconds();
 	bool fadingOut = ((currentTime - fadeOutStartTime) < FADE_OUT_DURATION && fadeOutWindow.id != None);
 
-	w = find_win(dpy, currentFocusWindow);
+	w = currentMainWin;
+	focus = find_win(dpy, currentFocusWindow);
 	overlay = find_win(dpy, currentOverlayWindow);
 	notification = find_win(dpy, currentNotificationWindow);
 	input = find_win(dpy, currentInputFocusWindow);
@@ -1304,6 +1307,11 @@ paint_all(Display *dpy, MouseCursor *cursor)
 			}
 			fadeOutWindow.id = None;
 		}
+	}
+
+	if ( w != focus )
+	{
+		paint_window(dpy, focus, &composite, &pipeline, false, cursor);
 	}
 
 	int touchInputFocusLayer = composite.nLayerCount - 1;
@@ -1811,6 +1819,12 @@ found:
 			sprintf( buf,  "xwininfo -id 0x%lx; xprop -id 0x%lx; xwininfo -root -tree", focus->id, focus->id );
 			system( buf );
 		}
+	}
+
+	if ( currentMainWin == nullptr || is_focus_priority_greater( focus, currentMainWin ) )
+	{
+		fprintf(stderr, "Main window change!\n");
+		currentMainWin = focus;
 	}
 
 	currentFocusWindow = focus->id;
@@ -2476,6 +2490,8 @@ finish_destroy_win(Display *dpy, Window id, bool gone)
 static void
 destroy_win(Display *dpy, Window id, bool gone, bool fade)
 {
+	if (currentMainWin && currentMainWin->id == id && gone)
+		currentMainWin = nullptr;
 	if (currentFocusWindow == id && gone)
 	{
 		currentFocusWindow = None;
@@ -3048,7 +3064,7 @@ void handle_done_commits( void )
 					}
 
 					// If this is the main plane, repaint
-					if ( w->id == currentFocusWindow )
+					if ( w->id == currentFocusWindow || w == currentMainWin )
 					{
 						hasRepaint = true;
 					}
