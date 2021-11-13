@@ -162,22 +162,23 @@ struct wsi_memory_allocate_info {
 struct {
 	uint32_t DRMFormat;
 	VkFormat vkFormat;
+	VkFormat vkFormatSrgb;
 	bool bNeedsSwizzle; // swap the R and the B channels
 	bool bHasAlpha;
 } s_DRMVKFormatTable[] = {
-	{ DRM_FORMAT_ARGB8888, VK_FORMAT_B8G8R8A8_UNORM, false, true },
-	{ DRM_FORMAT_XRGB8888, VK_FORMAT_B8G8R8A8_UNORM, false, false },
-	{ DRM_FORMAT_ARGB8888, VK_FORMAT_R8G8B8A8_UNORM, true, true },
-	{ DRM_FORMAT_XRGB8888, VK_FORMAT_R8G8B8A8_UNORM, true, false },
-	{ DRM_FORMAT_NV12, VK_FORMAT_G8_B8R8_2PLANE_420_UNORM, false, false },
-	{ DRM_FORMAT_INVALID, VK_FORMAT_UNDEFINED, false, false },
+	{ DRM_FORMAT_ARGB8888, VK_FORMAT_B8G8R8A8_UNORM, VK_FORMAT_B8G8R8A8_SRGB, false, true },
+	{ DRM_FORMAT_XRGB8888, VK_FORMAT_B8G8R8A8_UNORM, VK_FORMAT_B8G8R8A8_SRGB, false, false },
+	{ DRM_FORMAT_ARGB8888, VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R8G8B8A8_SRGB, true, true },
+	{ DRM_FORMAT_XRGB8888, VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R8G8B8A8_SRGB, true, false },
+	{ DRM_FORMAT_NV12, VK_FORMAT_G8_B8R8_2PLANE_420_UNORM, VK_FORMAT_G8_B8R8_2PLANE_420_UNORM, false, false },
+	{ DRM_FORMAT_INVALID, VK_FORMAT_UNDEFINED, VK_FORMAT_UNDEFINED, false, false },
 };
 
 static inline uint32_t VulkanFormatToDRM( VkFormat vkFormat )
 {
 	for ( int i = 0; s_DRMVKFormatTable[i].vkFormat != VK_FORMAT_UNDEFINED; i++ )
 	{
-		if ( s_DRMVKFormatTable[i].vkFormat == vkFormat )
+		if ( s_DRMVKFormatTable[i].vkFormat == vkFormat || s_DRMVKFormatTable[i].vkFormatSrgb == vkFormat )
 		{
 			return s_DRMVKFormatTable[i].DRMFormat;
 		}
@@ -186,13 +187,13 @@ static inline uint32_t VulkanFormatToDRM( VkFormat vkFormat )
 	return DRM_FORMAT_INVALID;
 }
 
-static inline VkFormat DRMFormatToVulkan( uint32_t nDRMFormat )
+static inline VkFormat DRMFormatToVulkan( uint32_t nDRMFormat, bool bSrgb )
 {
 	for ( int i = 0; s_DRMVKFormatTable[i].vkFormat != VK_FORMAT_UNDEFINED; i++ )
 	{
 		if ( s_DRMVKFormatTable[i].DRMFormat == nDRMFormat )
 		{
-			return s_DRMVKFormatTable[i].vkFormat;
+			return bSrgb ? s_DRMVKFormatTable[i].vkFormatSrgb : s_DRMVKFormatTable[i].vkFormat;
 		}
 	}
 	
@@ -361,7 +362,7 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, VkFormat format, cr
 
 	if ( pDMA != nullptr )
 	{
-		assert( format == DRMFormatToVulkan( pDMA->format ) );
+		assert( format == DRMFormatToVulkan( pDMA->format, true ) || format == DRMFormatToVulkan( pDMA->format, false ) );
 	}
 
 	if ( g_vulkanSupportsModifiers && pDMA && pDMA->modifier != DRM_FORMAT_MOD_INVALID )
@@ -1695,7 +1696,7 @@ bool vulkan_make_output( void )
 	}
 	else
 	{
-		pOutput->outputFormat = DRMFormatToVulkan( g_nDRMFormat );
+		pOutput->outputFormat = DRMFormatToVulkan( g_nDRMFormat, false );
 		
 		if ( pOutput->outputFormat == VK_FORMAT_UNDEFINED )
 		{
@@ -1892,7 +1893,7 @@ VulkanTexture_t vulkan_create_texture_from_dmabuf( struct wlr_dmabuf_attributes 
 	CVulkanTexture::createFlags texCreateFlags;
 	texCreateFlags.bTextureable = true;
 	
-	if ( pTex->BInit( pDMA->width, pDMA->height, DRMFormatToVulkan( pDMA->format ), texCreateFlags, pDMA ) == false )
+	if ( pTex->BInit( pDMA->width, pDMA->height, DRMFormatToVulkan( pDMA->format, true ), texCreateFlags, pDMA ) == false )
 	{
 		delete pTex;
 		return ret;
@@ -2566,7 +2567,7 @@ VulkanTexture_t vulkan_create_texture_from_wlr_buffer( struct wlr_buffer *buf )
 		return 0;
 	}
 
-	VkFormat format = DRMFormatToVulkan( drmFormat );
+	VkFormat format = DRMFormatToVulkan( drmFormat, true );
 	uint32_t width = buf->width;
 	uint32_t height = buf->height;
 
