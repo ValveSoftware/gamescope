@@ -106,6 +106,7 @@ struct VkPhysicalDeviceMemoryProperties memoryProperties;
 VulkanOutput_t g_output;
 
 std::unordered_map<VulkanTexture_t, CVulkanTexture *> g_mapVulkanTextures;
+std::mutex g_mapVulkanTexturesMutex;
 std::atomic<VulkanTexture_t> g_nMaxVulkanTexHandle;
 
 struct VulkanSamplerCacheEntry_t
@@ -292,6 +293,19 @@ static VkResult getModifierProps( const VkImageCreateInfo *imageInfo, uint64_t m
 	imageProps.pNext = externalFormatProps;
 
 	return vkGetPhysicalDeviceImageFormatProperties2(physicalDevice, &imageFormatInfo, &imageProps);
+}
+
+
+static CVulkanTexture *getVulkanTexture( VulkanTexture_t tex )
+{
+	std::lock_guard<std::mutex> m( g_mapVulkanTexturesMutex );
+	return g_mapVulkanTextures[ tex ];
+}
+
+static void setVulkanTexture( VulkanTexture_t tex, CVulkanTexture *val )
+{
+	std::lock_guard<std::mutex> m( g_mapVulkanTexturesMutex );
+	g_mapVulkanTextures[ tex ] = val;
 }
 
 bool CVulkanTexture::BInit( uint32_t width, uint32_t height, VkFormat format, createFlags flags, wlr_dmabuf_attributes *pDMA /* = nullptr */ )
@@ -1849,7 +1863,7 @@ void vulkan_garbage_collect( void )
 					
 					if ( pTex->nRefCount == 0 )
 					{
-						g_mapVulkanTextures[ pTex->handle ] = nullptr;
+						setVulkanTexture( pTex->handle, nullptr);
 						delete pTex;
 					}
 				}
@@ -1876,7 +1890,7 @@ VulkanTexture_t vulkan_create_texture_from_dmabuf( struct wlr_dmabuf_attributes 
 	}
 	
 	ret = ++g_nMaxVulkanTexHandle;
-	g_mapVulkanTextures[ ret ] = pTex;
+	setVulkanTexture( ret, pTex );
 	
 	pTex->handle = ret;
 	
@@ -1924,7 +1938,7 @@ VulkanTexture_t vulkan_create_texture_from_bits( uint32_t width, uint32_t height
 	submit_command_buffer( handle, refs );
 	
 	ret = ++g_nMaxVulkanTexHandle;
-	g_mapVulkanTextures[ ret ] = pTex;
+	setVulkanTexture( ret, pTex );
 	
 	pTex->handle = ret;
 	
@@ -1936,7 +1950,7 @@ void vulkan_free_texture( VulkanTexture_t vulkanTex )
 	if ( vulkanTex == 0 )
 		return;
 	
-	CVulkanTexture *pTex = g_mapVulkanTextures[ vulkanTex ];
+	CVulkanTexture *pTex = getVulkanTexture( vulkanTex );
 
 	assert( pTex != nullptr );
 	assert( pTex->handle == vulkanTex );
@@ -1946,7 +1960,7 @@ void vulkan_free_texture( VulkanTexture_t vulkanTex )
 	if ( pTex->nRefCount == 0 )
 	{
 		delete pTex;
-		g_mapVulkanTextures[ vulkanTex ] = nullptr;
+		setVulkanTexture( vulkanTex, nullptr );
 	}
 }
 
@@ -2031,11 +2045,11 @@ void vulkan_update_descriptor( struct Composite_t *pComposite, struct VulkanPipe
 
 		if ( pPipeline->layerBindings[ i ].tex != 0 )
 		{
-			pTex = g_mapVulkanTextures[ pPipeline->layerBindings[ i ].tex ];
+			pTex = getVulkanTexture( pPipeline->layerBindings[ i ].tex );
 		}
 		else
 		{
-			pTex = g_mapVulkanTextures[ g_emptyTex ];
+			pTex = getVulkanTexture( g_emptyTex );
 		}
 		
 		// First try to look up the sampler in the cache.
@@ -2140,7 +2154,7 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 	{
 		if ( pPipeline->layerBindings[ i ].tex != 0 )
 		{
-			CVulkanTexture *pTex = g_mapVulkanTextures[ pPipeline->layerBindings[ i ].tex ];
+			CVulkanTexture *pTex = getVulkanTexture( pPipeline->layerBindings[ i ].tex );
 			if (pTex->m_format == VK_FORMAT_G8_B8R8_2PLANE_420_UNORM)
 				pComposite->nYCBCRMask |= 1 << i;
 		}
@@ -2387,9 +2401,9 @@ uint32_t vulkan_texture_get_fbid( VulkanTexture_t vulkanTex )
 	if ( vulkanTex == 0 )
 		return 0;
 	
-	assert( g_mapVulkanTextures[ vulkanTex ] != nullptr );
+	assert( getVulkanTexture( vulkanTex ) != nullptr );
 	
-	uint32_t ret = g_mapVulkanTextures[ vulkanTex ]->m_FBID;
+	uint32_t ret = getVulkanTexture( vulkanTex )->m_FBID;
 	
 	assert( ret != 0 );
 	
@@ -2403,7 +2417,7 @@ int vulkan_texture_get_fence( VulkanTexture_t vulkanTex )
 	const VkMemoryGetFdInfoKHR memory_get_fd_info = {
 		.sType = VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR,
 		.pNext = NULL,
-		.memory = g_mapVulkanTextures[ vulkanTex ]->m_vkImageMemory,
+		.memory = getVulkanTexture( vulkanTex )->m_vkImageMemory,
 		.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT,
 	};
 	int fence = -1;
@@ -2620,7 +2634,7 @@ VulkanTexture_t vulkan_create_texture_from_wlr_buffer( struct wlr_buffer *buf )
 
 	VulkanTexture_t texid = ++g_nMaxVulkanTexHandle;
 	pTex->handle = texid;
-	g_mapVulkanTextures[ texid ] = pTex;
+	setVulkanTexture( texid, pTex );
 
 	return texid;
 }
