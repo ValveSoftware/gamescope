@@ -67,6 +67,12 @@ static std::map< uint32_t, const char * > connector_types = {
 #endif
 };
 
+static struct fb& get_fb( struct drm_t& drm, uint32_t id )
+{
+	std::lock_guard<std::mutex> m( drm.fb_map_mutex );
+	return drm.fb_map[ id ];
+}
+
 static uint32_t get_connector_possible_crtcs(struct drm_t *drm, const drmModeConnector *connector) {
 	uint32_t possible_crtcs = 0;
 
@@ -191,11 +197,13 @@ static void page_flip_handler(int fd, unsigned int frame, unsigned int sec, unsi
 	{
 		uint32_t previous_fbid = g_DRM.fbids_on_screen[ i ];
 		assert( previous_fbid != 0 );
-		assert( g_DRM.map_fbid_inflightflips[ previous_fbid ].n_refs > 0 );
 
-		g_DRM.map_fbid_inflightflips[ previous_fbid ].n_refs--;
+		struct fb &previous_fb = get_fb( g_DRM, previous_fbid );
+		assert( previous_fb.n_refs > 0 );
 
-		if ( g_DRM.map_fbid_inflightflips[ previous_fbid ].n_refs == 0 )
+		previous_fb.n_refs--;
+
+		if ( previous_fb.n_refs == 0 )
 		{
 			// we flipped away from this previous fbid, now safe to delete
 			std::lock_guard<std::mutex> lock( g_DRM.free_queue_lock );
@@ -206,7 +214,7 @@ static void page_flip_handler(int fd, unsigned int frame, unsigned int sec, unsi
 				{
 					drm_verbose_log.debugf("deferred free %u", previous_fbid);
 
-					drm_free_fb( &g_DRM, &g_DRM.map_fbid_inflightflips[ previous_fbid ] );
+					drm_free_fb( &g_DRM, &previous_fb );
 
 					g_DRM.fbid_free_queue.erase( g_DRM.fbid_free_queue.begin() + i );
 					break;
@@ -767,8 +775,9 @@ int drm_commit(struct drm_t *drm, struct Composite_t *pComposite, struct VulkanP
 	// potentially beat us to the refcount checks.
 	for ( uint32_t i = 0; i < drm->fbids_in_req.size(); i++ )
 	{
-		assert( g_DRM.map_fbid_inflightflips[ drm->fbids_in_req[ i ] ].held == true );
-		g_DRM.map_fbid_inflightflips[ drm->fbids_in_req[ i ] ].n_refs++;
+		struct fb &fb = get_fb( g_DRM, drm->fbids_in_req[ i ] );
+		assert( fb.held == true );
+		fb.n_refs++;
 	}
 
 	assert( drm->fbids_queued.size() == 0 );
@@ -799,7 +808,7 @@ int drm_commit(struct drm_t *drm, struct Composite_t *pComposite, struct VulkanP
 		// Undo refcount if the commit didn't actually work
 		for ( uint32_t i = 0; i < drm->fbids_in_req.size(); i++ )
 		{
-			g_DRM.map_fbid_inflightflips[ drm->fbids_in_req[ i ] ].n_refs--;
+			get_fb( g_DRM, drm->fbids_in_req[ i ] ).n_refs--;
 		}
 
 		drm->fbids_queued.clear();
@@ -885,7 +894,6 @@ uint32_t drm_fbid_from_dmabuf( struct drm_t *drm, struct wlr_buffer *buf, struct
 	}
 
 	drm_verbose_log.debugf("make fbid %u", fb_id);
-	assert( drm->map_fbid_inflightflips[ fb_id ].held == false );
 
 	if ( buf != nullptr )
 	{
@@ -894,10 +902,15 @@ uint32_t drm_fbid_from_dmabuf( struct drm_t *drm, struct wlr_buffer *buf, struct
 		wlserver_unlock();
 	}
 
-	drm->map_fbid_inflightflips[ fb_id ].id = fb_id;
-	drm->map_fbid_inflightflips[ fb_id ].buf = buf;
-	drm->map_fbid_inflightflips[ fb_id ].held = true;
-	drm->map_fbid_inflightflips[ fb_id ].n_refs = 0;
+	/* Nested scope so fb doesn't end up in the out: label */
+	{
+		struct fb &fb = get_fb( *drm, fb_id );
+		assert( fb.held == false );
+		fb.id = fb_id;
+		fb.buf = buf;
+		fb.held = true;
+		fb.n_refs = 0;
+	}
 
 out:
 	for ( int i = 0; i < dma_buf->n_planes; i++ ) {
@@ -946,14 +959,16 @@ static void drm_free_fb( struct drm_t *drm, struct fb *fb )
 
 void drm_drop_fbid( struct drm_t *drm, uint32_t fbid )
 {
-	assert( drm->map_fbid_inflightflips[ fbid ].held == true );
-	drm->map_fbid_inflightflips[ fbid ].held = false;
+	struct fb &fb = get_fb( *drm, fbid );
+	
+	assert( fb.held == true );
+	fb.held = false;
 
-	if ( drm->map_fbid_inflightflips[ fbid ].n_refs == 0 )
+	if ( fb.n_refs == 0 )
 	{
 		/* FB isn't being used in any page-flip, free it immediately */
 		drm_verbose_log.debugf("free fbid %u", fbid);
-		drm_free_fb( drm, &drm->map_fbid_inflightflips[ fbid ] );
+		drm_free_fb( drm, &fb );
 	}
 	else
 	{

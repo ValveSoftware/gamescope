@@ -102,7 +102,9 @@ struct drm_t {
 	/* FBs currently on screen */
 	std::vector < uint32_t > fbids_on_screen;
 	
-	std::unordered_map< uint32_t, struct fb > map_fbid_inflightflips;
+	std::unordered_map< uint32_t, struct fb > fb_map;
+	std::mutex fb_map_mutex;
+	
 	std::mutex free_queue_lock;
 	std::vector< uint32_t > fbid_free_queue;
 	
