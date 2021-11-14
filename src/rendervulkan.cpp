@@ -712,6 +712,10 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, VkFormat format, cr
 	return true;
 }
 
+CVulkanTexture::CVulkanTexture( void ) : nRefCount( 1 )
+{
+}
+
 CVulkanTexture::~CVulkanTexture( void )
 {
 	if ( m_pMappedData != nullptr )
@@ -1859,9 +1863,7 @@ void vulkan_garbage_collect( void )
 				for ( uint32_t ref = 0; ref < g_scratchCommandBuffers[ i ].refs.size(); ref++ )
 				{
 					CVulkanTexture *pTex = g_scratchCommandBuffers[ i ].refs[ ref ];
-					pTex->nRefCount--;
-					
-					if ( pTex->nRefCount == 0 )
+					if ( --pTex->nRefCount == 0 )
 					{
 						setVulkanTexture( pTex->handle, nullptr);
 						delete pTex;
@@ -1955,9 +1957,7 @@ void vulkan_free_texture( VulkanTexture_t vulkanTex )
 	assert( pTex != nullptr );
 	assert( pTex->handle == vulkanTex );
 	
-	pTex->nRefCount--;
-	
-	if ( pTex->nRefCount == 0 )
+	if ( --pTex->nRefCount == 0 )
 	{
 		delete pTex;
 		setVulkanTexture( vulkanTex, nullptr );
