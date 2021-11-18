@@ -132,6 +132,7 @@ struct win {
 	bool sizeHintsSpecified;
 	bool skipTaskbar;
 	bool skipPager;
+	bool isDialog;
 	unsigned int requestedWidth;
 	unsigned int requestedHeight;
 
@@ -1561,7 +1562,7 @@ win_is_override_redirect( win *w )
 static bool
 win_skip_taskbar_and_pager( win *w )
 {
-	return w->skipTaskbar && w->skipPager;
+	return w->skipTaskbar && w->skipPager && !w->isDialog;
 }
 
 /* Returns true if a's focus priority > b's.
@@ -2021,6 +2022,29 @@ get_net_wm_state(Display *dpy, win *w)
 }
 
 static void
+get_net_wm_window_type(Display *dpy, win *w)
+{
+	Atom type;
+	int format;
+	unsigned long nitems;
+	unsigned long bytesAfter;
+	unsigned char *data;
+	if (XGetWindowProperty(dpy, w->id, winTypeAtom, 0, 2048, false,
+			AnyPropertyType, &type, &format, &nitems, &bytesAfter, &data) != Success) {
+		return;
+	}
+
+	Atom *props = (Atom *)data;
+	for (size_t i = 0; i < nitems; i++) {
+		if (props[i] == winDialogAtom) {
+			w->isDialog = true;
+		}
+	}
+
+	XFree(data);
+}
+
+static void
 map_win(Display *dpy, Window id, unsigned long sequence)
 {
 	win		*w = find_win(dpy, id);
@@ -2071,6 +2095,7 @@ map_win(Display *dpy, Window id, unsigned long sequence)
 	get_size_hints(dpy, w);
 
 	get_net_wm_state(dpy, w);
+	get_net_wm_window_type(dpy, w);
 
 	XWMHints *wmHints = XGetWMHints( dpy, w->id );
 
@@ -2325,6 +2350,7 @@ add_win(Display *dpy, Window id, Window prev, unsigned long sequence)
 	new_win->sizeHintsSpecified = false;
 	new_win->skipTaskbar = false;
 	new_win->skipPager = false;
+	new_win->isDialog = false;
 	new_win->requestedWidth = 0;
 	new_win->requestedHeight = 0;
 	new_win->nudged = false;
