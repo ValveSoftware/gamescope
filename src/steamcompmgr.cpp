@@ -1729,31 +1729,6 @@ found:
 		gameFocused = focus->appID != 0;
 	}
 
-	unsigned long focusedWindow = 0;
-	unsigned long focusedAppId = 0;
-
-	if ( inputFocus == NULL )
-	{
-		inputFocus = focus;
-	}
-
-	if ( focus )
-	{
-		focusedWindow = focus->id;
-		focusedAppId = inputFocus->appID;
-	}
-
-	XChangeProperty( dpy, root, gamescopeFocusedAppAtom, XA_CARDINAL, 32, PropModeReplace,
-					 (unsigned char *)&focusedAppId, focusedAppId != 0 ? 1 : 0 );
-
-	XChangeProperty( dpy, root, gamescopeFocusedWindowAtom, XA_CARDINAL, 32, PropModeReplace,
-					 (unsigned char *)&focusedWindow, focusedWindow != 0 ? 1 : 0 );
-
-	if (!focus)
-	{
-		return;
-	}
-
 	if ( gameFocused )
 	{
 		// Do some searches through game windows to follow transient links if needed
@@ -1777,6 +1752,31 @@ found:
 			if ( bFoundTransient == false )
 				break;
 		}
+	}
+
+	unsigned long focusedWindow = 0;
+	unsigned long focusedAppId = 0;
+
+	if ( inputFocus == NULL )
+	{
+		inputFocus = focus;
+	}
+
+	if ( focus )
+	{
+		focusedWindow = focus->id;
+		focusedAppId = inputFocus->appID;
+	}
+
+	XChangeProperty( dpy, root, gamescopeFocusedAppAtom, XA_CARDINAL, 32, PropModeReplace,
+					 (unsigned char *)&focusedAppId, focusedAppId != 0 ? 1 : 0 );
+
+	XChangeProperty( dpy, root, gamescopeFocusedWindowAtom, XA_CARDINAL, 32, PropModeReplace,
+					 (unsigned char *)&focusedWindow, focusedWindow != 0 ? 1 : 0 );
+
+	if (!focus)
+	{
+		return;
 	}
 
 // 	if (fadeOutWindow.id == None && currentFocusWindow != focus->id)
