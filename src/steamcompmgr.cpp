@@ -3451,7 +3451,7 @@ dispatch_x11( Display *dpy, MouseCursor *cursor )
 					// This shouldn't happen due to our pointer barriers,
 					// but there is a known X server bug; warp to last good
 					// position.
-					cursor->resetPosition();
+					//cursor->resetPosition();
 				}
 				break;
 			case MotionNotify:
