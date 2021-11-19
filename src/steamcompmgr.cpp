@@ -1840,6 +1840,8 @@ found:
 // 	if (fadeOutWindow.id && currentFocusWindow != focus->id)
 	if ( prevFocusWindow != focus->id )
 	{
+		hasRepaint = true;
+
 		/* Some games (e.g. DOOM Eternal) don't react well to being put back as
 		* iconic, so never do that. Only take them out of iconic. */
 		uint32_t wmState[] = { ICCCM_NORMAL_STATE, None };
