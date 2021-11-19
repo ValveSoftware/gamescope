@@ -1039,8 +1039,8 @@ void MouseCursor::paint(win *window, struct Composite_t *pComposite,
 }
 
 static void
-paint_window(Display *dpy, win *w, struct Composite_t *pComposite,
-			  struct VulkanPipeline_t *pPipeline, bool notificationMode, MouseCursor *cursor, bool isOverride = false)
+paint_window(Display *dpy, win *w, win *scaleW, struct Composite_t *pComposite,
+			  struct VulkanPipeline_t *pPipeline, bool notificationMode, MouseCursor *cursor)
 {
 	uint32_t sourceWidth, sourceHeight;
 	int drawXOffset = 0, drawYOffset = 0;
@@ -1070,8 +1070,8 @@ paint_window(Display *dpy, win *w, struct Composite_t *pComposite,
 	}
 	else
 	{
-		sourceWidth = w->a.width;
-		sourceHeight = w->a.height;
+		sourceWidth = scaleW->a.width;
+		sourceHeight = scaleW->a.height;
 	}
 
 	if (sourceWidth != currentOutputWidth || sourceHeight != currentOutputHeight || globalScaleRatio != 1.0f)
@@ -1088,6 +1088,12 @@ paint_window(Display *dpy, win *w, struct Composite_t *pComposite,
 		drawXOffset = ((int)currentOutputWidth - (int)sourceWidth * currentScaleRatio) / 2.0f;
 		drawYOffset = ((int)currentOutputHeight - (int)sourceHeight * currentScaleRatio) / 2.0f;
 
+		if (w != scaleW)
+		{
+			drawXOffset += w->a.x * currentScaleRatio;
+			drawYOffset += w->a.y * currentScaleRatio;
+		}
+
 		if ( zoomScaleRatio != 1.0 )
 		{
 			drawXOffset += (((int)sourceWidth / 2) - cursor->x()) * currentScaleRatio;
@@ -1102,7 +1108,7 @@ paint_window(Display *dpy, win *w, struct Composite_t *pComposite,
 	pComposite->data.vScale[ curLayer ].x = 1.0 / currentScaleRatio;
 	pComposite->data.vScale[ curLayer ].y = 1.0 / currentScaleRatio;
 
-	if ( isOverride )
+	if ( w != scaleW )
 	{
 		pComposite->data.vOffset[ curLayer ].x = -drawXOffset;
 		pComposite->data.vOffset[ curLayer ].y = -drawYOffset;
@@ -1140,7 +1146,7 @@ paint_window(Display *dpy, win *w, struct Composite_t *pComposite,
 
 	pPipeline->layerBindings[ curLayer ].zpos = 0;
 
-	if ( isOverride )
+	if ( w != scaleW )
 	{
 		pPipeline->layerBindings[ curLayer ].zpos = 1;
 	}
@@ -1276,12 +1282,12 @@ paint_all(Display *dpy, MouseCursor *cursor)
 
 		// Draw it in the background
 		fadeOutWindow.opacity = (1.0 - newOpacity) * OPAQUE;
-		paint_window(dpy, &fadeOutWindow, &composite, &pipeline, false, cursor);
+		paint_window(dpy, &fadeOutWindow, &fadeOutWindow, &composite, &pipeline, false, cursor);
 
 		// Blend new window on top with linear crossfade
 		w->opacity = newOpacity * OPAQUE;
 
-		paint_window(dpy, w, &composite, &pipeline, false, cursor);
+		paint_window(dpy, w, w, &composite, &pipeline, false, cursor);
 	}
 	else
 	{
@@ -1296,7 +1302,7 @@ paint_all(Display *dpy, MouseCursor *cursor)
 				if ( videow->isSteamStreamingClientVideo == true )
 				{
 					// TODO: also check matching AppID so we can have several pairs
-					paint_window(dpy, videow, &composite, &pipeline, false, cursor);
+					paint_window(dpy, videow, videow, &composite, &pipeline, false, cursor);
 					break;
 				}
 			}
@@ -1304,13 +1310,13 @@ paint_all(Display *dpy, MouseCursor *cursor)
 			// paint UI unless it's fully hidden, which it communicates to us through opacity=0
 			if ( w->opacity > TRANSLUCENT )
 			{
-				paint_window(dpy, w, &composite, &pipeline, false, cursor);
+				paint_window(dpy, w, w, &composite, &pipeline, false, cursor);
 			}
 		}
 		else
 		{
 			// Just draw focused window as normal, be it Steam or the game
-			paint_window(dpy, w, &composite, &pipeline, false, cursor);
+			paint_window(dpy, w, w, &composite, &pipeline, false, cursor);
 		}
 
 		if (fadeOutWindow.id) {
@@ -1328,7 +1334,7 @@ paint_all(Display *dpy, MouseCursor *cursor)
 	// TODO: We want to paint this at the same scale as the normal window and probably
 	// with an offset.
 	if (override)
-		paint_window(dpy, override, &composite, &pipeline, false, cursor, true);
+		paint_window(dpy, override, w, &composite, &pipeline, false, cursor);
 
 	int touchInputFocusLayer = composite.nLayerCount - 1;
 
@@ -1336,7 +1342,7 @@ paint_all(Display *dpy, MouseCursor *cursor)
 	{
 		if (overlay->opacity)
 		{
-			paint_window(dpy, overlay, &composite, &pipeline, false, cursor);
+			paint_window(dpy, overlay, overlay, &composite, &pipeline, false, cursor);
 
 			if ( overlay->id == currentInputFocusWindow )
 				touchInputFocusLayer = composite.nLayerCount - 1;
@@ -1355,13 +1361,13 @@ paint_all(Display *dpy, MouseCursor *cursor)
 	{
 		if (notification->opacity)
 		{
-			paint_window(dpy, notification, &composite, &pipeline, true, cursor);
+			paint_window(dpy, notification, notification, &composite, &pipeline, true, cursor);
 		}
 	}
 
 	// Draw cursor if we need to
 	if (input) {
-		cursor->paint(input, &composite, &pipeline );
+		cursor->paint(override == input ? w : input, &composite, &pipeline);
 	}
 
 	if (drawDebugInfo)
