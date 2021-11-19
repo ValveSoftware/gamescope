@@ -56,6 +56,8 @@
 #include <getopt.h>
 #include <spawn.h>
 #include <signal.h>
+#include <linux/input-event-codes.h>
+
 
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
@@ -171,6 +173,7 @@ uint32_t		currentInputFocusMode;
 static Window 	currentKeyboardFocusWindow;
 static Window	currentOverlayWindow;
 static Window	currentNotificationWindow;
+static Window	currentOverrideWindow;
 
 bool hasFocusWindow;
 
@@ -1023,7 +1026,7 @@ void MouseCursor::paint(win *window, struct Composite_t *pComposite,
 	pPipeline->layerBindings[ curLayer ].surfaceWidth = m_width;
 	pPipeline->layerBindings[ curLayer ].surfaceHeight = m_height;
 
-	pPipeline->layerBindings[ curLayer ].zpos = 2; // cursor, on top of both bottom layers
+	pPipeline->layerBindings[ curLayer ].zpos = 3; // cursor, on top of both bottom layers
 
 	pPipeline->layerBindings[ curLayer ].tex = m_texture;
 	pPipeline->layerBindings[ curLayer ].fbid = BIsNested() ? 0 :
@@ -1036,7 +1039,7 @@ void MouseCursor::paint(win *window, struct Composite_t *pComposite,
 
 static void
 paint_window(Display *dpy, win *w, struct Composite_t *pComposite,
-			  struct VulkanPipeline_t *pPipeline, bool notificationMode, MouseCursor *cursor)
+			  struct VulkanPipeline_t *pPipeline, bool notificationMode, MouseCursor *cursor, bool isOverride = false)
 {
 	uint32_t sourceWidth, sourceHeight;
 	int drawXOffset = 0, drawYOffset = 0;
@@ -1098,7 +1101,14 @@ paint_window(Display *dpy, win *w, struct Composite_t *pComposite,
 	pComposite->data.vScale[ curLayer ].x = 1.0 / currentScaleRatio;
 	pComposite->data.vScale[ curLayer ].y = 1.0 / currentScaleRatio;
 
-	if (notificationMode)
+	if ( isOverride )
+	{
+		pComposite->data.vOffset[ curLayer ].x = -drawXOffset;
+		pComposite->data.vOffset[ curLayer ].y = -drawYOffset;
+
+		pComposite->data.flBorderAlpha[ curLayer ] = 0.0f;
+	}
+	else if (notificationMode)
 	{
 		int xOffset = 0, yOffset = 0;
 
@@ -1129,9 +1139,14 @@ paint_window(Display *dpy, win *w, struct Composite_t *pComposite,
 
 	pPipeline->layerBindings[ curLayer ].zpos = 0;
 
-	if ( w->isOverlay || w->isSteamStreamingClient )
+	if ( isOverride )
 	{
 		pPipeline->layerBindings[ curLayer ].zpos = 1;
+	}
+
+	if ( w->isOverlay || w->isSteamStreamingClient )
+	{
+		pPipeline->layerBindings[ curLayer ].zpos = 2;
 	}
 
 	pPipeline->layerBindings[ curLayer ].tex = lastCommit.vulkanTex;
@@ -1206,6 +1221,7 @@ paint_all(Display *dpy, MouseCursor *cursor)
 	win	*w;
 	win	*overlay;
 	win	*notification;
+	win	*override;
 	win *input;
 
 	unsigned int currentTime = get_time_in_milliseconds();
@@ -1214,6 +1230,7 @@ paint_all(Display *dpy, MouseCursor *cursor)
 	w = find_win(dpy, currentFocusWindow);
 	overlay = find_win(dpy, currentOverlayWindow);
 	notification = find_win(dpy, currentNotificationWindow);
+	override = find_win(dpy, currentOverrideWindow);
 	input = find_win(dpy, currentInputFocusWindow);
 
 	if ( !w )
@@ -1305,6 +1322,12 @@ paint_all(Display *dpy, MouseCursor *cursor)
 			fadeOutWindow.id = None;
 		}
 	}
+
+
+	// TODO: We want to paint this at the same scale as the normal window and probably
+	// with an offset.
+	if (override)
+		paint_window(dpy, override, &composite, &pipeline, false, cursor, true);
 
 	int touchInputFocusLayer = composite.nLayerCount - 1;
 
@@ -1603,7 +1626,7 @@ is_focus_priority_greater( win *a, win *b )
 static void
 determine_and_apply_focus(Display *dpy, MouseCursor *cursor)
 {
-	win *w, *focus = NULL;
+	win *w, *focus = NULL, *override_focus = NULL;
 	win *inputFocus = NULL;
 
 	gameFocused = false;
@@ -1611,10 +1634,12 @@ determine_and_apply_focus(Display *dpy, MouseCursor *cursor)
 	Window prevFocusWindow = currentFocusWindow;
 	Window prevOverlayWindow = currentOverlayWindow;
 	Window prevNotificationWindow = currentNotificationWindow;
+	Window prevOverrideWindow = currentOverrideWindow;
 	currentFocusWindow = None;
 	currentFocusWin = nullptr;
 	currentOverlayWindow = None;
 	currentNotificationWindow = None;
+	currentOverrideWindow = None;
 
 	unsigned int maxOpacity = 0;
 	std::vector< win* > vecPossibleFocusWindows;
@@ -1754,12 +1779,25 @@ found:
 		}
 	}
 
+	for ( size_t i = 0; i < vecPossibleFocusWindows.size(); i++ ) {
+		auto* override = vecPossibleFocusWindows[i];
+		if (win_is_override_redirect(override) && override != focus && override->a.x > 0 && override->a.y > 0) {
+			override_focus = override;
+			break;
+		}
+	}
+
+	currentOverrideWindow = override_focus ? override_focus->id : None;
+
+	if ( currentOverrideWindow != prevOverrideWindow )
+		hasRepaint = true;
+
 	unsigned long focusedWindow = 0;
 	unsigned long focusedAppId = 0;
 
 	if ( inputFocus == NULL )
 	{
-		inputFocus = focus;
+		inputFocus = override_focus ? override_focus : focus;
 	}
 
 	if ( focus )
@@ -1827,14 +1865,20 @@ found:
 		}
 
 		if ( inputFocus->inputFocusMode )
-			keyboardFocusWin = focus;
+			keyboardFocusWin = override_focus ? override_focus : focus;
 
 		if ( inputFocus->surface.wlr != nullptr || keyboardFocusWin->surface.wlr != nullptr )
 		{
 			wlserver_lock();
 
 			if ( inputFocus->surface.wlr != nullptr )
+			{
+				// Instantly stop pressing left mouse before transitioning to a new window.
+				// for focus.
+				// Fixes dropdowns not working.
+				wlserver_mousebutton( BTN_LEFT, false, 0 );
 				wlserver_mousefocus( inputFocus->surface.wlr, cursor->x(), cursor->y() );
+			}
 
 			if ( keyboardFocusWin->surface.wlr != nullptr )
 				wlserver_keyboardfocus( keyboardFocusWin->surface.wlr );
@@ -1842,6 +1886,7 @@ found:
 			wlserver_unlock();
 		}
 
+		if ( !override_focus || override_focus != keyboardFocusWin )
 			XSetInputFocus(dpy, keyboardFocusWin->id, RevertToNone, CurrentTime);
 
 		currentInputFocusWindow = inputFocus->id;
@@ -2487,6 +2532,8 @@ destroy_win(Display *dpy, Window id, bool gone, bool fade)
 		currentOverlayWindow = None;
 	if (currentNotificationWindow == id && gone)
 		currentNotificationWindow = None;
+	if (currentOverrideWindow == id && gone)
+		currentOverrideWindow = None;
 	if (currentKeyboardFocusWindow == id && gone)
 		currentKeyboardFocusWindow = None;
 	focusDirty = true;
@@ -3048,7 +3095,7 @@ void handle_done_commits( void )
 					}
 
 					// If this is the main plane, repaint
-					if ( w->id == currentFocusWindow )
+					if ( w->id == currentFocusWindow || w->id == currentOverrideWindow )
 					{
 						hasRepaint = true;
 					}
