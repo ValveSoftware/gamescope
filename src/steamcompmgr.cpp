@@ -1038,7 +1038,7 @@ void MouseCursor::paint(win *window, struct Composite_t *pComposite,
 	pComposite->nLayerCount += 1;
 }
 
-static void
+static bool
 paint_window(Display *dpy, win *w, win *scaleW, struct Composite_t *pComposite,
 			  struct VulkanPipeline_t *pPipeline, bool notificationMode, MouseCursor *cursor)
 {
@@ -1049,11 +1049,11 @@ paint_window(Display *dpy, win *w, win *scaleW, struct Composite_t *pComposite,
 	bool validContents = get_window_last_done_commit( w, lastCommit );
 
 	if (!w)
-		return;
+		return false;
 
 	// Don't add a layer at all if it's an overlay without contents
 	if (w->isOverlay && !validContents)
-		return;
+		return false;
 
 	// Base plane will stay as tex=0 if we don't have contents yet, which will
 	// make us fall back to compositing and use the Vulkan null texture
@@ -1061,7 +1061,7 @@ paint_window(Display *dpy, win *w, win *scaleW, struct Composite_t *pComposite,
 	win *mainOverlayWindow = find_win(dpy, currentOverlayWindow);
 
 	if (notificationMode && !mainOverlayWindow)
-		return;
+		return false;
 
 	if (notificationMode)
 	{
@@ -1162,6 +1162,8 @@ paint_window(Display *dpy, win *w, win *scaleW, struct Composite_t *pComposite,
 	pPipeline->layerBindings[ curLayer ].bFilter = w->isOverlay ? true : g_bFilterGameWindow;
 
 	pComposite->nLayerCount += 1;
+
+	return validContents;
 }
 
 static void
@@ -1217,6 +1219,8 @@ paint_debug_info(Display *dpy)
 		paint_message("Encountered X11 error", Y, 1.0f, 0.0f, 0.0f); Y += textYMax;
 	}
 }
+
+static bool g_bFirstFrame = true;
 
 static void
 paint_all(Display *dpy, MouseCursor *cursor)
@@ -1274,6 +1278,7 @@ paint_all(Display *dpy, MouseCursor *cursor)
 
 	struct Composite_t composite = {};
 	struct VulkanPipeline_t pipeline = {};
+	bool bValidContents = false;
 
 	// Fading out from previous window?
 	if (fadingOut)
@@ -1282,12 +1287,12 @@ paint_all(Display *dpy, MouseCursor *cursor)
 
 		// Draw it in the background
 		fadeOutWindow.opacity = (1.0 - newOpacity) * OPAQUE;
-		paint_window(dpy, &fadeOutWindow, &fadeOutWindow, &composite, &pipeline, false, cursor);
+		bValidContents |= paint_window(dpy, &fadeOutWindow, &fadeOutWindow, &composite, &pipeline, false, cursor);
 
 		// Blend new window on top with linear crossfade
 		w->opacity = newOpacity * OPAQUE;
 
-		paint_window(dpy, w, w, &composite, &pipeline, false, cursor);
+		bValidContents |= paint_window(dpy, w, w, &composite, &pipeline, false, cursor);
 	}
 	else
 	{
@@ -1302,7 +1307,7 @@ paint_all(Display *dpy, MouseCursor *cursor)
 				if ( videow->isSteamStreamingClientVideo == true )
 				{
 					// TODO: also check matching AppID so we can have several pairs
-					paint_window(dpy, videow, videow, &composite, &pipeline, false, cursor);
+					bValidContents |= paint_window(dpy, videow, videow, &composite, &pipeline, false, cursor);
 					break;
 				}
 			}
@@ -1310,13 +1315,13 @@ paint_all(Display *dpy, MouseCursor *cursor)
 			// paint UI unless it's fully hidden, which it communicates to us through opacity=0
 			if ( w->opacity > TRANSLUCENT )
 			{
-				paint_window(dpy, w, w, &composite, &pipeline, false, cursor);
+				bValidContents |= paint_window(dpy, w, w, &composite, &pipeline, false, cursor);
 			}
 		}
 		else
 		{
 			// Just draw focused window as normal, be it Steam or the game
-			paint_window(dpy, w, w, &composite, &pipeline, false, cursor);
+			bValidContents |= paint_window(dpy, w, w, &composite, &pipeline, false, cursor);
 		}
 
 		if (fadeOutWindow.id) {
@@ -1334,7 +1339,7 @@ paint_all(Display *dpy, MouseCursor *cursor)
 	// TODO: We want to paint this at the same scale as the normal window and probably
 	// with an offset.
 	if (override)
-		paint_window(dpy, override, w, &composite, &pipeline, false, cursor);
+		bValidContents |= paint_window(dpy, override, w, &composite, &pipeline, false, cursor);
 
 	int touchInputFocusLayer = composite.nLayerCount - 1;
 
@@ -1342,7 +1347,7 @@ paint_all(Display *dpy, MouseCursor *cursor)
 	{
 		if (overlay->opacity)
 		{
-			paint_window(dpy, overlay, overlay, &composite, &pipeline, false, cursor);
+			bValidContents |= paint_window(dpy, overlay, overlay, &composite, &pipeline, false, cursor);
 
 			if ( overlay->id == currentInputFocusWindow )
 				touchInputFocusLayer = composite.nLayerCount - 1;
@@ -1361,7 +1366,7 @@ paint_all(Display *dpy, MouseCursor *cursor)
 	{
 		if (notification->opacity)
 		{
-			paint_window(dpy, notification, notification, &composite, &pipeline, true, cursor);
+			bValidContents |= paint_window(dpy, notification, notification, &composite, &pipeline, true, cursor);
 		}
 	}
 
@@ -1373,10 +1378,21 @@ paint_all(Display *dpy, MouseCursor *cursor)
 	if (drawDebugInfo)
 		paint_debug_info(dpy);
 
-	if ( BIsNested() == false && g_DRM.paused == true )
+	// If this is our first frame,and we have no valid contents, then toss it.
+	// We don't want to do this on any future frames as we can end up in the following scenario:
+	// -> Game crashes
+	// -> Stuck on the last frame of the game
+	// -> User brings up overlay
+	// -> User closes overlay
+	// -> Overlay is still visible :( but not interactable
+	bool bDiscard = g_bFirstFrame && !bValidContents;
+
+	if ( bDiscard || ( BIsNested() == false && g_DRM.paused == true ) )
 	{
 		return;
 	}
+
+	g_bFirstFrame = false;
 
 	bool bDoComposite = true;
 
