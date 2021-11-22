@@ -1742,8 +1742,12 @@ paint_all()
 	if ( bDoComposite == true )
 	{
 		std::shared_ptr<CVulkanTexture> pCaptureTexture = nullptr;
+		if ( bCapture )
+		{
+			pCaptureTexture = vulkan_acquire_screenshot_texture();
+		}
 
-		bool bResult = vulkan_composite( &composite, &pipeline, bCapture ? &pCaptureTexture : nullptr );
+		bool bResult = vulkan_composite( &composite, &pipeline, pCaptureTexture );
 
 		if ( bResult != true )
 		{

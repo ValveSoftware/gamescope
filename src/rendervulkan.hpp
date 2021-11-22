@@ -165,6 +165,8 @@ public:
 	VkFormat m_format = VK_FORMAT_UNDEFINED;
 
 	struct wlr_dmabuf_attributes m_dmabuf = {};
+
+	bool m_bTransitioned = false;
 };
 
 extern bool g_vulkanSupportsModifiers;
@@ -185,8 +187,9 @@ std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struct wl
 uint32_t vulkan_texture_get_fbid( const std::shared_ptr<CVulkanTexture>& vulkanTex );
 int vulkan_texture_get_fence( const std::shared_ptr<CVulkanTexture>& vulkanTex );
 
-bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *pPipeline, std::shared_ptr<CVulkanTexture> *pScreenshotTexture );
+bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *pPipeline, std::shared_ptr<CVulkanTexture> pScreenshotTexture );
 uint32_t vulkan_get_last_composite_fbid( void );
+std::shared_ptr<CVulkanTexture> vulkan_acquire_screenshot_texture(void);
 
 void vulkan_present_to_window( void );
 

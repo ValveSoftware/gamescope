@@ -2427,7 +2427,33 @@ VkDescriptorSet vulkan_update_descriptor( struct VulkanPipeline_t *pPipeline, in
     return descriptorSet;
 }
 
-bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *pPipeline, std::shared_ptr<CVulkanTexture> *pScreenshotTexture )
+std::shared_ptr<CVulkanTexture> vulkan_acquire_screenshot_texture(void)
+{
+	for (auto& pScreenshotImage : g_output.pScreenshotImages)
+	{
+		if (pScreenshotImage == nullptr)
+		{
+			pScreenshotImage = std::make_shared<CVulkanTexture>();
+
+			CVulkanTexture::createFlags screenshotImageFlags;
+			screenshotImageFlags.bMappable = true;
+			screenshotImageFlags.bTransferDst = true;
+
+			bool bSuccess = pScreenshotImage->BInit( currentOutputWidth, currentOutputHeight, VulkanFormatToDRM(g_output.outputFormat), screenshotImageFlags );
+
+			assert( bSuccess );
+		}
+
+		if (pScreenshotImage.use_count() > 1)
+			continue;
+
+		return pScreenshotImage;
+	}
+
+	return nullptr;
+}
+
+bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *pPipeline, std::shared_ptr<CVulkanTexture> pScreenshotTexture )
 {
 	VkImage compositeImage;
 	VkImageView targetImageView;
@@ -2746,52 +2772,32 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 
 	if ( pScreenshotTexture != nullptr )
 	{
-		std::shared_ptr<CVulkanTexture> pFoundScreenshotImage = nullptr;
-
-		for (auto& pScreenshotImage : g_output.pScreenshotImages)
+		if ( !pScreenshotTexture->m_bTransitioned )
 		{
-			if (pScreenshotImage == nullptr)
+			// Transition it to GENERAL
+			VkImageSubresourceRange subResRange =
 			{
-				pScreenshotImage = std::make_shared<CVulkanTexture>();
+				.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+				.levelCount = 1,
+				.layerCount = 1
+			};
 
-				CVulkanTexture::createFlags screenshotImageFlags;
-				screenshotImageFlags.bMappable = true;
-				screenshotImageFlags.bTransferDst = true;
+			VkImageMemoryBarrier memoryBarrier =
+			{
+				.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+				.srcAccessMask = 0,
+				.dstAccessMask = 0,
+				.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+				.newLayout = VK_IMAGE_LAYOUT_GENERAL,
+				.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+				.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+				.image = pScreenshotTexture->m_vkImage,
+				.subresourceRange = subResRange
+			};
 
-				bool bSuccess = pScreenshotImage->BInit( currentOutputWidth, currentOutputHeight, VulkanFormatToDRM(g_output.outputFormat), screenshotImageFlags );
+			vkCmdPipelineBarrier( curCommandBuffer, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
 
-				assert( bSuccess );
-
-				// Transition it to GENERAL
-				VkImageSubresourceRange subResRange =
-				{
-					.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-					.levelCount = 1,
-					.layerCount = 1
-				};
-
-				VkImageMemoryBarrier memoryBarrier =
-				{
-					.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-					.srcAccessMask = 0,
-					.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
-					.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-					.newLayout = VK_IMAGE_LAYOUT_GENERAL,
-					.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-					.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-					.image = pScreenshotImage->m_vkImage,
-					.subresourceRange = subResRange
-				};
-
-				vkCmdPipelineBarrier( curCommandBuffer, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-									0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
-			}
-
-			if (pScreenshotImage.use_count() > 1)
-				continue;
-
-			pFoundScreenshotImage = pScreenshotImage;
-			break;
+			pScreenshotTexture->m_bTransitioned = true;
 		}
 
 		VkImageMemoryBarrier memoryBarrier =
@@ -2806,7 +2812,7 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 			.image = compositeImage,
 			.subresourceRange = subResRange
 		};
-	
+
 		vkCmdPipelineBarrier( curCommandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
 				      0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
 
@@ -2828,9 +2834,7 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 			.depth = 1
 		};
 
-		vkCmdCopyImage( curCommandBuffer, compositeImage, VK_IMAGE_LAYOUT_GENERAL, pFoundScreenshotImage->m_vkImage, VK_IMAGE_LAYOUT_GENERAL, 1, &region );
-
-		*pScreenshotTexture = pFoundScreenshotImage;
+		vkCmdCopyImage( curCommandBuffer, compositeImage, VK_IMAGE_LAYOUT_GENERAL, pScreenshotTexture->m_vkImage, VK_IMAGE_LAYOUT_GENERAL, 1, &region );
 	}
 
 	bool useForeignQueue = !BIsNested() && g_vulkanSupportsModifiers;
