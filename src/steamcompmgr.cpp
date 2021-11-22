@@ -1788,7 +1788,7 @@ found:
 			{
 				win *candidate = vecPossibleFocusWindows[ i ];
 
-				if ( candidate != focus && candidate->transientFor == focus->id )
+				if ( candidate != focus && candidate->transientFor == focus->id && !candidate->a.override_redirect )
 				{
 					bFoundTransient = true;
 					focus = candidate;
@@ -1800,13 +1800,40 @@ found:
 			if ( bFoundTransient == false )
 				break;
 		}
+
+		// Do some searches to find transient links to override redirects too.
+		while ( true )
+		{
+			bool bFoundTransient = false;
+
+			for ( uint32_t i = 0; i < vecPossibleFocusWindows.size(); i++ )
+			{
+				win *candidate = vecPossibleFocusWindows[ i ];
+
+				if ( ( !override_focus || candidate != override_focus ) && candidate != focus &&
+					( ( !override_focus && candidate->transientFor == focus->id ) || ( override_focus && candidate->transientFor == override_focus->id ) ) &&
+					candidate->a.override_redirect )
+				{
+					bFoundTransient = true;
+					override_focus = candidate;
+					break;
+				}
+			}
+
+			// Hopefully we can't have transient cycles or we'll have to maintain a list of visited windows here
+			if ( bFoundTransient == false )
+				break;
+		}
 	}
 
-	for ( size_t i = 0; i < vecPossibleFocusWindows.size(); i++ ) {
-		auto* override = vecPossibleFocusWindows[i];
-		if (win_is_override_redirect(override) && override != focus && override->a.x > 0 && override->a.y > 0) {
-			override_focus = override;
-			break;
+	if ( !override_focus )
+	{
+		for ( size_t i = 0; i < vecPossibleFocusWindows.size(); i++ ) {
+			auto* override = vecPossibleFocusWindows[i];
+			if (win_is_override_redirect(override) && override != focus && override->a.x > 0 && override->a.y > 0) {
+				override_focus = override;
+				break;
+			}
 		}
 	}
 
