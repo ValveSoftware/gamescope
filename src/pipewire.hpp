@@ -16,7 +16,7 @@ struct pipewire_state {
 	uint32_t stream_node_id;
 	bool streaming;
 	struct spa_video_info_raw video_info;
-	int stride;
+	int shm_stride;
 	uint64_t seq;
 };
 
@@ -27,9 +27,12 @@ struct pipewire_state {
  */
 struct pipewire_buffer {
 	struct spa_video_info_raw video_info;
-	int stride;
-	uint8_t *data;
-	int fd;
+
+	struct {
+		int stride;
+		uint8_t *data;
+		int fd;
+	} shm;
 
 	// The following fields are not thread-safe
 

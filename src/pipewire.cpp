@@ -27,8 +27,8 @@ static void destroy_buffer(struct pipewire_buffer *buffer) {
 	assert(!buffer->copying);
 	assert(buffer->buffer == nullptr);
 
-	munmap(buffer->data, buffer->stride * buffer->video_info.size.height);
-	close(buffer->fd);
+	munmap(buffer->shm.data, buffer->shm.stride * buffer->video_info.size.height);
+	close(buffer->shm.fd);
 	delete buffer;
 }
 
@@ -83,14 +83,14 @@ static void copy_buffer(struct pipewire_state *state, struct pipewire_buffer *bu
 
 	struct spa_chunk *chunk = spa_buffer->datas[0].chunk;
 	chunk->offset = 0;
-	chunk->size = state->video_info.size.height * state->stride;
-	chunk->stride = state->stride;
+	chunk->size = state->video_info.size.height * buffer->shm.stride;
+	chunk->stride = buffer->shm.stride;
 	chunk->flags = needs_reneg ? SPA_CHUNK_FLAG_CORRUPTED : 0;
 
 	if (!needs_reneg) {
 		int bpp = 4;
 		for (uint32_t i = 0; i < tex->m_height; i++) {
-			memcpy(buffer->data + i * buffer->stride, (uint8_t *) tex->m_pMappedData + i * tex->m_unRowPitch, bpp * tex->m_width);
+			memcpy(buffer->shm.data + i * buffer->shm.stride, (uint8_t *) tex->m_pMappedData + i * tex->m_unRowPitch, bpp * tex->m_width);
 		}
 	}
 }
@@ -177,7 +177,7 @@ static void stream_handle_param_changed(void *data, uint32_t id, const struct sp
 		pwr_log.errorf("spa_format_video_raw_parse failed");
 		return;
 	}
-	state->stride = SPA_ROUND_UP_N(state->video_info.size.width * bpp, 4);
+	state->shm_stride = SPA_ROUND_UP_N(state->video_info.size.width * bpp, 4);
 
 	pwr_log.debugf("format changed (size: %dx%d)", state->video_info.size.width, state->video_info.size.height);
 
@@ -185,7 +185,7 @@ static void stream_handle_param_changed(void *data, uint32_t id, const struct sp
 	struct spa_pod_builder builder = SPA_POD_BUILDER_INIT(buf, sizeof(buf));
 
 	int buffers = 4;
-	int size = state->stride * state->video_info.size.height;
+	int shm_size = state->shm_stride * state->video_info.size.height;
 	int data_type = 1 << SPA_DATA_MemFd;
 
 	const struct spa_pod *buffers_param =
@@ -193,8 +193,8 @@ static void stream_handle_param_changed(void *data, uint32_t id, const struct sp
 		SPA_TYPE_OBJECT_ParamBuffers, SPA_PARAM_Buffers,
 		SPA_PARAM_BUFFERS_buffers, SPA_POD_CHOICE_RANGE_Int(buffers, 1, 32),
 		SPA_PARAM_BUFFERS_blocks, SPA_POD_Int(1),
-		SPA_PARAM_BUFFERS_size, SPA_POD_Int(size),
-		SPA_PARAM_BUFFERS_stride, SPA_POD_Int(state->stride),
+		SPA_PARAM_BUFFERS_size, SPA_POD_Int(shm_size),
+		SPA_PARAM_BUFFERS_stride, SPA_POD_Int(state->shm_stride),
 		SPA_PARAM_BUFFERS_dataType, SPA_POD_CHOICE_FLAGS_Int(data_type));
 	const struct spa_pod *meta_param =
 		(const struct spa_pod *) spa_pod_builder_add_object(&builder,
@@ -258,7 +258,7 @@ static void stream_handle_add_buffer(void *user_data, struct pw_buffer *pw_buffe
 		return;
 	}
 
-	off_t size = state->stride * state->video_info.size.height;
+	off_t size = state->shm_stride * state->video_info.size.height;
 	if (ftruncate(fd, size) != 0) {
 		pwr_log.errorf_errno("ftruncate failed");
 		close(fd);
@@ -275,9 +275,9 @@ static void stream_handle_add_buffer(void *user_data, struct pw_buffer *pw_buffe
 	struct pipewire_buffer *buffer = new pipewire_buffer();
 	buffer->buffer = pw_buffer;
 	buffer->video_info = state->video_info;
-	buffer->stride = state->stride;
-	buffer->data = (uint8_t *) data;
-	buffer->fd = fd;
+	buffer->shm.stride = state->shm_stride;
+	buffer->shm.data = (uint8_t *) data;
+	buffer->shm.fd = fd;
 
 	pw_buffer->user_data = buffer;
 
