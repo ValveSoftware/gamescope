@@ -1671,6 +1671,14 @@ is_focus_priority_greater( win *a, win *b )
 	return false;
 }
 
+static bool is_good_override_candidate( win *override, win* focus )
+{
+	// Some Chrome/Edge dropdowns (ie. FH5 xbox login) will automatically close themselves if you
+	// focus them while they are meant to be offscreen (-1,-1 and 1x1) so check that the
+	// override's position is on-screen.
+	return win_is_override_redirect(override) && override != focus && override->a.x > 0 && override->a.y > 0;
+} 
+
 static void
 determine_and_apply_focus(Display *dpy, MouseCursor *cursor)
 {
@@ -1802,6 +1810,33 @@ found:
 		gameFocused = focus->appID != 0;
 	}
 
+	auto resolveTransientOverrides = [&]()
+	{
+		// Do some searches to find transient links to override redirects too.
+		while ( true )
+		{
+			bool bFoundTransient = false;
+
+			for ( uint32_t i = 0; i < vecPossibleFocusWindows.size(); i++ )
+			{
+				win *candidate = vecPossibleFocusWindows[ i ];
+
+				if ( ( !override_focus || candidate != override_focus ) && candidate != focus &&
+					( ( !override_focus && candidate->transientFor == focus->id ) || ( override_focus && candidate->transientFor == override_focus->id ) ) &&
+					candidate->a.override_redirect )
+				{
+					bFoundTransient = true;
+					override_focus = candidate;
+					break;
+				}
+			}
+
+			// Hopefully we can't have transient cycles or we'll have to maintain a list of visited windows here
+			if ( bFoundTransient == false )
+				break;
+		}
+	};
+
 	if ( gameFocused )
 	{
 		// Do some searches through game windows to follow transient links if needed
@@ -1826,41 +1861,34 @@ found:
 				break;
 		}
 
-		// Do some searches to find transient links to override redirects too.
-		while ( true )
-		{
-			bool bFoundTransient = false;
-
-			for ( uint32_t i = 0; i < vecPossibleFocusWindows.size(); i++ )
-			{
-				win *candidate = vecPossibleFocusWindows[ i ];
-
-				if ( ( !override_focus || candidate != override_focus ) && candidate != focus &&
-					( ( !override_focus && candidate->transientFor == focus->id ) || ( override_focus && candidate->transientFor == override_focus->id ) ) &&
-					candidate->a.override_redirect )
-				{
-					bFoundTransient = true;
-					override_focus = candidate;
-					break;
-				}
-			}
-
-			// Hopefully we can't have transient cycles or we'll have to maintain a list of visited windows here
-			if ( bFoundTransient == false )
-				break;
-		}
+		resolveTransientOverrides();
 	}
 
 	if ( !override_focus )
 	{
-		for ( size_t i = 0; i < vecPossibleFocusWindows.size(); i++ ) {
-			auto* override = vecPossibleFocusWindows[i];
-			if (win_is_override_redirect(override) && override != focus && override->a.x > 0 && override->a.y > 0) {
-				override_focus = override;
-				break;
+		if ( vecFocuscontrolAppIDs.size() > 0 && focus )
+		{
+			for ( size_t i = 0; i < vecPossibleFocusWindows.size(); i++ ) {
+				auto* override = vecPossibleFocusWindows[i];
+				if ( is_good_override_candidate(override, focus) && override->appID == focus->appID ) {
+					override_focus = override;
+					break;
+				}
+			}
+		}
+		else if ( vecPossibleFocusWindows.size() > 0 )
+		{
+			for ( size_t i = 0; i < vecPossibleFocusWindows.size(); i++ ) {
+				auto* override = vecPossibleFocusWindows[i];
+				if ( is_good_override_candidate(override, focus) ) {
+					override_focus = override;
+					break;
+				}
 			}
 		}
 	}
+
+	resolveTransientOverrides();
 
 	currentOverrideWindow = override_focus ? override_focus->id : None;
 
