@@ -306,6 +306,25 @@ static int g_nudgePipe[2] = {-1, -1};
 
 static LogScope xwm_log("xwm");
 
+// Right now there's a suuuper duper rare bug where if we change the zposes
+// from these values the overlay can render behind the base layer
+// or the override can render above the overlay which is very very wrong.
+// So for now, if we have both an override, just force composition
+// and keep these zpos values the same.
+#define WORKAROUND_ZPOS_BUG
+
+#ifdef WORKAROUND_ZPOS_BUG
+static const uint32_t g_zposBase = 0;
+static const uint32_t g_zposOverride = 0;
+static const uint32_t g_zposOverlay = 1;
+static const uint32_t g_zposCursor = 2;
+#else
+static const uint32_t g_zposBase = 0;
+static const uint32_t g_zposOverride = 1;
+static const uint32_t g_zposOverlay = 2;
+static const uint32_t g_zposCursor = 3;
+#endif
+
 // poor man's semaphore
 class sem
 {
@@ -1027,7 +1046,7 @@ void MouseCursor::paint(win *window, struct Composite_t *pComposite,
 	pPipeline->layerBindings[ curLayer ].surfaceWidth = m_width;
 	pPipeline->layerBindings[ curLayer ].surfaceHeight = m_height;
 
-	pPipeline->layerBindings[ curLayer ].zpos = 3; // cursor, on top of both bottom layers
+	pPipeline->layerBindings[ curLayer ].zpos = g_zposCursor; // cursor, on top of both bottom layers
 
 	pPipeline->layerBindings[ curLayer ].tex = m_texture;
 	pPipeline->layerBindings[ curLayer ].fbid = BIsNested() ? 0 :
@@ -1144,16 +1163,16 @@ paint_window(Display *dpy, win *w, win *scaleW, struct Composite_t *pComposite,
 	pPipeline->layerBindings[ curLayer ].surfaceWidth = w->a.width;
 	pPipeline->layerBindings[ curLayer ].surfaceHeight = w->a.height;
 
-	pPipeline->layerBindings[ curLayer ].zpos = 0;
+	pPipeline->layerBindings[ curLayer ].zpos = g_zposBase;
 
 	if ( w != scaleW )
 	{
-		pPipeline->layerBindings[ curLayer ].zpos = 1;
+		pPipeline->layerBindings[ curLayer ].zpos = g_zposOverride;
 	}
 
 	if ( w->isOverlay || w->isSteamStreamingClient )
 	{
-		pPipeline->layerBindings[ curLayer ].zpos = 2;
+		pPipeline->layerBindings[ curLayer ].zpos = g_zposOverlay;
 	}
 
 	pPipeline->layerBindings[ curLayer ].tex = lastCommit.vulkanTex;
@@ -1405,8 +1424,14 @@ paint_all(Display *dpy, MouseCursor *cursor)
 #endif
 
 	bool bCapture = takeScreenshot || pw_buffer != nullptr;
+	
+#ifdef WORKAROUND_ZPOS_BUG
+	const bool bOverrideCompositeHack = override != nullptr;
+#else
+	const bool bOverrideCompositeHack = false;
+#endif
 
-	if ( BIsNested() == false && alwaysComposite == false && bCapture == false )
+	if ( BIsNested() == false && alwaysComposite == false && bCapture == false && bOverrideCompositeHack == false )
 	{
 		int ret = drm_prepare( &g_DRM, &composite, &pipeline );
 		if ( ret == 0 )
