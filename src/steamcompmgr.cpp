@@ -1742,9 +1742,9 @@ determine_and_apply_focus(Display *dpy, MouseCursor *cursor)
 	std::vector< unsigned long > focusable_appids;
 	std::vector< unsigned long > focusable_windows;
 
-	for ( unsigned long i = 0; i < vecPossibleFocusWindows.size(); i++ )
+	for ( win *focusable_window : vecPossibleFocusWindows )
 	{
-		unsigned int unAppID = vecPossibleFocusWindows[ i ]->appID;
+		unsigned int unAppID = focusable_window->appID;
 		if ( unAppID != 0 )
 		{
 			unsigned long j;
@@ -1762,9 +1762,9 @@ determine_and_apply_focus(Display *dpy, MouseCursor *cursor)
 		}
 
 		// list of [window, appid, pid] triplets
-		focusable_windows.push_back( vecPossibleFocusWindows[ i ]->id );
-		focusable_windows.push_back( vecPossibleFocusWindows[ i ]->appID );
-		focusable_windows.push_back( vecPossibleFocusWindows[ i ]->pid );
+		focusable_windows.push_back( focusable_window->id );
+		focusable_windows.push_back( focusable_window->appID );
+		focusable_windows.push_back( focusable_window->pid );
 	}
 
 	XChangeProperty( dpy, root, gamescopeFocusableAppsAtom, XA_CARDINAL, 32, PropModeReplace,
@@ -1780,23 +1780,23 @@ determine_and_apply_focus(Display *dpy, MouseCursor *cursor)
 	{
 		if ( focusControlWindow != None )
 		{
-			for ( unsigned long i = 0; i < vecPossibleFocusWindows.size(); i++ )
+			for ( win *focusable_window : vecPossibleFocusWindows )
 			{
-				if ( vecPossibleFocusWindows[ i ]->id == focusControlWindow )
+				if ( focusable_window->id == focusControlWindow )
 				{
-					focus = vecPossibleFocusWindows[ i ];
+					focus = focusable_window;
 					goto found;
 				}
 			}
 		}
 
-		for ( unsigned long i = 0; i < vecFocuscontrolAppIDs.size(); i++ )
+		for ( auto focusable_appid : vecFocuscontrolAppIDs )
 		{
-			for ( unsigned long j = 0; j < vecPossibleFocusWindows.size(); j++ )
+			for ( win *focusable_window : vecPossibleFocusWindows )
 			{
-				if ( vecPossibleFocusWindows[ j ]->appID == vecFocuscontrolAppIDs[ i ] )
+				if ( focusable_window->appID == focusable_appid )
 				{
-					focus = vecPossibleFocusWindows[ j ];
+					focus = focusable_window;
 					goto found;
 				}
 			}
@@ -1817,10 +1817,8 @@ found:
 		{
 			bool bFoundTransient = false;
 
-			for ( uint32_t i = 0; i < vecPossibleFocusWindows.size(); i++ )
+			for ( win *candidate : vecPossibleFocusWindows )
 			{
-				win *candidate = vecPossibleFocusWindows[ i ];
-
 				if ( ( !override_focus || candidate != override_focus ) && candidate != focus &&
 					( ( !override_focus && candidate->transientFor == focus->id ) || ( override_focus && candidate->transientFor == override_focus->id ) ) &&
 					candidate->a.override_redirect )
@@ -1844,10 +1842,8 @@ found:
 		{
 			bool bFoundTransient = false;
 
-			for ( uint32_t i = 0; i < vecPossibleFocusWindows.size(); i++ )
+			for ( win *candidate : vecPossibleFocusWindows )
 			{
-				win *candidate = vecPossibleFocusWindows[ i ];
-
 				if ( candidate != focus && candidate->transientFor == focus->id && !candidate->a.override_redirect )
 				{
 					bFoundTransient = true;
@@ -1868,8 +1864,8 @@ found:
 	{
 		if ( vecFocuscontrolAppIDs.size() > 0 && focus )
 		{
-			for ( size_t i = 0; i < vecPossibleFocusWindows.size(); i++ ) {
-				auto* override = vecPossibleFocusWindows[i];
+			for ( win *override : vecPossibleFocusWindows )
+			{
 				if ( is_good_override_candidate(override, focus) && override->appID == focus->appID ) {
 					override_focus = override;
 					break;
@@ -1878,8 +1874,8 @@ found:
 		}
 		else if ( vecPossibleFocusWindows.size() > 0 )
 		{
-			for ( size_t i = 0; i < vecPossibleFocusWindows.size(); i++ ) {
-				auto* override = vecPossibleFocusWindows[i];
+			for ( win *override : vecPossibleFocusWindows )
+			{
 				if ( is_good_override_candidate(override, focus) ) {
 					override_focus = override;
 					break;
