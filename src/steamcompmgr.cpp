@@ -817,7 +817,7 @@ void MouseCursor::setDirty()
 	m_dirty = true;
 }
 
-bool MouseCursor::setCursorImage(char *data, int w, int h)
+bool MouseCursor::setCursorImage(char *data, int w, int h, int hx, int hy)
 {
 	XRenderPictFormat *pictformat;
 	Picture picture;
@@ -865,7 +865,7 @@ bool MouseCursor::setCursorImage(char *data, int w, int h)
 		goto error_picture;
 	}
 
-	if (!(cursor = XRenderCreateCursor(m_display, picture, 0, 0)))
+	if (!(cursor = XRenderCreateCursor(m_display, picture, hx, hy)))
 	{
 		xwm_log.errorf("Failed to create cursor");
 		goto error_cursor;
@@ -3688,7 +3688,7 @@ struct rgba_t
 };
 
 static bool
-load_mouse_cursor( MouseCursor *cursor, const char *path )
+load_mouse_cursor( MouseCursor *cursor, const char *path, int hx, int hy )
 {
 	int w, h, channels;
 	rgba_t *data = (rgba_t *) stbi_load(path, &w, &h, &channels, STBI_rgb_alpha);
@@ -3705,7 +3705,7 @@ load_mouse_cursor( MouseCursor *cursor, const char *path )
 	});
 
 	// Data is freed by XDestroyImage in setCursorImage.
-	return cursor->setCursorImage((char *)data, w, h);
+	return cursor->setCursorImage((char *)data, w, h, hx, hy);
 }
 
 enum event_type {
@@ -3716,6 +3716,8 @@ enum event_type {
 };
 
 const char* g_customCursorPath = nullptr;
+int g_customCursorHotspotX = 0;
+int g_customCursorHotspotY = 0;
 
 void
 steamcompmgr_main(int argc, char **argv)
@@ -3773,6 +3775,8 @@ steamcompmgr_main(int argc, char **argv)
 					debugEvents = true;
 				} else if (strcmp(opt_name, "cursor") == 0) {
 					g_customCursorPath = optarg;
+				} else if (strcmp(opt_name, "cursor-hotspot") == 0) {
+					sscanf(optarg, "%d,%d", &g_customCursorHotspotX, &g_customCursorHotspotY);
 				}
 				break;
 			case '?':
@@ -3945,7 +3949,7 @@ steamcompmgr_main(int argc, char **argv)
 	std::unique_ptr<MouseCursor> cursor(new MouseCursor(dpy));
 	if (g_customCursorPath)
 	{
-		if (!load_mouse_cursor(cursor.get(), g_customCursorPath))
+		if (!load_mouse_cursor(cursor.get(), g_customCursorPath, g_customCursorHotspotX, g_customCursorHotspotY))
 			xwm_log.errorf("Failed to load mouse cursor: %s", g_customCursorPath);
 	}
 
