@@ -3701,7 +3701,11 @@ load_mouse_cursor( MouseCursor *cursor, const char *path )
 	std::transform(data, data + w * h, data, [](rgba_t x) {
 		if (x.a == 0)
 			return rgba_t{};
-		return rgba_t{ x.b, x.g, x.r, x.a };
+		return rgba_t{
+			uint8_t((x.b * x.a) / 255),
+			uint8_t((x.g * x.a) / 255),
+			uint8_t((x.r * x.a) / 255),
+			x.a };
 	});
 
 	// Data is freed by XDestroyImage in setCursorImage.
