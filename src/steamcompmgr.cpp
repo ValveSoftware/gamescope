@@ -174,6 +174,7 @@ static Window 	currentKeyboardFocusWindow;
 static Window	currentOverlayWindow;
 static Window	currentNotificationWindow;
 static Window	currentOverrideWindow;
+static Window   currentFadeWindow;
 
 bool hasFocusWindow;
 
@@ -207,9 +208,7 @@ unsigned int	cursorHideTime = 10'000;
 
 bool			gotXError = false;
 
-win				fadeOutWindow;
-bool			fadeOutWindowGone;
-unsigned int	fadeOutStartTime;
+unsigned int	fadeOutStartTime = 0;
 
 extern float g_flMaxWindowScale;
 extern bool g_bIntegerScale;
@@ -263,11 +262,13 @@ static Atom		gamescopeInputCounterAtom;
 enum HeldCommitTypes_t
 {
 	HELD_COMMIT_BASE,
+	HELD_COMMIT_FADE,
 
 	HELD_COMMIT_COUNT,
 };
 
 std::array<commit_t, HELD_COMMIT_COUNT> g_HeldCommits;
+bool g_bPendingFade = false;
 
 /* opacity property name; sometime soon I'll write up an EWMH spec for it */
 #define OPACITY_PROP		"_NET_WM_WINDOW_OPACITY"
@@ -1159,7 +1160,7 @@ struct BaseLayerInfo_t
 std::array< BaseLayerInfo_t, HELD_COMMIT_COUNT > g_CachedPlanes = {};
 
 static bool
-paint_cached_base_layer(const commit_t& commit, const BaseLayerInfo_t& base, struct Composite_t *pComposite, struct VulkanPipeline_t *pPipeline)
+paint_cached_base_layer(const commit_t& commit, const BaseLayerInfo_t& base, struct Composite_t *pComposite, struct VulkanPipeline_t *pPipeline, float flOpacityScale)
 {
 	if (!commit.done)
 		return false;
@@ -1169,7 +1170,7 @@ paint_cached_base_layer(const commit_t& commit, const BaseLayerInfo_t& base, str
 	pComposite->data.vScale[ curLayer ].y = base.scale[1];
 	pComposite->data.vOffset[ curLayer ].x = base.offset[0];
 	pComposite->data.vOffset[ curLayer ].y = base.offset[1];
-	pComposite->data.flOpacity[ curLayer ] = base.opacity;
+	pComposite->data.flOpacity[ curLayer ] = base.opacity * flOpacityScale;
 
 	pPipeline->layerBindings[ curLayer ].tex = commit.vulkanTex;
 	pPipeline->layerBindings[ curLayer ].fbid = commit.fb_id;
@@ -1182,7 +1183,7 @@ paint_cached_base_layer(const commit_t& commit, const BaseLayerInfo_t& base, str
 
 static bool
 paint_window(Display *dpy, win *w, win *scaleW, struct Composite_t *pComposite,
-			  struct VulkanPipeline_t *pPipeline, bool notificationMode, MouseCursor *cursor, bool bBasePlane = false)
+			  struct VulkanPipeline_t *pPipeline, bool notificationMode, MouseCursor *cursor, bool bBasePlane = false, float flOpacityScale = 1.0f, bool bFadeTarget = false)
 {
 	uint32_t sourceWidth, sourceHeight;
 	int drawXOffset = 0, drawYOffset = 0;
@@ -1197,7 +1198,15 @@ paint_window(Display *dpy, win *w, win *scaleW, struct Composite_t *pComposite,
 			// If we're the base plane and have no valid contents
 			// pick up that buffer we've been holding onto if we have one.
 			if ( g_HeldCommits[ HELD_COMMIT_BASE ].done )
-				return paint_cached_base_layer( g_HeldCommits[ HELD_COMMIT_BASE ], g_CachedPlanes[ HELD_COMMIT_BASE ], pComposite, pPipeline );
+				return paint_cached_base_layer( g_HeldCommits[ HELD_COMMIT_BASE ], g_CachedPlanes[ HELD_COMMIT_BASE ], pComposite, pPipeline, flOpacityScale );
+		}
+		else
+		{
+			if ( g_bPendingFade )
+			{
+				fadeOutStartTime = get_time_in_milliseconds();
+				g_bPendingFade = false;
+			}
 		}
 	}
 
@@ -1256,7 +1265,7 @@ paint_window(Display *dpy, win *w, win *scaleW, struct Composite_t *pComposite,
 
 	int curLayer = pComposite->nLayerCount;
 
-	pComposite->data.flOpacity[ curLayer ] = w->isOverlay ? w->opacity / (float)OPAQUE : 1.0f;
+	pComposite->data.flOpacity[ curLayer ] = ( w->isOverlay ? w->opacity / (float)OPAQUE : 1.0f ) * flOpacityScale;
 
 	pComposite->data.vScale[ curLayer ].x = 1.0 / currentScaleRatio;
 	pComposite->data.vScale[ curLayer ].y = 1.0 / currentScaleRatio;
@@ -1324,6 +1333,8 @@ paint_window(Display *dpy, win *w, win *scaleW, struct Composite_t *pComposite,
 		basePlane.opacity = pComposite->data.flOpacity[ curLayer ];
 
 		g_CachedPlanes[ HELD_COMMIT_BASE ] = basePlane;
+		if ( !bFadeTarget )
+			g_CachedPlanes[ HELD_COMMIT_FADE ] = basePlane;
 	}
 
 	pComposite->nLayerCount += 1;
@@ -1387,6 +1398,11 @@ paint_debug_info(Display *dpy)
 
 static bool g_bFirstFrame = true;
 
+static bool is_fading_out()
+{
+	return fadeOutStartTime || g_bPendingFade;
+}
+
 static void
 paint_all(Display *dpy, MouseCursor *cursor)
 {
@@ -1401,7 +1417,7 @@ paint_all(Display *dpy, MouseCursor *cursor)
 	win *input;
 
 	unsigned int currentTime = get_time_in_milliseconds();
-	bool fadingOut = ((currentTime - fadeOutStartTime) < FADE_OUT_DURATION && fadeOutWindow.id != None);
+	bool fadingOut = ( currentTime - fadeOutStartTime < FADE_OUT_DURATION || g_bPendingFade ) && g_HeldCommits[HELD_COMMIT_FADE].done;
 
 	w = find_win(dpy, currentFocusWindow);
 	overlay = find_win(dpy, currentOverlayWindow);
@@ -1445,61 +1461,55 @@ paint_all(Display *dpy, MouseCursor *cursor)
 	struct VulkanPipeline_t pipeline = {};
 	bool bValidContents = false;
 
-	// Fading out from previous window?
-	if (fadingOut)
+	// If the window we'd paint as the base layer is the streaming client,
+	// find the video underlay and put it up first in the scenegraph
+	if ( w->isSteamStreamingClient == true )
 	{
-		double newOpacity = ((currentTime - fadeOutStartTime) / (double)FADE_OUT_DURATION);
+		win *videow = NULL;
 
-		// Draw it in the background
-		fadeOutWindow.opacity = (1.0 - newOpacity) * OPAQUE;
-		bValidContents |= paint_window(dpy, &fadeOutWindow, &fadeOutWindow, &composite, &pipeline, false, cursor);
+		for ( videow = list; videow; videow = videow->next )
+		{
+			if ( videow->isSteamStreamingClientVideo == true )
+			{
+				// TODO: also check matching AppID so we can have several pairs
+				bValidContents |= paint_window(dpy, videow, videow, &composite, &pipeline, false, cursor);
+				break;
+			}
+		}
 
-		// Blend new window on top with linear crossfade
-		w->opacity = newOpacity * OPAQUE;
-
-		bValidContents |= paint_window(dpy, w, w, &composite, &pipeline, false, cursor);
+		// paint UI unless it's fully hidden, which it communicates to us through opacity=0
+		if ( w->opacity > TRANSLUCENT )
+		{
+			bValidContents |= paint_window(dpy, w, w, &composite, &pipeline, false, cursor);
+		}
 	}
 	else
 	{
-		// If the window we'd paint as the base layer is the streaming client,
-		// find the video underlay and put it up first in the scenegraph
-		if ( w->isSteamStreamingClient == true )
+		if ( fadingOut )
 		{
-			win *videow = NULL;
-
-			for ( videow = list; videow; videow = videow->next )
-			{
-				if ( videow->isSteamStreamingClientVideo == true )
-				{
-					// TODO: also check matching AppID so we can have several pairs
-					bValidContents |= paint_window(dpy, videow, videow, &composite, &pipeline, false, cursor);
-					break;
-				}
-			}
-
-			// paint UI unless it's fully hidden, which it communicates to us through opacity=0
-			if ( w->opacity > TRANSLUCENT )
-			{
-				bValidContents |= paint_window(dpy, w, w, &composite, &pipeline, false, cursor);
-			}
+			float opacityScale = g_bPendingFade
+				? 0.0f
+				: ((currentTime - fadeOutStartTime) / (float)FADE_OUT_DURATION);
+	
+			bValidContents |= paint_cached_base_layer(g_HeldCommits[HELD_COMMIT_FADE], g_CachedPlanes[HELD_COMMIT_FADE], &composite, &pipeline, 1.0f - opacityScale);
+			bValidContents |= paint_window(dpy, w, w, &composite, &pipeline, false, cursor, true, opacityScale, true);
 		}
 		else
 		{
-			// Just draw focused window as normal, be it Steam or the game
-			bValidContents |= paint_window(dpy, w, w, &composite, &pipeline, false, cursor);
-		}
-
-		if (fadeOutWindow.id) {
-
-			if (fadeOutWindowGone)
 			{
-				// This is the only reference to these resources now.
-				fadeOutWindowGone = false;
+				if ( g_HeldCommits[HELD_COMMIT_FADE].done )
+				{
+					release_commit(g_HeldCommits[HELD_COMMIT_FADE]);
+					g_HeldCommits[HELD_COMMIT_FADE] = commit_t{};
+					g_bPendingFade = false;
+					fadeOutStartTime = 0;
+					currentFadeWindow = None;
+				}
 			}
-			fadeOutWindow.id = None;
+			// Just draw focused window as normal, be it Steam or the game
+			bValidContents |= paint_window(dpy, w, w, &composite, &pipeline, false, cursor, true);
 		}
 	}
-
 
 	// TODO: We want to paint this at the same scale as the normal window and probably
 	// with an offset.
@@ -2062,22 +2072,31 @@ found:
 		return;
 	}
 
-// 	if (fadeOutWindow.id == None && currentFocusWindow != focus->id)
-// 	{
-// 		// Initiate fade out if switching focus
-// 		w = find_win(dpy, currentFocusWindow);
-//
-// 		if (w)
-// 		{
-// 			ensure_win_resources(dpy, w);
-// 			fadeOutWindow = *w;
-// 			fadeOutStartTime = get_time_in_milliseconds();
-// 		}
-// 	}
-
-// 	if (fadeOutWindow.id && currentFocusWindow != focus->id)
 	if ( prevFocusWindow != focus->id )
 	{
+		if ( FADE_OUT_DURATION != 0 && !g_bFirstFrame )
+		{
+			if ( !g_HeldCommits[ HELD_COMMIT_FADE ].done )
+			{
+				currentFadeWindow = prevFocusWindow;
+				ref_commit( g_HeldCommits[ HELD_COMMIT_BASE ] );
+				g_HeldCommits[ HELD_COMMIT_FADE ] = g_HeldCommits[ HELD_COMMIT_BASE ];
+				g_bPendingFade = true;
+			}
+			else
+			{
+				// If we end up fading back to what we were going to fade to, cancel the fade.
+				if ( currentFadeWindow != None && focus->id == currentFadeWindow )
+				{
+					release_commit( g_HeldCommits[ HELD_COMMIT_FADE ] );
+					g_HeldCommits[ HELD_COMMIT_FADE ] = commit_t{};
+					g_bPendingFade = false;
+					fadeOutStartTime = 0;
+					currentFadeWindow = None;
+				}
+			}
+		}
+
 		hasRepaint = true;
 
 		/* Some games (e.g. DOOM Eternal) don't react well to being put back as
@@ -2396,15 +2415,6 @@ static void
 finish_unmap_win(Display *dpy, win *w)
 {
 	// TODO clear done commits here?
-// 	if (fadeOutWindow.id != w->id)
-// 	{
-// 		teardown_win_resources( w );
-// 	}
-
-	if (fadeOutWindow.id == w->id)
-	{
-		fadeOutWindowGone = true;
-	}
 
 	/* don't care about properties anymore */
 	set_ignore(dpy, NextRequest(dpy));
@@ -2773,6 +2783,8 @@ destroy_win(Display *dpy, Window id, bool gone, bool fade)
 		currentFocusWindow = None;
 		currentFocusWin = nullptr;
 	}
+	if (currentFadeWindow == id && gone)
+		currentFadeWindow = None;
 	if (currentInputFocusWindow == id && gone)
 		currentInputFocusWindow = None;
 	if (currentOverlayWindow == id && gone)
@@ -4183,12 +4195,19 @@ steamcompmgr_main(int argc, char **argv)
 
 		check_new_wayland_res();
 
-		if ( ( g_bTakeScreenshot == true || hasRepaint == true ) && vblank == true )
+		if ( ( g_bTakeScreenshot == true || hasRepaint == true || is_fading_out() ) && vblank == true )
 		{
 			paint_all(dpy, cursor.get());
 
 			// Consumed the need to repaint here
 			hasRepaint = false;
+
+			// If we're in the middle of a fade, pump an event into the loop to
+			// make sure we keep pushing frames even if the app isn't updating.
+			if ( is_fading_out() )
+			{
+				nudge_steamcompmgr();
+			}
 		}
 
 		// TODO: Look into making this _RAW
@@ -4196,13 +4215,6 @@ steamcompmgr_main(int argc, char **argv)
 		// all over so this may be problematic to just change.
 		struct timespec now;
 		clock_gettime(CLOCK_MONOTONIC, &now);
-
-		// If we're in the middle of a fade, pump an event into the loop to
-		// make sure we keep pushing frames even if the app isn't updating.
-		if (fadeOutWindow.id)
-		{
-			nudge_steamcompmgr();
-		}
 
 		cursor->updatePosition();
 
