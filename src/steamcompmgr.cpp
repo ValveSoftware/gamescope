@@ -680,10 +680,7 @@ release_commit( commit_t &commit )
 static bool
 import_commit ( struct wlr_buffer *buf, commit_t &commit )
 {
-	/* Keep this locked during the entire function so we
-	 * avoid racing the creation of the commit. Unlikely to
-	 * come up with the current callers but a safe default. */
-	std::lock_guard<std::mutex> lock( wlr_buffer_map_lock );
+	std::unique_lock<std::mutex> lock( wlr_buffer_map_lock );
 
 	commit.buf = buf;
 
@@ -693,6 +690,12 @@ import_commit ( struct wlr_buffer *buf, commit_t &commit )
 		commit.vulkanTex = it->second.vulkanTex;
 		commit.fb_id = it->second.fb_id;
 
+		/* Unlock here to avoid deadlock [1],
+		 * drm_lock_fbid calls wlserver_lock.
+		 * Map is no longer used here and the element 
+		 * is no longer accessed. */
+		lock.unlock();
+
 		if (commit.fb_id)
 		{
 			drm_lock_fbid( &g_DRM, commit.fb_id );
@@ -700,6 +703,18 @@ import_commit ( struct wlr_buffer *buf, commit_t &commit )
 
 		return true;
 	}
+
+	wlr_buffer_map_entry& entry = wlr_buffer_map[buf];
+	/* [1]
+	 * Need to unlock the wlr_buffer_map_lock to avoid
+	 * a deadlock on destroy_buffer if it owns the wlserver_lock.
+	 * This is safe for a few reasons:
+	 * - 1: All accesses to wlr_buffer_map are done before this lock.
+	 * - 2: destroy_buffer cannot be called from this buffer before now
+	 *      as it only happens because of the signal added below.
+	 * - 3: "References to elements in the unordered_map container remain
+	 *		 valid in all cases, even after a rehash." */
+	lock.unlock();
 
 	commit.vulkanTex = vulkan_create_texture_from_wlr_buffer( buf );
 	assert( commit.vulkanTex != 0 );
@@ -719,7 +734,6 @@ import_commit ( struct wlr_buffer *buf, commit_t &commit )
 		commit.fb_id = 0;
 	}
 
-	wlr_buffer_map_entry& entry = wlr_buffer_map[buf];
 	entry.listener.notify = destroy_buffer;
 	entry.buf = buf;
 	entry.vulkanTex = commit.vulkanTex;
