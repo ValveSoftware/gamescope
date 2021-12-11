@@ -1189,7 +1189,7 @@ paint_window(Display *dpy, win *w, win *scaleW, struct Composite_t *pComposite,
 	int drawXOffset = 0, drawYOffset = 0;
 	float currentScaleRatio = 1.0;
 	commit_t lastCommit = {};
-	bool validContents = get_window_last_done_commit( w, lastCommit );
+	bool validContents = w ? get_window_last_done_commit( w, lastCommit ) : false;
 
 	if ( bBasePlane )
 	{
