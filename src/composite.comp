@@ -98,7 +98,7 @@ void main() {
     vec4 outputValue = vec4(0.0f);
 
     if (c_layerCount > 0)
-        outputValue = sampleLayer(0, uv);
+        outputValue = sampleLayer(0, uv) * u_opacity[0];
 
     for (int i = 1; i < c_layerCount; i++) {
         vec4 layerColor = sampleLayer(i, uv);
