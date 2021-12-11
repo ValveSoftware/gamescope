@@ -210,10 +210,10 @@ bool			gotXError = false;
 
 unsigned int	fadeOutStartTime = 0;
 
+unsigned int 	g_FadeOutDuration = 0;
+
 extern float g_flMaxWindowScale;
 extern bool g_bIntegerScale;
-
-#define			FADE_OUT_DURATION 200
 
 /* find these once and be done with it */
 static Atom		steamAtom;
@@ -1417,7 +1417,7 @@ paint_all(Display *dpy, MouseCursor *cursor)
 	win *input;
 
 	unsigned int currentTime = get_time_in_milliseconds();
-	bool fadingOut = ( currentTime - fadeOutStartTime < FADE_OUT_DURATION || g_bPendingFade ) && g_HeldCommits[HELD_COMMIT_FADE].done;
+	bool fadingOut = ( currentTime - fadeOutStartTime < g_FadeOutDuration || g_bPendingFade ) && g_HeldCommits[HELD_COMMIT_FADE].done;
 
 	w = find_win(dpy, currentFocusWindow);
 	overlay = find_win(dpy, currentOverlayWindow);
@@ -1489,7 +1489,7 @@ paint_all(Display *dpy, MouseCursor *cursor)
 		{
 			float opacityScale = g_bPendingFade
 				? 0.0f
-				: ((currentTime - fadeOutStartTime) / (float)FADE_OUT_DURATION);
+				: ((currentTime - fadeOutStartTime) / (float)g_FadeOutDuration);
 	
 			bValidContents |= paint_cached_base_layer(g_HeldCommits[HELD_COMMIT_FADE], g_CachedPlanes[HELD_COMMIT_FADE], &composite, &pipeline, 1.0f - opacityScale);
 			bValidContents |= paint_window(dpy, w, w, &composite, &pipeline, false, cursor, true, opacityScale, true);
@@ -2074,7 +2074,7 @@ found:
 
 	if ( prevFocusWindow != focus->id )
 	{
-		if ( FADE_OUT_DURATION != 0 && !g_bFirstFrame )
+		if ( g_FadeOutDuration != 0 && !g_bFirstFrame )
 		{
 			if ( !g_HeldCommits[ HELD_COMMIT_FADE ].done )
 			{
@@ -3891,6 +3891,8 @@ steamcompmgr_main(int argc, char **argv)
 					g_customCursorPath = optarg;
 				} else if (strcmp(opt_name, "cursor-hotspot") == 0) {
 					sscanf(optarg, "%d,%d", &g_customCursorHotspotX, &g_customCursorHotspotY);
+				} else if (strcmp(opt_name, "fade-out-duration") == 0) {
+					g_FadeOutDuration = atoi(optarg);
 				}
 				break;
 			case '?':
