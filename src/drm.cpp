@@ -1109,11 +1109,6 @@ drm_prepare_liftoff( struct drm_t *drm, const struct Composite_t *pComposite, co
 			liftoff_layer_set_property( drm->lo_layers[ i ], "zpos", pPipeline->layerBindings[ i ].zpos );
 			liftoff_layer_set_property( drm->lo_layers[ i ], "alpha", pComposite->data.flOpacity[ i ] * 0xffff);
 
-			if ( pPipeline->layerBindings[ i ].zpos == 0 )
-			{
-				assert( ( pComposite->data.flOpacity[ i ] * 0xffff ) == 0xffff );
-			}
-
 			const uint16_t srcWidth = pPipeline->layerBindings[ i ].surfaceWidth;
 			const uint16_t srcHeight = pPipeline->layerBindings[ i ].surfaceHeight;
 
