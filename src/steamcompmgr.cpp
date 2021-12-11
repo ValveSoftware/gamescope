@@ -260,6 +260,15 @@ static Atom		gamescopeCtrlAppIDAtom;
 static Atom		gamescopeCtrlWindowAtom;
 static Atom		gamescopeInputCounterAtom;
 
+enum HeldCommitTypes_t
+{
+	HELD_COMMIT_BASE,
+
+	HELD_COMMIT_COUNT,
+};
+
+std::array<commit_t, HELD_COMMIT_COUNT> g_HeldCommits;
+
 /* opacity property name; sometime soon I'll write up an EWMH spec for it */
 #define OPACITY_PROP		"_NET_WM_WINDOW_OPACITY"
 #define GAME_PROP			"STEAM_GAME"
@@ -628,14 +637,14 @@ destroy_buffer( struct wl_listener *listener, void * )
 	std::lock_guard<std::mutex> lock( wlr_buffer_map_lock );
 	wlr_buffer_map_entry *entry = wl_container_of( listener, entry, listener );
 
-	if ( entry->fb_id != 0 )
-	{
-		drm_drop_fbid( &g_DRM, entry->fb_id );
-	}
-
 	if ( entry->vulkanTex != 0 )
 	{
 		vulkan_free_texture( entry->vulkanTex );
+	}
+
+	if ( entry->fb_id != 0 )
+	{
+		drm_drop_fbid( &g_DRM, entry->fb_id );
 	}
 
 	wl_list_remove( &entry->listener.link );
@@ -645,17 +654,26 @@ destroy_buffer( struct wl_listener *listener, void * )
 }
 
 static void
+ref_commit( commit_t &commit )
+{
+	vulkan_ref_commit( commit.vulkanTex );
+}
+
+static void
 release_commit( commit_t &commit )
 {
-	if ( commit.fb_id != 0 )
+	if ( !vulkan_free_commit( commit.vulkanTex ) )
 	{
-		drm_unlock_fbid( &g_DRM, commit.fb_id );
-		commit.fb_id = 0;
-	}
+		if ( commit.fb_id != 0 )
+		{
+			drm_unlock_fbid( &g_DRM, commit.fb_id );
+			commit.fb_id = 0;
+		}
 
-	wlserver_lock();
-	wlr_buffer_unlock( commit.buf );
-	wlserver_unlock();
+		wlserver_lock();
+		wlr_buffer_unlock( commit.buf );
+		wlserver_unlock();
+	}
 }
 
 static bool
@@ -3360,6 +3378,7 @@ void check_new_wayland_res( void )
 			}
 
 			newCommit.commitID = ++maxCommmitID;
+			ref_commit( newCommit );
 			w->commit_queue.push_back( newCommit );
 		}
 
