@@ -1972,6 +1972,33 @@ void vulkan_free_texture( VulkanTexture_t vulkanTex )
 	}
 }
 
+int32_t vulkan_ref_commit( VulkanTexture_t vulkanTex )
+{
+	if ( vulkanTex == 0 )
+		return 0;
+
+	CVulkanTexture *pTex = getVulkanTexture( vulkanTex );
+
+	assert( pTex != nullptr );
+	assert( pTex->handle == vulkanTex );
+
+	return ++pTex->nCommitRefCount;
+}
+
+int32_t vulkan_free_commit( VulkanTexture_t vulkanTex )
+{
+	if ( vulkanTex == 0 )
+		return 0;
+	
+	CVulkanTexture *pTex = getVulkanTexture( vulkanTex );
+
+	assert( pTex != nullptr );
+	assert( pTex->handle == vulkanTex );
+	
+	int32_t refs = --pTex->nCommitRefCount;
+	return refs;
+}
+
 bool operator==(const struct VulkanPipeline_t::LayerBinding_t& lhs, struct VulkanPipeline_t::LayerBinding_t& rhs)
 {
 	if ( lhs.bFilter != rhs.bFilter )
