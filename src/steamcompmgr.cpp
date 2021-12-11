@@ -1149,15 +1149,57 @@ void MouseCursor::paint(win *window, struct Composite_t *pComposite,
 	pComposite->nLayerCount += 1;
 }
 
+struct BaseLayerInfo_t
+{
+	float scale[2];
+	float offset[2];
+	float opacity;
+};
+
+std::array< BaseLayerInfo_t, HELD_COMMIT_COUNT > g_CachedPlanes = {};
+
+static bool
+paint_cached_base_layer(const commit_t& commit, const BaseLayerInfo_t& base, struct Composite_t *pComposite, struct VulkanPipeline_t *pPipeline)
+{
+	if (!commit.done)
+		return false;
+	int curLayer = pComposite->nLayerCount;
+
+	pComposite->data.vScale[ curLayer ].x = base.scale[0];
+	pComposite->data.vScale[ curLayer ].y = base.scale[1];
+	pComposite->data.vOffset[ curLayer ].x = base.offset[0];
+	pComposite->data.vOffset[ curLayer ].y = base.offset[1];
+	pComposite->data.flOpacity[ curLayer ] = base.opacity;
+
+	pPipeline->layerBindings[ curLayer ].tex = commit.vulkanTex;
+	pPipeline->layerBindings[ curLayer ].fbid = commit.fb_id;
+	pPipeline->layerBindings[ curLayer ].bFilter = true;
+
+	pComposite->nLayerCount++;
+
+	return true;
+}
+
 static bool
 paint_window(Display *dpy, win *w, win *scaleW, struct Composite_t *pComposite,
-			  struct VulkanPipeline_t *pPipeline, bool notificationMode, MouseCursor *cursor)
+			  struct VulkanPipeline_t *pPipeline, bool notificationMode, MouseCursor *cursor, bool bBasePlane = false)
 {
 	uint32_t sourceWidth, sourceHeight;
 	int drawXOffset = 0, drawYOffset = 0;
 	float currentScaleRatio = 1.0;
 	commit_t lastCommit = {};
 	bool validContents = get_window_last_done_commit( w, lastCommit );
+
+	if ( bBasePlane )
+	{
+		if ( !validContents )
+		{
+			// If we're the base plane and have no valid contents
+			// pick up that buffer we've been holding onto if we have one.
+			if ( g_HeldCommits[ HELD_COMMIT_BASE ].done )
+				return paint_cached_base_layer( g_HeldCommits[ HELD_COMMIT_BASE ], g_CachedPlanes[ HELD_COMMIT_BASE ], pComposite, pPipeline );
+		}
+	}
 
 	if (!w)
 		return false;
@@ -1271,6 +1313,18 @@ paint_window(Display *dpy, win *w, win *scaleW, struct Composite_t *pComposite,
 	pPipeline->layerBindings[ curLayer ].fbid = lastCommit.fb_id;
 
 	pPipeline->layerBindings[ curLayer ].bFilter = w->isOverlay ? true : g_bFilterGameWindow;
+
+	if ( bBasePlane )
+	{
+		BaseLayerInfo_t basePlane = {};
+		basePlane.scale[0] = pComposite->data.vScale[ curLayer ].x;
+		basePlane.scale[1] = pComposite->data.vScale[ curLayer ].y;
+		basePlane.offset[0] = pComposite->data.vOffset[ curLayer ].x;
+		basePlane.offset[1] = pComposite->data.vOffset[ curLayer ].y;
+		basePlane.opacity = pComposite->data.flOpacity[ curLayer ];
+
+		g_CachedPlanes[ HELD_COMMIT_BASE ] = basePlane;
+	}
 
 	pComposite->nLayerCount += 1;
 
@@ -3288,7 +3342,17 @@ void handle_done_commits( void )
 					}
 
 					// If this is the main plane, repaint
-					if ( w->id == currentFocusWindow || w->id == currentOverrideWindow )
+					if ( w->id == currentFocusWindow )
+					{
+						if ( g_HeldCommits[ HELD_COMMIT_BASE ].done )
+							release_commit( g_HeldCommits[ HELD_COMMIT_BASE ] );
+					
+						ref_commit( w->commit_queue[ j ] );
+						g_HeldCommits[ HELD_COMMIT_BASE ] = w->commit_queue[ j ];
+						hasRepaint = true;
+					}
+
+					if ( w->id == currentOverrideWindow )
 					{
 						frame_timing();
 						hasRepaint = true;
