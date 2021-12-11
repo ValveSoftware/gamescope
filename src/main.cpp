@@ -63,6 +63,7 @@ const struct option *gamescope_options = (struct option[]){
 	{ "force-composition", no_argument, nullptr, 'c' },
 	{ "composite-debug", no_argument, nullptr, 0 },
 	{ "disable-xres", no_argument, nullptr, 'x' },
+	{ "fade-out-duration", required_argument, nullptr, 0 },
 
 	{} // keep last
 };
