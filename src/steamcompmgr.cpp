@@ -664,7 +664,7 @@ import_commit ( struct wlr_buffer *buf, commit_t &commit )
 	/* Keep this locked during the entire function so we
 	 * avoid racing the creation of the commit. Unlikely to
 	 * come up with the current callers but a safe default. */
-	std::lock_guard<std::mutex> lock( wlr_buffer_map_lock );
+	std::unique_lock<std::mutex> lock( wlr_buffer_map_lock );
 
 	commit.buf = buf;
 
@@ -705,6 +705,16 @@ import_commit ( struct wlr_buffer *buf, commit_t &commit )
 	entry.buf = buf;
 	entry.vulkanTex = commit.vulkanTex;
 	entry.fb_id = commit.fb_id;
+
+	/* Need to unlock the wlr_buffer_map_lock to avoid
+	 * a deadlock on destroy_buffer if it owns the wlserver_lock.
+	 * This is safe for a few reasons:
+	 * - 1: All accesses to wlr_buffer_map are done before this lock.
+	 * - 2: destroy_buffer cannot be called from this buffer before now
+	 *      as it only happens because of the signal added below.
+	 * - 3: "References to elements in the unordered_map container remain
+	 *		 valid in all cases, even after a rehash." */
+	lock.unlock();
 
 	wlserver_lock();
 	wl_signal_add( &buf->events.destroy, &entry.listener );
