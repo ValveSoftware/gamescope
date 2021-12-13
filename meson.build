@@ -66,17 +66,19 @@ if not cppc.check_header('vulkan/vulkan.h', dependencies: vulkan_dep)
   error('Missing vulkan-headers')
 endif
 
-shadercompiler = find_program('glslangValidator', native: true)
 
-spirv_shader = custom_target('shader_target',
-  output : 'composite.h',
-  input : 'src/composite.comp',
-  command : [
-    shadercompiler, '-V', '-e', 'main', '--vn',
-    'composite_spv', '@INPUT@', '-o', '@OUTPUT@'
-  ],
-  install : false,
+glsl_compiler = find_program('glslangValidator', native: true)
+glsl_generator = generator(
+  glsl_compiler,
+  output    : ['@BASENAME@.h'],
+  arguments : ['-V', '@INPUT@', '--vn', '@BASENAME@', '-o', '@OUTPUT@'],
 )
+
+shader_src = [
+  'src/shaders/cs_composite_blit.comp',
+]
+
+spirv_shaders = glsl_generator.process(shader_src)
 
 liftoff_dep = dependency(
   'libliftoff',
@@ -102,8 +104,9 @@ src = [
   'src/log.cpp',
   'src/ime.cpp',
   'src/mangoapp.cpp',
-  spirv_shader,
 ]
+
+src += spirv_shaders
 
 if pipewire_dep.found()
   src += 'src/pipewire.cpp'

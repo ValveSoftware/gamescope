@@ -13,7 +13,7 @@
 #include "sdlwindow.hpp"
 #include "log.hpp"
 
-#include "composite.h"
+#include "cs_composite_blit.h"
 
 bool g_bIsCompositeDebug = false;
 
@@ -1140,8 +1140,8 @@ retry:
 	
 	VkShaderModuleCreateInfo shaderModuleCreateInfo = {};
 	shaderModuleCreateInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-	shaderModuleCreateInfo.codeSize = sizeof(composite_spv);
-	shaderModuleCreateInfo.pCode = (const uint32_t*)composite_spv;
+	shaderModuleCreateInfo.codeSize = sizeof(cs_composite_blit);
+	shaderModuleCreateInfo.pCode = cs_composite_blit;
 	
 	res = vkCreateShaderModule( device, &shaderModuleCreateInfo, nullptr, &shaderModule );
 	if ( res != VK_SUCCESS )
