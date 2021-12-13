@@ -3258,6 +3258,7 @@ void handle_done_commits( void )
 					// If this is the main plane, repaint
 					if ( w->id == currentFocusWindow || w->id == currentOverrideWindow )
 					{
+						frame_timing();
 						hasRepaint = true;
 					}
 

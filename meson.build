@@ -99,6 +99,7 @@ src = [
   'src/rendervulkan.cpp',
   'src/log.cpp',
   'src/ime.cpp',
+  'src/mangoapp.cpp',
   spirv_shader,
 ]
 
