@@ -68,11 +68,23 @@ endif
 
 
 glsl_compiler = find_program('glslangValidator', native: true)
-glsl_generator = generator(
-  glsl_compiler,
-  output    : ['@BASENAME@.h'],
-  arguments : ['-V', '@INPUT@', '--vn', '@BASENAME@', '-o', '@OUTPUT@'],
-)
+
+# Use --depfile to rebuild shaders when included files have changed. Sadly debian based
+# distros don't have up-to-date glslang so we need to check for support first.
+if run_command(glsl_compiler, ['--version', '--depfile', 'dummy.dep']).returncode() == 0
+  glsl_generator = generator(
+    glsl_compiler,
+    output    : ['@BASENAME@.h'],
+    arguments : ['-V', '@INPUT@', '--vn', '@BASENAME@', '-o', '@OUTPUT@', '--depfile', '@DEPFILE@', '--quiet'],
+    depfile   : '@DEPFILE@',
+  )
+else
+  glsl_generator = generator(
+    glsl_compiler,
+    output    : ['@BASENAME@.h'],
+    arguments : ['-V', '@INPUT@', '--vn', '@BASENAME@', '-o', '@OUTPUT@'],
+  )
+endif
 
 shader_src = [
   'src/shaders/cs_composite_blit.comp',
