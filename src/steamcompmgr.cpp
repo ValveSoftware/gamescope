@@ -278,7 +278,7 @@ bool g_bPendingFade = false;
 #define GAME_PROP			"STEAM_GAME"
 #define STEAM_PROP			"STEAM_BIGPICTURE"
 #define OVERLAY_PROP		"STEAM_OVERLAY"
-#define EXTERNAL_OVERLAY_PROP		"STEAM_EXTERNAL_OVERLAY"
+#define EXTERNAL_OVERLAY_PROP		"GAMESCOPE_EXTERNAL_OVERLAY"
 #define GAMES_RUNNING_PROP 	"STEAM_GAMES_RUNNING"
 #define SCREEN_SCALE_PROP	"STEAM_SCREEN_SCALE"
 #define SCREEN_MAGNIFICATION_PROP	"STEAM_SCREEN_MAGNIFICATION"
@@ -1542,7 +1542,7 @@ paint_all(Display *dpy, MouseCursor *cursor)
 	if (externalOverlay){
 		if (externalOverlay->opacity)
 		{
-			paint_window(dpy, externalOverlay, &composite, &pipeline, false, cursor);
+			paint_window(dpy, externalOverlay, externalOverlay, &composite, &pipeline, false, cursor);
 
 			if ( externalOverlay->id == currentInputFocusWindow )
 				touchInputFocusLayer = savedLayer;
