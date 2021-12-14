@@ -2587,6 +2587,7 @@ add_win(Display *dpy, Window id, Window prev, unsigned long sequence)
 		new_win->damage = None;
 	else
 	{
+		set_ignore(dpy, NextRequest(dpy));
 		new_win->damage = XDamageCreate(dpy, id, XDamageReportRawRectangles);
 	}
 	new_win->opacity = OPAQUE;
@@ -2841,8 +2842,14 @@ damage_win(Display *dpy, XDamageNotifyEvent *de)
 		w->damage_sequence > focus->damage_sequence)
 		focusDirty = true;
 
+	// Josh: This will sometimes cause a BadDamage error.
+	// I looked around at different compositors to see what
+	// they do here and they just seem to ignore it.
 	if (w->damage)
+	{
+		set_ignore(dpy, NextRequest(dpy));
 		XDamageSubtract(dpy, w->damage, None, None);
+	}
 
 	gpuvis_trace_printf( "damage_win win %lx appID %u", w->id, w->appID );
 }
