@@ -4262,6 +4262,20 @@ steamcompmgr_main(int argc, char **argv)
 		vblank = false;
 	}
 
+	// Clean up any commits.
+
+	for ( win *w = list; w; w = w->next )
+	{
+		for ( commit_t& commit : w->commit_queue )
+			release_commit( commit );
+	}
+
+	if ( g_HeldCommits[ HELD_COMMIT_BASE ].done )
+		release_commit( g_HeldCommits[ HELD_COMMIT_BASE ] );
+
+	if ( g_HeldCommits[ HELD_COMMIT_FADE ].done )
+		release_commit( g_HeldCommits[ HELD_COMMIT_FADE ] );
+
 	imageWaitThreadRun = false;
 	waitListSem.signal();
 
