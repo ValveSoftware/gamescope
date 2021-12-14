@@ -2777,6 +2777,10 @@ finish_destroy_win(Display *dpy, Window id, bool gone)
 				w->damage = None;
 			}
 
+			// release all commits now we are closed.
+			for ( commit_t& commit : w->commit_queue )
+				release_commit( commit );
+
 			wlserver_lock();
 			wlserver_surface_finish( &w->surface );
 			wlserver_unlock();
