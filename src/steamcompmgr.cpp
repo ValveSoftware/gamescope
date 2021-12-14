@@ -35,6 +35,7 @@
 #include <atomic>
 #include <vector>
 #include <algorithm>
+#include <array>
 #include <iostream>
 #include <fstream>
 #include <string>
