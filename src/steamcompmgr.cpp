@@ -2357,6 +2357,8 @@ map_win(Display *dpy, Window id, unsigned long sequence)
 	XSelectInput(dpy, id, PropertyChangeMask | SubstructureNotifyMask |
 		PointerMotionMask | LeaveWindowMask | FocusChangeMask);
 
+	XFlush(dpy);
+
 	/* This needs to be here since we don't get PropertyNotify when unmapped */
 	w->opacity = get_prop(dpy, w->id, opacityAtom, OPAQUE);
 
