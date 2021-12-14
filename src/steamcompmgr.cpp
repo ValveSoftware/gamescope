@@ -632,6 +632,10 @@ static win * find_win( struct wlr_surface *surf )
 	return nullptr;
 }
 
+#ifdef COMMIT_REF_DEBUG
+static int buffer_refs = 0;
+#endif
+
 static void
 destroy_buffer( struct wl_listener *listener, void * )
 {
@@ -649,6 +653,10 @@ destroy_buffer( struct wl_listener *listener, void * )
 	}
 
 	wl_list_remove( &entry->listener.link );
+
+#ifdef COMMIT_REF_DEBUG
+	fprintf(stderr, "destroy_buffer - refs: %d\n", --buffer_refs);
+#endif
 
 	/* Has to be the last thing we do as this deletes *entry. */
 	wlr_buffer_map.erase( wlr_buffer_map.find( entry->buf ) );
@@ -703,6 +711,10 @@ import_commit ( struct wlr_buffer *buf, commit_t &commit )
 
 		return true;
 	}
+
+#ifdef COMMIT_REF_DEBUG
+	fprintf(stderr, "import_commit - refs %d\n", ++buffer_refs);
+#endif
 
 	wlr_buffer_map_entry& entry = wlr_buffer_map[buf];
 	/* [1]
