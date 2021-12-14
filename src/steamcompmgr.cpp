@@ -56,6 +56,8 @@
 #include <getopt.h>
 #include <spawn.h>
 #include <signal.h>
+#include <linux/input-event-codes.h>
+
 
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
@@ -81,7 +83,9 @@
 #endif
 
 #define STB_IMAGE_IMPLEMENTATION
+#define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb_image.h>
+#include <stb_image_write.h>
 
 #define GPUVIS_TRACE_IMPLEMENTATION
 #include "gpuvis_trace_utils.h"
@@ -105,8 +109,8 @@ struct commit_t
 std::mutex listCommitsDoneLock;
 std::vector< uint64_t > listCommitsDone;
 
-typedef struct _win {
-	struct _win		*next;
+struct win {
+	struct win		*next;
 	Window		id;
 	XWindowAttributes	a;
 	int			mode;
@@ -144,7 +148,7 @@ typedef struct _win {
 	struct wlserver_surface surface;
 
 	std::vector< commit_t > commit_queue;
-} win;
+};
 
 static win		*list;
 static int		scr;
@@ -171,6 +175,8 @@ static Window 	currentKeyboardFocusWindow;
 static Window	currentOverlayWindow;
 static Window	currentExternalOverlayWindow;
 static Window	currentNotificationWindow;
+static Window	currentOverrideWindow;
+static Window   currentFadeWindow;
 
 bool hasFocusWindow;
 
@@ -192,6 +198,9 @@ float			focusedWindowScaleY = 1.0f;
 float			focusedWindowOffsetX = 0.0f;
 float			focusedWindowOffsetY = 0.0f;
 
+uint32_t		inputCounter;
+uint32_t		lastPublishedInputCounter;
+
 bool			focusDirty = false;
 bool			hasRepaint = false;
 
@@ -201,14 +210,12 @@ unsigned int	cursorHideTime = 10'000;
 
 bool			gotXError = false;
 
-win				fadeOutWindow;
-bool			fadeOutWindowGone;
-unsigned int	fadeOutStartTime;
+unsigned int	fadeOutStartTime = 0;
+
+unsigned int 	g_FadeOutDuration = 0;
 
 extern float g_flMaxWindowScale;
 extern bool g_bIntegerScale;
-
-#define			FADE_OUT_DURATION 200
 
 /* find these once and be done with it */
 static Atom		steamAtom;
@@ -253,6 +260,18 @@ static Atom		gamescopeFocusedWindowAtom;
 static Atom		gamescopeFocusedAppAtom;
 static Atom		gamescopeCtrlAppIDAtom;
 static Atom		gamescopeCtrlWindowAtom;
+static Atom		gamescopeInputCounterAtom;
+
+enum HeldCommitTypes_t
+{
+	HELD_COMMIT_BASE,
+	HELD_COMMIT_FADE,
+
+	HELD_COMMIT_COUNT,
+};
+
+std::array<commit_t, HELD_COMMIT_COUNT> g_HeldCommits;
+bool g_bPendingFade = false;
 
 /* opacity property name; sometime soon I'll write up an EWMH spec for it */
 #define OPACITY_PROP		"_NET_WM_WINDOW_OPACITY"
@@ -295,11 +314,42 @@ static bool		useXRes = true;
 std::mutex wayland_commit_lock;
 std::vector<ResListEntry_t> wayland_commit_queue;
 
+struct wlr_buffer_map_entry {
+	struct wl_listener listener;
+	struct wlr_buffer *buf;
+	VulkanTexture_t vulkanTex;
+	uint32_t fb_id;
+};
+
+static std::mutex wlr_buffer_map_lock;
+static std::unordered_map<struct wlr_buffer*, wlr_buffer_map_entry> wlr_buffer_map;
+
 static std::atomic< bool > g_bTakeScreenshot{false};
 
 static int g_nudgePipe[2] = {-1, -1};
 
 static LogScope xwm_log("xwm");
+
+// Right now there's a suuuper duper rare bug where if we change the zposes
+// from these values the overlay can render behind the base layer
+// or the override can render above the overlay which is very very wrong.
+// So for now, if we have both an override, just force composition
+// and keep these zpos values the same.
+#define WORKAROUND_ZPOS_BUG
+
+#ifdef WORKAROUND_ZPOS_BUG
+static const uint32_t g_zposBase = 0;
+static const uint32_t g_zposOverride = 0;
+static const uint32_t g_zposOverlay = 1;
+static const uint32_t g_zposExternalOverlay = 2;
+static const uint32_t g_zposCursor = 3;
+#else
+static const uint32_t g_zposBase = 0;
+static const uint32_t g_zposOverride = 1;
+static const uint32_t g_zposOverlay = 2;
+static const uint32_t g_zposExternalOverlay = 3;
+static const uint32_t g_zposCursor = 4;
+#endif
 
 // poor man's semaphore
 class sem
@@ -336,6 +386,8 @@ bool imageWaitThreadRun = true;
 
 void imageWaitThreadMain( void )
 {
+	pthread_setname_np( pthread_self(), "gamescope-img" );
+
 wait:
 	waitListSem.wait();
 
@@ -398,6 +450,7 @@ bool statsThreadRun;
 
 void statsThreadMain( void )
 {
+	pthread_setname_np( pthread_self(), "gamescope-stats" );
 	signal(SIGPIPE, SIG_IGN);
 
 	while ( statsPipeFD == -1 )
@@ -586,29 +639,88 @@ static win * find_win( struct wlr_surface *surf )
 }
 
 static void
+destroy_buffer( struct wl_listener *listener, void * )
+{
+	std::lock_guard<std::mutex> lock( wlr_buffer_map_lock );
+	wlr_buffer_map_entry *entry = wl_container_of( listener, entry, listener );
+
+	if ( entry->vulkanTex != 0 )
+	{
+		vulkan_free_texture( entry->vulkanTex );
+	}
+
+	if ( entry->fb_id != 0 )
+	{
+		drm_drop_fbid( &g_DRM, entry->fb_id );
+	}
+
+	wl_list_remove( &entry->listener.link );
+
+	/* Has to be the last thing we do as this deletes *entry. */
+	wlr_buffer_map.erase( wlr_buffer_map.find( entry->buf ) );
+}
+
+static void
+ref_commit( commit_t &commit )
+{
+	vulkan_ref_commit( commit.vulkanTex );
+}
+
+static void
 release_commit( commit_t &commit )
 {
-	if ( commit.fb_id != 0 )
+	if ( !vulkan_free_commit( commit.vulkanTex ) )
 	{
-		drm_drop_fbid( &g_DRM, commit.fb_id );
-		commit.fb_id = 0;
-	}
+		if ( commit.fb_id != 0 )
+		{
+			drm_unlock_fbid( &g_DRM, commit.fb_id );
+			commit.fb_id = 0;
+		}
 
-	if ( commit.vulkanTex != 0 )
-	{
-		vulkan_free_texture( commit.vulkanTex );
-		commit.vulkanTex = 0;
+		wlserver_lock();
+		wlr_buffer_unlock( commit.buf );
+		wlserver_unlock();
 	}
-
-	wlserver_lock();
-	wlr_buffer_unlock( commit.buf );
-	wlserver_unlock();
 }
 
 static bool
 import_commit ( struct wlr_buffer *buf, commit_t &commit )
 {
+	std::unique_lock<std::mutex> lock( wlr_buffer_map_lock );
+
 	commit.buf = buf;
+
+	auto it = wlr_buffer_map.find( buf );
+	if ( it != wlr_buffer_map.end() )
+	{
+		commit.vulkanTex = it->second.vulkanTex;
+		commit.fb_id = it->second.fb_id;
+
+		/* Unlock here to avoid deadlock [1],
+		 * drm_lock_fbid calls wlserver_lock.
+		 * Map is no longer used here and the element 
+		 * is no longer accessed. */
+		lock.unlock();
+
+		if (commit.fb_id)
+		{
+			drm_lock_fbid( &g_DRM, commit.fb_id );
+		}
+
+		return true;
+	}
+
+	wlr_buffer_map_entry& entry = wlr_buffer_map[buf];
+	/* [1]
+	 * Need to unlock the wlr_buffer_map_lock to avoid
+	 * a deadlock on destroy_buffer if it owns the wlserver_lock.
+	 * This is safe for a few reasons:
+	 * - 1: All accesses to wlr_buffer_map are done before this lock.
+	 * - 2: destroy_buffer cannot be called from this buffer before now
+	 *      as it only happens because of the signal added below.
+	 * - 3: "References to elements in the unordered_map container remain
+	 *		 valid in all cases, even after a rehash." */
+	lock.unlock();
 
 	commit.vulkanTex = vulkan_create_texture_from_wlr_buffer( buf );
 	assert( commit.vulkanTex != 0 );
@@ -617,11 +729,25 @@ import_commit ( struct wlr_buffer *buf, commit_t &commit )
 	if ( BIsNested() == false && wlr_buffer_get_dmabuf( buf, &dmabuf ) )
 	{
 		commit.fb_id = drm_fbid_from_dmabuf( &g_DRM, buf, &dmabuf );
+
+		if ( commit.fb_id )
+		{
+			drm_lock_fbid( &g_DRM, commit.fb_id );
+		}
 	}
 	else
 	{
 		commit.fb_id = 0;
 	}
+
+	entry.listener.notify = destroy_buffer;
+	entry.buf = buf;
+	entry.vulkanTex = commit.vulkanTex;
+	entry.fb_id = commit.fb_id;
+
+	wlserver_lock();
+	wl_signal_add( &buf->events.destroy, &entry.listener );
+	wlserver_unlock();
 
 	return true;
 }
@@ -730,7 +856,7 @@ void MouseCursor::setDirty()
 	m_dirty = true;
 }
 
-bool MouseCursor::setCursorImage(char *data, int w, int h)
+bool MouseCursor::setCursorImage(char *data, int w, int h, int hx, int hy)
 {
 	XRenderPictFormat *pictformat;
 	Picture picture;
@@ -778,7 +904,7 @@ bool MouseCursor::setCursorImage(char *data, int w, int h)
 		goto error_picture;
 	}
 
-	if (!(cursor = XRenderCreateCursor(m_display, picture, 0, 0)))
+	if (!(cursor = XRenderCreateCursor(m_display, picture, hx, hy)))
 	{
 		xwm_log.errorf("Failed to create cursor");
 		goto error_cursor;
@@ -834,7 +960,8 @@ void MouseCursor::constrainPosition()
 	int rootX, rootY;
 	queryGlobalPosition(rootX, rootY);
 
-	if (rootX >= window->a.width || rootY >= window->a.height) {
+	if (rootX - window->a.x >= window->a.width || rootY - window->a.y >= window->a.height ||
+		rootX - window->a.x < 0 || rootY - window->a.y < 0 ) {
 		warp(window->a.width / 2, window->a.height / 2);
 	}
 }
@@ -1018,7 +1145,7 @@ void MouseCursor::paint(win *window, struct Composite_t *pComposite,
 	pPipeline->layerBindings[ curLayer ].surfaceWidth = m_width;
 	pPipeline->layerBindings[ curLayer ].surfaceHeight = m_height;
 
-	pPipeline->layerBindings[ curLayer ].zpos = 3; // cursor, on top of both bottom layers
+	pPipeline->layerBindings[ curLayer ].zpos = g_zposCursor; // cursor, on top of both bottom layers
 
 	pPipeline->layerBindings[ curLayer ].tex = m_texture;
 	pPipeline->layerBindings[ curLayer ].fbid = BIsNested() ? 0 :
@@ -1029,22 +1156,73 @@ void MouseCursor::paint(win *window, struct Composite_t *pComposite,
 	pComposite->nLayerCount += 1;
 }
 
-static void
-paint_window(Display *dpy, win *w, struct Composite_t *pComposite,
-			  struct VulkanPipeline_t *pPipeline, bool notificationMode, MouseCursor *cursor)
+struct BaseLayerInfo_t
+{
+	float scale[2];
+	float offset[2];
+	float opacity;
+};
+
+std::array< BaseLayerInfo_t, HELD_COMMIT_COUNT > g_CachedPlanes = {};
+
+static bool
+paint_cached_base_layer(const commit_t& commit, const BaseLayerInfo_t& base, struct Composite_t *pComposite, struct VulkanPipeline_t *pPipeline, float flOpacityScale)
+{
+	if (!commit.done)
+		return false;
+	int curLayer = pComposite->nLayerCount;
+
+	pComposite->data.vScale[ curLayer ].x = base.scale[0];
+	pComposite->data.vScale[ curLayer ].y = base.scale[1];
+	pComposite->data.vOffset[ curLayer ].x = base.offset[0];
+	pComposite->data.vOffset[ curLayer ].y = base.offset[1];
+	pComposite->data.flOpacity[ curLayer ] = base.opacity * flOpacityScale;
+
+	pPipeline->layerBindings[ curLayer ].tex = commit.vulkanTex;
+	pPipeline->layerBindings[ curLayer ].fbid = commit.fb_id;
+	pPipeline->layerBindings[ curLayer ].bFilter = true;
+
+	pComposite->nLayerCount++;
+
+	return true;
+}
+
+static bool
+paint_window(Display *dpy, win *w, win *scaleW, struct Composite_t *pComposite,
+			  struct VulkanPipeline_t *pPipeline, bool notificationMode, MouseCursor *cursor, bool bBasePlane = false, float flOpacityScale = 1.0f, bool bFadeTarget = false)
 {
 	uint32_t sourceWidth, sourceHeight;
 	int drawXOffset = 0, drawYOffset = 0;
 	float currentScaleRatio = 1.0;
 	commit_t lastCommit = {};
-	bool validContents = get_window_last_done_commit( w, lastCommit );
+	bool validContents = w ? get_window_last_done_commit( w, lastCommit ) : false;
+
+	if ( bBasePlane )
+	{
+		if ( !validContents )
+		{
+			// If we're the base plane and have no valid contents
+			// pick up that buffer we've been holding onto if we have one.
+			if ( g_HeldCommits[ HELD_COMMIT_BASE ].done )
+				return paint_cached_base_layer( g_HeldCommits[ HELD_COMMIT_BASE ], g_CachedPlanes[ HELD_COMMIT_BASE ], pComposite, pPipeline, flOpacityScale );
+		}
+		else
+		{
+			if ( g_bPendingFade )
+			{
+				fadeOutStartTime = get_time_in_milliseconds();
+				g_bPendingFade = false;
+			}
+		}
+	}
 
 	if (!w)
-		return;
+		return false;
 
 	// Don't add a layer at all if it's an overlay without contents
+
 	if ((w->isOverlay || w->isExternalOverlay) && !validContents)
-		return;
+		return false;
 
 	// Base plane will stay as tex=0 if we don't have contents yet, which will
 	// make us fall back to compositing and use the Vulkan null texture
@@ -1052,7 +1230,7 @@ paint_window(Display *dpy, win *w, struct Composite_t *pComposite,
 	win *mainOverlayWindow = find_win(dpy, currentOverlayWindow);
 
 	if (notificationMode && !mainOverlayWindow)
-		return;
+		return false;
 
 	if (notificationMode)
 	{
@@ -1061,8 +1239,8 @@ paint_window(Display *dpy, win *w, struct Composite_t *pComposite,
 	}
 	else
 	{
-		sourceWidth = w->a.width;
-		sourceHeight = w->a.height;
+		sourceWidth = scaleW->a.width;
+		sourceHeight = scaleW->a.height;
 	}
 
 	if (sourceWidth != currentOutputWidth || sourceHeight != currentOutputHeight || globalScaleRatio != 1.0f)
@@ -1079,6 +1257,12 @@ paint_window(Display *dpy, win *w, struct Composite_t *pComposite,
 		drawXOffset = ((int)currentOutputWidth - (int)sourceWidth * currentScaleRatio) / 2.0f;
 		drawYOffset = ((int)currentOutputHeight - (int)sourceHeight * currentScaleRatio) / 2.0f;
 
+		if (w != scaleW)
+		{
+			drawXOffset += w->a.x * currentScaleRatio;
+			drawYOffset += w->a.y * currentScaleRatio;
+		}
+
 		if ( zoomScaleRatio != 1.0 )
 		{
 			drawXOffset += (((int)sourceWidth / 2) - cursor->x()) * currentScaleRatio;
@@ -1088,12 +1272,19 @@ paint_window(Display *dpy, win *w, struct Composite_t *pComposite,
 
 	int curLayer = pComposite->nLayerCount;
 
-	pComposite->data.flOpacity[ curLayer ] = (w->isOverlay || w->isExternalOverlay) ? w->opacity / (float)OPAQUE : 1.0f;
+	pComposite->data.flOpacity[ curLayer ] = ( (w->isOverlay || w->isExternalOverlay) ? w->opacity / (float)OPAQUE : 1.0f ) * flOpacityScale;
 
 	pComposite->data.vScale[ curLayer ].x = 1.0 / currentScaleRatio;
 	pComposite->data.vScale[ curLayer ].y = 1.0 / currentScaleRatio;
 
-	if (notificationMode)
+	if ( w != scaleW )
+	{
+		pComposite->data.vOffset[ curLayer ].x = -drawXOffset;
+		pComposite->data.vOffset[ curLayer ].y = -drawYOffset;
+
+		pComposite->data.flBorderAlpha[ curLayer ] = 0.0f;
+	}
+	else if (notificationMode)
 	{
 		int xOffset = 0, yOffset = 0;
 
@@ -1122,15 +1313,20 @@ paint_window(Display *dpy, win *w, struct Composite_t *pComposite,
 	pPipeline->layerBindings[ curLayer ].surfaceWidth = w->a.width;
 	pPipeline->layerBindings[ curLayer ].surfaceHeight = w->a.height;
 
-	pPipeline->layerBindings[ curLayer ].zpos = 0;
+	pPipeline->layerBindings[ curLayer ].zpos = g_zposBase;
+
+	if ( w != scaleW )
+	{
+		pPipeline->layerBindings[ curLayer ].zpos = g_zposOverride;
+	}
 
 	if ( w->isOverlay || w->isSteamStreamingClient )
 	{
-		pPipeline->layerBindings[ curLayer ].zpos = 2;
+		pPipeline->layerBindings[ curLayer ].zpos = g_zposOverlay;
 	}
 	if ( w->isExternalOverlay )
 	{
-		pPipeline->layerBindings[ curLayer ].zpos = 1;
+		pPipeline->layerBindings[ curLayer ].zpos = g_zposExternalOverlay;
 	}
 
 	pPipeline->layerBindings[ curLayer ].tex = lastCommit.vulkanTex;
@@ -1138,7 +1334,23 @@ paint_window(Display *dpy, win *w, struct Composite_t *pComposite,
 
 	pPipeline->layerBindings[ curLayer ].bFilter = (w->isOverlay || w->isExternalOverlay) ? true : g_bFilterGameWindow;
 
+	if ( bBasePlane )
+	{
+		BaseLayerInfo_t basePlane = {};
+		basePlane.scale[0] = pComposite->data.vScale[ curLayer ].x;
+		basePlane.scale[1] = pComposite->data.vScale[ curLayer ].y;
+		basePlane.offset[0] = pComposite->data.vOffset[ curLayer ].x;
+		basePlane.offset[1] = pComposite->data.vOffset[ curLayer ].y;
+		basePlane.opacity = pComposite->data.flOpacity[ curLayer ];
+
+		g_CachedPlanes[ HELD_COMMIT_BASE ] = basePlane;
+		if ( !bFadeTarget )
+			g_CachedPlanes[ HELD_COMMIT_FADE ] = basePlane;
+	}
+
 	pComposite->nLayerCount += 1;
+
+	return validContents;
 }
 
 static void
@@ -1202,6 +1414,13 @@ paint_debug_info(Display *dpy)
 	}
 }
 
+static bool g_bFirstFrame = true;
+
+static bool is_fading_out()
+{
+	return fadeOutStartTime || g_bPendingFade;
+}
+
 static void
 paint_all(Display *dpy, MouseCursor *cursor)
 {
@@ -1213,15 +1432,17 @@ paint_all(Display *dpy, MouseCursor *cursor)
 	win	*overlay;
 	win *externalOverlay;
 	win	*notification;
+	win	*override;
 	win *input;
 
 	unsigned int currentTime = get_time_in_milliseconds();
-	bool fadingOut = ((currentTime - fadeOutStartTime) < FADE_OUT_DURATION && fadeOutWindow.id != None);
+	bool fadingOut = ( currentTime - fadeOutStartTime < g_FadeOutDuration || g_bPendingFade ) && g_HeldCommits[HELD_COMMIT_FADE].done;
 
 	w = find_win(dpy, currentFocusWindow);
 	overlay = find_win(dpy, currentOverlayWindow);
 	externalOverlay = find_win(dpy, currentExternalOverlayWindow);
 	notification = find_win(dpy, currentNotificationWindow);
+	override = find_win(dpy, currentOverrideWindow);
 	input = find_win(dpy, currentInputFocusWindow);
 
 	if ( !w )
@@ -1258,61 +1479,62 @@ paint_all(Display *dpy, MouseCursor *cursor)
 
 	struct Composite_t composite = {};
 	struct VulkanPipeline_t pipeline = {};
+	bool bValidContents = false;
 
-	// Fading out from previous window?
-	if (fadingOut)
+	// If the window we'd paint as the base layer is the streaming client,
+	// find the video underlay and put it up first in the scenegraph
+	if ( w->isSteamStreamingClient == true )
 	{
-		double newOpacity = ((currentTime - fadeOutStartTime) / (double)FADE_OUT_DURATION);
+		win *videow = NULL;
 
-		// Draw it in the background
-		fadeOutWindow.opacity = (1.0 - newOpacity) * OPAQUE;
-		paint_window(dpy, &fadeOutWindow, &composite, &pipeline, false, cursor);
+		for ( videow = list; videow; videow = videow->next )
+		{
+			if ( videow->isSteamStreamingClientVideo == true )
+			{
+				// TODO: also check matching AppID so we can have several pairs
+				bValidContents |= paint_window(dpy, videow, videow, &composite, &pipeline, false, cursor);
+				break;
+			}
+		}
 
-		// Blend new window on top with linear crossfade
-		w->opacity = newOpacity * OPAQUE;
-
-		paint_window(dpy, w, &composite, &pipeline, false, cursor);
+		// paint UI unless it's fully hidden, which it communicates to us through opacity=0
+		if ( w->opacity > TRANSLUCENT )
+		{
+			bValidContents |= paint_window(dpy, w, w, &composite, &pipeline, false, cursor);
+		}
 	}
 	else
 	{
-		// If the window we'd paint as the base layer is the streaming client,
-		// find the video underlay and put it up first in the scenegraph
-		if ( w->isSteamStreamingClient == true )
+		if ( fadingOut )
 		{
-			win *videow = NULL;
-
-			for ( videow = list; videow; videow = videow->next )
-			{
-				if ( videow->isSteamStreamingClientVideo == true )
-				{
-					// TODO: also check matching AppID so we can have several pairs
-					paint_window(dpy, videow, &composite, &pipeline, false, cursor);
-					break;
-				}
-			}
-
-			// paint UI unless it's fully hidden, which it communicates to us through opacity=0
-			if ( w->opacity > TRANSLUCENT )
-			{
-				paint_window(dpy, w, &composite, &pipeline, false, cursor);
-			}
+			float opacityScale = g_bPendingFade
+				? 0.0f
+				: ((currentTime - fadeOutStartTime) / (float)g_FadeOutDuration);
+	
+			bValidContents |= paint_cached_base_layer(g_HeldCommits[HELD_COMMIT_FADE], g_CachedPlanes[HELD_COMMIT_FADE], &composite, &pipeline, 1.0f - opacityScale);
+			bValidContents |= paint_window(dpy, w, w, &composite, &pipeline, false, cursor, true, opacityScale, true);
 		}
 		else
 		{
-			// Just draw focused window as normal, be it Steam or the game
-			paint_window(dpy, w, &composite, &pipeline, false, cursor);
-		}
-
-		if (fadeOutWindow.id) {
-
-			if (fadeOutWindowGone)
 			{
-				// This is the only reference to these resources now.
-				fadeOutWindowGone = false;
+				if ( g_HeldCommits[HELD_COMMIT_FADE].done )
+				{
+					release_commit(g_HeldCommits[HELD_COMMIT_FADE]);
+					g_HeldCommits[HELD_COMMIT_FADE] = commit_t{};
+					g_bPendingFade = false;
+					fadeOutStartTime = 0;
+					currentFadeWindow = None;
+				}
 			}
-			fadeOutWindow.id = None;
+			// Just draw focused window as normal, be it Steam or the game
+			bValidContents |= paint_window(dpy, w, w, &composite, &pipeline, false, cursor, true);
 		}
 	}
+
+	// TODO: We want to paint this at the same scale as the normal window and probably
+	// with an offset.
+	if (override)
+		bValidContents |= paint_window(dpy, override, w, &composite, &pipeline, false, cursor);
 
 	int touchInputFocusLayer = composite.nLayerCount - 1;
 	int savedLayer = composite.nLayerCount - 1;
@@ -1331,7 +1553,7 @@ paint_all(Display *dpy, MouseCursor *cursor)
 	{
 		if (overlay->opacity)
 		{
-			paint_window(dpy, overlay, &composite, &pipeline, false, cursor);
+			bValidContents |= paint_window(dpy, overlay, overlay, &composite, &pipeline, false, cursor);
 
 			if ( overlay->id == currentInputFocusWindow )
 				touchInputFocusLayer = savedLayer;
@@ -1350,22 +1572,33 @@ paint_all(Display *dpy, MouseCursor *cursor)
 	{
 		if (notification->opacity)
 		{
-			paint_window(dpy, notification, &composite, &pipeline, true, cursor);
+			bValidContents |= paint_window(dpy, notification, notification, &composite, &pipeline, true, cursor);
 		}
 	}
 
 	// Draw cursor if we need to
 	if (input) {
-		cursor->paint(input, &composite, &pipeline );
+		cursor->paint(override == input ? w : input, &composite, &pipeline);
 	}
 
 	if (drawDebugInfo)
 		paint_debug_info(dpy);
 
-	if ( BIsNested() == false && g_DRM.paused == true )
+	// If this is our first frame,and we have no valid contents, then toss it.
+	// We don't want to do this on any future frames as we can end up in the following scenario:
+	// -> Game crashes
+	// -> Stuck on the last frame of the game
+	// -> User brings up overlay
+	// -> User closes overlay
+	// -> Overlay is still visible :( but not interactable
+	bool bDiscard = g_bFirstFrame && !bValidContents;
+
+	if ( bDiscard || ( BIsNested() == false && g_DRM.paused == true ) )
 	{
 		return;
 	}
+
+	g_bFirstFrame = false;
 
 	bool bDoComposite = true;
 
@@ -1378,8 +1611,14 @@ paint_all(Display *dpy, MouseCursor *cursor)
 #endif
 
 	bool bCapture = takeScreenshot || pw_buffer != nullptr;
+	
+#ifdef WORKAROUND_ZPOS_BUG
+	const bool bOverrideCompositeHack = override != nullptr;
+#else
+	const bool bOverrideCompositeHack = false;
+#endif
 
-	if ( BIsNested() == false && alwaysComposite == false && bCapture == false )
+	if ( BIsNested() == false && alwaysComposite == false && bCapture == false && bOverrideCompositeHack == false )
 	{
 		int ret = drm_prepare( &g_DRM, &composite, &pipeline );
 		if ( ret == 0 )
@@ -1390,7 +1629,7 @@ paint_all(Display *dpy, MouseCursor *cursor)
 
 	if ( bDoComposite == true )
 	{
-		CVulkanTexture *pCaptureTexture = nullptr;
+		std::shared_ptr<CVulkanTexture> pCaptureTexture = nullptr;
 
 		bool bResult = vulkan_composite( &composite, &pipeline, bCapture ? &pCaptureTexture : nullptr );
 
@@ -1441,24 +1680,44 @@ paint_all(Display *dpy, MouseCursor *cursor)
 			assert( pCaptureTexture != nullptr );
 			assert( pCaptureTexture->m_format == VK_FORMAT_B8G8R8A8_UNORM );
 
-			uint32_t redMask = 0x00ff0000;
-			uint32_t greenMask = 0x0000ff00;
-			uint32_t blueMask = 0x000000ff;
-			uint32_t alphaMask = 0;
+			std::thread screenshotThread = std::thread([=] {
+				pthread_setname_np( pthread_self(), "gamescope-scrsh" );
 
-			SDL_Surface *pSDLSurface = SDL_CreateRGBSurfaceFrom( pCaptureTexture->m_pMappedData, currentOutputWidth, currentOutputHeight, 32, pCaptureTexture->m_unRowPitch, redMask, greenMask, blueMask, alphaMask );
+				const uint8_t *mappedData = reinterpret_cast<const uint8_t *>(pCaptureTexture->m_pMappedData);
 
-			static char pTimeBuffer[1024];
+				// Make our own copy of the image to remove the alpha channel.
+				auto imageData = std::vector<uint8_t>(currentOutputWidth * currentOutputHeight * 4);
+				const uint32_t comp = 4;
+				const uint32_t pitch = currentOutputWidth * comp;
+				for (uint32_t y = 0; y < currentOutputHeight; y++)
+				{
+					for (uint32_t x = 0; x < currentOutputWidth; x++)
+					{
+						// BGR...
+						imageData[y * pitch + x * comp + 0] = mappedData[y * pCaptureTexture->m_unRowPitch + x * comp + 2];
+						imageData[y * pitch + x * comp + 1] = mappedData[y * pCaptureTexture->m_unRowPitch + x * comp + 1];
+						imageData[y * pitch + x * comp + 2] = mappedData[y * pCaptureTexture->m_unRowPitch + x * comp + 0];
+						imageData[y * pitch + x * comp + 3] = 255;
+					}
+				}
 
-			time_t currentTime = time(0);
-			struct tm *localTime = localtime( &currentTime );
-			strftime( pTimeBuffer, sizeof( pTimeBuffer ), "/tmp/gamescope_%Y-%m-%d_%H-%M-%S.bmp", localTime );
+				char pTimeBuffer[1024];
+				time_t currentTime = time(0);
+				struct tm *localTime = localtime( &currentTime );
+				strftime( pTimeBuffer, sizeof( pTimeBuffer ), "/tmp/gamescope_%Y-%m-%d_%H-%M-%S.png", localTime );
 
-			SDL_SaveBMP( pSDLSurface, pTimeBuffer );
+				if ( stbi_write_png(pTimeBuffer, currentOutputWidth, currentOutputHeight, 4, imageData.data(), pitch) )
+				{
+					xwm_log.infof("Screenshot saved to %s", pTimeBuffer);
+				}
+				else
+				{
+					xwm_log.errorf( "Failed to save screenshot to %s", pTimeBuffer );
+				}
+			});
 
-			SDL_FreeSurface( pSDLSurface );
+			screenshotThread.detach();
 
-			xwm_log.infof("Screenshot saved to %s", pTimeBuffer);
 			takeScreenshot = false;
 		}
 
@@ -1466,22 +1725,9 @@ paint_all(Display *dpy, MouseCursor *cursor)
 		if ( pw_buffer != nullptr )
 		{
 			assert( pCaptureTexture != nullptr );
-			assert( pCaptureTexture->m_format == VK_FORMAT_B8G8R8A8_UNORM );
+			assert( pw_buffer->texture == nullptr );
 
-			if ( pw_buffer->video_info.size.width != currentOutputWidth || pw_buffer->video_info.size.height != currentOutputHeight )
-			{
-				// Push black frames until the PipeWire thread realizes the stream size has changed
-				memset( pw_buffer->data, 0, pw_buffer->stride * pw_buffer->video_info.size.height );
-			}
-			else
-			{
-				// TODO: avoid this memcpy by using multiple capture textures
-				int bpp = 4;
-				for ( unsigned int i = 0; i < currentOutputHeight; i++ )
-				{
-					memcpy( pw_buffer->data + i * pw_buffer->stride, (uint8_t *) pCaptureTexture->m_pMappedData + i * pCaptureTexture->m_unRowPitch, bpp * currentOutputWidth );
-				}
-			}
+			pw_buffer->texture = pCaptureTexture;
 
 			push_pipewire_buffer(pw_buffer);
 			// TODO: make sure the buffer isn't lost in one of the failure
@@ -1612,19 +1858,31 @@ is_focus_priority_greater( win *a, win *b )
 	return false;
 }
 
+static bool is_good_override_candidate( win *override, win* focus )
+{
+	// Some Chrome/Edge dropdowns (ie. FH5 xbox login) will automatically close themselves if you
+	// focus them while they are meant to be offscreen (-1,-1 and 1x1) so check that the
+	// override's position is on-screen.
+	return win_is_override_redirect(override) && override != focus && override->a.x > 0 && override->a.y > 0;
+} 
+
 static void
 determine_and_apply_focus(Display *dpy, MouseCursor *cursor)
 {
-	win *w, *focus = NULL;
+	win *w, *focus = NULL, *override_focus = NULL;
 	win *inputFocus = NULL;
 
 	gameFocused = false;
 
 	Window prevFocusWindow = currentFocusWindow;
+	Window prevOverlayWindow = currentOverlayWindow;
+	Window prevNotificationWindow = currentNotificationWindow;
+	Window prevOverrideWindow = currentOverrideWindow;
 	currentFocusWindow = None;
 	currentFocusWin = nullptr;
 	currentOverlayWindow = None;
 	currentNotificationWindow = None;
+	currentOverrideWindow = None;
 
 	unsigned int maxOpacity = 0;
 	std::vector< win* > vecPossibleFocusWindows;
@@ -1637,8 +1895,8 @@ determine_and_apply_focus(Display *dpy, MouseCursor *cursor)
 		}
 
 		if ( w->a.map_state == IsViewable && w->a.c_class == InputOutput && w->isOverlay == false &&
-		      w->isExternalOverlay == false && (w->opacity > TRANSLUCENT || 
-			  w->isSteamStreamingClient == true ) )
+			w->isExternalOverlay == false && ( win_has_game_id( w ) || w->isSteam || w->isSteamStreamingClient ) &&
+			 (w->opacity > TRANSLUCENT || w->isSteamStreamingClient == true ) )
 		{
 			vecPossibleFocusWindows.push_back( w );
 		}
@@ -1670,12 +1928,18 @@ determine_and_apply_focus(Display *dpy, MouseCursor *cursor)
 		}
 	}
 
+	if ( prevOverlayWindow != currentOverlayWindow ||
+	     prevNotificationWindow != currentNotificationWindow )
+	{
+		hasRepaint = true;
+	}
+
 	std::vector< unsigned long > focusable_appids;
 	std::vector< unsigned long > focusable_windows;
 
-	for ( unsigned long i = 0; i < vecPossibleFocusWindows.size(); i++ )
+	for ( win *focusable_window : vecPossibleFocusWindows )
 	{
-		unsigned int unAppID = vecPossibleFocusWindows[ i ]->appID;
+		unsigned int unAppID = focusable_window->appID;
 		if ( unAppID != 0 )
 		{
 			unsigned long j;
@@ -1693,9 +1957,9 @@ determine_and_apply_focus(Display *dpy, MouseCursor *cursor)
 		}
 
 		// list of [window, appid, pid] triplets
-		focusable_windows.push_back( vecPossibleFocusWindows[ i ]->id );
-		focusable_windows.push_back( vecPossibleFocusWindows[ i ]->appID );
-		focusable_windows.push_back( vecPossibleFocusWindows[ i ]->pid );
+		focusable_windows.push_back( focusable_window->id );
+		focusable_windows.push_back( focusable_window->appID );
+		focusable_windows.push_back( focusable_window->pid );
 	}
 
 	XChangeProperty( dpy, root, gamescopeFocusableAppsAtom, XA_CARDINAL, 32, PropModeReplace,
@@ -1711,23 +1975,23 @@ determine_and_apply_focus(Display *dpy, MouseCursor *cursor)
 	{
 		if ( focusControlWindow != None )
 		{
-			for ( unsigned long i = 0; i < vecPossibleFocusWindows.size(); i++ )
+			for ( win *focusable_window : vecPossibleFocusWindows )
 			{
-				if ( vecPossibleFocusWindows[ i ]->id == focusControlWindow )
+				if ( focusable_window->id == focusControlWindow )
 				{
-					focus = vecPossibleFocusWindows[ i ];
+					focus = focusable_window;
 					goto found;
 				}
 			}
 		}
 
-		for ( unsigned long i = 0; i < vecFocuscontrolAppIDs.size(); i++ )
+		for ( auto focusable_appid : vecFocuscontrolAppIDs )
 		{
-			for ( unsigned long j = 0; j < vecPossibleFocusWindows.size(); j++ )
+			for ( win *focusable_window : vecPossibleFocusWindows )
 			{
-				if ( vecPossibleFocusWindows[ j ]->appID == vecFocuscontrolAppIDs[ i ] )
+				if ( focusable_window->appID == focusable_appid )
 				{
-					focus = vecPossibleFocusWindows[ j ];
+					focus = focusable_window;
 					goto found;
 				}
 			}
@@ -1741,12 +2005,93 @@ found:
 		gameFocused = focus->appID != 0;
 	}
 
+	auto resolveTransientOverrides = [&]()
+	{
+		// Do some searches to find transient links to override redirects too.
+		while ( true )
+		{
+			bool bFoundTransient = false;
+
+			for ( win *candidate : vecPossibleFocusWindows )
+			{
+				if ( ( !override_focus || candidate != override_focus ) && candidate != focus &&
+					( ( !override_focus && candidate->transientFor == focus->id ) || ( override_focus && candidate->transientFor == override_focus->id ) ) &&
+					candidate->a.override_redirect )
+				{
+					bFoundTransient = true;
+					override_focus = candidate;
+					break;
+				}
+			}
+
+			// Hopefully we can't have transient cycles or we'll have to maintain a list of visited windows here
+			if ( bFoundTransient == false )
+				break;
+		}
+	};
+
+	if ( gameFocused )
+	{
+		// Do some searches through game windows to follow transient links if needed
+		while ( true )
+		{
+			bool bFoundTransient = false;
+
+			for ( win *candidate : vecPossibleFocusWindows )
+			{
+				if ( candidate != focus && candidate->transientFor == focus->id && !candidate->a.override_redirect )
+				{
+					bFoundTransient = true;
+					focus = candidate;
+					break;
+				}
+			}
+
+			// Hopefully we can't have transient cycles or we'll have to maintain a list of visited windows here
+			if ( bFoundTransient == false )
+				break;
+		}
+
+		resolveTransientOverrides();
+	}
+
+	if ( !override_focus )
+	{
+		if ( vecFocuscontrolAppIDs.size() > 0 && focus )
+		{
+			for ( win *override : vecPossibleFocusWindows )
+			{
+				if ( is_good_override_candidate(override, focus) && override->appID == focus->appID ) {
+					override_focus = override;
+					break;
+				}
+			}
+		}
+		else if ( vecPossibleFocusWindows.size() > 0 )
+		{
+			for ( win *override : vecPossibleFocusWindows )
+			{
+				if ( is_good_override_candidate(override, focus) ) {
+					override_focus = override;
+					break;
+				}
+			}
+		}
+	}
+
+	resolveTransientOverrides();
+
+	currentOverrideWindow = override_focus ? override_focus->id : None;
+
+	if ( currentOverrideWindow != prevOverrideWindow )
+		hasRepaint = true;
+
 	unsigned long focusedWindow = 0;
 	unsigned long focusedAppId = 0;
 
 	if ( inputFocus == NULL )
 	{
-		inputFocus = focus;
+		inputFocus = override_focus ? override_focus : focus;
 	}
 
 	if ( focus )
@@ -1766,47 +2111,33 @@ found:
 		return;
 	}
 
-	if ( gameFocused )
-	{
-		// Do some searches through game windows to follow transient links if needed
-		while ( true )
-		{
-			bool bFoundTransient = false;
-
-			for ( uint32_t i = 0; i < vecPossibleFocusWindows.size(); i++ )
-			{
-				win *candidate = vecPossibleFocusWindows[ i ];
-
-				if ( candidate != focus && candidate->transientFor == focus->id )
-				{
-					bFoundTransient = true;
-					focus = candidate;
-					break;
-				}
-			}
-
-			// Hopefully we can't have transient cycles or we'll have to maintain a list of visited windows here
-			if ( bFoundTransient == false )
-				break;
-		}
-	}
-
-// 	if (fadeOutWindow.id == None && currentFocusWindow != focus->id)
-// 	{
-// 		// Initiate fade out if switching focus
-// 		w = find_win(dpy, currentFocusWindow);
-//
-// 		if (w)
-// 		{
-// 			ensure_win_resources(dpy, w);
-// 			fadeOutWindow = *w;
-// 			fadeOutStartTime = get_time_in_milliseconds();
-// 		}
-// 	}
-
-// 	if (fadeOutWindow.id && currentFocusWindow != focus->id)
 	if ( prevFocusWindow != focus->id )
 	{
+		if ( g_FadeOutDuration != 0 && !g_bFirstFrame )
+		{
+			if ( !g_HeldCommits[ HELD_COMMIT_FADE ].done )
+			{
+				currentFadeWindow = prevFocusWindow;
+				ref_commit( g_HeldCommits[ HELD_COMMIT_BASE ] );
+				g_HeldCommits[ HELD_COMMIT_FADE ] = g_HeldCommits[ HELD_COMMIT_BASE ];
+				g_bPendingFade = true;
+			}
+			else
+			{
+				// If we end up fading back to what we were going to fade to, cancel the fade.
+				if ( currentFadeWindow != None && focus->id == currentFadeWindow )
+				{
+					release_commit( g_HeldCommits[ HELD_COMMIT_FADE ] );
+					g_HeldCommits[ HELD_COMMIT_FADE ] = commit_t{};
+					g_bPendingFade = false;
+					fadeOutStartTime = 0;
+					currentFadeWindow = None;
+				}
+			}
+		}
+
+		hasRepaint = true;
+
 		/* Some games (e.g. DOOM Eternal) don't react well to being put back as
 		* iconic, so never do that. Only take them out of iconic. */
 		uint32_t wmState[] = { ICCCM_NORMAL_STATE, None };
@@ -1839,14 +2170,20 @@ found:
 		}
 
 		if ( inputFocus->inputFocusMode )
-			keyboardFocusWin = focus;
+			keyboardFocusWin = override_focus ? override_focus : focus;
 
 		if ( inputFocus->surface.wlr != nullptr || keyboardFocusWin->surface.wlr != nullptr )
 		{
 			wlserver_lock();
 
 			if ( inputFocus->surface.wlr != nullptr )
+			{
+				// Instantly stop pressing left mouse before transitioning to a new window.
+				// for focus.
+				// Fixes dropdowns not working.
+				wlserver_mousebutton( BTN_LEFT, false, 0 );
 				wlserver_mousefocus( inputFocus->surface.wlr, cursor->x(), cursor->y() );
+			}
 
 			if ( keyboardFocusWin->surface.wlr != nullptr )
 				wlserver_keyboardfocus( keyboardFocusWin->surface.wlr );
@@ -1854,6 +2191,7 @@ found:
 			wlserver_unlock();
 		}
 
+		if ( !override_focus || override_focus != keyboardFocusWin )
 			XSetInputFocus(dpy, keyboardFocusWin->id, RevertToNone, CurrentTime);
 
 		currentInputFocusWindow = inputFocus->id;
@@ -2117,15 +2455,6 @@ static void
 finish_unmap_win(Display *dpy, win *w)
 {
 	// TODO clear done commits here?
-// 	if (fadeOutWindow.id != w->id)
-// 	{
-// 		teardown_win_resources( w );
-// 	}
-
-	if (fadeOutWindow.id == w->id)
-	{
-		fadeOutWindowGone = true;
-	}
 
 	/* don't care about properties anymore */
 	set_ignore(dpy, NextRequest(dpy));
@@ -2495,6 +2824,8 @@ destroy_win(Display *dpy, Window id, bool gone, bool fade)
 		currentFocusWindow = None;
 		currentFocusWin = nullptr;
 	}
+	if (currentFadeWindow == id && gone)
+		currentFadeWindow = None;
 	if (currentInputFocusWindow == id && gone)
 		currentInputFocusWindow = None;
 	if (currentOverlayWindow == id && gone)
@@ -2503,6 +2834,8 @@ destroy_win(Display *dpy, Window id, bool gone, bool fade)
 		currentExternalOverlayWindow = None;
 	if (currentNotificationWindow == id && gone)
 		currentNotificationWindow = None;
+	if (currentOverrideWindow == id && gone)
+		currentOverrideWindow = None;
 	if (currentKeyboardFocusWindow == id && gone)
 		currentKeyboardFocusWindow = None;
 	focusDirty = true;
@@ -3078,6 +3411,16 @@ void handle_done_commits( void )
 					// If this is the main plane, repaint
 					if ( w->id == currentFocusWindow )
 					{
+						if ( g_HeldCommits[ HELD_COMMIT_BASE ].done )
+							release_commit( g_HeldCommits[ HELD_COMMIT_BASE ] );
+					
+						ref_commit( w->commit_queue[ j ] );
+						g_HeldCommits[ HELD_COMMIT_BASE ] = w->commit_queue[ j ];
+						hasRepaint = true;
+					}
+
+					if ( w->id == currentOverrideWindow )
+					{
 						hasRepaint = true;
 					}
 
@@ -3165,6 +3508,7 @@ void check_new_wayland_res( void )
 			}
 
 			newCommit.commitID = ++maxCommmitID;
+			ref_commit( newCommit );
 			w->commit_queue.push_back( newCommit );
 		}
 
@@ -3272,6 +3616,8 @@ spawn_client( char **argv )
 	}
 
 	std::thread waitThread([]() {
+		pthread_setname_np( pthread_self(), "gamescope-wait" );
+
 		// Because we've set PR_SET_CHILD_SUBREAPER above, we'll get process
 		// status notifications for all of our child processes, even if our
 		// direct child exits. Wait until all have exited.
@@ -3506,7 +3852,7 @@ struct rgba_t
 };
 
 static bool
-load_mouse_cursor( MouseCursor *cursor, const char *path )
+load_mouse_cursor( MouseCursor *cursor, const char *path, int hx, int hy )
 {
 	int w, h, channels;
 	rgba_t *data = (rgba_t *) stbi_load(path, &w, &h, &channels, STBI_rgb_alpha);
@@ -3519,11 +3865,15 @@ load_mouse_cursor( MouseCursor *cursor, const char *path )
 	std::transform(data, data + w * h, data, [](rgba_t x) {
 		if (x.a == 0)
 			return rgba_t{};
-		return rgba_t{ x.b, x.g, x.r, x.a };
+		return rgba_t{
+			uint8_t((x.b * x.a) / 255),
+			uint8_t((x.g * x.a) / 255),
+			uint8_t((x.r * x.a) / 255),
+			x.a };
 	});
 
 	// Data is freed by XDestroyImage in setCursorImage.
-	return cursor->setCursorImage((char *)data, w, h);
+	return cursor->setCursorImage((char *)data, w, h, hx, hy);
 }
 
 enum event_type {
@@ -3534,6 +3884,8 @@ enum event_type {
 };
 
 const char* g_customCursorPath = nullptr;
+int g_customCursorHotspotX = 0;
+int g_customCursorHotspotY = 0;
 
 void
 steamcompmgr_main(int argc, char **argv)
@@ -3591,6 +3943,10 @@ steamcompmgr_main(int argc, char **argv)
 					debugEvents = true;
 				} else if (strcmp(opt_name, "cursor") == 0) {
 					g_customCursorPath = optarg;
+				} else if (strcmp(opt_name, "cursor-hotspot") == 0) {
+					sscanf(optarg, "%d,%d", &g_customCursorHotspotX, &g_customCursorHotspotY);
+				} else if (strcmp(opt_name, "fade-out-duration") == 0) {
+					g_FadeOutDuration = atoi(optarg);
 				}
 				break;
 			case '?':
@@ -3723,6 +4079,7 @@ steamcompmgr_main(int argc, char **argv)
 	gamescopeCtrlAppIDAtom = XInternAtom(dpy, "GAMESCOPECTRL_BASELAYER_APPID", false);
 	gamescopeCtrlWindowAtom = XInternAtom(dpy, "GAMESCOPECTRL_BASELAYER_WINDOW", false);
 	WMChangeStateAtom = XInternAtom(dpy, "WM_CHANGE_STATE", false);
+	gamescopeInputCounterAtom = XInternAtom(dpy, "GAMESCOPE_INPUT_COUNTER", false);
 
 	root_width = DisplayWidth(dpy, scr);
 	root_height = DisplayHeight(dpy, scr);
@@ -3763,7 +4120,7 @@ steamcompmgr_main(int argc, char **argv)
 	std::unique_ptr<MouseCursor> cursor(new MouseCursor(dpy));
 	if (g_customCursorPath)
 	{
-		if (!load_mouse_cursor(cursor.get(), g_customCursorPath))
+		if (!load_mouse_cursor(cursor.get(), g_customCursorPath, g_customCursorHotspotX, g_customCursorHotspotY))
 			xwm_log.errorf("Failed to load mouse cursor: %s", g_customCursorPath);
 	}
 
@@ -3840,6 +4197,14 @@ steamcompmgr_main(int argc, char **argv)
 			break;
 		}
 
+		if ( inputCounter != lastPublishedInputCounter )
+		{
+			XChangeProperty( dpy, root, gamescopeInputCounterAtom, XA_CARDINAL, 32, PropModeReplace,
+							 (unsigned char *)&inputCounter, 1 );
+
+			lastPublishedInputCounter = inputCounter;
+		}
+
 		if (focusDirty == true)
 		{
 			determine_and_apply_focus(dpy, cursor.get());
@@ -3887,12 +4252,19 @@ steamcompmgr_main(int argc, char **argv)
 
 		check_new_wayland_res();
 
-		if ( ( g_bTakeScreenshot == true || hasRepaint == true ) && vblank == true )
+		if ( ( g_bTakeScreenshot == true || hasRepaint == true || is_fading_out() ) && vblank == true )
 		{
 			paint_all(dpy, cursor.get());
 
 			// Consumed the need to repaint here
 			hasRepaint = false;
+
+			// If we're in the middle of a fade, pump an event into the loop to
+			// make sure we keep pushing frames even if the app isn't updating.
+			if ( is_fading_out() )
+			{
+				nudge_steamcompmgr();
+			}
 		}
 
 		// TODO: Look into making this _RAW
@@ -3900,13 +4272,6 @@ steamcompmgr_main(int argc, char **argv)
 		// all over so this may be problematic to just change.
 		struct timespec now;
 		clock_gettime(CLOCK_MONOTONIC, &now);
-
-		// If we're in the middle of a fade, pump an event into the loop to
-		// make sure we keep pushing frames even if the app isn't updating.
-		if (fadeOutWindow.id)
-		{
-			nudge_steamcompmgr();
-		}
 
 		cursor->updatePosition();
 

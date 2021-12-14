@@ -110,9 +110,18 @@ const struct wlr_surface_role xwayland_surface_role = {
 static void xwayland_ready(struct wl_listener *listener, void *data)
 {
 	bXwaylandReady = true;
+
+	if (!wlserver.wlr.xwayland_server->options.no_touch_pointer_emulation)
+		wl_log.infof("Xwayland doesn't support -noTouchPointerEmulation, touch events might get duplicated");
 }
 
 struct wl_listener xwayland_ready_listener = { .notify = xwayland_ready };
+
+static void bump_input_counter()
+{
+	inputCounter++;
+	nudge_steamcompmgr();
+}
 
 static void wlserver_handle_modifiers(struct wl_listener *listener, void *data)
 {
@@ -120,6 +129,8 @@ static void wlserver_handle_modifiers(struct wl_listener *listener, void *data)
 
 	wlr_seat_set_keyboard( wlserver.wlr.seat, keyboard->device );
 	wlr_seat_keyboard_notify_modifiers( wlserver.wlr.seat, &keyboard->device->keyboard->modifiers );
+
+	bump_input_counter();
 }
 
 static void wlserver_handle_key(struct wl_listener *listener, void *data)
@@ -138,6 +149,8 @@ static void wlserver_handle_key(struct wl_listener *listener, void *data)
 
 	wlr_seat_set_keyboard( wlserver.wlr.seat, keyboard->device);
 	wlr_seat_keyboard_notify_key( wlserver.wlr.seat, event->time_msec, event->keycode, event->state );
+
+	bump_input_counter();
 }
 
 static void wlserver_movecursor( int x, int y )
@@ -199,6 +212,8 @@ static void wlserver_handle_pointer_axis(struct wl_listener *listener, void *dat
 static void wlserver_handle_pointer_frame(struct wl_listener *listener, void *data)
 {
 	wlr_seat_pointer_notify_frame( wlserver.wlr.seat );
+
+	bump_input_counter();
 }
 
 static inline uint32_t steamcompmgr_button_to_wlserver_button( int button )
@@ -271,6 +286,8 @@ static void wlserver_handle_touch_down(struct wl_listener *listener, void *data)
 			}
 		}
 	}
+
+	bump_input_counter();
 }
 
 static void wlserver_handle_touch_up(struct wl_listener *listener, void *data)
@@ -308,6 +325,8 @@ static void wlserver_handle_touch_up(struct wl_listener *listener, void *data)
 			wlserver.touch_down[ event->touch_id ] = false;
 		}
 	}
+
+	bump_input_counter();
 }
 
 static void wlserver_handle_touch_motion(struct wl_listener *listener, void *data)
@@ -348,6 +367,8 @@ static void wlserver_handle_touch_motion(struct wl_listener *listener, void *dat
 			wlr_seat_pointer_notify_frame( wlserver.wlr.seat );
 		}
 	}
+
+	bump_input_counter();
 }
 
 static void wlserver_new_input(struct wl_listener *listener, void *data)
@@ -716,6 +737,7 @@ bool wlserver_init( void ) {
 	struct wlr_xwayland_server_options xwayland_options = {
 		.lazy = false,
 		.enable_wm = false,
+		.no_touch_pointer_emulation = true,
 	};
 	wlserver.wlr.xwayland_server = wlr_xwayland_server_create(wlserver.display, &xwayland_options);
 	wl_signal_add(&wlserver.wlr.xwayland_server->events.ready, &xwayland_ready_listener);
@@ -806,6 +828,8 @@ void wlserver_key( uint32_t key, bool press, uint32_t time )
 	assert( wlserver.wlr.virtual_keyboard_device != nullptr );
 	wlr_seat_set_keyboard( wlserver.wlr.seat, wlserver.wlr.virtual_keyboard_device );
 	wlr_seat_keyboard_notify_key( wlserver.wlr.seat, time, key, press );
+
+	bump_input_counter();
 }
 
 void wlserver_mousefocus( struct wlr_surface *wlrsurface, int x /* = 0 */, int y /* = 0 */ )

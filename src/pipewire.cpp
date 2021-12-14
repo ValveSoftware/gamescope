@@ -13,7 +13,7 @@
 #include "pipewire.hpp"
 #include "log.hpp"
 
-static LogScope log("pipewire");
+static LogScope pwr_log("pipewire");
 
 static struct pipewire_state pipewire_state = { .stream_node_id = SPA_ID_INVALID };
 static int nudgePipe[2] = { -1, -1 };
@@ -49,27 +49,12 @@ static void request_buffer(struct pipewire_state *state)
 {
 	struct pw_buffer *pw_buffer = pw_stream_dequeue_buffer(state->stream);
 	if (!pw_buffer) {
-		log.errorf("warning: out of buffers");
+		pwr_log.errorf("warning: out of buffers");
 		state->needs_buffer = true;
 		return;
 	}
 
-	struct spa_buffer *spa_buffer = pw_buffer->buffer;
 	struct pipewire_buffer *buffer = (struct pipewire_buffer *) pw_buffer->user_data;
-
-	struct spa_meta_header *header = (struct spa_meta_header *) spa_buffer_find_meta_data(spa_buffer, SPA_META_Header, sizeof(*header));
-	if (header != nullptr) {
-		header->pts = -1;
-		header->flags = 0;
-		header->seq = state->seq++;
-		header->dts_offset = 0;
-	}
-
-	struct spa_chunk *chunk = spa_buffer->datas[0].chunk;
-	chunk->offset = 0;
-	chunk->size = state->video_info.size.height * state->stride;
-	chunk->stride = state->stride;
-
 	buffer->copying = true;
 
 	// Past this exchange, the PipeWire thread shares the buffer with the
@@ -78,26 +63,59 @@ static void request_buffer(struct pipewire_state *state)
 	assert(old == nullptr);
 }
 
+static void copy_buffer(struct pipewire_state *state, struct pipewire_buffer *buffer)
+{
+	std::shared_ptr<CVulkanTexture> tex = std::move(buffer->texture);
+	assert(tex != nullptr);
+	assert(tex->m_format == VK_FORMAT_B8G8R8A8_UNORM);
+
+	struct pw_buffer *pw_buffer = buffer->buffer;
+	struct spa_buffer *spa_buffer = pw_buffer->buffer;
+
+	bool needs_reneg = buffer->video_info.size.width != tex->m_width || buffer->video_info.size.height != tex->m_height;
+
+	struct spa_meta_header *header = (struct spa_meta_header *) spa_buffer_find_meta_data(spa_buffer, SPA_META_Header, sizeof(*header));
+	if (header != nullptr) {
+		header->pts = -1;
+		header->flags = needs_reneg ? SPA_META_HEADER_FLAG_CORRUPTED : 0;
+		header->seq = state->seq++;
+		header->dts_offset = 0;
+	}
+
+	struct spa_chunk *chunk = spa_buffer->datas[0].chunk;
+	chunk->offset = 0;
+	chunk->size = state->video_info.size.height * state->stride;
+	chunk->stride = state->stride;
+	chunk->flags = needs_reneg ? SPA_CHUNK_FLAG_CORRUPTED : 0;
+
+	if (!needs_reneg) {
+		int bpp = 4;
+		for (uint32_t i = 0; i < tex->m_height; i++) {
+			memcpy(buffer->data + i * buffer->stride, (uint8_t *) tex->m_pMappedData + i * tex->m_unRowPitch, bpp * tex->m_width);
+		}
+	}
+}
+
 static void dispatch_nudge(struct pipewire_state *state, int fd)
 {
 	while (true) {
 		static char buf[1024];
 		if (read(fd, buf, sizeof(buf)) < 0) {
 			if (errno != EAGAIN)
-				log.errorf_errno("dispatch_nudge: read failed");
+				pwr_log.errorf_errno("dispatch_nudge: read failed");
 			break;
 		}
 	}
 
 	if (g_nOutputWidth != state->video_info.size.width || g_nOutputHeight != state->video_info.size.height) {
-		log.debugf("renegociating stream params (size: %dx%d)", g_nOutputWidth, g_nOutputHeight);
+		pwr_log.debugf("renegociating stream params (size: %dx%d)", g_nOutputWidth, g_nOutputHeight);
 
 		uint8_t buf[1024];
 		struct spa_pod_builder builder = SPA_POD_BUILDER_INIT(buf, sizeof(buf));
 		const struct spa_pod *format_param = get_format_param(&builder);
 		int ret = pw_stream_update_params(state->stream, &format_param, 1);
 		if (ret < 0) {
-			log.errorf("pw_stream_update_params failed");
+			pwr_log.errorf("pw_stream_update_params failed");
 		}
 	}
 
@@ -109,9 +127,11 @@ static void dispatch_nudge(struct pipewire_state *state, int fd)
 		buffer->copying = false;
 
 		if (buffer->buffer != nullptr) {
+			copy_buffer(state, buffer);
+
 			int ret = pw_stream_queue_buffer(state->stream, buffer->buffer);
 			if (ret < 0) {
-				log.errorf("pw_stream_queue_buffer failed");
+				pwr_log.errorf("pw_stream_queue_buffer failed");
 			}
 		} else {
 			destroy_buffer(buffer);
@@ -127,7 +147,7 @@ static void stream_handle_state_changed(void *data, enum pw_stream_state old_str
 {
 	struct pipewire_state *state = (struct pipewire_state *) data;
 
-	log.debugf("stream state changed: %s", pw_stream_state_as_string(stream_state));
+	pwr_log.debugf("stream state changed: %s", pw_stream_state_as_string(stream_state));
 
 	switch (stream_state) {
 	case PW_STREAM_STATE_PAUSED:
@@ -160,12 +180,12 @@ static void stream_handle_param_changed(void *data, uint32_t id, const struct sp
 	int bpp = 4;
 	int ret = spa_format_video_raw_parse(param, &state->video_info);
 	if (ret < 0) {
-		log.errorf("spa_format_video_raw_parse failed");
+		pwr_log.errorf("spa_format_video_raw_parse failed");
 		return;
 	}
 	state->stride = SPA_ROUND_UP_N(state->video_info.size.width * bpp, 4);
 
-	log.debugf("format changed (size: %dx%d)", state->video_info.size.width, state->video_info.size.height);
+	pwr_log.debugf("format changed (size: %dx%d)", state->video_info.size.width, state->video_info.size.height);
 
 	uint8_t buf[1024];
 	struct spa_pod_builder builder = SPA_POD_BUILDER_INIT(buf, sizeof(buf));
@@ -191,7 +211,7 @@ static void stream_handle_param_changed(void *data, uint32_t id, const struct sp
 
 	ret = pw_stream_update_params(state->stream, params, sizeof(params) / sizeof(params[0]));
 	if (ret != 0) {
-		log.errorf("pw_stream_update_params failed");
+		pwr_log.errorf("pw_stream_update_params failed");
 	}
 }
 
@@ -244,26 +264,26 @@ static void stream_handle_add_buffer(void *user_data, struct pw_buffer *pw_buffe
 	struct spa_data *spa_data = &spa_buffer->datas[0];
 
 	if ((spa_data->type & (1 << SPA_DATA_MemFd)) == 0) {
-		log.errorf("unsupported data type");
+		pwr_log.errorf("unsupported data type");
 		return;
 	}
 
 	int fd = anonymous_shm_open();
 	if (fd < 0) {
-		log.errorf("failed to create shm file");
+		pwr_log.errorf("failed to create shm file");
 		return;
 	}
 
 	off_t size = state->stride * state->video_info.size.height;
 	if (ftruncate(fd, size) != 0) {
-		log.errorf_errno("ftruncate failed");
+		pwr_log.errorf_errno("ftruncate failed");
 		close(fd);
 		return;
 	}
 
 	void *data = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
 	if (data == MAP_FAILED) {
-		log.errorf_errno("mmap failed");
+		pwr_log.errorf_errno("mmap failed");
 		close(fd);
 		return;
 	}
@@ -313,6 +333,8 @@ enum event_type {
 
 static void run_pipewire(struct pipewire_state *state)
 {
+	pthread_setname_np( pthread_self(), "gamescope-pw" );
+
 	struct pollfd pollfds[] = {
 		[EVENT_PIPEWIRE] = {
 			.fd = pw_loop_get_fd(state->loop),
@@ -328,12 +350,12 @@ static void run_pipewire(struct pipewire_state *state)
 	while (state->running) {
 		int ret = poll(pollfds, EVENT_COUNT, -1);
 		if (ret < 0) {
-			log.errorf_errno("poll failed");
+			pwr_log.errorf_errno("poll failed");
 			break;
 		}
 
 		if (pollfds[EVENT_PIPEWIRE].revents & POLLHUP) {
-			log.errorf("lost connection to server");
+			pwr_log.errorf("lost connection to server");
 			break;
 		}
 
@@ -342,7 +364,7 @@ static void run_pipewire(struct pipewire_state *state)
 		if (pollfds[EVENT_PIPEWIRE].revents & POLLIN) {
 			ret = pw_loop_iterate(state->loop, -1);
 			if (ret < 0) {
-				log.errorf("pw_loop_iterate failed");
+				pwr_log.errorf("pw_loop_iterate failed");
 				break;
 			}
 		}
@@ -352,7 +374,7 @@ static void run_pipewire(struct pipewire_state *state)
 		}
 	}
 
-	log.infof("exiting");
+	pwr_log.infof("exiting");
 	pw_stream_destroy(state->stream);
 	pw_core_disconnect(state->core);
 	pw_context_destroy(state->context);
@@ -366,25 +388,25 @@ bool init_pipewire(void)
 	pw_init(nullptr, nullptr);
 
 	if (pipe2(nudgePipe, O_CLOEXEC | O_NONBLOCK) != 0) {
-		log.errorf_errno("pipe2 failed");
+		pwr_log.errorf_errno("pipe2 failed");
 		return false;
 	}
 
 	state->loop = pw_loop_new(nullptr);
 	if (!state->loop) {
-		log.errorf("pw_loop_new failed");
+		pwr_log.errorf("pw_loop_new failed");
 		return false;
 	}
 
 	state->context = pw_context_new(state->loop, nullptr, 0);
 	if (!state->context) {
-		log.errorf("pw_context_new failed");
+		pwr_log.errorf("pw_context_new failed");
 		return false;
 	}
 
 	state->core = pw_context_connect(state->context, nullptr, 0);
 	if (!state->core) {
-		log.errorf("pw_context_connect failed");
+		pwr_log.errorf("pw_context_connect failed");
 		return false;
 	}
 
@@ -393,7 +415,7 @@ bool init_pipewire(void)
 			PW_KEY_MEDIA_CLASS, "Video/Source",
 			nullptr));
 	if (!state->stream) {
-		log.errorf("pw_stream_new failed");
+		pwr_log.errorf("pw_stream_new failed");
 		return false;
 	}
 
@@ -407,19 +429,19 @@ bool init_pipewire(void)
 	enum pw_stream_flags flags = (enum pw_stream_flags)(PW_STREAM_FLAG_DRIVER | PW_STREAM_FLAG_ALLOC_BUFFERS);
 	int ret = pw_stream_connect(state->stream, PW_DIRECTION_OUTPUT, PW_ID_ANY, flags, &format_param, 1);
 	if (ret != 0) {
-		log.errorf("pw_stream_connect failed");
+		pwr_log.errorf("pw_stream_connect failed");
 		return false;
 	}
 
 	while (state->stream_node_id == SPA_ID_INVALID) {
 		int ret = pw_loop_iterate(state->loop, -1);
 		if (ret < 0) {
-			log.errorf("pw_loop_iterate failed");
+			pwr_log.errorf("pw_loop_iterate failed");
 			return false;
 		}
 	}
 
-	log.infof("stream available on node ID: %u", state->stream_node_id);
+	pwr_log.infof("stream available on node ID: %u", state->stream_node_id);
 
 	std::thread thread(run_pipewire, state);
 	thread.detach();
@@ -447,5 +469,5 @@ void push_pipewire_buffer(struct pipewire_buffer *buffer)
 void nudge_pipewire(void)
 {
 	if (write(nudgePipe[1], "\n", 1) < 0)
-		log.errorf_errno("nudge_pipewire: write failed");
+		pwr_log.errorf_errno("nudge_pipewire: write failed");
 }

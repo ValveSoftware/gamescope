@@ -47,9 +47,11 @@ const struct option *gamescope_options = (struct option[]){
 	{ "debug-layers", no_argument, nullptr, 0 },
 	{ "prefer-output", required_argument, nullptr, 'O' },
 	{ "default-touch-mode", required_argument, nullptr, 0 },
+	{ "generate-drm-mode", required_argument, nullptr, 0 },
 
 	// steamcompmgr options
 	{ "cursor", required_argument, nullptr, 0 },
+	{ "cursor-hotspot", required_argument, nullptr, 0 },
 	{ "ready-fd", required_argument, nullptr, 'R' },
 	{ "stats-path", required_argument, nullptr, 'T' },
 	{ "hide-cursor-delay", required_argument, nullptr, 'C' },
@@ -59,7 +61,9 @@ const struct option *gamescope_options = (struct option[]){
 	{ "debug-events", no_argument, nullptr, 0 },
 	{ "steam", no_argument, nullptr, 'e' },
 	{ "force-composition", no_argument, nullptr, 'c' },
+	{ "composite-debug", no_argument, nullptr, 0 },
 	{ "disable-xres", no_argument, nullptr, 'x' },
+	{ "fade-out-duration", required_argument, nullptr, 0 },
 
 	{} // keep last
 };
@@ -91,6 +95,7 @@ const char usage[] =
 	"Embedded mode options:\n"
 	"  -O, --prefer-output            list of connectors in order of preference\n"
 	"  --default-touch-mode           0: hover, 1: left, 2: right, 3: middle, 4: passthrough\n"
+	"  --generate-drm-mode            DRM mode generation algorithm (cvt, fixed)\n"
 	"\n"
 	"Debug options:\n"
 	"  --disable-layers               disable libliftoff (hardware planes)\n"
@@ -100,6 +105,7 @@ const char usage[] =
 	"  --debug-hud                    paint HUD with debug info\n"
 	"  --debug-events                 debug X11 events\n"
 	"  --force-composition            disable direct scan-out\n"
+	"  --composite-debug              draw frame markers on alternating corners of the screen when compositing\n"
 	"  --disable-xres                 disable XRes for PID lookup\n"
 	"\n"
 	"Keyboard shortcuts:\n"
@@ -160,6 +166,18 @@ static std::string build_optstring(const struct option *options)
 			optstring.append(":");
 	}
 	return optstring;
+}
+
+static enum drm_mode_generation parse_drm_mode_generation(const char *str)
+{
+	if (strcmp(str, "cvt") == 0) {
+		return DRM_MODE_GENERATE_CVT;
+	} else if (strcmp(str, "fixed") == 0) {
+		return DRM_MODE_GENERATE_FIXED;
+	} else {
+		fprintf( stderr, "gamescope: invalid value for --generate-drm-mode\n" );
+		exit(1);
+	}
 }
 
 static void handle_signal( int sig )
@@ -237,9 +255,13 @@ int main(int argc, char **argv)
 					g_bUseLayers = false;
 				} else if (strcmp(opt_name, "debug-layers") == 0) {
 					g_bDebugLayers = true;
+				} else if (strcmp(opt_name, "composite-debug") == 0) {
+					g_bIsCompositeDebug = true;
 				} else if (strcmp(opt_name, "default-touch-mode") == 0) {
 					g_nDefaultTouchClickMode = (enum wlserver_touch_click_mode) atoi( optarg );
 					g_nTouchClickMode = g_nDefaultTouchClickMode;
+				} else if (strcmp(opt_name, "generate-drm-mode") == 0) {
+					g_drmModeGeneration = parse_drm_mode_generation( optarg );
 				}
 				break;
 			case '?':
@@ -394,6 +416,8 @@ int main(int argc, char **argv)
 
 static void steamCompMgrThreadRun(int argc, char **argv)
 {
+	pthread_setname_np( pthread_self(), "gamescope-xwm" );
+
 	steamcompmgr_main( argc, argv );
 
 	pthread_kill( g_mainThread, SIGINT );

@@ -17,9 +17,9 @@ extern "C" {
 #include <wlr/types/wlr_buffer.h>
 }
 
-#include "cvt.hpp"
 #include "drm.hpp"
 #include "main.hpp"
+#include "modegen.hpp"
 #include "vblankmanager.hpp"
 #include "wlserver.hpp"
 #include "log.hpp"
@@ -37,6 +37,8 @@ bool g_bRotated = false;
 bool g_bUseLayers = true;
 bool g_bDebugLayers = false;
 const char *g_sOutputName = nullptr;
+
+enum drm_mode_generation g_drmModeGeneration = DRM_MODE_GENERATE_CVT;
 
 static LogScope drm_log("drm");
 static LogScope drm_verbose_log("drm", LOG_SILENT);
@@ -66,6 +68,12 @@ static std::map< uint32_t, const char * > connector_types = {
 	{ DRM_MODE_CONNECTOR_USB, "USB" },
 #endif
 };
+
+static struct fb& get_fb( struct drm_t& drm, uint32_t id )
+{
+	std::lock_guard<std::mutex> m( drm.fb_map_mutex );
+	return drm.fb_map[ id ];
+}
 
 static uint32_t get_connector_possible_crtcs(struct drm_t *drm, const drmModeConnector *connector) {
 	uint32_t possible_crtcs = 0;
@@ -171,7 +179,7 @@ static struct plane *find_primary_plane(struct drm_t *drm)
 	return primary;
 }
 
-static void drm_free_fb( struct drm_t *drm, struct fb *fb );
+static void drm_unlock_fb_internal( struct drm_t *drm, struct fb *fb );
 
 static void page_flip_handler(int fd, unsigned int frame, unsigned int sec, unsigned int usec, unsigned int crtc_id, void *data)
 {
@@ -191,22 +199,37 @@ static void page_flip_handler(int fd, unsigned int frame, unsigned int sec, unsi
 	{
 		uint32_t previous_fbid = g_DRM.fbids_on_screen[ i ];
 		assert( previous_fbid != 0 );
-		assert( g_DRM.map_fbid_inflightflips[ previous_fbid ].n_refs > 0 );
 
-		g_DRM.map_fbid_inflightflips[ previous_fbid ].n_refs--;
+		struct fb &previous_fb = get_fb( g_DRM, previous_fbid );
+		assert( previous_fb.n_refs > 0 );
 
-		if ( g_DRM.map_fbid_inflightflips[ previous_fbid ].n_refs == 0 )
+		previous_fb.n_refs--;
+
+		if ( previous_fb.n_refs == 0 )
 		{
 			// we flipped away from this previous fbid, now safe to delete
 			std::lock_guard<std::mutex> lock( g_DRM.free_queue_lock );
+
+			for ( uint32_t i = 0; i < g_DRM.fbid_unlock_queue.size(); i++ )
+			{
+				if ( g_DRM.fbid_unlock_queue[ i ] == previous_fbid )
+				{
+					drm_verbose_log.debugf("deferred unlock %u", previous_fbid);
+
+					drm_unlock_fb_internal( &g_DRM, &get_fb( g_DRM, previous_fbid ) );
+
+					g_DRM.fbid_unlock_queue.erase( g_DRM.fbid_unlock_queue.begin() + i );
+					break;
+				}
+			}
 
 			for ( uint32_t i = 0; i < g_DRM.fbid_free_queue.size(); i++ )
 			{
 				if ( g_DRM.fbid_free_queue[ i ] == previous_fbid )
 				{
-					drm_verbose_log.debugf("deferred free %u", previous_fbid);
+					drm_verbose_log.debugf( "deferred free %u", previous_fbid );
 
-					drm_free_fb( &g_DRM, &g_DRM.map_fbid_inflightflips[ previous_fbid ] );
+					drm_drop_fbid( &g_DRM, previous_fbid );
 
 					g_DRM.fbid_free_queue.erase( g_DRM.fbid_free_queue.begin() + i );
 					break;
@@ -223,6 +246,8 @@ static void page_flip_handler(int fd, unsigned int frame, unsigned int sec, unsi
 
 void flip_handler_thread_run(void)
 {
+	pthread_setname_np( pthread_self(), "gamescope-kms" );
+
 	struct pollfd pollfd = {
 		.fd = g_DRM.fd,
 		.events = POLLIN,
@@ -767,8 +792,9 @@ int drm_commit(struct drm_t *drm, struct Composite_t *pComposite, struct VulkanP
 	// potentially beat us to the refcount checks.
 	for ( uint32_t i = 0; i < drm->fbids_in_req.size(); i++ )
 	{
-		assert( g_DRM.map_fbid_inflightflips[ drm->fbids_in_req[ i ] ].held == true );
-		g_DRM.map_fbid_inflightflips[ drm->fbids_in_req[ i ] ].n_refs++;
+		struct fb &fb = get_fb( g_DRM, drm->fbids_in_req[ i ] );
+		assert( fb.held == true );
+		fb.n_refs++;
 	}
 
 	assert( drm->fbids_queued.size() == 0 );
@@ -799,7 +825,7 @@ int drm_commit(struct drm_t *drm, struct Composite_t *pComposite, struct VulkanP
 		// Undo refcount if the commit didn't actually work
 		for ( uint32_t i = 0; i < drm->fbids_in_req.size(); i++ )
 		{
-			g_DRM.map_fbid_inflightflips[ drm->fbids_in_req[ i ] ].n_refs--;
+			get_fb( g_DRM, drm->fbids_in_req[ i ] ).n_refs--;
 		}
 
 		drm->fbids_queued.clear();
@@ -885,19 +911,16 @@ uint32_t drm_fbid_from_dmabuf( struct drm_t *drm, struct wlr_buffer *buf, struct
 	}
 
 	drm_verbose_log.debugf("make fbid %u", fb_id);
-	assert( drm->map_fbid_inflightflips[ fb_id ].held == false );
 
-	if ( buf != nullptr )
+	/* Nested scope so fb doesn't end up in the out: label */
 	{
-		wlserver_lock();
-		buf = wlr_buffer_lock( buf );
-		wlserver_unlock();
+		struct fb &fb = get_fb( *drm, fb_id );
+		assert( fb.held == false );
+		fb.id = fb_id;
+		fb.buf = buf;
+		fb.held = !buf;
+		fb.n_refs = 0;
 	}
-
-	drm->map_fbid_inflightflips[ fb_id ].id = fb_id;
-	drm->map_fbid_inflightflips[ fb_id ].buf = buf;
-	drm->map_fbid_inflightflips[ fb_id ].held = true;
-	drm->map_fbid_inflightflips[ fb_id ].n_refs = 0;
 
 out:
 	for ( int i = 0; i < dma_buf->n_planes; i++ ) {
@@ -924,15 +947,32 @@ out:
 	return fb_id;
 }
 
-static void drm_free_fb( struct drm_t *drm, struct fb *fb )
+void drm_drop_fbid( struct drm_t *drm, uint32_t fbid )
 {
-	assert( !fb->held );
-	assert( fb->n_refs == 0 );
+	struct fb &fb = get_fb( *drm, fbid );
+	assert( fb.held == false ||
+	        fb.buf == nullptr );
 
-	if ( drmModeRmFB( drm->fd, fb->id ) != 0 )
+	fb.held = false;
+
+	if ( fb.n_refs != 0  )
+	{
+		std::lock_guard<std::mutex> lock( drm->free_queue_lock );
+
+		drm->fbid_free_queue.push_back( fbid );
+		return;
+	}
+
+	if (drmModeRmFB( drm->fd, fbid ) != 0 )
 	{
 		drm_log.errorf_errno( "drmModeRmFB failed" );
 	}
+}
+
+static void drm_unlock_fb_internal( struct drm_t *drm, struct fb *fb )
+{
+	assert( !fb->held );
+	assert( fb->n_refs == 0 );
 
 	if ( fb->buf != nullptr )
 	{
@@ -940,26 +980,41 @@ static void drm_free_fb( struct drm_t *drm, struct fb *fb )
 		wlr_buffer_unlock( fb->buf );
 		wlserver_unlock();
 	}
-
-	fb = {};
 }
 
-void drm_drop_fbid( struct drm_t *drm, uint32_t fbid )
+void drm_lock_fbid( struct drm_t *drm, uint32_t fbid )
 {
-	assert( drm->map_fbid_inflightflips[ fbid ].held == true );
-	drm->map_fbid_inflightflips[ fbid ].held = false;
+	struct fb &fb = get_fb( *drm, fbid );
+	assert( fb.held == false );
+	assert( fb.n_refs == 0 );
+	fb.held = true;
 
-	if ( drm->map_fbid_inflightflips[ fbid ].n_refs == 0 )
+	if ( fb.buf != nullptr )
+	{
+		wlserver_lock();
+		wlr_buffer_lock( fb.buf );
+		wlserver_unlock();
+	}
+}
+
+void drm_unlock_fbid( struct drm_t *drm, uint32_t fbid )
+{
+	struct fb &fb = get_fb( *drm, fbid );
+	
+	assert( fb.held == true );
+	fb.held = false;
+
+	if ( fb.n_refs == 0 )
 	{
 		/* FB isn't being used in any page-flip, free it immediately */
 		drm_verbose_log.debugf("free fbid %u", fbid);
-		drm_free_fb( drm, &drm->map_fbid_inflightflips[ fbid ] );
+		drm_unlock_fb_internal( drm, &fb );
 	}
 	else
 	{
 		std::lock_guard<std::mutex> lock( drm->free_queue_lock );
 
-		drm->fbid_free_queue.push_back( fbid );
+		drm->fbid_unlock_queue.push_back( fbid );
 	}
 }
 
@@ -1053,11 +1108,6 @@ drm_prepare_liftoff( struct drm_t *drm, const struct Composite_t *pComposite, co
 
 			liftoff_layer_set_property( drm->lo_layers[ i ], "zpos", pPipeline->layerBindings[ i ].zpos );
 			liftoff_layer_set_property( drm->lo_layers[ i ], "alpha", pComposite->data.flOpacity[ i ] * 0xffff);
-
-			if ( pPipeline->layerBindings[ i ].zpos == 0 )
-			{
-				assert( ( pComposite->data.flOpacity[ i ] * 0xffff ) == 0xffff );
-			}
 
 			const uint16_t srcWidth = pPipeline->layerBindings[ i ].surfaceWidth;
 			const uint16_t srcHeight = pPipeline->layerBindings[ i ].surfaceHeight;
@@ -1286,9 +1336,17 @@ bool drm_set_mode( struct drm_t *drm, const drmModeModeInfo *mode )
 
 bool drm_set_refresh( struct drm_t *drm, int refresh )
 {
+	int width = g_nOutputWidth;
+	int height = g_nOutputHeight;
+	if ( g_bRotated ) {
+		int tmp = width;
+		width = height;
+		height = tmp;
+	}
+
 	drmModeConnector *connector = drm->connector->connector;
-	const drmModeModeInfo *existing_mode = find_mode(connector, g_nOutputWidth, g_nOutputHeight, refresh);
-	drmModeModeInfo mode;
+	const drmModeModeInfo *existing_mode = find_mode(connector, width, height, refresh);
+	drmModeModeInfo mode = {0};
 	if ( existing_mode )
 	{
 		mode = *existing_mode;
@@ -1296,8 +1354,19 @@ bool drm_set_refresh( struct drm_t *drm, int refresh )
 	else
 	{
 		/* TODO: check refresh is within the EDID limits */
-		generate_cvt_mode( &mode, g_nOutputWidth, g_nOutputHeight, refresh, true, false );
+		switch ( g_drmModeGeneration )
+		{
+		case DRM_MODE_GENERATE_CVT:
+			generate_cvt_mode( &mode, width, height, refresh, true, false );
+			break;
+		case DRM_MODE_GENERATE_FIXED:
+			const drmModeModeInfo *preferred_mode = find_mode(connector, 0, 0, 0);
+			generate_fixed_mode( &mode, preferred_mode, refresh );
+			break;
+		}
 	}
+
+	mode.type = DRM_MODE_TYPE_USERDEF;
 
 	return drm_set_mode(drm, &mode);
 }

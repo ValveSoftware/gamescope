@@ -24,6 +24,8 @@ uint64_t g_uVblankDrawBufferNS = 5'000'000;
 
 void vblankThreadRun( void )
 {
+	pthread_setname_np( pthread_self(), "gamescope-vblk" );
+
 	while ( true )
 	{
 		uint64_t lastVblank = g_lastVblank - g_uVblankDrawBufferNS;

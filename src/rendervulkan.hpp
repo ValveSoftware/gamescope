@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <stdint.h>
 
 typedef uint32_t VulkanTexture_t;
@@ -49,8 +50,10 @@ struct Composite_t
 
 #include "drm.hpp"
 
+#include <memory>
 #include <unordered_map>
 #include <vector>
+#include <atomic>
 #include <wayland-server-core.h>
 
 extern "C" {
@@ -101,6 +104,7 @@ public:
 
 	bool BInit( uint32_t width, uint32_t height, VkFormat format, createFlags flags, wlr_dmabuf_attributes *pDMA = nullptr );
 
+	CVulkanTexture( void );
 	~CVulkanTexture( void );
 	
 	bool m_bInitialized = false;
@@ -110,11 +114,13 @@ public:
 	
 	VkImageView m_vkImageView = VK_NULL_HANDLE;
 
+	uint32_t m_width = 0, m_height = 0;
 	uint32_t m_unRowPitch = 0;
 	
 	uint32_t m_FBID = 0;
 	
-	int32_t nRefCount = 1;
+	std::atomic<int32_t> nRefCount;
+	int32_t nCommitRefCount = 0;
 	
 	VulkanTexture_t handle = 0;
 
@@ -127,6 +133,8 @@ extern bool g_vulkanSupportsModifiers;
 
 extern bool g_vulkanHasDrmPrimaryDevId;
 extern dev_t g_vulkanDrmPrimaryDevId;
+
+extern bool g_bIsCompositeDebug;
 
 bool vulkan_init(void);
 bool vulkan_init_formats(void);
@@ -141,7 +149,10 @@ int vulkan_texture_get_fence( VulkanTexture_t vulkanTex );
 
 void vulkan_free_texture( VulkanTexture_t vulkanTex );
 
-bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *pPipeline, CVulkanTexture **pScreenshotTexture );
+int32_t vulkan_ref_commit( VulkanTexture_t vulkanTex );
+int32_t vulkan_free_commit( VulkanTexture_t vulkanTex );
+
+bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *pPipeline, std::shared_ptr<CVulkanTexture> *pScreenshotTexture );
 uint32_t vulkan_get_last_composite_fbid( void );
 
 void vulkan_present_to_window( void );

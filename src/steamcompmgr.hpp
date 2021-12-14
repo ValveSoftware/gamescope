@@ -30,7 +30,7 @@ struct ResListEntry_t {
 };
 
 struct _XDisplay;
-struct _win;
+struct win;
 
 class MouseCursor
 {
@@ -45,12 +45,12 @@ public:
 	void constrainPosition();
 	void resetPosition();
 
-	void paint(struct _win *window, struct Composite_t *pComposite,
+	void paint(struct win *window, struct Composite_t *pComposite,
 			   struct VulkanPipeline_t *pPipeline);
 	void setDirty();
 
 	// Will take ownership of data.
-	bool setCursorImage(char *data, int w, int h);
+	bool setCursorImage(char *data, int w, int h, int hx, int hy);
 
 	void hide() { m_lastMovedTime = 0; checkSuspension(); }
 
@@ -92,6 +92,8 @@ extern float focusedWindowScaleX;
 extern float focusedWindowScaleY;
 extern float focusedWindowOffsetX;
 extern float focusedWindowOffsetY;
+
+extern uint32_t inputCounter;
 
 void nudge_steamcompmgr( void );
 void take_screenshot( void );

@@ -1,7 +1,10 @@
 #pragma once
 
+#include <memory>
 #include <pipewire/pipewire.h>
 #include <spa/param/video/format-utils.h>
+
+#include "rendervulkan.hpp"
 
 struct pipewire_state {
 	struct pw_loop *loop;
@@ -36,6 +39,10 @@ struct pipewire_buffer {
 	// We pass the buffer to the steamcompmgr thread for copying. This is set
 	// to true if the buffer is currently owned by the steamcompmgr thread.
 	bool copying;
+	// Once steamcompmgr has copied the buffer, it'll set this field to the
+	// copy. The PipeWire thread is responsible for downloading the buffer,
+	// then release it.
+	std::shared_ptr<CVulkanTexture> texture;
 };
 
 bool init_pipewire(void);
