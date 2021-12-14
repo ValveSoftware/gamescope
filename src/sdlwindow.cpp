@@ -212,11 +212,23 @@ bool sdlwindow_init( void )
 	return g_bSDLInitOK;
 }
 
+extern bool steamMode;
+extern bool g_bFirstFrame;
+
 void sdlwindow_update( void )
 {
-	if ( g_bWindowShown != hasFocusWindow )
+	bool should_show = hasFocusWindow;
+
+	// If we are Steam Mode in nested, show the window
+	// whenever we have had a first frame to match
+	// what we do in embedded with Steam for testing
+	// held commits, etc.
+	if ( steamMode )
+		should_show |= !g_bFirstFrame;
+
+	if ( g_bWindowShown != should_show )
 	{
-		g_bWindowShown = hasFocusWindow;
+		g_bWindowShown = should_show;
 
 		if ( g_bWindowShown )
 		{

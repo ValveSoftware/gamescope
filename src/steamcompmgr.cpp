@@ -304,7 +304,7 @@ float			currentFrameRate;
 static bool		debugFocus = false;
 static bool		drawDebugInfo = false;
 static bool		debugEvents = false;
-static bool		steamMode = false;
+bool			steamMode = false;
 static bool		alwaysComposite = false;
 static bool		useXRes = true;
 
@@ -1409,7 +1409,7 @@ paint_debug_info(Display *dpy)
 	}
 }
 
-static bool g_bFirstFrame = true;
+bool g_bFirstFrame = true;
 
 static bool is_fading_out()
 {
