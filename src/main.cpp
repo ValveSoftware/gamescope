@@ -41,6 +41,8 @@ const struct option *gamescope_options = (struct option[]){
 	{ "nested-unfocused-refresh", required_argument, nullptr, 'o' },
 	{ "borderless", no_argument, nullptr, 'b' },
 	{ "fullscreen", no_argument, nullptr, 'f' },
+	{ "no-mouse-capture", required_argument, nullptr, 'M' },
+	{ "center-mouse-on-focus-loss", no_argument, nullptr, 0 },
 
 	// embedded mode options
 	{ "disable-layers", no_argument, nullptr, 0 },
@@ -91,6 +93,8 @@ const char usage[] =
 	"  -o, --nested-unfocused-refresh game refresh rate when unfocused\n"
 	"  -b, --borderless               make the window borderless\n"
 	"  -f, --fullscreen               make the window fullscreen\n"
+	"  -M, --no-mouse-capture         do not capture the mouse\n"
+	"  --center-mouse-on-focus-loss   center the virtual mouse when focus is lost (only usable with -M)\n"
 	"\n"
 	"Embedded mode options:\n"
 	"  -O, --prefer-output            list of connectors in order of preference\n"
@@ -111,6 +115,7 @@ const char usage[] =
 	"Keyboard shortcuts:\n"
 	"  Super + F                      toggle fullscreen\n"
 	"  Super + N                      toggle nearest neighbour filtering\n"
+	"  Super + Scroll Lock            toggle mouse capture\n"
 	"  Super + S                      take a screenshot\n"
 	"";
 
@@ -126,6 +131,9 @@ uint32_t g_nOutputHeight = 0;
 int g_nOutputRefresh = 0;
 
 bool g_bFullscreen = false;
+
+bool g_bNoMouseCapture = false;
+bool g_bCenterMouseOnFocusLoss = false;
 
 bool g_bIsNested = false;
 
@@ -243,6 +251,9 @@ int main(int argc, char **argv)
 			case 'f':
 				g_bFullscreen = true;
 				break;
+			case 'M':
+				g_bNoMouseCapture = true;
+				break;
 			case 'O':
 				g_sOutputName = optarg;
 				break;
@@ -262,6 +273,9 @@ int main(int argc, char **argv)
 					g_nTouchClickMode = g_nDefaultTouchClickMode;
 				} else if (strcmp(opt_name, "generate-drm-mode") == 0) {
 					g_drmModeGeneration = parse_drm_mode_generation( optarg );
+				} else if (strcmp(opt_name, "center-mouse-on-focus-loss") == 0) {
+					g_bCenterMouseOnFocusLoss = true;
+                                        fprintf(stderr, "ffs\n");
 				}
 				break;
 			case '?':

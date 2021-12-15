@@ -92,6 +92,7 @@ void wlserver_key( uint32_t key, bool press, uint32_t time );
 
 void wlserver_mousefocus( struct wlr_surface *wlrsurface, int x = 0, int y = 0 );
 void wlserver_mousemotion( int x, int y, uint32_t time );
+void wlserver_absmousemotion( int x, int y, uint32_t time );
 void wlserver_mousebutton( int button, bool press, uint32_t time );
 void wlserver_mousewheel( int x, int y, uint32_t time );
 
