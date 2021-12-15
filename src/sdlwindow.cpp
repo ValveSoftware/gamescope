@@ -190,6 +190,12 @@ void inputSDLThreadRun( void )
 						g_nNestedRefresh = g_nOldNestedRefresh;
 						g_bWindowFocused = true;
 						break;
+					case SDL_WINDOWEVENT_EXPOSED:
+						if ( g_bFullscreen == false )
+						{
+							request_repaint();
+						}
+						break;
 				}
 				break;
 			default:

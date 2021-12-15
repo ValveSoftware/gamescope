@@ -97,3 +97,4 @@ extern uint32_t inputCounter;
 
 void nudge_steamcompmgr( void );
 void take_screenshot( void );
+void request_repaint( void );
