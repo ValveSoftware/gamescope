@@ -13,6 +13,8 @@
 
 #include "sdlscancodetable.hpp"
 
+#define DEFAULT_TITLE "gamescope"
+
 static bool g_bSDLInitOK = false;
 static std::mutex g_SDLInitLock;
 
@@ -84,7 +86,7 @@ void inputSDLThreadRun( void )
 		nSDLWindowFlags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
 	}
 
-	g_SDLWindow = SDL_CreateWindow( "gamescope",
+	g_SDLWindow = SDL_CreateWindow( DEFAULT_TITLE,
 							   SDL_WINDOWPOS_UNDEFINED,
 							SDL_WINDOWPOS_UNDEFINED,
 							g_nOutputWidth,
@@ -239,6 +241,11 @@ void sdlwindow_update( void )
 			SDL_HideWindow( g_SDLWindow );
 		}
 	}
+}
+
+void sdlwindow_title( const char* title )
+{
+	SDL_SetWindowTitle( g_SDLWindow, title ? title : DEFAULT_TITLE );
 }
 
 void sdlwindow_pushupdate( void )
