@@ -65,7 +65,7 @@ void actionmap_unset(uint32_t dev, uint32_t id)
 
 static int chtodev(char ch)
 {
-	return ch == ACDEV_KEYBOARD || ch == ACDEV_BUTTON ? ch : ACDEV_NONE;
+	return ch == ACDEV_KEYBOARD || ch == ACDEV_BUTTON || ch == ACDEV_NULL ? ch : ACDEV_NONE;
 }
 
 void actionmap_load(const char* filename)

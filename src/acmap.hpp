@@ -8,6 +8,7 @@
 #define ACDEV_NONE	0
 #define ACDEV_KEYBOARD	'k'
 #define ACDEV_BUTTON	'b'
+#define ACDEV_NULL	'n'
 
 struct action {
 	uint32_t dev, id;
