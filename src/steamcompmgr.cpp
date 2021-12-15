@@ -259,6 +259,7 @@ static Atom		gamescopeFocusedAppAtom;
 static Atom		gamescopeCtrlAppIDAtom;
 static Atom		gamescopeCtrlWindowAtom;
 static Atom		gamescopeInputCounterAtom;
+static Atom		gamescopeScreenShotAtom;
 
 enum HeldCommitTypes_t
 {
@@ -322,6 +323,7 @@ static std::mutex wlr_buffer_map_lock;
 static std::unordered_map<struct wlr_buffer*, wlr_buffer_map_entry> wlr_buffer_map;
 
 static std::atomic< bool > g_bTakeScreenshot{false};
+static bool g_bPropertyRequestedScreenshot;
 
 static int g_nudgePipe[2] = {-1, -1};
 
@@ -1586,6 +1588,8 @@ paint_all(Display *dpy, MouseCursor *cursor)
 
 	// Handoff from whatever thread to this one since we check ours twice
 	bool takeScreenshot = g_bTakeScreenshot.exchange(false);
+	bool propertyRequestedScreenshot = g_bPropertyRequestedScreenshot;
+	g_bPropertyRequestedScreenshot = false;
 
 	struct pipewire_buffer *pw_buffer = nullptr;
 #if HAVE_PIPEWIRE
@@ -1683,10 +1687,14 @@ paint_all(Display *dpy, MouseCursor *cursor)
 					}
 				}
 
-				char pTimeBuffer[1024];
-				time_t currentTime = time(0);
-				struct tm *localTime = localtime( &currentTime );
-				strftime( pTimeBuffer, sizeof( pTimeBuffer ), "/tmp/gamescope_%Y-%m-%d_%H-%M-%S.png", localTime );
+				char pTimeBuffer[1024] = "/tmp/gamescope.png";
+
+				if ( !propertyRequestedScreenshot )
+				{
+					time_t currentTime = time(0);
+					struct tm *localTime = localtime( &currentTime );
+					strftime( pTimeBuffer, sizeof( pTimeBuffer ), "/tmp/gamescope_%Y-%m-%d_%H-%M-%S.png", localTime );
+				}
 
 				if ( stbi_write_png(pTimeBuffer, currentOutputWidth, currentOutputHeight, 4, imageData.data(), pitch) )
 				{
@@ -3098,6 +3106,15 @@ handle_property_notify(Display *dpy, XPropertyEvent *ev)
 		focusControlWindow = get_prop( dpy, root, gamescopeCtrlWindowAtom, None );
 		focusDirty = true;
 	}
+	if ( ev->atom == gamescopeScreenShotAtom )
+	{
+		if ( ev->state == PropertyNewValue )
+		{
+			g_bTakeScreenshot = true;
+			g_bPropertyRequestedScreenshot = true;
+			XDeleteProperty( dpy, root, gamescopeScreenShotAtom );
+		}
+	}
 	if (ev->atom == gameAtom)
 	{
 		win * w = find_win(dpy, ev->window);
@@ -4066,6 +4083,7 @@ steamcompmgr_main(int argc, char **argv)
 	gamescopeCtrlWindowAtom = XInternAtom(dpy, "GAMESCOPECTRL_BASELAYER_WINDOW", false);
 	WMChangeStateAtom = XInternAtom(dpy, "WM_CHANGE_STATE", false);
 	gamescopeInputCounterAtom = XInternAtom(dpy, "GAMESCOPE_INPUT_COUNTER", false);
+	gamescopeScreenShotAtom = XInternAtom( dpy, "GAMESCOPECTRL_REQUEST_SCREENSHOT", false );
 
 	root_width = DisplayWidth(dpy, scr);
 	root_height = DisplayHeight(dpy, scr);
