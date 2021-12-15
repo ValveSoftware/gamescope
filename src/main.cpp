@@ -43,6 +43,7 @@ const struct option *gamescope_options = (struct option[]){
 	{ "fullscreen", no_argument, nullptr, 'f' },
 	{ "no-mouse-capture", required_argument, nullptr, 'M' },
 	{ "center-mouse-on-focus-loss", no_argument, nullptr, 0 },
+	{ "no-mod-key", no_argument, nullptr, 0 },
 
 	// embedded mode options
 	{ "disable-layers", no_argument, nullptr, 0 },
@@ -95,6 +96,7 @@ const char usage[] =
 	"  -f, --fullscreen               make the window fullscreen\n"
 	"  -M, --no-mouse-capture         do not capture the mouse\n"
 	"  --center-mouse-on-focus-loss   center the virtual mouse when focus is lost (only usable with -M)\n"
+	"  --no-mod-key                   do not generate events for the Super key\n"
 	"\n"
 	"Embedded mode options:\n"
 	"  -O, --prefer-output            list of connectors in order of preference\n"
@@ -134,6 +136,8 @@ bool g_bFullscreen = false;
 
 bool g_bNoMouseCapture = false;
 bool g_bCenterMouseOnFocusLoss = false;
+
+bool g_bNoModKey = false;
 
 bool g_bIsNested = false;
 
@@ -275,6 +279,8 @@ int main(int argc, char **argv)
 					g_drmModeGeneration = parse_drm_mode_generation( optarg );
 				} else if (strcmp(opt_name, "center-mouse-on-focus-loss") == 0) {
 					g_bCenterMouseOnFocusLoss = true;
+				} else if (strcmp(opt_name, "no-mod-key") == 0) {
+					g_bNoModKey = true;
 				}
 				break;
 			case '?':
