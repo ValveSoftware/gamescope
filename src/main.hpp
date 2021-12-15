@@ -22,6 +22,9 @@ extern int g_nOutputRefresh; // Hz
 
 extern bool g_bFullscreen;
 
+extern bool g_bNoMouseCapture;
+extern bool g_bCenterMouseOnFocusLoss;
+
 extern bool g_bFilterGameWindow;
 
 extern bool g_bBorderlessOutputWindow;
