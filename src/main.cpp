@@ -275,7 +275,6 @@ int main(int argc, char **argv)
 					g_drmModeGeneration = parse_drm_mode_generation( optarg );
 				} else if (strcmp(opt_name, "center-mouse-on-focus-loss") == 0) {
 					g_bCenterMouseOnFocusLoss = true;
-                                        fprintf(stderr, "ffs\n");
 				}
 				break;
 			case '?':
