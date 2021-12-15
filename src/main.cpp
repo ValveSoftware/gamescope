@@ -18,6 +18,7 @@
 #include "rendervulkan.hpp"
 #include "sdlwindow.hpp"
 #include "wlserver.hpp"
+#include "acmap.hpp"
 #include "gpuvis_trace_utils.h"
 
 #if HAVE_PIPEWIRE
@@ -64,6 +65,8 @@ const struct option *gamescope_options = (struct option[]){
 	{ "composite-debug", no_argument, nullptr, 0 },
 	{ "disable-xres", no_argument, nullptr, 'x' },
 	{ "fade-out-duration", required_argument, nullptr, 0 },
+	{ "actionmap-file", required_argument, nullptr, 0 },
+	{ "report-actionmaps", no_argument, nullptr, 0 },
 
 	{} // keep last
 };
@@ -86,6 +89,8 @@ const char usage[] =
 	"  -T, --stats-path               write statistics to path\n"
 	"  -C, --hide-cursor-delay        hide cursor image after delay\n"
 	"  -e, --steam                    enable Steam integration\n"
+	"  --actionmap-file filename      provide an actionmap file for remapping keys and buttons\n"
+	"  --report-actionmaps            report action maps to stderr\n"
 	"\n"
 	"Nested mode options:\n"
 	"  -o, --nested-unfocused-refresh game refresh rate when unfocused\n"
@@ -262,6 +267,10 @@ int main(int argc, char **argv)
 					g_nTouchClickMode = g_nDefaultTouchClickMode;
 				} else if (strcmp(opt_name, "generate-drm-mode") == 0) {
 					g_drmModeGeneration = parse_drm_mode_generation( optarg );
+				} else if (strcmp(opt_name, "actionmap-file") == 0) {
+					actionmap_load(optarg);
+				} else if (strcmp(opt_name, "report-actionmaps") == 0) {
+					g_bReportActionMaps = true;
 				}
 				break;
 			case '?':

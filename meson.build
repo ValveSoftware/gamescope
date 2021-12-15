@@ -99,6 +99,7 @@ src = [
   'src/rendervulkan.cpp',
   'src/log.cpp',
   'src/ime.cpp',
+  'src/acmap.cpp',
   spirv_shader,
 ]
 

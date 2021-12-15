@@ -10,6 +10,7 @@
 #include "sdlwindow.hpp"
 #include "rendervulkan.hpp"
 #include "steamcompmgr.hpp"
+#include "acmap.hpp"
 
 #include "sdlscancodetable.hpp"
 
@@ -117,9 +118,9 @@ void inputSDLThreadRun( void )
 			case SDL_MOUSEBUTTONDOWN:
 			case SDL_MOUSEBUTTONUP:
 				wlserver_lock();
-				wlserver_mousebutton( SDLButtonToLinuxButton( event.button.button ),
-									  event.button.state == SDL_PRESSED,
-									  event.button.timestamp );
+				actionmap_performbutton( SDLButtonToLinuxButton( event.button.button ),
+							 event.button.state == SDL_PRESSED,
+							 event.button.timestamp );
 				wlserver_unlock();
 				break;
 			case SDL_MOUSEWHEEL:
@@ -160,7 +161,7 @@ void inputSDLThreadRun( void )
 					break;
 
 				wlserver_lock();
-				wlserver_key( key, event.type == SDL_KEYDOWN, event.key.timestamp );
+				actionmap_performkey( key, event.type == SDL_KEYDOWN, event.key.timestamp );
 				wlserver_unlock();
 				break;
 			case SDL_WINDOWEVENT:
