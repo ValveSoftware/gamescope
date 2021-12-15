@@ -3435,6 +3435,12 @@ void take_screenshot( void )
 	nudge_steamcompmgr();
 }
 
+void request_repaint( void )
+{
+	hasRepaint = true;
+	nudge_steamcompmgr();
+}
+
 void check_new_wayland_res( void )
 {
 	// When importing buffer, we'll potentially need to perform operations with

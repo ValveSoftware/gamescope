@@ -236,6 +236,12 @@ void inputSDLThreadRun( void )
 							wlserver_unlock();
 						}
 						break;
+					case SDL_WINDOWEVENT_EXPOSED:
+						if ( g_bFullscreen == false )
+						{
+							request_repaint();
+						}
+						break;
 				}
 				break;
 			default:
