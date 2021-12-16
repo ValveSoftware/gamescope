@@ -2352,9 +2352,10 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 		.dstAccessMask = useForeignQueue ? (VkAccessFlagBits)0 : VK_ACCESS_MEMORY_READ_BIT,
 		.oldLayout = VK_IMAGE_LAYOUT_GENERAL,
 		.newLayout = VK_IMAGE_LAYOUT_GENERAL,
-		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-		.dstQueueFamilyIndex = useForeignQueue ? VK_QUEUE_FAMILY_FOREIGN_EXT
-						       : VK_QUEUE_FAMILY_IGNORED,
+		.srcQueueFamilyIndex = queueFamilyIndex,
+		.dstQueueFamilyIndex = useForeignQueue
+								? VK_QUEUE_FAMILY_FOREIGN_EXT
+						    	: queueFamilyIndex,
 		.image = compositeImage,
 		.subresourceRange = subResRange
 	};
