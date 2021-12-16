@@ -1418,6 +1418,17 @@ static bool is_fading_out()
 	return fadeOutStartTime || g_bPendingFade;
 }
 
+static void update_touch_scaling( struct Composite_t *pComposite )
+{
+	if ( !pComposite->nLayerCount )
+		return;
+
+	focusedWindowScaleX = pComposite->data.vScale[ pComposite->nLayerCount - 1 ].x;
+	focusedWindowScaleY = pComposite->data.vScale[ pComposite->nLayerCount - 1 ].y;
+	focusedWindowOffsetX = pComposite->data.vOffset[ pComposite->nLayerCount - 1 ].x;
+	focusedWindowOffsetY = pComposite->data.vOffset[ pComposite->nLayerCount - 1 ].y;
+}
+
 static void
 paint_all(Display *dpy, MouseCursor *cursor)
 {
@@ -1491,12 +1502,16 @@ paint_all(Display *dpy, MouseCursor *cursor)
 				break;
 			}
 		}
+		
+		int nOldLayerCount = composite.nLayerCount;
 
+		bValidContents |= paint_window(dpy, w, w, &composite, &pipeline, false, cursor);
+		update_touch_scaling( &composite );
+		
 		// paint UI unless it's fully hidden, which it communicates to us through opacity=0
-		if ( w->opacity > TRANSLUCENT )
-		{
-			bValidContents |= paint_window(dpy, w, w, &composite, &pipeline, false, cursor);
-		}
+		// we paint it to extract scaling coefficients above, then remove the layer if one was added
+		if ( w->opacity == TRANSLUCENT && nOldLayerCount < composite.nLayerCount )
+			composite.nLayerCount--;
 	}
 	else
 	{
@@ -1524,14 +1539,16 @@ paint_all(Display *dpy, MouseCursor *cursor)
 			// Just draw focused window as normal, be it Steam or the game
 			bValidContents |= paint_window(dpy, w, w, &composite, &pipeline, false, cursor, true);
 		}
+		update_touch_scaling( &composite );
 	}
 
 	// TODO: We want to paint this at the same scale as the normal window and probably
 	// with an offset.
 	if (override)
+	{
 		bValidContents |= paint_window(dpy, override, w, &composite, &pipeline, false, cursor);
-
-	int touchInputFocusLayer = composite.nLayerCount - 1;
+		update_touch_scaling( &composite );
+	}
 
 	if (inGame && overlay)
 	{
@@ -1540,16 +1557,8 @@ paint_all(Display *dpy, MouseCursor *cursor)
 			bValidContents |= paint_window(dpy, overlay, overlay, &composite, &pipeline, false, cursor);
 
 			if ( overlay->id == currentInputFocusWindow )
-				touchInputFocusLayer = composite.nLayerCount - 1;
+				update_touch_scaling( &composite );
 		}
-	}
-
-	if ( touchInputFocusLayer >= 0 )
-	{
-		focusedWindowScaleX = composite.data.vScale[ touchInputFocusLayer ].x;
-		focusedWindowScaleY = composite.data.vScale[ touchInputFocusLayer ].y;
-		focusedWindowOffsetX = composite.data.vOffset[ touchInputFocusLayer ].x;
-		focusedWindowOffsetY = composite.data.vOffset[ touchInputFocusLayer ].y;
 	}
 
 	if (inGame && notification)
