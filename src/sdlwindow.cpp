@@ -21,6 +21,9 @@ static bool g_bWindowShown = false;
 static int g_nOldNestedRefresh = 0;
 static bool g_bWindowFocused = true;
 
+static int g_nLastAbsMouseX = 0;
+static int g_nLastAbsMouseY = 0;
+
 SDL_Window *g_SDLWindow;
 static uint32_t g_unSDLUserEventID;
 static SDL_Event g_SDLUserEvent;
@@ -98,7 +101,15 @@ void inputSDLThreadRun( void )
 		return;
 	}
 
-	SDL_SetRelativeMouseMode(SDL_TRUE);
+	if ( g_bNoMouseCapture == true )
+	{
+		SDL_SetRelativeMouseMode(SDL_FALSE);
+		SDL_ShowCursor(SDL_FALSE);
+	}
+	else
+	{
+		SDL_SetRelativeMouseMode(SDL_TRUE);
+	}
 
 	g_nOldNestedRefresh = g_nNestedRefresh;
 
@@ -113,7 +124,16 @@ void inputSDLThreadRun( void )
 				if ( g_bWindowFocused )
 				{
 					wlserver_lock();
-					wlserver_mousemotion( event.motion.xrel, event.motion.yrel, event.motion.timestamp );
+					if ( g_bNoMouseCapture == true )
+					{
+						wlserver_absmousemotion( event.motion.x, event.motion.y, event.motion.timestamp );
+						g_nLastAbsMouseX = event.motion.x;
+						g_nLastAbsMouseY = event.motion.y;
+					}
+					else
+					{
+						wlserver_mousemotion( event.motion.xrel, event.motion.yrel, event.motion.timestamp );
+					}
 					wlserver_unlock();
 				}
 				break;
@@ -148,6 +168,18 @@ void inputSDLThreadRun( void )
 							break;
 						case KEY_S:
 							take_screenshot();
+							break;
+						case KEY_SCROLLLOCK:
+							g_bNoMouseCapture = !g_bNoMouseCapture;
+							if ( g_bNoMouseCapture == true )
+							{
+								SDL_SetRelativeMouseMode(SDL_FALSE);
+								SDL_ShowCursor(SDL_FALSE);
+							}
+							else
+							{
+								SDL_SetRelativeMouseMode(SDL_TRUE);
+							}
 							break;
 						default:
 							handled = false;
@@ -185,10 +217,22 @@ void inputSDLThreadRun( void )
 					case SDL_WINDOWEVENT_FOCUS_LOST:
 						g_nNestedRefresh = g_nNestedUnfocusedRefresh;
 						g_bWindowFocused = false;
+						if ( g_bNoMouseCapture == true && g_bCenterMouseOnFocusLoss == true )
+						{
+							wlserver_lock();
+							wlserver_absmousemotion( g_nOutputWidth / 2, g_nOutputHeight / 2, event.window.timestamp );
+							wlserver_unlock();
+						}
 						break;
 					case SDL_WINDOWEVENT_FOCUS_GAINED:
 						g_nNestedRefresh = g_nOldNestedRefresh;
 						g_bWindowFocused = true;
+						if ( g_bNoMouseCapture == true && g_bCenterMouseOnFocusLoss == true )
+						{
+							wlserver_lock();
+							wlserver_absmousemotion( g_nLastAbsMouseX, g_nLastAbsMouseY, event.window.timestamp );
+							wlserver_unlock();
+						}
 						break;
 				}
 				break;
