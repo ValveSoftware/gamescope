@@ -2070,7 +2070,7 @@ void vulkan_update_descriptor( struct Composite_t *pComposite, struct VulkanPipe
 		vkUpdateDescriptorSets(device, 1, &writeDescriptorSet, 0, nullptr);
 	}
 	
-	std::array< VkDescriptorImageInfo, k_nMaxLayers > imageDescriptors;
+	std::array< VkDescriptorImageInfo, k_nMaxLayers > imageDescriptors = {};
 	for ( uint32_t i = 0; i < k_nMaxLayers; i++ )
 	{
 		VkSampler sampler = VK_NULL_HANDLE;
@@ -2136,36 +2136,32 @@ void vulkan_update_descriptor( struct Composite_t *pComposite, struct VulkanPipe
 		.pTexelBufferView = nullptr,
 	};
 
+	// Duplicate image descriptors for ycbcr.
+	std::array< VkDescriptorImageInfo, k_nMaxLayers > ycbcrImageDescriptors = {};
 	if ( nYCBCRMask != 0 )
 	{
-		// Duplicate image descriptors for ycbcr.
-		std::array< VkDescriptorImageInfo, k_nMaxLayers > ycbcrImageDescriptors;
 		for (uint32_t i = 0; i < k_nMaxLayers; i++)
 		{
 			ycbcrImageDescriptors[i] = imageDescriptors[i];
 			// We use immutable samplers.
 			ycbcrImageDescriptors[i].sampler = VK_NULL_HANDLE;
 		}
-
-		writeDescriptorSets[1] = {
-			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-			.pNext = nullptr,
-			.dstSet = descriptorSet,
-			.dstBinding = 5,
-			.dstArrayElement = 0,
-			.descriptorCount = ycbcrImageDescriptors.size(),
-			.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-			.pImageInfo = ycbcrImageDescriptors.data(),
-			.pBufferInfo = nullptr,
-			.pTexelBufferView = nullptr,
-		};
-
-		vkUpdateDescriptorSets(device, 2, writeDescriptorSets.data(), 0, nullptr);
 	}
-	else
-	{
-		vkUpdateDescriptorSets(device, 1, writeDescriptorSets.data(), 0, nullptr);
-	}
+
+	writeDescriptorSets[1] = {
+		.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+		.pNext = nullptr,
+		.dstSet = descriptorSet,
+		.dstBinding = 5,
+		.dstArrayElement = 0,
+		.descriptorCount = ycbcrImageDescriptors.size(),
+		.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+		.pImageInfo = ycbcrImageDescriptors.data(),
+		.pBufferInfo = nullptr,
+		.pTexelBufferView = nullptr,
+	};
+
+	vkUpdateDescriptorSets(device, 2, writeDescriptorSets.data(), 0, nullptr);
 }
 
 bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *pPipeline, std::shared_ptr<CVulkanTexture> *pScreenshotTexture )
