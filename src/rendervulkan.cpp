@@ -1222,7 +1222,10 @@ retry:
 	
 	vkCreateSampler( device, &ycbcrSamplerInfo, nullptr, &ycbcrSampler );
 
-	std::array<VkSampler, k_nMaxLayers> ycbcrSamplers = {ycbcrSampler, ycbcrSampler, ycbcrSampler, ycbcrSampler};
+	// Create an array of our ycbcrSampler to fill up
+	std::array<VkSampler, k_nMaxLayers> ycbcrSamplers;
+	for (auto& sampler : ycbcrSamplers)
+		sampler = ycbcrSampler;
 	
 	std::vector< VkDescriptorSetLayoutBinding > vecLayoutBindings;
 	VkDescriptorSetLayoutBinding descriptorSetLayoutBindings =
@@ -1241,7 +1244,7 @@ retry:
 
 	vecLayoutBindings.push_back( descriptorSetLayoutBindings );
 
-	descriptorSetLayoutBindings.binding = 5;
+	descriptorSetLayoutBindings.binding = 1 + k_nMaxLayers;
 	descriptorSetLayoutBindings.descriptorCount = k_nMaxLayers;
 	descriptorSetLayoutBindings.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 	descriptorSetLayoutBindings.pImmutableSamplers = ycbcrSamplers.data();
@@ -2121,6 +2124,18 @@ void vulkan_update_descriptor( struct Composite_t *pComposite, struct VulkanPipe
 		}
 	}
 
+	// Duplicate image descriptors for ycbcr.
+	std::array< VkDescriptorImageInfo, k_nMaxLayers > ycbcrImageDescriptors = {};
+	if ( nYCBCRMask != 0 )
+	{
+		for (uint32_t i = 0; i < k_nMaxLayers; i++)
+		{
+			ycbcrImageDescriptors[i] = imageDescriptors[i];
+			// We use immutable samplers.
+			ycbcrImageDescriptors[i].sampler = VK_NULL_HANDLE;
+		}
+	}
+
 	std::array< VkWriteDescriptorSet, 2 > writeDescriptorSets;
 
 	writeDescriptorSets[0] = {
@@ -2136,23 +2151,11 @@ void vulkan_update_descriptor( struct Composite_t *pComposite, struct VulkanPipe
 		.pTexelBufferView = nullptr,
 	};
 
-	// Duplicate image descriptors for ycbcr.
-	std::array< VkDescriptorImageInfo, k_nMaxLayers > ycbcrImageDescriptors = {};
-	if ( nYCBCRMask != 0 )
-	{
-		for (uint32_t i = 0; i < k_nMaxLayers; i++)
-		{
-			ycbcrImageDescriptors[i] = imageDescriptors[i];
-			// We use immutable samplers.
-			ycbcrImageDescriptors[i].sampler = VK_NULL_HANDLE;
-		}
-	}
-
 	writeDescriptorSets[1] = {
 		.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 		.pNext = nullptr,
 		.dstSet = descriptorSet,
-		.dstBinding = 5,
+		.dstBinding = 1 + k_nMaxLayers,
 		.dstArrayElement = 0,
 		.descriptorCount = ycbcrImageDescriptors.size(),
 		.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
@@ -2161,7 +2164,7 @@ void vulkan_update_descriptor( struct Composite_t *pComposite, struct VulkanPipe
 		.pTexelBufferView = nullptr,
 	};
 
-	vkUpdateDescriptorSets(device, 2, writeDescriptorSets.data(), 0, nullptr);
+	vkUpdateDescriptorSets(device, writeDescriptorSets.size(), writeDescriptorSets.data(), 0, nullptr);
 }
 
 bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *pPipeline, std::shared_ptr<CVulkanTexture> *pScreenshotTexture )
