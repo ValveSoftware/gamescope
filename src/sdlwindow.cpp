@@ -121,21 +121,19 @@ void inputSDLThreadRun( void )
 		switch( event.type )
 		{
 			case SDL_MOUSEMOTION:
-				if ( g_bNoMouseCapture == true )
+				if ( g_bWindowFocused )
 				{
-					if ( g_bWindowFocused == true )
+					wlserver_lock();
+					if ( g_bNoMouseCapture == true )
 					{
-						wlserver_lock();
 						wlserver_absmousemotion( event.motion.x, event.motion.y, event.motion.timestamp );
-						wlserver_unlock();
 						g_nLastAbsMouseX = event.motion.x;
 						g_nLastAbsMouseY = event.motion.y;
 					}
-				}
-				else
-				{
-					wlserver_lock();
-					wlserver_mousemotion( event.motion.xrel, event.motion.yrel, event.motion.timestamp );
+					else
+					{
+						wlserver_mousemotion( event.motion.xrel, event.motion.yrel, event.motion.timestamp );
+					}
 					wlserver_unlock();
 				}
 				break;
