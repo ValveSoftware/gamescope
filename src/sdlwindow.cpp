@@ -27,6 +27,9 @@ SDL_Window *g_SDLWindow;
 static uint32_t g_unSDLUserEventID;
 static SDL_Event g_SDLUserEvent;
 
+static std::string g_SDLWindowTitle;
+static bool g_bUpdateSDLWindowTitle = false;
+
 //-----------------------------------------------------------------------------
 // Purpose: Convert from the remote scancode to a Linux event keycode
 //-----------------------------------------------------------------------------
@@ -241,11 +244,23 @@ void sdlwindow_update( void )
 			SDL_HideWindow( g_SDLWindow );
 		}
 	}
+
+	if ( g_bUpdateSDLWindowTitle == true )
+	{
+		g_bUpdateSDLWindowTitle = false;
+		SDL_SetWindowTitle( g_SDLWindow, g_SDLWindowTitle.c_str() );
+	}
 }
 
 void sdlwindow_title( const char* title )
 {
-	SDL_SetWindowTitle( g_SDLWindow, title ? title : DEFAULT_TITLE );
+	title = title ? title : DEFAULT_TITLE;
+	if ( g_SDLWindowTitle != title )
+	{
+		g_SDLWindowTitle = title ? title : DEFAULT_TITLE;
+		g_bUpdateSDLWindowTitle = true;
+		sdlwindow_pushupdate();
+	}
 }
 
 void sdlwindow_pushupdate( void )
