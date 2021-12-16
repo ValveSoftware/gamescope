@@ -110,9 +110,12 @@ void inputSDLThreadRun( void )
 		switch( event.type )
 		{
 			case SDL_MOUSEMOTION:
-				wlserver_lock();
-				wlserver_mousemotion( event.motion.xrel, event.motion.yrel, event.motion.timestamp );
-				wlserver_unlock();
+				if ( g_bWindowFocused )
+				{
+					wlserver_lock();
+					wlserver_mousemotion( event.motion.xrel, event.motion.yrel, event.motion.timestamp );
+					wlserver_unlock();
+				}
 				break;
 			case SDL_MOUSEBUTTONDOWN:
 			case SDL_MOUSEBUTTONUP:
