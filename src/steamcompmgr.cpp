@@ -324,6 +324,7 @@ static std::unordered_map<struct wlr_buffer*, wlr_buffer_map_entry> wlr_buffer_m
 
 static std::atomic< bool > g_bTakeScreenshot{false};
 static bool g_bPropertyRequestedScreenshot;
+static std::atomic< bool > g_bRepaintRequested{false};
 
 static int g_nudgePipe[2] = {-1, -1};
 
@@ -3467,7 +3468,7 @@ void take_screenshot( void )
 
 void request_repaint( void )
 {
-	hasRepaint = true;
+	g_bRepaintRequested = true;
 	nudge_steamcompmgr();
 }
 
@@ -4273,6 +4274,11 @@ steamcompmgr_main(int argc, char **argv)
 		handle_done_commits();
 
 		check_new_wayland_res();
+
+		if ( g_bRepaintRequested.exchange(false) )
+		{
+			hasRepaint = true;
+		}
 
 		if ( ( g_bTakeScreenshot == true || hasRepaint == true || is_fading_out() ) && vblank == true )
 		{
