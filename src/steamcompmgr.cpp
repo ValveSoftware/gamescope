@@ -2004,7 +2004,7 @@ found:
 		}
 	};
 
-	if ( gameFocused )
+	if ( gameFocused && focus )
 	{
 		// Do some searches through game windows to follow transient links if needed
 		while ( true )
@@ -2029,9 +2029,9 @@ found:
 		resolveTransientOverrides();
 	}
 
-	if ( !override_focus )
+	if ( !override_focus && focus )
 	{
-		if ( vecFocuscontrolAppIDs.size() > 0 && focus )
+		if ( vecFocuscontrolAppIDs.size() > 0 )
 		{
 			for ( win *override : vecPossibleFocusWindows )
 			{
@@ -2051,9 +2051,10 @@ found:
 				}
 			}
 		}
+
+		resolveTransientOverrides();
 	}
 
-	resolveTransientOverrides();
 
 	currentOverrideWindow = override_focus ? override_focus->id : None;
 
