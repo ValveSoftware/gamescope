@@ -1713,6 +1713,8 @@ paint_all(Display *dpy, MouseCursor *cursor)
 				{
 					xwm_log.errorf( "Failed to save screenshot to %s", pTimeBuffer );
 				}
+
+				XDeleteProperty( dpy, root, gamescopeScreenShotAtom );
 			});
 
 			screenshotThread.detach();
@@ -3125,7 +3127,6 @@ handle_property_notify(Display *dpy, XPropertyEvent *ev)
 		{
 			g_bTakeScreenshot = true;
 			g_bPropertyRequestedScreenshot = true;
-			XDeleteProperty( dpy, root, gamescopeScreenShotAtom );
 		}
 	}
 	if (ev->atom == gameAtom)
