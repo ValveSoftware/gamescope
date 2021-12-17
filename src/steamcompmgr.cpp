@@ -1568,16 +1568,7 @@ paint_all(Display *dpy, MouseCursor *cursor)
 	if (drawDebugInfo)
 		paint_debug_info(dpy);
 
-	// If this is our first frame,and we have no valid contents, then toss it.
-	// We don't want to do this on any future frames as we can end up in the following scenario:
-	// -> Game crashes
-	// -> Stuck on the last frame of the game
-	// -> User brings up overlay
-	// -> User closes overlay
-	// -> Overlay is still visible :( but not interactable
-	bool bDiscard = g_bFirstFrame && !bValidContents;
-
-	if ( bDiscard || ( BIsNested() == false && g_DRM.paused == true ) )
+	if ( !bValidContents || ( BIsNested() == false && g_DRM.paused == true ) )
 	{
 		return;
 	}
