@@ -2131,6 +2131,36 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 		return false;
 	}
 	
+	VkImageSubresourceRange subResRange =
+	{
+		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+		.levelCount = 1,
+		.layerCount = 1
+	};
+	
+	/* We don't need a queue ownership transfer even with the foreign path
+	   because we don't care about the content of the image.
+	   The spec says:
+	   "If memory dependencies are correctly expressed between uses of such
+	    a resource between two queues in different families, but no ownership
+	    transfer is defined, the contents of that resource are undefined for
+	    any read accesses performed by the second queue family." */
+	VkImageMemoryBarrier memoryBarrier =
+	{
+		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+		.srcAccessMask = 0,
+		.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+		.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+		.newLayout = VK_IMAGE_LAYOUT_GENERAL,
+		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.image = compositeImage,
+		.subresourceRange = subResRange
+	};
+	
+	vkCmdPipelineBarrier( curCommandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+			      		0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
+	
 	vkCmdBindPipeline(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelines[pComposite->nLayerCount - 1][pComposite->nSwapChannels][pComposite->nYCBCRMask]);
 	
 	vkCmdBindDescriptorSets(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE,
@@ -2147,14 +2177,6 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 	
 	vkCmdDispatch( curCommandBuffer, nGroupCountX, nGroupCountY, 1 );
 	
-	// Pipeline barrier to flush our compute operations so the buffer can be scanned out safely
-	VkImageSubresourceRange subResRange =
-	{
-		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-		.levelCount = 1,
-		.layerCount = 1
-	};
-
 	if ( pScreenshotTexture != nullptr )
 	{
 		std::shared_ptr<CVulkanTexture> pFoundScreenshotImage = nullptr;
@@ -2246,10 +2268,7 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 
 	bool useForeignQueue = !BIsNested() && g_vulkanSupportsModifiers;
 
-	/* The non-foreign path is very hinky, and for the foreign path the acquire
-	 * barriers are still missing (but are unlikely to do anything on radv). Also
-	 * missing is the initial pipeline barrier from VK_IMAGE_LAYOUT_UNDEFINED. */
-	VkImageMemoryBarrier memoryBarrier =
+	memoryBarrier =
 	{
 		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
 		.srcAccessMask = pScreenshotTexture ? VK_ACCESS_TRANSFER_READ_BIT : VK_ACCESS_SHADER_WRITE_BIT,
