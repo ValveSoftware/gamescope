@@ -3445,8 +3445,7 @@ void check_new_wayland_res( void )
 	std::vector<ResListEntry_t> tmp_queue;
 	{
 		std::lock_guard<std::mutex> lock( wayland_commit_lock );
-		tmp_queue = wayland_commit_queue;
-		wayland_commit_queue.clear();
+		tmp_queue = std::move(wayland_commit_queue);
 	}
 
 	for ( uint32_t i = 0; i < tmp_queue.size(); i++ )
