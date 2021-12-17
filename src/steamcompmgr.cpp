@@ -3401,7 +3401,7 @@ void handle_done_commits( void )
 					}
 
 					// If this is the main plane, repaint
-					if ( w->id == currentFocusWindow )
+					if ( w->id == currentFocusWindow && !w->isSteamStreamingClient )
 					{
 						g_HeldCommits[ HELD_COMMIT_BASE ] = w->commit_queue[ j ];
 						hasRepaint = true;
@@ -3414,6 +3414,7 @@ void handle_done_commits( void )
 
 					if ( w->isSteamStreamingClientVideo && currentFocusWin && currentFocusWin->isSteamStreamingClient )
 					{
+						g_HeldCommits[ HELD_COMMIT_BASE ] = w->commit_queue[ j ];
 						hasRepaint = true;
 					}
 
