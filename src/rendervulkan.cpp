@@ -304,8 +304,18 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, VkFormat format, cr
 	VkResult res = VK_ERROR_INITIALIZATION_FAILED;
 
 	VkImageTiling tiling = (flags.bMappable || flags.bLinear) ? VK_IMAGE_TILING_LINEAR : VK_IMAGE_TILING_OPTIMAL;
-	VkImageUsageFlags usage = flags.bTextureable ? VK_IMAGE_USAGE_SAMPLED_BIT : VK_IMAGE_USAGE_STORAGE_BIT;
+	VkImageUsageFlags usage = 0;
 	VkMemoryPropertyFlags properties;
+
+	if ( flags.bSampled == true )
+	{
+		usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
+	}
+
+	if ( flags.bStorage == true )
+	{
+		usage |= VK_IMAGE_USAGE_STORAGE_BIT;
+	}
 
 	if ( flags.bTransferSrc == true )
 	{
@@ -664,29 +674,33 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, VkFormat format, cr
 
 	if (!bHasAlpha )
 	{
-		// Right now this implies no storage bit - check it now as that's incompatible with swizzle
-		assert ( flags.bTextureable == true );
+		// not compatible with with swizzles
+		assert ( flags.bStorage == false );
 	}
-	
-	VkImageViewCreateInfo createInfo = {};
-	createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-	createInfo.image = m_vkImage;
-	createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-	createInfo.format = format;
-	createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
-	createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-	createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
-	createInfo.components.a = bHasAlpha ? VK_COMPONENT_SWIZZLE_IDENTITY : VK_COMPONENT_SWIZZLE_ONE;
-	createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-	createInfo.subresourceRange.baseMipLevel = 0;
-	createInfo.subresourceRange.levelCount = 1;
-	createInfo.subresourceRange.baseArrayLayer = 0;
-	createInfo.subresourceRange.layerCount = 1;
-	
-	res = vkCreateImageView(device, &createInfo, nullptr, &m_vkImageView);
-	if ( res != VK_SUCCESS ) {
-		vk_errorf( res, "vkCreateImageView failed" );
-		return false;
+
+	if ( flags.bStorage || flags.bSampled )
+	{
+		VkImageViewCreateInfo createInfo = {};
+		createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+		createInfo.image = m_vkImage;
+		createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+		createInfo.format = format;
+		createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+		createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+		createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+		createInfo.components.a = bHasAlpha ? VK_COMPONENT_SWIZZLE_IDENTITY : VK_COMPONENT_SWIZZLE_ONE;
+		createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		createInfo.subresourceRange.baseMipLevel = 0;
+		createInfo.subresourceRange.levelCount = 1;
+		createInfo.subresourceRange.baseArrayLayer = 0;
+		createInfo.subresourceRange.layerCount = 1;
+
+		res = vkCreateImageView(device, &createInfo, nullptr, &m_vkImageView);
+		if ( res != VK_SUCCESS ) {
+			vk_errorf( res, "vkCreateImageView failed" );
+			return false;
+		}
+
 	}
 
 	if ( flags.bMappable )
@@ -1627,6 +1641,7 @@ static bool vulkan_make_output_images( VulkanOutput_t *pOutput )
 {
 	CVulkanTexture::createFlags outputImageflags;
 	outputImageflags.bFlippable = true;
+	outputImageflags.bStorage = true;
 	outputImageflags.bTransferSrc = true; // for screenshots
 
 	pOutput->outputImage[0] = nullptr;
@@ -1915,7 +1930,7 @@ std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_dmabuf( struct wlr_dm
 	std::shared_ptr<CVulkanTexture> pTex = std::make_shared<CVulkanTexture>();
 
 	CVulkanTexture::createFlags texCreateFlags;
-	texCreateFlags.bTextureable = true;
+	texCreateFlags.bSampled = true;
 	
 	if ( pTex->BInit( pDMA->width, pDMA->height, DRMFormatToVulkan( pDMA->format, true ), texCreateFlags, pDMA ) == false )
 		return nullptr;
@@ -1927,7 +1942,7 @@ std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_bits( uint32_t width,
 {
 	std::shared_ptr<CVulkanTexture> pTex = std::make_shared<CVulkanTexture>();
 
-	texCreateFlags.bTextureable = true;
+	texCreateFlags.bSampled = true;
 	texCreateFlags.bTransferDst = true;
 
 	if ( pTex->BInit( width, height, format, texCreateFlags ) == false )
@@ -2627,7 +2642,7 @@ std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struct wl
 
 	std::shared_ptr<CVulkanTexture> pTex = std::make_shared<CVulkanTexture>();
 	CVulkanTexture::createFlags texCreateFlags = {};
-	texCreateFlags.bTextureable = true;
+	texCreateFlags.bSampled = true;
 	texCreateFlags.bTransferDst = true;
 	if ( pTex->BInit( width, height, format, texCreateFlags ) == false )
 		return nullptr;

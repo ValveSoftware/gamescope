@@ -102,16 +102,18 @@ public:
 		createFlags( void )
 		{
 			bFlippable = false;
-			bTextureable = false;
 			bMappable = false;
+			bSampled = false;
+			bStorage = false;
 			bTransferSrc = false;
 			bTransferDst = false;
 			bLinear = false;
 		}
 
 		bool bFlippable : 1;
-		bool bTextureable : 1;
 		bool bMappable : 1;
+		bool bSampled : 1;
+		bool bStorage : 1;
 		bool bTransferSrc : 1;
 		bool bTransferDst : 1;
 		bool bLinear : 1;
