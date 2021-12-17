@@ -44,6 +44,7 @@ struct VulkanOutput_t
 	VkSwapchainKHR swapChain;
 	std::vector< VkImage > swapChainImages;
 	std::vector< VkImageView > swapChainImageViews;
+	VkFence acquireFence;
 	
 	// If no swapchain, use our own images
 	
@@ -1460,8 +1461,12 @@ void fini_device()
 
 bool acquire_next_image( void )
 {
-	VkResult res = vkAcquireNextImageKHR( device, g_output.swapChain, UINT64_MAX, VK_NULL_HANDLE, VK_NULL_HANDLE, &g_output.nSwapChainImageIndex );
-	return res == VK_SUCCESS || res == VK_SUBOPTIMAL_KHR;
+	VkResult res = vkAcquireNextImageKHR( device, g_output.swapChain, UINT64_MAX, VK_NULL_HANDLE, g_output.acquireFence, &g_output.nSwapChainImageIndex );
+	if ( res != VK_SUCCESS && res != VK_SUBOPTIMAL_KHR )
+		return false;
+	if ( vkWaitForFences( device, 1, &g_output.acquireFence, false, UINT64_MAX ) != VK_SUCCESS )
+		return false;
+	return vkResetFences( device, 1, &g_output.acquireFence ) == VK_SUCCESS;
 }
 
 void vulkan_present_to_window( void )
@@ -1553,6 +1558,11 @@ bool vulkan_make_swapchain( VulkanOutput_t *pOutput )
 			return false;
 	}
 	
+	VkFenceCreateInfo fenceInfo = {};
+	fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+
+	vkCreateFence( device, &fenceInfo, nullptr, &pOutput->acquireFence );
+
 	return true;
 }
 
