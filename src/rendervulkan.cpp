@@ -2255,7 +2255,7 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 		.srcAccessMask = pScreenshotTexture ? VK_ACCESS_TRANSFER_READ_BIT : VK_ACCESS_SHADER_WRITE_BIT,
 		.dstAccessMask = useForeignQueue ? (VkAccessFlagBits)0 : VK_ACCESS_MEMORY_READ_BIT,
 		.oldLayout = VK_IMAGE_LAYOUT_GENERAL,
-		.newLayout = VK_IMAGE_LAYOUT_GENERAL,
+		.newLayout = BIsNested() ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR : VK_IMAGE_LAYOUT_GENERAL,
 		.srcQueueFamilyIndex = queueFamilyIndex,
 		.dstQueueFamilyIndex = useForeignQueue
 								? VK_QUEUE_FAMILY_FOREIGN_EXT
