@@ -54,8 +54,10 @@ struct fb {
 	uint32_t id;
 	/* Client buffer, if any */
 	struct wlr_buffer *buf;
-	/* A FB is held if it's being used by steamcompmgr */
-	bool held;
+	/* A FB is held if it's being used by steamcompmgr 
+	 * doesn't need to be atomic as it's only ever
+	 * modified/read from the steamcompmgr thread */
+	int held_refs;
 	/* Number of page-flips using the FB */
 	std::atomic< uint32_t > n_refs;
 };

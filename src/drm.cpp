@@ -201,7 +201,6 @@ static void page_flip_handler(int fd, unsigned int frame, unsigned int sec, unsi
 		assert( previous_fbid != 0 );
 
 		struct fb &previous_fb = get_fb( g_DRM, previous_fbid );
-		assert( previous_fb.n_refs > 0 );
 
 		if ( --previous_fb.n_refs == 0 )
 		{
@@ -791,7 +790,7 @@ int drm_commit(struct drm_t *drm, struct Composite_t *pComposite, struct VulkanP
 	for ( uint32_t i = 0; i < drm->fbids_in_req.size(); i++ )
 	{
 		struct fb &fb = get_fb( g_DRM, drm->fbids_in_req[ i ] );
-		assert( fb.held == true );
+		assert( fb.held_refs );
 		fb.n_refs++;
 	}
 
@@ -913,10 +912,11 @@ uint32_t drm_fbid_from_dmabuf( struct drm_t *drm, struct wlr_buffer *buf, struct
 	/* Nested scope so fb doesn't end up in the out: label */
 	{
 		struct fb &fb = get_fb( *drm, fb_id );
-		assert( fb.held == false );
+		assert( fb.held_refs == 0 );
 		fb.id = fb_id;
 		fb.buf = buf;
-		fb.held = !buf;
+		if (!buf)
+			fb.held_refs++;
 		fb.n_refs = 0;
 	}
 
@@ -948,15 +948,14 @@ out:
 void drm_drop_fbid( struct drm_t *drm, uint32_t fbid )
 {
 	struct fb &fb = get_fb( *drm, fbid );
-	assert( fb.held == false ||
+	assert( fb.held_refs == 0 ||
 	        fb.buf == nullptr );
 
-	fb.held = false;
+	fb.held_refs = 0;
 
-	if ( fb.n_refs != 0  )
+	if ( fb.n_refs != 0 )
 	{
 		std::lock_guard<std::mutex> lock( drm->free_queue_lock );
-
 		drm->fbid_free_queue.push_back( fbid );
 		return;
 	}
@@ -969,7 +968,7 @@ void drm_drop_fbid( struct drm_t *drm, uint32_t fbid )
 
 static void drm_unlock_fb_internal( struct drm_t *drm, struct fb *fb )
 {
-	assert( !fb->held );
+	assert( fb->held_refs == 0 );
 	assert( fb->n_refs == 0 );
 
 	if ( fb->buf != nullptr )
@@ -983,15 +982,16 @@ static void drm_unlock_fb_internal( struct drm_t *drm, struct fb *fb )
 void drm_lock_fbid( struct drm_t *drm, uint32_t fbid )
 {
 	struct fb &fb = get_fb( *drm, fbid );
-	assert( fb.held == false );
 	assert( fb.n_refs == 0 );
-	fb.held = true;
 
-	if ( fb.buf != nullptr )
+	if ( fb.held_refs++ == 0 )
 	{
-		wlserver_lock();
-		wlr_buffer_lock( fb.buf );
-		wlserver_unlock();
+		if ( fb.buf != nullptr )
+		{
+			wlserver_lock();
+			wlr_buffer_lock( fb.buf );
+			wlserver_unlock();
+		}
 	}
 }
 
@@ -999,21 +999,20 @@ void drm_unlock_fbid( struct drm_t *drm, uint32_t fbid )
 {
 	struct fb &fb = get_fb( *drm, fbid );
 	
-	assert( fb.held == true );
-	fb.held = false;
+	assert( fb.held_refs > 0 );
+	if ( --fb.held_refs != 0 )
+		return;
 
-	if ( fb.n_refs == 0 )
-	{
-		/* FB isn't being used in any page-flip, free it immediately */
-		drm_verbose_log.debugf("free fbid %u", fbid);
-		drm_unlock_fb_internal( drm, &fb );
-	}
-	else
+	if ( fb.n_refs != 0 )
 	{
 		std::lock_guard<std::mutex> lock( drm->free_queue_lock );
-
 		drm->fbid_unlock_queue.push_back( fbid );
+		return;
 	}
+
+	/* FB isn't being used in any page-flip, free it immediately */
+	drm_verbose_log.debugf("free fbid %u", fbid);
+	drm_unlock_fb_internal( drm, &fb );
 }
 
 /* Prepares an atomic commit without using libliftoff */
