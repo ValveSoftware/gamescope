@@ -1478,26 +1478,32 @@ paint_all(Display *dpy, MouseCursor *cursor)
 	if ( w->isSteamStreamingClient == true )
 	{
 		win *videow = NULL;
+		bool bHasVideoUnderlay = false;
 
 		for ( videow = list; videow; videow = videow->next )
 		{
 			if ( videow->isSteamStreamingClientVideo == true )
 			{
 				// TODO: also check matching AppID so we can have several pairs
-				bValidContents |= paint_window(dpy, videow, videow, &composite, &pipeline, false, cursor);
+				bValidContents |= paint_window(dpy, videow, videow, &composite, &pipeline, false, cursor, true);
+				bHasVideoUnderlay = true;
 				break;
 			}
 		}
 		
+		bool bOldValidContents = bValidContents;
 		int nOldLayerCount = composite.nLayerCount;
 
-		bValidContents |= paint_window(dpy, w, w, &composite, &pipeline, false, cursor);
+		bValidContents |= paint_window(dpy, w, w, &composite, &pipeline, false, cursor, !bHasVideoUnderlay);
 		update_touch_scaling( &composite );
 		
 		// paint UI unless it's fully hidden, which it communicates to us through opacity=0
 		// we paint it to extract scaling coefficients above, then remove the layer if one was added
-		if ( w->opacity == TRANSLUCENT && nOldLayerCount < composite.nLayerCount )
+		if ( w->opacity == TRANSLUCENT && bHasVideoUnderlay && nOldLayerCount < composite.nLayerCount )
+		{
 			composite.nLayerCount--;
+			bValidContents = bOldValidContents;
+		}
 	}
 	else
 	{
