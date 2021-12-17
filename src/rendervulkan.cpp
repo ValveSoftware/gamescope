@@ -49,7 +49,7 @@ struct VulkanOutput_t
 	// If no swapchain, use our own images
 	
 	int nOutImage; // ping/pong between two RTs
-	CVulkanTexture outputImage[2];
+	std::shared_ptr<CVulkanTexture> outputImage[2];
 
 	VkFormat outputFormat;
 
@@ -95,7 +95,7 @@ struct scratchCmdBuffer_t
 	VkCommandBuffer cmdBuf;
 	VkFence fence;
 	
-	std::vector<CVulkanTexture *> refs;
+	std::vector<std::shared_ptr<CVulkanTexture>> refs;
 	
 	std::atomic<bool> haswaiter;
 	std::atomic<bool> busy;
@@ -107,10 +107,6 @@ struct VkPhysicalDeviceMemoryProperties memoryProperties;
 
 VulkanOutput_t g_output;
 
-std::unordered_map<VulkanTexture_t, CVulkanTexture *> g_mapVulkanTextures;
-std::mutex g_mapVulkanTexturesMutex;
-std::atomic<VulkanTexture_t> g_nMaxVulkanTexHandle;
-
 struct VulkanSamplerCacheEntry_t
 {
 	VulkanPipeline_t::LayerBinding_t key;
@@ -120,7 +116,7 @@ struct VulkanSamplerCacheEntry_t
 
 std::vector< VulkanSamplerCacheEntry_t > g_vecVulkanSamplerCache;
 
-VulkanTexture_t g_emptyTex;
+std::shared_ptr<CVulkanTexture> g_emptyTex;
 
 static std::map< VkFormat, std::map< uint64_t, VkDrmFormatModifierPropertiesEXT > > DRMModifierProps = {};
 static std::vector< uint32_t > sampledShmFormats{};
@@ -296,19 +292,6 @@ static VkResult getModifierProps( const VkImageCreateInfo *imageInfo, uint64_t m
 	imageProps.pNext = externalFormatProps;
 
 	return vkGetPhysicalDeviceImageFormatProperties2(physicalDevice, &imageFormatInfo, &imageProps);
-}
-
-
-static CVulkanTexture *getVulkanTexture( VulkanTexture_t tex )
-{
-	std::lock_guard<std::mutex> m( g_mapVulkanTexturesMutex );
-	return g_mapVulkanTextures[ tex ];
-}
-
-static void setVulkanTexture( VulkanTexture_t tex, CVulkanTexture *val )
-{
-	std::lock_guard<std::mutex> m( g_mapVulkanTexturesMutex );
-	g_mapVulkanTextures[ tex ] = val;
 }
 
 bool CVulkanTexture::BInit( uint32_t width, uint32_t height, VkFormat format, createFlags flags, wlr_dmabuf_attributes *pDMA /* = nullptr */ )
@@ -717,7 +700,7 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, VkFormat format, cr
 	return true;
 }
 
-CVulkanTexture::CVulkanTexture( void ) : nRefCount( 1 )
+CVulkanTexture::CVulkanTexture( void )
 {
 }
 
@@ -1588,14 +1571,19 @@ static bool vulkan_make_output_images( VulkanOutput_t *pOutput )
 	outputImageflags.bFlippable = true;
 	outputImageflags.bTransferSrc = true; // for screenshots
 
-	bool bSuccess = pOutput->outputImage[0].BInit( g_nOutputWidth, g_nOutputHeight, pOutput->outputFormat, outputImageflags );
+	pOutput->outputImage[0] = nullptr;
+	pOutput->outputImage[1] = nullptr;
+
+	pOutput->outputImage[0] = std::make_shared<CVulkanTexture>();
+	bool bSuccess = pOutput->outputImage[0]->BInit( g_nOutputWidth, g_nOutputHeight, pOutput->outputFormat, outputImageflags );
 	if ( bSuccess != true )
 	{
 		vk_log.errorf( "failed to allocate buffer for KMS" );
 		return false;
 	}
 
-	bSuccess = pOutput->outputImage[1].BInit( g_nOutputWidth, g_nOutputHeight, pOutput->outputFormat, outputImageflags );
+	pOutput->outputImage[1] = std::make_shared<CVulkanTexture>();
+	bSuccess = pOutput->outputImage[1]->BInit( g_nOutputWidth, g_nOutputHeight, pOutput->outputFormat, outputImageflags );
 	if ( bSuccess != true )
 	{
 		vk_log.errorf( "failed to allocate buffer for KMS" );
@@ -1609,10 +1597,6 @@ bool vulkan_remake_output_images( void )
 {
 	VulkanOutput_t *pOutput = &g_output;
 	vkQueueWaitIdle( queue );
-
-	pOutput->outputImage[0].~CVulkanTexture();
-	pOutput->outputImage[1].~CVulkanTexture();
-	memset(&pOutput->outputImage, 0, sizeof(pOutput->outputImage));
 
 	pOutput->nOutImage = 0;
 
@@ -1823,7 +1807,7 @@ static inline uint32_t get_command_buffer( VkCommandBuffer &cmdBuf, VkFence *pFe
 	return 0;
 }
 
-static inline void submit_command_buffer( uint32_t handle, std::vector<CVulkanTexture *> &vecRefs )
+static inline void submit_command_buffer( uint32_t handle, std::vector<std::shared_ptr<CVulkanTexture>> &vecRefs )
 {
 	VkCommandBuffer cmdBuf = g_scratchCommandBuffers[ handle ].cmdBuf;
 	VkFence fence = g_scratchCommandBuffers[ handle ].fence;
@@ -1849,10 +1833,7 @@ static inline void submit_command_buffer( uint32_t handle, std::vector<CVulkanTe
 	}
 	
 	for( uint32_t i = 0; i < vecRefs.size(); i++ )
-	{
-		vecRefs[ i ]->nRefCount++;
-		g_scratchCommandBuffers[ handle ].refs.push_back( vecRefs[ i ] );
-	}
+		g_scratchCommandBuffers[ handle ].refs.push_back( std::move(vecRefs[ i ]) );
 }
 
 void vulkan_garbage_collect( void )
@@ -1871,59 +1852,35 @@ void vulkan_garbage_collect( void )
 				vkResetCommandBuffer( g_scratchCommandBuffers[ i ].cmdBuf, 0 );
 				vkResetFences( device, 1, &g_scratchCommandBuffers[ i ].fence );
 				
-				for ( uint32_t ref = 0; ref < g_scratchCommandBuffers[ i ].refs.size(); ref++ )
-				{
-					CVulkanTexture *pTex = g_scratchCommandBuffers[ i ].refs[ ref ];
-					if ( --pTex->nRefCount == 0 )
-					{
-						setVulkanTexture( pTex->handle, nullptr);
-						delete pTex;
-					}
-				}
-
+				g_scratchCommandBuffers[ i ].refs.clear();
 				g_scratchCommandBuffers[ i ].busy = false;
 			}
 		}
 	}
 }
 
-VulkanTexture_t vulkan_create_texture_from_dmabuf( struct wlr_dmabuf_attributes *pDMA )
+std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_dmabuf( struct wlr_dmabuf_attributes *pDMA )
 {
-	VulkanTexture_t ret = 0;
-
-	CVulkanTexture *pTex = new CVulkanTexture();
+	std::shared_ptr<CVulkanTexture> pTex = std::make_shared<CVulkanTexture>();
 
 	CVulkanTexture::createFlags texCreateFlags;
 	texCreateFlags.bTextureable = true;
 	
 	if ( pTex->BInit( pDMA->width, pDMA->height, DRMFormatToVulkan( pDMA->format, true ), texCreateFlags, pDMA ) == false )
-	{
-		delete pTex;
-		return ret;
-	}
+		return nullptr;
 	
-	ret = ++g_nMaxVulkanTexHandle;
-	setVulkanTexture( ret, pTex );
-	
-	pTex->handle = ret;
-	
-	return ret;
+	return pTex;
 }
 
-VulkanTexture_t vulkan_create_texture_from_bits( uint32_t width, uint32_t height, VkFormat format, CVulkanTexture::createFlags texCreateFlags, void *bits )
+std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_bits( uint32_t width, uint32_t height, VkFormat format, CVulkanTexture::createFlags texCreateFlags, void *bits )
 {
-	VulkanTexture_t ret = 0;
-	
-	CVulkanTexture *pTex = new CVulkanTexture();
+	std::shared_ptr<CVulkanTexture> pTex = std::make_shared<CVulkanTexture>();
 
 	texCreateFlags.bTextureable = true;
 	texCreateFlags.bTransferDst = true;
 
 	if ( pTex->BInit( width, height, format, texCreateFlags ) == false )
-	{
-		delete pTex;
-		return ret;
-	}
+		return nullptr;
 	
 	memcpy( pUploadBuffer, bits, width * height * 4 );
 	
@@ -1945,34 +1902,12 @@ VulkanTexture_t vulkan_create_texture_from_bits( uint32_t width, uint32_t height
 	
 	vkCmdCopyBufferToImage( commandBuffer, uploadBuffer, pTex->m_vkImage, VK_IMAGE_LAYOUT_GENERAL, 1, &region );
 	
-	std::vector<CVulkanTexture *> refs;
+	std::vector<std::shared_ptr<CVulkanTexture>> refs;
 	refs.push_back( pTex );
 	
 	submit_command_buffer( handle, refs );
 	
-	ret = ++g_nMaxVulkanTexHandle;
-	setVulkanTexture( ret, pTex );
-	
-	pTex->handle = ret;
-	
-	return ret;
-}
-
-void vulkan_free_texture( VulkanTexture_t vulkanTex )
-{
-	if ( vulkanTex == 0 )
-		return;
-	
-	CVulkanTexture *pTex = getVulkanTexture( vulkanTex );
-
-	assert( pTex != nullptr );
-	assert( pTex->handle == vulkanTex );
-	
-	if ( --pTex->nRefCount == 0 )
-	{
-		delete pTex;
-		setVulkanTexture( vulkanTex, nullptr );
-	}
+	return pTex;
 }
 
 bool operator==(const struct VulkanPipeline_t::LayerBinding_t& lhs, struct VulkanPipeline_t::LayerBinding_t& rhs)
@@ -2022,7 +1957,7 @@ void vulkan_update_descriptor( struct Composite_t *pComposite, struct VulkanPipe
 		}
 		else
 		{
-			targetImageView = g_output.outputImage[ g_output.nOutImage ].m_vkImageView;
+			targetImageView = g_output.outputImage[ g_output.nOutImage ]->m_vkImageView;
 		}
 
 		VkDescriptorImageInfo imageInfo = {
@@ -2050,20 +1985,14 @@ void vulkan_update_descriptor( struct Composite_t *pComposite, struct VulkanPipe
 	for ( uint32_t i = 0; i < k_nMaxLayers; i++ )
 	{
 		VkSampler sampler = VK_NULL_HANDLE;
-		CVulkanTexture *pTex = nullptr;
 		bool bForceNearest = pComposite->data.vScale[i].x == 1.0f &&
 							 pComposite->data.vScale[i].y == 1.0f &&
 							 float_is_integer(pComposite->data.vOffset[i].x);
 							 float_is_integer(pComposite->data.vOffset[i].y);
 
-		if ( pPipeline->layerBindings[ i ].tex != 0 )
-		{
-			pTex = getVulkanTexture( pPipeline->layerBindings[ i ].tex );
-		}
-		else
-		{
-			pTex = getVulkanTexture( g_emptyTex );
-		}
+		const std::shared_ptr<CVulkanTexture>& pTex = pPipeline->layerBindings[ i ].tex
+			? pPipeline->layerBindings[ i ].tex
+			: g_emptyTex;
 		
 		// First try to look up the sampler in the cache.
 		for ( uint32_t j = 0; j < g_vecVulkanSamplerCache.size(); j++ )
@@ -2150,7 +2079,7 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 	}
 	else
 	{
-		compositeImage = g_output.outputImage[ g_output.nOutImage ].m_vkImage;
+		compositeImage = g_output.outputImage[ g_output.nOutImage ]->m_vkImage;
 
 		if ( DRMFormatNeedsSwizzle( g_nDRMFormat ) )
 		{
@@ -2163,7 +2092,7 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 	{
 		if ( pPipeline->layerBindings[ i ].tex != 0 )
 		{
-			CVulkanTexture *pTex = getVulkanTexture( pPipeline->layerBindings[ i ].tex );
+			const auto& pTex = pPipeline->layerBindings[ i ].tex;
 			if (pTex->m_format == VK_FORMAT_G8_B8R8_2PLANE_420_UNORM)
 				pComposite->nYCBCRMask |= 1 << i;
 		}
@@ -2418,31 +2347,26 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 
 uint32_t vulkan_get_last_composite_fbid( void )
 {
-	return g_output.outputImage[ !g_output.nOutImage ].m_FBID;
+	return g_output.outputImage[ !g_output.nOutImage ]->m_FBID;
 }
 
-uint32_t vulkan_texture_get_fbid( VulkanTexture_t vulkanTex )
+uint32_t vulkan_texture_get_fbid( const std::shared_ptr<CVulkanTexture>& vulkanTex )
 {
-	if ( vulkanTex == 0 )
+	if ( !vulkanTex )
 		return 0;
-	
-	assert( getVulkanTexture( vulkanTex ) != nullptr );
-	
-	uint32_t ret = getVulkanTexture( vulkanTex )->m_FBID;
-	
-	assert( ret != 0 );
-	
-	return ret;
+
+	return vulkanTex->m_FBID;
 }
 
-int vulkan_texture_get_fence( VulkanTexture_t vulkanTex )
+int vulkan_texture_get_fence( const std::shared_ptr<CVulkanTexture>& vulkanTex )
 {
-	assert ( vulkanTex != 0 );
+	if ( !vulkanTex )
+		return -1;
 
 	const VkMemoryGetFdInfoKHR memory_get_fd_info = {
 		.sType = VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR,
 		.pNext = NULL,
-		.memory = getVulkanTexture( vulkanTex )->m_vkImageMemory,
+		.memory = vulkanTex->m_vkImageMemory,
 		.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT,
 	};
 	int fence = -1;
@@ -2548,7 +2472,7 @@ struct wlr_renderer *vulkan_renderer_create( void )
 	return &renderer->base;
 }
 
-VulkanTexture_t vulkan_create_texture_from_wlr_buffer( struct wlr_buffer *buf )
+std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struct wlr_buffer *buf )
 {
 
 	struct wlr_dmabuf_attributes dmabuf = {0};
@@ -2627,15 +2551,12 @@ VulkanTexture_t vulkan_create_texture_from_wlr_buffer( struct wlr_buffer *buf )
 
 	wlr_buffer_end_data_ptr_access( buf );
 
-	CVulkanTexture *pTex = new CVulkanTexture();
+	std::shared_ptr<CVulkanTexture> pTex = std::make_shared<CVulkanTexture>();
 	CVulkanTexture::createFlags texCreateFlags = {};
 	texCreateFlags.bTextureable = true;
 	texCreateFlags.bTransferDst = true;
 	if ( pTex->BInit( width, height, format, texCreateFlags ) == false )
-	{
-		delete pTex;
-		return 0;
-	}
+		return nullptr;
 
 	VkCommandBuffer commandBuffer;
 	uint32_t handle = get_command_buffer( commandBuffer, nullptr );
@@ -2652,14 +2573,10 @@ VulkanTexture_t vulkan_create_texture_from_wlr_buffer( struct wlr_buffer *buf )
 	};
 	vkCmdCopyBufferToImage( commandBuffer, buffer, pTex->m_vkImage, VK_IMAGE_LAYOUT_GENERAL, 1, &region );
 
-	std::vector<CVulkanTexture *> refs;
+	std::vector<std::shared_ptr<CVulkanTexture>> refs;
 	refs.push_back( pTex );
 
 	submit_command_buffer( handle, refs );
 
-	VulkanTexture_t texid = ++g_nMaxVulkanTexHandle;
-	pTex->handle = texid;
-	setVulkanTexture( texid, pTex );
-
-	return texid;
+	return pTex;
 }

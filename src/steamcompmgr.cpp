@@ -118,7 +118,7 @@ struct commit_t
 
 	struct wlr_buffer *buf = nullptr;
 	uint32_t fb_id = 0;
-	VulkanTexture_t vulkanTex = 0;
+	std::shared_ptr<CVulkanTexture> vulkanTex;
 	uint64_t commitID = 0;
 	bool done = false;
 };
@@ -331,7 +331,7 @@ std::vector<ResListEntry_t> wayland_commit_queue;
 struct wlr_buffer_map_entry {
 	struct wl_listener listener;
 	struct wlr_buffer *buf;
-	VulkanTexture_t vulkanTex;
+	std::shared_ptr<CVulkanTexture> vulkanTex;
 	uint32_t fb_id;
 };
 
@@ -661,11 +661,6 @@ destroy_buffer( struct wl_listener *listener, void * )
 	std::lock_guard<std::mutex> lock( wlr_buffer_map_lock );
 	wlr_buffer_map_entry *entry = wl_container_of( listener, entry, listener );
 
-	if ( entry->vulkanTex != 0 )
-	{
-		vulkan_free_texture( entry->vulkanTex );
-	}
-
 	if ( entry->fb_id != 0 )
 	{
 		drm_drop_fbid( &g_DRM, entry->fb_id );
@@ -726,7 +721,7 @@ import_commit ( struct wlr_buffer *buf )
 	lock.unlock();
 
 	commit->vulkanTex = vulkan_create_texture_from_wlr_buffer( buf );
-	assert( commit->vulkanTex != 0 );
+	assert( commit->vulkanTex );
 
 	struct wlr_dmabuf_attributes dmabuf = {0};
 	if ( BIsNested() == false && wlr_buffer_get_dmabuf( buf, &dmabuf ) )
@@ -1041,10 +1036,7 @@ bool MouseCursor::getTexture()
 		m_height = g_DRM.cursor_height;
 	}
 
-	if (m_texture) {
-		vulkan_free_texture(m_texture);
-		m_texture = 0;
-	}
+	m_texture = nullptr;
 
 	// Assume the cursor is fully translucent unless proven otherwise.
 	bool bNoCursor = true;
@@ -1633,14 +1625,13 @@ paint_all(Display *dpy, MouseCursor *cursor)
 		}
 		else
 		{
-			memset( &composite, 0, sizeof( composite ) );
+			composite = {};
 			composite.nLayerCount = 1;
 			composite.data.vScale[ 0 ].x = 1.0;
 			composite.data.vScale[ 0 ].y = 1.0;
 			composite.data.flOpacity[ 0 ] = 1.0;
 
-			memset( &pipeline, 0, sizeof( pipeline ) );
-
+			pipeline = {};
 			pipeline.layerBindings[ 0 ].surfaceWidth = g_nOutputWidth;
 			pipeline.layerBindings[ 0 ].surfaceHeight = g_nOutputHeight;
 

@@ -68,7 +68,7 @@ private:
 	int m_hotspotX = 0, m_hotspotY = 0;
 	int m_width = 0, m_height = 0;
 
-	VulkanTexture_t m_texture = 0;
+	std::shared_ptr<CVulkanTexture> m_texture;
 	bool m_dirty;
 	bool m_imageEmpty;
 
