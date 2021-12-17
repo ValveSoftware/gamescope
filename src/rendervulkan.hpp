@@ -120,7 +120,6 @@ public:
 	uint32_t m_FBID = 0;
 	
 	std::atomic<int32_t> nRefCount;
-	int32_t nCommitRefCount = 0;
 	
 	VulkanTexture_t handle = 0;
 
@@ -148,9 +147,6 @@ uint32_t vulkan_texture_get_fbid( VulkanTexture_t vulkanTex );
 int vulkan_texture_get_fence( VulkanTexture_t vulkanTex );
 
 void vulkan_free_texture( VulkanTexture_t vulkanTex );
-
-int32_t vulkan_ref_commit( VulkanTexture_t vulkanTex );
-int32_t vulkan_free_commit( VulkanTexture_t vulkanTex );
 
 bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *pPipeline, std::shared_ptr<CVulkanTexture> *pScreenshotTexture );
 uint32_t vulkan_get_last_composite_fbid( void );
