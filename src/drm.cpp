@@ -203,9 +203,7 @@ static void page_flip_handler(int fd, unsigned int frame, unsigned int sec, unsi
 		struct fb &previous_fb = get_fb( g_DRM, previous_fbid );
 		assert( previous_fb.n_refs > 0 );
 
-		previous_fb.n_refs--;
-
-		if ( previous_fb.n_refs == 0 )
+		if ( --previous_fb.n_refs == 0 )
 		{
 			// we flipped away from this previous fbid, now safe to delete
 			std::lock_guard<std::mutex> lock( g_DRM.free_queue_lock );
