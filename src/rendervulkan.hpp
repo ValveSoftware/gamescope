@@ -4,11 +4,12 @@
 
 #include <atomic>
 #include <stdint.h>
-
-typedef uint32_t VulkanTexture_t;
+#include <memory>
 
 #define k_nMaxLayers 4
 #define k_nMaxYcbcrMask 16
+
+class CVulkanTexture;
 
 // These two structs are horrible
 struct VulkanPipeline_t
@@ -18,7 +19,7 @@ struct VulkanPipeline_t
 		int surfaceWidth;
 		int surfaceHeight;
 		
-		VulkanTexture_t tex;
+		std::shared_ptr<CVulkanTexture> tex;
 		uint32_t fbid;
 		
 		int zpos;
@@ -118,10 +119,6 @@ public:
 	uint32_t m_unRowPitch = 0;
 	
 	uint32_t m_FBID = 0;
-	
-	std::atomic<int32_t> nRefCount;
-	
-	VulkanTexture_t handle = 0;
 
 	void *m_pMappedData = nullptr;
 
@@ -139,14 +136,12 @@ bool vulkan_init(void);
 bool vulkan_init_formats(void);
 bool vulkan_make_output(void);
 
-VulkanTexture_t vulkan_create_texture_from_dmabuf( struct wlr_dmabuf_attributes *pDMA );
-VulkanTexture_t vulkan_create_texture_from_bits( uint32_t width, uint32_t height, VkFormat format, CVulkanTexture::createFlags texCreateFlags, void *bits );
-VulkanTexture_t vulkan_create_texture_from_wlr_buffer( struct wlr_buffer *buf );
+std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_dmabuf( struct wlr_dmabuf_attributes *pDMA );
+std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_bits( uint32_t width, uint32_t height, VkFormat format, CVulkanTexture::createFlags texCreateFlags, void *bits );
+std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struct wlr_buffer *buf );
 
-uint32_t vulkan_texture_get_fbid( VulkanTexture_t vulkanTex );
-int vulkan_texture_get_fence( VulkanTexture_t vulkanTex );
-
-void vulkan_free_texture( VulkanTexture_t vulkanTex );
+uint32_t vulkan_texture_get_fbid( const std::shared_ptr<CVulkanTexture>& vulkanTex );
+int vulkan_texture_get_fence( const std::shared_ptr<CVulkanTexture>& vulkanTex );
 
 bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *pPipeline, std::shared_ptr<CVulkanTexture> *pScreenshotTexture );
 uint32_t vulkan_get_last_composite_fbid( void );
