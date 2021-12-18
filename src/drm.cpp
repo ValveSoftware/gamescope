@@ -809,7 +809,9 @@ int drm_commit(struct drm_t *drm, struct Composite_t *pComposite, struct VulkanP
 
 		if ( ret != -EBUSY && ret != -EACCES )
 		{
-			exit( 1 );
+			drm_log.errorf( "fatal flip error, aborting" );
+			drm->flip_lock.unlock();
+			abort();
 		}
 
 		drm->pending = drm->current;
