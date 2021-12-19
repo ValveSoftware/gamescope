@@ -1280,7 +1280,7 @@ retry:
 	VkPushConstantRange pushConstantRange = {
 		.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
 		.offset = 0,
-		.size = uint32_t(sizeof(Composite_t::CompositeData_t) + (g_bIsCompositeDebug ? sizeof(uint32_t) : 0))
+		.size = uint32_t(sizeof(Composite_t::CompositeData_t) + sizeof(uint32_t)),
 	};
 	
 	VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo = {
