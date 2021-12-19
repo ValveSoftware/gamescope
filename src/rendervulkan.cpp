@@ -2040,13 +2040,17 @@ void vulkan_update_descriptor( struct Composite_t *pComposite, struct VulkanPipe
 
 	// Duplicate image descriptors for ycbcr.
 	std::array< VkDescriptorImageInfo, k_nMaxLayers > ycbcrImageDescriptors = {};
-	if ( nYCBCRMask != 0 )
+
+	for (uint32_t i = 0; i < k_nMaxLayers; i++)
 	{
-		for (uint32_t i = 0; i < k_nMaxLayers; i++)
+		if ( nYCBCRMask & ( 1u << i ) )
 		{
 			ycbcrImageDescriptors[i] = imageDescriptors[i];
 			// We use immutable samplers.
 			ycbcrImageDescriptors[i].sampler = VK_NULL_HANDLE;
+			// The ycbcr image might not be usable as a rgb image
+			// and the shader doesn't use it anyway.
+			imageDescriptors[i].imageView =  VK_NULL_HANDLE;
 		}
 	}
 
