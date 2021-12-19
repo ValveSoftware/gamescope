@@ -1123,6 +1123,11 @@ retry:
 	clockFeatures.pNext = std::exchange(features2.pNext, &clockFeatures);
 	clockFeatures.shaderSubgroupClock = VK_TRUE;
 
+	VkPhysicalDeviceSamplerYcbcrConversionFeatures ycbcrFeatures = {};
+	ycbcrFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SAMPLER_YCBCR_CONVERSION_FEATURES;
+	ycbcrFeatures.pNext = std::exchange(features2.pNext, &ycbcrFeatures);
+	ycbcrFeatures.samplerYcbcrConversion = VK_TRUE;
+
 	VkResult res = vkCreateDevice(physicalDevice, &deviceCreateInfo, NULL, &device);
 	if ( res != VK_SUCCESS )
 	{
