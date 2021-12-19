@@ -1102,6 +1102,8 @@ retry:
 	vecEnabledDeviceExtensions.push_back( VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME );
 
 	vecEnabledDeviceExtensions.push_back( VK_KHR_SHADER_CLOCK_EXTENSION_NAME );
+
+	vecEnabledDeviceExtensions.push_back( VK_EXT_ROBUSTNESS_2_EXTENSION_NAME );
 	
 	VkPhysicalDeviceFeatures2 features2 = {};
 	features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
@@ -1127,6 +1129,11 @@ retry:
 	ycbcrFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SAMPLER_YCBCR_CONVERSION_FEATURES;
 	ycbcrFeatures.pNext = std::exchange(features2.pNext, &ycbcrFeatures);
 	ycbcrFeatures.samplerYcbcrConversion = VK_TRUE;
+
+	VkPhysicalDeviceRobustness2FeaturesEXT robustness2Features = {};
+	robustness2Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT;
+	robustness2Features.pNext = std::exchange(features2.pNext, &robustness2Features);
+	robustness2Features.nullDescriptor = VK_TRUE;
 
 	VkResult res = vkCreateDevice(physicalDevice, &deviceCreateInfo, NULL, &device);
 	if ( res != VK_SUCCESS )
