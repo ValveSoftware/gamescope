@@ -19,7 +19,6 @@ bool g_bIsCompositeDebug = false;
 
 PFN_vkGetMemoryFdKHR dyn_vkGetMemoryFdKHR;
 PFN_vkGetImageDrmFormatModifierPropertiesEXT dyn_vkGetImageDrmFormatModifierPropertiesEXT;
-PFN_vkGetFenceFdKHR dyn_vkGetFenceFdKHR;
 
 const VkApplicationInfo appInfo = {
 	.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
@@ -55,9 +54,6 @@ struct VulkanOutput_t
 
 	int nCurCmdBuffer;
 	VkCommandBuffer commandBuffers[2]; // ping/pong command buffers as well
-
-	VkFence fence;
-	int fenceFD;
 
 	std::array<std::shared_ptr<CVulkanTexture>, 8> pScreenshotImages;
 };
@@ -1104,8 +1100,6 @@ retry:
 	vecEnabledDeviceExtensions.push_back( VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME );
 	vecEnabledDeviceExtensions.push_back( VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME );
 
-	vecEnabledDeviceExtensions.push_back( VK_KHR_EXTERNAL_FENCE_FD_EXTENSION_NAME );
-
 	vecEnabledDeviceExtensions.push_back( VK_KHR_SHADER_CLOCK_EXTENSION_NAME );
 	
 	VkDeviceCreateInfo deviceCreateInfo = {
@@ -1737,9 +1731,6 @@ bool vulkan_make_output( void )
 	
 	pOutput->nCurCmdBuffer = 0;
 	
-	pOutput->fence = VK_NULL_HANDLE;
-	pOutput->fenceFD = -1;
-	
 	return true;
 }
 
@@ -1781,10 +1772,6 @@ bool vulkan_init( void )
 	
 	dyn_vkGetMemoryFdKHR = (PFN_vkGetMemoryFdKHR)vkGetDeviceProcAddr( device, "vkGetMemoryFdKHR" );
 	if ( dyn_vkGetMemoryFdKHR == nullptr )
-		return false;
-	
-	dyn_vkGetFenceFdKHR = (PFN_vkGetFenceFdKHR)vkGetDeviceProcAddr( device, "vkGetFenceFdKHR" );
-	if ( dyn_vkGetFenceFdKHR == nullptr )
 		return false;
 
 	dyn_vkGetImageDrmFormatModifierPropertiesEXT = (PFN_vkGetImageDrmFormatModifierPropertiesEXT)vkGetDeviceProcAddr( device, "vkGetImageDrmFormatModifierPropertiesEXT" );
@@ -2110,9 +2097,6 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 		pComposite->data.vOffset[ i ].x += pComposite->data.vScale[ i ].x / 2.0f;
 		pComposite->data.vOffset[ i ].y += pComposite->data.vScale[ i ].y / 2.0f;
 	}
-
-	
-	assert ( g_output.fence == VK_NULL_HANDLE );
 	
 	VkCommandBuffer curCommandBuffer = g_output.commandBuffers[ g_output.nCurCmdBuffer ];
 	
@@ -2280,44 +2264,6 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 	{
 		return false;
 	}
-	
-// 	VkExportFenceCreateInfoKHR exportFenceCreateInfo = 
-// 	{
-// 		.sType = VK_STRUCTURE_TYPE_EXPORT_FENCE_CREATE_INFO,
-// 		.handleTypes = VK_EXTERNAL_FENCE_HANDLE_TYPE_SYNC_FD_BIT_KHR
-// 	};
-// 	
-// 	VkFenceCreateInfo fenceCreateInfo =
-// 	{
-// 		.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
-// 		.pNext = &exportFenceCreateInfo,
-// 	};
-// 	
-// 	res = vkCreateFence( device, &fenceCreateInfo, nullptr, &g_output.fence );
-// 	
-// 	if ( res != VK_SUCCESS )
-// 	{
-// 		return false;
-// 	}
-// 	
-// 	assert( g_output.fence != VK_NULL_HANDLE );
-// 	
-// 	VkFenceGetFdInfoKHR fenceGetFDInfo =
-// 	{
-// 		.sType = VK_STRUCTURE_TYPE_FENCE_GET_FD_INFO_KHR,
-// 		.fence = g_output.fence,
-// 		.handleType = VK_EXTERNAL_FENCE_HANDLE_TYPE_SYNC_FD_BIT_KHR
-// 	};
-// 	
-// 	res = dyn_vkGetFenceFdKHR( device, &fenceGetFDInfo, &g_output.fenceFD );
-// 	
-// 	if ( res != VK_SUCCESS )
-// 	{
-// 		return false;
-// 	}
-// 	
-// 	// In theory it can start as -1 if it's already signaled, but there's no way in this case
-// 	assert( g_output.fenceFD != -1 );
 	
 	VkSubmitInfo submitInfo = {
 		VK_STRUCTURE_TYPE_SUBMIT_INFO,
