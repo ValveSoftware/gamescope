@@ -136,8 +136,6 @@ namespace std
 
 std::unordered_map< VulkanSamplerCacheKey_t, VkSampler > g_vulkanSamplerCache;
 
-std::shared_ptr<CVulkanTexture> g_emptyTex;
-
 static std::map< VkFormat, std::map< uint64_t, VkDrmFormatModifierPropertiesEXT > > DRMModifierProps = {};
 static std::vector< uint32_t > sampledShmFormats{};
 static struct wlr_drm_format_set sampledDRMFormats = {};
@@ -854,15 +852,6 @@ bool vulkan_init_formats()
 	{
 		uint32_t fmt = sampledDRMFormats.formats[ i ]->format;
 		vk_log.infof( "  0x%" PRIX32, fmt );
-	}
-
-	CVulkanTexture::createFlags texCreateFlags;
-	uint32_t bits = 0;
-	g_emptyTex = vulkan_create_texture_from_bits( 1, 1, VK_FORMAT_R8G8B8A8_UNORM, texCreateFlags, &bits );
-
-	if ( g_emptyTex == 0 )
-	{
-		return false;
 	}
 
 	return true;
@@ -2027,9 +2016,9 @@ void vulkan_update_descriptor( struct Composite_t *pComposite, struct VulkanPipe
 							 float_is_integer(pComposite->data.vOffset[i].x);
 							 float_is_integer(pComposite->data.vOffset[i].y);
 
-		const std::shared_ptr<CVulkanTexture>& pTex = pPipeline->layerBindings[ i ].tex
-			? pPipeline->layerBindings[ i ].tex
-			: g_emptyTex;
+		VkImageView imageView = pPipeline->layerBindings[ i ].tex
+			? pPipeline->layerBindings[ i ].tex->m_vkImageView
+			: VK_NULL_HANDLE;
 
 		VulkanSamplerCacheKey_t samplerKey;
 		samplerKey.bNearest = bForceNearest || !pPipeline->layerBindings[i].bFilter;
@@ -2041,7 +2030,7 @@ void vulkan_update_descriptor( struct Composite_t *pComposite, struct VulkanPipe
 		{
 			VkDescriptorImageInfo imageInfo = {
 				.sampler = sampler,
-				.imageView = pTex->m_vkImageView,
+				.imageView = imageView,
 				.imageLayout = VK_IMAGE_LAYOUT_GENERAL,
 			};
 
