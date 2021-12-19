@@ -1228,7 +1228,6 @@ retry:
 		.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
 		.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
 		.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK,
-		.unnormalizedCoordinates = VK_TRUE,
 	};
 	
 	vkCreateSampler( device, &ycbcrSamplerInfo, nullptr, &ycbcrSampler );

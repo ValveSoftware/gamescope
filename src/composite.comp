@@ -70,7 +70,7 @@ void compositing_debug(uvec2 size, uvec2 coord) {
     }
 }
 
-vec4 sampleLayer(sampler2D layerSampler, uint layerIdx, vec2 uv) {
+vec4 sampleLayer(sampler2D layerSampler, uint layerIdx, vec2 uv, bool unnormalized) {
     vec2 coord = ((uv + u_offset[layerIdx]) * u_scale[layerIdx]);
     vec2 texSize = textureSize(layerSampler, 0);
 
@@ -80,13 +80,16 @@ vec4 sampleLayer(sampler2D layerSampler, uint layerIdx, vec2 uv) {
         return vec4(0.0f, 0.0f, 0.0f, border);
     }
 
+    if (!unnormalized)
+        coord /= texSize;
+
     return textureLod(layerSampler, coord, 0.0f);
 }
 
 vec4 sampleLayer(uint layerIdx, vec2 uv) {
     if ((c_ycbcrMask & (1 << layerIdx)) != 0)
-        return srgbToLinear(sampleLayer(s_ycbcr_samplers[layerIdx], layerIdx, uv));
-    return sampleLayer(s_samplers[layerIdx], layerIdx, uv);
+        return srgbToLinear(sampleLayer(s_ycbcr_samplers[layerIdx], layerIdx, uv, false));
+    return sampleLayer(s_samplers[layerIdx], layerIdx, uv, true);
 }
 
 void main() {
