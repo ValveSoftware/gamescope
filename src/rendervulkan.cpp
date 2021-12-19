@@ -1103,8 +1103,12 @@ retry:
 
 	vecEnabledDeviceExtensions.push_back( VK_KHR_SHADER_CLOCK_EXTENSION_NAME );
 	
+	VkPhysicalDeviceFeatures2 features2 = {};
+	features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+	
 	VkDeviceCreateInfo deviceCreateInfo = {
 		.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+		.pNext = &features2,
 		.queueCreateInfoCount = 1,
 		.pQueueCreateInfos = &queueCreateInfo,
 		.enabledLayerCount = 0,
@@ -1113,6 +1117,11 @@ retry:
 		.ppEnabledExtensionNames = vecEnabledDeviceExtensions.data(),
 		.pEnabledFeatures = 0,
 	};
+
+	VkPhysicalDeviceShaderClockFeaturesKHR clockFeatures = {};
+	clockFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_CLOCK_FEATURES_KHR;
+	clockFeatures.pNext = std::exchange(features2.pNext, &clockFeatures);
+	clockFeatures.shaderSubgroupClock = VK_TRUE;
 
 	VkResult res = vkCreateDevice(physicalDevice, &deviceCreateInfo, NULL, &device);
 	if ( res != VK_SUCCESS )
