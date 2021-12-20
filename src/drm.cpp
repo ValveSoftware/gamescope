@@ -1226,15 +1226,21 @@ int drm_prepare( struct drm_t *drm, const struct Composite_t *pComposite, const 
 
 		drm->fbids_in_req.clear();
 
-		drm->pending = drm->current;
-
-		for ( size_t i = 0; i < drm->crtcs.size(); i++ )
-		{
-			drm->crtcs[i].pending = drm->crtcs[i].current;
-		}
+		if ( needs_modeset )
+			drm->needs_modeset = true;
 	}
 
 	return ret;
+}
+
+void drm_rollback( struct drm_t *drm )
+{
+	drm->pending = drm->current;
+
+	for ( size_t i = 0; i < drm->crtcs.size(); i++ )
+	{
+		drm->crtcs[i].pending = drm->crtcs[i].current;
+	}
 }
 
 bool drm_poll_state( struct drm_t *drm )

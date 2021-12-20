@@ -1643,9 +1643,29 @@ paint_all(Display *dpy, MouseCursor *cursor)
 
 			if ( ret != 0 )
 			{
-				xwm_log.errorf( "Failed to prepare 1-layer flip: %s", strerror( -ret ) );
-				// We should always handle a 1-layer flip
-				abort();
+				if ( g_DRM.current.mode_id == 0 )
+				{
+					xwm_log.errorf("We failed our modeset and have no mode to fall back to! (Initial modeset failed?): %s", strerror(-ret));
+					abort();
+				}
+
+				xwm_log.errorf("Failed to prepare 1-layer flip (%s), trying again with previous mode if modeset needed", strerror( -ret ));
+
+				drm_rollback( &g_DRM );
+
+				// Try once again to in case we need to fall back to another mode.
+				ret = drm_prepare( &g_DRM, &composite, &pipeline );
+
+				// Happens when we're VT-switched away
+				if ( ret == -EACCES )
+					return;
+
+				if ( ret != 0 )
+				{
+					xwm_log.errorf("Failed to prepare 1-layer flip entirely: %s", strerror( -ret ));
+					// We should always handle a 1-layer flip
+					abort();
+				}
 			}
 
 			drm_commit( &g_DRM, &composite, &pipeline );
