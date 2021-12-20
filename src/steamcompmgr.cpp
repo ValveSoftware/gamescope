@@ -1211,11 +1211,16 @@ paint_window(Display *dpy, win *w, win *scaleW, struct Composite_t *pComposite,
 		}
 	}
 
-	if (!w)
-		return false;
-
-	// Don't add a layer at all if it's an overlay without contents
-	if (w->isOverlay && !lastCommit)
+	// Exit out if we have no window or
+	// no commit.
+	//
+	// We may have no commit if we're an overlay,
+	// in which case, we don't want to add it,
+	// or in the case of the base plane, this is our
+	// first ever frame so we have no cached base layer
+	// to hold on to, so we should not add a layer in that
+	// instance either.
+	if (!w || !lastCommit)
 		return false;
 
 	// Base plane will stay as tex=0 if we don't have contents yet, which will
@@ -1319,8 +1324,8 @@ paint_window(Display *dpy, win *w, win *scaleW, struct Composite_t *pComposite,
 		pPipeline->layerBindings[ curLayer ].zpos = g_zposOverlay;
 	}
 
-	pPipeline->layerBindings[ curLayer ].tex = lastCommit ? lastCommit->vulkanTex : 0;
-	pPipeline->layerBindings[ curLayer ].fbid = lastCommit ? lastCommit->fb_id : 0;
+	pPipeline->layerBindings[ curLayer ].tex = lastCommit->vulkanTex;
+	pPipeline->layerBindings[ curLayer ].fbid = lastCommit->fb_id;
 
 	pPipeline->layerBindings[ curLayer ].bFilter = w->isOverlay ? true : g_bFilterGameWindow;
 
