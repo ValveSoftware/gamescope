@@ -645,10 +645,10 @@ bool wlserver_init( void ) {
 
 	wl_signal_add( &wlserver.wlr.multi_backend->events.new_input, &new_input_listener );
 
-	wlserver.wlr.noop_backend = wlr_noop_backend_create( wlserver.display );
-	wlr_multi_backend_add( wlserver.wlr.multi_backend, wlserver.wlr.noop_backend );
+	wlserver.wlr.headless_backend = wlr_headless_backend_create( wlserver.display );
+	wlr_multi_backend_add( wlserver.wlr.multi_backend, wlserver.wlr.headless_backend );
 
-	wlserver.wlr.output = wlr_noop_add_output( wlserver.wlr.noop_backend );
+	wlserver.wlr.output = wlr_headless_add_output( wlserver.wlr.headless_backend, 1280, 720 );
 
 	if ( bIsDRM == True )
 	{
