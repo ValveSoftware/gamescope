@@ -1159,11 +1159,9 @@ struct BaseLayerInfo_t
 
 std::array< BaseLayerInfo_t, HELD_COMMIT_COUNT > g_CachedPlanes = {};
 
-static bool
+static void
 paint_cached_base_layer(const std::shared_ptr<commit_t>& commit, const BaseLayerInfo_t& base, struct Composite_t *pComposite, struct VulkanPipeline_t *pPipeline, float flOpacityScale)
 {
-	if ( !commit->done )
-		return false;
 	int curLayer = pComposite->nLayerCount;
 
 	pComposite->data.vScale[ curLayer ].x = base.scale[0];
@@ -1177,11 +1175,9 @@ paint_cached_base_layer(const std::shared_ptr<commit_t>& commit, const BaseLayer
 	pPipeline->layerBindings[ curLayer ].bFilter = true;
 
 	pComposite->nLayerCount++;
-
-	return true;
 }
 
-static bool
+static void
 paint_window(Display *dpy, win *w, win *scaleW, struct Composite_t *pComposite,
 			  struct VulkanPipeline_t *pPipeline, bool notificationMode, MouseCursor *cursor, bool bBasePlane = false, float flOpacityScale = 1.0f, bool bFadeTarget = false)
 {
@@ -1199,7 +1195,10 @@ paint_window(Display *dpy, win *w, win *scaleW, struct Composite_t *pComposite,
 			// If we're the base plane and have no valid contents
 			// pick up that buffer we've been holding onto if we have one.
 			if ( g_HeldCommits[ HELD_COMMIT_BASE ] )
-				return paint_cached_base_layer( g_HeldCommits[ HELD_COMMIT_BASE ], g_CachedPlanes[ HELD_COMMIT_BASE ], pComposite, pPipeline, flOpacityScale );
+			{
+				paint_cached_base_layer( g_HeldCommits[ HELD_COMMIT_BASE ], g_CachedPlanes[ HELD_COMMIT_BASE ], pComposite, pPipeline, flOpacityScale );
+				return;
+			}
 		}
 		else
 		{
@@ -1221,7 +1220,7 @@ paint_window(Display *dpy, win *w, win *scaleW, struct Composite_t *pComposite,
 	// to hold on to, so we should not add a layer in that
 	// instance either.
 	if (!w || !lastCommit)
-		return false;
+		return;
 
 	// Base plane will stay as tex=0 if we don't have contents yet, which will
 	// make us fall back to compositing and use the Vulkan null texture
@@ -1229,7 +1228,7 @@ paint_window(Display *dpy, win *w, win *scaleW, struct Composite_t *pComposite,
 	win *mainOverlayWindow = find_win(dpy, currentOverlayWindow);
 
 	if (notificationMode && !mainOverlayWindow)
-		return false;
+		return;
 
 	if (notificationMode)
 	{
@@ -1344,8 +1343,6 @@ paint_window(Display *dpy, win *w, win *scaleW, struct Composite_t *pComposite,
 	}
 
 	pComposite->nLayerCount += 1;
-
-	return true;
 }
 
 static void
@@ -1476,7 +1473,6 @@ paint_all(Display *dpy, MouseCursor *cursor)
 
 	struct Composite_t composite = {};
 	struct VulkanPipeline_t pipeline = {};
-	bool bValidContents = false;
 
 	// If the window we'd paint as the base layer is the streaming client,
 	// find the video underlay and put it up first in the scenegraph
@@ -1490,25 +1486,21 @@ paint_all(Display *dpy, MouseCursor *cursor)
 			if ( videow->isSteamStreamingClientVideo == true )
 			{
 				// TODO: also check matching AppID so we can have several pairs
-				bValidContents |= paint_window(dpy, videow, videow, &composite, &pipeline, false, cursor, true);
+				paint_window(dpy, videow, videow, &composite, &pipeline, false, cursor, true);
 				bHasVideoUnderlay = true;
 				break;
 			}
 		}
 		
-		bool bOldValidContents = bValidContents;
 		int nOldLayerCount = composite.nLayerCount;
 
-		bValidContents |= paint_window(dpy, w, w, &composite, &pipeline, false, cursor, !bHasVideoUnderlay);
+		paint_window(dpy, w, w, &composite, &pipeline, false, cursor, !bHasVideoUnderlay);
 		update_touch_scaling( &composite );
 		
 		// paint UI unless it's fully hidden, which it communicates to us through opacity=0
 		// we paint it to extract scaling coefficients above, then remove the layer if one was added
 		if ( w->opacity == TRANSLUCENT && bHasVideoUnderlay && nOldLayerCount < composite.nLayerCount )
-		{
 			composite.nLayerCount--;
-			bValidContents = bOldValidContents;
-		}
 	}
 	else
 	{
@@ -1518,8 +1510,8 @@ paint_all(Display *dpy, MouseCursor *cursor)
 				? 0.0f
 				: ((currentTime - fadeOutStartTime) / (float)g_FadeOutDuration);
 	
-			bValidContents |= paint_cached_base_layer(g_HeldCommits[HELD_COMMIT_FADE], g_CachedPlanes[HELD_COMMIT_FADE], &composite, &pipeline, 1.0f - opacityScale);
-			bValidContents |= paint_window(dpy, w, w, &composite, &pipeline, false, cursor, true, opacityScale, true);
+			paint_cached_base_layer(g_HeldCommits[HELD_COMMIT_FADE], g_CachedPlanes[HELD_COMMIT_FADE], &composite, &pipeline, 1.0f - opacityScale);
+			paint_window(dpy, w, w, &composite, &pipeline, false, cursor, true, opacityScale, true);
 		}
 		else
 		{
@@ -1533,7 +1525,7 @@ paint_all(Display *dpy, MouseCursor *cursor)
 				}
 			}
 			// Just draw focused window as normal, be it Steam or the game
-			bValidContents |= paint_window(dpy, w, w, &composite, &pipeline, false, cursor, true);
+			paint_window(dpy, w, w, &composite, &pipeline, false, cursor, true);
 		}
 		update_touch_scaling( &composite );
 	}
@@ -1542,7 +1534,7 @@ paint_all(Display *dpy, MouseCursor *cursor)
 	// with an offset.
 	if (override)
 	{
-		bValidContents |= paint_window(dpy, override, w, &composite, &pipeline, false, cursor);
+		paint_window(dpy, override, w, &composite, &pipeline, false, cursor);
 		update_touch_scaling( &composite );
 	}
 
@@ -1550,7 +1542,7 @@ paint_all(Display *dpy, MouseCursor *cursor)
 	{
 		if (overlay->opacity)
 		{
-			bValidContents |= paint_window(dpy, overlay, overlay, &composite, &pipeline, false, cursor);
+			paint_window(dpy, overlay, overlay, &composite, &pipeline, false, cursor);
 
 			if ( overlay->id == currentInputFocusWindow )
 				update_touch_scaling( &composite );
@@ -1561,9 +1553,12 @@ paint_all(Display *dpy, MouseCursor *cursor)
 	{
 		if (notification->opacity)
 		{
-			bValidContents |= paint_window(dpy, notification, notification, &composite, &pipeline, true, cursor);
+			paint_window(dpy, notification, notification, &composite, &pipeline, true, cursor);
 		}
 	}
+
+	// If we have any layers that aren't a cursor, then we have valid contents for presentation.
+	const bool bValidContents = composite.nLayerCount > 0;
 
 	// Draw cursor if we need to
 	if (input) {
