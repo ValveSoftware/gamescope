@@ -257,14 +257,14 @@ void sdlwindow_update( void )
 void sdlwindow_title( const char* title )
 {
 	title = title ? title : DEFAULT_TITLE;
+	g_SDLWindowTitleLock.lock();
 	if ( g_SDLWindowTitle != title )
 	{
-		g_SDLWindowTitleLock.lock();
 		g_SDLWindowTitle = title ? title : DEFAULT_TITLE;
 		g_bUpdateSDLWindowTitle = true;
-		g_SDLWindowTitleLock.unlock();
 		sdlwindow_pushupdate();
 	}
+	g_SDLWindowTitleLock.unlock();
 }
 
 void sdlwindow_pushupdate( void )
