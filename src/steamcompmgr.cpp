@@ -2218,6 +2218,8 @@ found:
 	}
 
 	XFree(children);
+
+	sdlwindow_title( w->title );
 }
 
 static void
@@ -3199,6 +3201,10 @@ handle_property_notify(Display *dpy, XPropertyEvent *ev)
 		win *w = find_win(dpy, ev->window);
 		if (w) {
 			get_win_title(dpy, w, ev->atom);
+			if (w == currentFocusWin)
+			{
+				sdlwindow_title( w->title );
+			}
 		}
 	}
 }

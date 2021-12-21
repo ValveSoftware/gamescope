@@ -13,6 +13,8 @@
 
 #include "sdlscancodetable.hpp"
 
+#define DEFAULT_TITLE "gamescope"
+
 static bool g_bSDLInitOK = false;
 static std::mutex g_SDLInitLock;
 
@@ -24,6 +26,10 @@ static bool g_bWindowFocused = true;
 SDL_Window *g_SDLWindow;
 static uint32_t g_unSDLUserEventID;
 static SDL_Event g_SDLUserEvent;
+
+static std::mutex g_SDLWindowTitleLock;
+static std::string g_SDLWindowTitle;
+static bool g_bUpdateSDLWindowTitle = false;
 
 //-----------------------------------------------------------------------------
 // Purpose: Convert from the remote scancode to a Linux event keycode
@@ -84,7 +90,7 @@ void inputSDLThreadRun( void )
 		nSDLWindowFlags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
 	}
 
-	g_SDLWindow = SDL_CreateWindow( "gamescope",
+	g_SDLWindow = SDL_CreateWindow( DEFAULT_TITLE,
 							   SDL_WINDOWPOS_UNDEFINED,
 							SDL_WINDOWPOS_UNDEFINED,
 							g_nOutputWidth,
@@ -242,6 +248,27 @@ void sdlwindow_update( void )
 			SDL_HideWindow( g_SDLWindow );
 		}
 	}
+
+	g_SDLWindowTitleLock.lock();
+	if ( g_bUpdateSDLWindowTitle )
+	{
+		g_bUpdateSDLWindowTitle = false;
+		SDL_SetWindowTitle( g_SDLWindow, g_SDLWindowTitle.c_str() );
+	}
+	g_SDLWindowTitleLock.unlock();
+}
+
+void sdlwindow_title( const char* title )
+{
+	title = title ? title : DEFAULT_TITLE;
+	g_SDLWindowTitleLock.lock();
+	if ( g_SDLWindowTitle != title )
+	{
+		g_SDLWindowTitle = title ? title : DEFAULT_TITLE;
+		g_bUpdateSDLWindowTitle = true;
+		sdlwindow_pushupdate();
+	}
+	g_SDLWindowTitleLock.unlock();
 }
 
 void sdlwindow_pushupdate( void )
