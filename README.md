@@ -17,6 +17,19 @@ If running RadeonSI clients with older cards (GFX8 and below), currently have to
 
 ## Building
 
+### Dependencies
+
+#### Fedora
+```
+sudo dnf install libXxf86vm-devel libXres-devel libcap-devel SDL2-devel \
+ stb-devel pipewire-devel wlroots-devel mesa-libgbm-devel libinput-devel \
+ libudev-devel xcb-util-wm-devel xorg-x11-server-Xwayland-devel libuuid-devel \
+ glslang-devel
+ 
+```
+
+---
+
 ```
 git submodule update --init
 meson build/
