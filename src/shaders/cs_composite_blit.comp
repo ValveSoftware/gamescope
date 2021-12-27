@@ -11,9 +11,8 @@ layout(
 const int MaxLayers = 6;
 
 layout(constant_id = 0) const int  c_layerCount   = 1;
-layout(constant_id = 1) const bool c_swapChannels = false;
-layout(constant_id = 2) const uint c_ycbcrMask    = 0;
-layout(constant_id = 3) const bool c_compositing_debug = false;
+layout(constant_id = 1) const uint c_ycbcrMask    = 0;
+layout(constant_id = 2) const bool c_compositing_debug = false;
 
 layout(binding = 0, rgba8) writeonly uniform image2D dst;
 
@@ -116,9 +115,6 @@ void main() {
         float layerAlpha = opacity * layerColor.a;
         outputValue = layerColor * opacity + outputValue * (1.0f - layerAlpha);
     }
-
-    if (c_swapChannels)
-        outputValue = outputValue.bgra;
 
     imageStore(dst, ivec2(coord), linearToSrgb(outputValue));
 

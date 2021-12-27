@@ -81,7 +81,7 @@ VkDescriptorSetLayout descriptorSetLayout;
 VkPipelineLayout pipelineLayout;
 VkDescriptorSet descriptorSet;
 
-std::array<std::array<std::array<VkPipeline, k_nMaxYcbcrMask>, 2>, k_nMaxLayers> pipelines;
+std::array<std::array<VkPipeline, k_nMaxYcbcrMask>, k_nMaxLayers> pipelines;
 
 VkBuffer uploadBuffer;
 VkDeviceMemory uploadBufferMemory;
@@ -1295,7 +1295,7 @@ retry:
 		return false;
 	}
 
-	const std::array<VkSpecializationMapEntry, 4> specializationEntries = {{
+	const std::array<VkSpecializationMapEntry, 3> specializationEntries = {{
 		{
 			.constantID = 0,
 			.offset     = 0,
@@ -1304,65 +1304,56 @@ retry:
 		{
 			.constantID = 1,
 			.offset     = sizeof(uint32_t),
-			.size       = sizeof(VkBool32)
+			.size       = sizeof(uint32_t)
 		},
 		{
 			.constantID = 2,
 			.offset     = sizeof(uint32_t) + sizeof(uint32_t),
 			.size       = sizeof(uint32_t)
 		},
-		{
-			.constantID = 3,
-			.offset     = sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint32_t),
-			.size       = sizeof(uint32_t)
-		},
 	}};
 	
 	for (uint32_t layerCount = 0; layerCount < k_nMaxLayers; layerCount++) {
-		for (VkBool32 swapChannels = 0; swapChannels < 2; swapChannels++) {
-			for (uint32_t ycbcrMask = 0; ycbcrMask < k_nMaxYcbcrMask; ycbcrMask++) {
-				struct {
-					uint32_t layerCount;
-					VkBool32 swapChannels;
-					uint32_t ycbcrMask;
-					uint32_t debug;
-				} specializationData = {
-					.layerCount   = layerCount + 1,
-					.swapChannels = swapChannels,
-					.ycbcrMask    = ycbcrMask,
-					.debug        = g_bIsCompositeDebug,
-				};
+		for (uint32_t ycbcrMask = 0; ycbcrMask < k_nMaxYcbcrMask; ycbcrMask++) {
+			struct {
+				uint32_t layerCount;
+				uint32_t ycbcrMask;
+				uint32_t debug;
+			} specializationData = {
+				.layerCount   = layerCount + 1,
+				.ycbcrMask    = ycbcrMask,
+				.debug        = g_bIsCompositeDebug,
+			};
 
-				VkSpecializationInfo specializationInfo = {
-					.mapEntryCount = uint32_t(specializationEntries.size()),
-					.pMapEntries   = specializationEntries.data(),
-					.dataSize      = sizeof(specializationData),
-					.pData		   = &specializationData,
-				};
+			VkSpecializationInfo specializationInfo = {
+				.mapEntryCount = uint32_t(specializationEntries.size()),
+				.pMapEntries   = specializationEntries.data(),
+				.dataSize      = sizeof(specializationData),
+				.pData		   = &specializationData,
+			};
 
-				VkComputePipelineCreateInfo computePipelineCreateInfo = {
-					VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+			VkComputePipelineCreateInfo computePipelineCreateInfo = {
+				VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+				0,
+				0,
+				{
+					VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
 					0,
 					0,
-					{
-						VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-						0,
-						0,
-						VK_SHADER_STAGE_COMPUTE_BIT,
-						shaderModule,
-						"main",
-						&specializationInfo
-					},
-					pipelineLayout,
-					0,
-					0
-				};
+					VK_SHADER_STAGE_COMPUTE_BIT,
+					shaderModule,
+					"main",
+					&specializationInfo
+				},
+				pipelineLayout,
+				0,
+				0
+			};
 
-				res = vkCreateComputePipelines(device, 0, 1, &computePipelineCreateInfo, 0, &pipelines[layerCount][swapChannels][ycbcrMask]);
-				if (res != VK_SUCCESS) {
-					vk_errorf( res, "vkCreateComputePipelines failed" );
-					return false;
-				}
+			res = vkCreateComputePipelines(device, 0, 1, &computePipelineCreateInfo, 0, &pipelines[layerCount][ycbcrMask]);
+			if (res != VK_SUCCESS) {
+				vk_errorf( res, "vkCreateComputePipelines failed" );
+				return false;
 			}
 		}
 	}
@@ -2215,7 +2206,7 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 			      		0, 0, nullptr, 0, nullptr, textureBarriers.size(), textureBarriers.data() );
 
 	
-	vkCmdBindPipeline(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelines[pComposite->nLayerCount - 1][0][pComposite->nYCBCRMask]);
+	vkCmdBindPipeline(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelines[pComposite->nLayerCount - 1][pComposite->nYCBCRMask]);
 	
 	vkCmdBindDescriptorSets(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE,
 							pipelineLayout, 0, 1, &descriptorSet, 0, 0);
