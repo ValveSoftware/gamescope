@@ -179,15 +179,12 @@ struct {
 	uint32_t DRMFormat;
 	VkFormat vkFormat;
 	VkFormat vkFormatSrgb;
-	bool bNeedsSwizzle; // swap the R and the B channels
 	bool bHasAlpha;
 } s_DRMVKFormatTable[] = {
-	{ DRM_FORMAT_ARGB8888, VK_FORMAT_B8G8R8A8_UNORM, VK_FORMAT_B8G8R8A8_SRGB, false, true },
-	{ DRM_FORMAT_XRGB8888, VK_FORMAT_B8G8R8A8_UNORM, VK_FORMAT_B8G8R8A8_SRGB, false, false },
-	{ DRM_FORMAT_ARGB8888, VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R8G8B8A8_SRGB, true, true },
-	{ DRM_FORMAT_XRGB8888, VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R8G8B8A8_SRGB, true, false },
-	{ DRM_FORMAT_NV12, VK_FORMAT_G8_B8R8_2PLANE_420_UNORM, VK_FORMAT_G8_B8R8_2PLANE_420_UNORM, false, false },
-	{ DRM_FORMAT_INVALID, VK_FORMAT_UNDEFINED, VK_FORMAT_UNDEFINED, false, false },
+	{ DRM_FORMAT_ARGB8888, VK_FORMAT_B8G8R8A8_UNORM, VK_FORMAT_B8G8R8A8_SRGB, true },
+	{ DRM_FORMAT_XRGB8888, VK_FORMAT_B8G8R8A8_UNORM, VK_FORMAT_B8G8R8A8_SRGB, false },
+	{ DRM_FORMAT_NV12, VK_FORMAT_G8_B8R8_2PLANE_420_UNORM, VK_FORMAT_G8_B8R8_2PLANE_420_UNORM, false },
+	{ DRM_FORMAT_INVALID, VK_FORMAT_UNDEFINED, VK_FORMAT_UNDEFINED, false },
 };
 
 static inline uint32_t VulkanFormatToDRM( VkFormat vkFormat )
@@ -214,19 +211,6 @@ static inline VkFormat DRMFormatToVulkan( uint32_t nDRMFormat, bool bSrgb )
 	}
 	
 	return VK_FORMAT_UNDEFINED;
-}
-
-static inline bool DRMFormatNeedsSwizzle( uint32_t nDRMFormat )
-{
-	for ( int i = 0; s_DRMVKFormatTable[i].vkFormat != VK_FORMAT_UNDEFINED; i++ )
-	{
-		if ( s_DRMVKFormatTable[i].DRMFormat == nDRMFormat )
-		{
-			return s_DRMVKFormatTable[i].bNeedsSwizzle;
-		}
-	}
-	
-	return false;
 }
 
 static inline bool DRMFormatHasAlpha( uint32_t nDRMFormat )
@@ -675,10 +659,9 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, VkFormat format, cr
 		wlr_dmabuf_attributes_finish( &dmabuf );
 	}
 
-	bool bSwapChannels = pDMA ? DRMFormatNeedsSwizzle( pDMA->format ) : false;
 	bool bHasAlpha = pDMA ? DRMFormatHasAlpha( pDMA->format ) : true;
 
-	if ( bSwapChannels || !bHasAlpha )
+	if (!bHasAlpha )
 	{
 		// Right now this implies no storage bit - check it now as that's incompatible with swizzle
 		assert ( flags.bTextureable == true );
@@ -689,9 +672,9 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, VkFormat format, cr
 	createInfo.image = m_vkImage;
 	createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
 	createInfo.format = format;
-	createInfo.components.r = bSwapChannels ? VK_COMPONENT_SWIZZLE_B : VK_COMPONENT_SWIZZLE_IDENTITY;
+	createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
 	createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-	createInfo.components.b = bSwapChannels ? VK_COMPONENT_SWIZZLE_R : VK_COMPONENT_SWIZZLE_IDENTITY;
+	createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
 	createInfo.components.a = bHasAlpha ? VK_COMPONENT_SWIZZLE_IDENTITY : VK_COMPONENT_SWIZZLE_ONE;
 	createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
 	createInfo.subresourceRange.baseMipLevel = 0;
@@ -2137,11 +2120,6 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 	else
 	{
 		compositeImage = g_output.outputImage[ g_output.nOutImage ]->m_vkImage;
-
-		if ( DRMFormatNeedsSwizzle( g_nDRMFormat ) )
-		{
-			pComposite->nSwapChannels = 1;
-		}
 	}
 	
 	pComposite->nYCBCRMask = 0;
@@ -2237,7 +2215,7 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 			      		0, 0, nullptr, 0, nullptr, textureBarriers.size(), textureBarriers.data() );
 
 	
-	vkCmdBindPipeline(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelines[pComposite->nLayerCount - 1][pComposite->nSwapChannels][pComposite->nYCBCRMask]);
+	vkCmdBindPipeline(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelines[pComposite->nLayerCount - 1][0][pComposite->nYCBCRMask]);
 	
 	vkCmdBindDescriptorSets(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE,
 							pipelineLayout, 0, 1, &descriptorSet, 0, 0);

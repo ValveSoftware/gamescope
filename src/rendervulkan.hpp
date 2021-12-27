@@ -51,7 +51,6 @@ struct vec2_t
 struct Composite_t
 {
 	int nLayerCount;
-	int nSwapChannels;
 	int nYCBCRMask;
 
 	struct CompositeData_t
