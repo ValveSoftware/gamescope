@@ -1089,7 +1089,7 @@ bool MouseCursor::getTexture()
 		// TODO: choose format & modifiers from cursor plane
 	}
 
-	m_texture = vulkan_create_texture_from_bits(m_width, m_height, VK_FORMAT_B8G8R8A8_SRGB, texCreateFlags, cursorBuffer.data());
+	m_texture = vulkan_create_texture_from_bits(m_width, m_height, DRM_FORMAT_ARGB8888, texCreateFlags, cursorBuffer.data());
 	assert(m_texture);
 	XFree(image);
 	m_dirty = false;

@@ -119,7 +119,7 @@ public:
 		bool bLinear : 1;
 	};
 
-	bool BInit( uint32_t width, uint32_t height, VkFormat format, createFlags flags, wlr_dmabuf_attributes *pDMA = nullptr );
+	bool BInit( uint32_t width, uint32_t height, uint32_t drmFormat, createFlags flags, wlr_dmabuf_attributes *pDMA = nullptr );
 
 	CVulkanTexture( void );
 	~CVulkanTexture( void );
@@ -129,7 +129,8 @@ public:
 	VkImage m_vkImage = VK_NULL_HANDLE;
 	VkDeviceMemory m_vkImageMemory = VK_NULL_HANDLE;
 	
-	VkImageView m_vkImageView = VK_NULL_HANDLE;
+	VkImageView m_srgbView = VK_NULL_HANDLE;
+	VkImageView m_linearView = VK_NULL_HANDLE;
 
 	uint32_t m_width = 0, m_height = 0;
 	uint32_t m_unRowPitch = 0;
@@ -153,7 +154,7 @@ bool vulkan_init_formats(void);
 bool vulkan_make_output(void);
 
 std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_dmabuf( struct wlr_dmabuf_attributes *pDMA );
-std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_bits( uint32_t width, uint32_t height, VkFormat format, CVulkanTexture::createFlags texCreateFlags, void *bits );
+std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_bits( uint32_t width, uint32_t height, uint32_t drmFormat, CVulkanTexture::createFlags texCreateFlags, void *bits );
 std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struct wlr_buffer *buf );
 
 uint32_t vulkan_texture_get_fbid( const std::shared_ptr<CVulkanTexture>& vulkanTex );

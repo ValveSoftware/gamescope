@@ -155,6 +155,17 @@ static void vk_errorf(VkResult result, const char *fmt, ...) {
 	vk_log.errorf("%s (VkResult: %d)", buf, result);
 }
 
+template<typename Target, typename Base>
+Target *pNextFind(const Base *base, VkStructureType sType)
+{
+	for ( ; base; base = (const Base *)base->pNext )
+	{
+		if (base->sType == sType)
+			return (Target *) base;
+	}
+	return nullptr;
+}
+
 #define MAX_DEVICE_COUNT 8
 #define MAX_QUEUE_COUNT 8
 
@@ -275,6 +286,7 @@ static VkResult getModifierProps( const VkImageCreateInfo *imageInfo, uint64_t m
 	VkPhysicalDeviceImageDrmFormatModifierInfoEXT modifierFormatInfo = {};
 	VkPhysicalDeviceExternalImageFormatInfo externalImageFormatInfo = {};
 	VkPhysicalDeviceImageFormatInfo2 imageFormatInfo = {};
+	VkImageFormatListCreateInfo formatList = {};
 	VkImageFormatProperties2 imageProps = {};
 
 	modifierFormatInfo.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_DRM_FORMAT_MODIFIER_INFO_EXT;
@@ -293,13 +305,20 @@ static VkResult getModifierProps( const VkImageCreateInfo *imageInfo, uint64_t m
 	imageFormatInfo.usage = imageInfo->usage;
 	imageFormatInfo.flags = imageInfo->flags;
 
+	const VkImageFormatListCreateInfo *readonlyList = pNextFind<VkImageFormatListCreateInfo>(imageInfo, VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO);
+	if ( readonlyList != nullptr )
+	{
+		formatList = *readonlyList;
+		formatList.pNext = std::exchange(imageFormatInfo.pNext, &formatList);
+	}
+
 	imageProps.sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2;
 	imageProps.pNext = externalFormatProps;
 
 	return vkGetPhysicalDeviceImageFormatProperties2(physicalDevice, &imageFormatInfo, &imageProps);
 }
 
-bool CVulkanTexture::BInit( uint32_t width, uint32_t height, VkFormat format, createFlags flags, wlr_dmabuf_attributes *pDMA /* = nullptr */ )
+bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t drmFormat, createFlags flags, wlr_dmabuf_attributes *pDMA /* = nullptr */ )
 {
 	VkResult res = VK_ERROR_INITIALIZATION_FAILED;
 
@@ -351,16 +370,32 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, VkFormat format, cr
 	imageInfo.extent.depth = 1;
 	imageInfo.mipLevels = 1;
 	imageInfo.arrayLayers = 1;
-	imageInfo.format = format;
+	imageInfo.format = DRMFormatToVulkan(drmFormat, false);
 	imageInfo.tiling = tiling;
 	imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 	imageInfo.usage = usage;
 	imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
 	imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
+	assert( imageInfo.format != VK_FORMAT_UNDEFINED );
+
+	std::array<VkFormat, 2> formats = {
+		DRMFormatToVulkan(drmFormat, false),
+		DRMFormatToVulkan(drmFormat, true),
+	};
+	VkImageFormatListCreateInfo formatList = {};
+	formatList.sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO;
+	formatList.viewFormatCount = (uint32_t)formats.size();
+	formatList.pViewFormats = formats.data();
+	if ( formats[0] != formats[1] )
+	{
+		formatList.pNext = std::exchange(imageInfo.pNext, &formatList);
+		imageInfo.flags |= VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
+	}
+
 	if ( pDMA != nullptr )
 	{
-		assert( format == DRMFormatToVulkan( pDMA->format, true ) || format == DRMFormatToVulkan( pDMA->format, false ) );
+		assert( drmFormat == pDMA->format );
 	}
 
 	if ( g_vulkanSupportsModifiers && pDMA && pDMA->modifier != DRM_FORMAT_MOD_INVALID )
@@ -377,7 +412,7 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, VkFormat format, cr
 		     ( externalImageProperties.externalMemoryProperties.externalMemoryFeatures & VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT ) )
 		{
 			modifierInfo.sType = VK_STRUCTURE_TYPE_IMAGE_DRM_FORMAT_MODIFIER_EXPLICIT_CREATE_INFO_EXT;
-			modifierInfo.pNext = imageInfo.pNext;
+			modifierInfo.pNext = std::exchange(imageInfo.pNext, &modifierInfo);
 			modifierInfo.drmFormatModifier = pDMA->modifier;
 			modifierInfo.drmFormatModifierPlaneCount = pDMA->n_planes;
 			modifierInfo.pPlaneLayouts = modifierPlaneLayouts;
@@ -388,8 +423,6 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, VkFormat format, cr
 				modifierPlaneLayouts[i].rowPitch = pDMA->stride[i];
 			}
 
-			imageInfo.pNext = &modifierInfo;
-
 			imageInfo.tiling = tiling = VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT;
 		}
 	}
@@ -397,7 +430,6 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, VkFormat format, cr
 	std::vector<uint64_t> modifiers = {};
 	if ( flags.bFlippable == true && g_vulkanSupportsModifiers && !pDMA )
 	{
-		uint32_t drmFormat = VulkanFormatToDRM( format );
 		assert( drmFormat != DRM_FORMAT_INVALID );
 
 		uint64_t linear = DRM_FORMAT_MOD_LINEAR;
@@ -440,11 +472,9 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, VkFormat format, cr
 		assert( modifiers.size() > 0 );
 
 		modifierListInfo.sType = VK_STRUCTURE_TYPE_IMAGE_DRM_FORMAT_MODIFIER_LIST_CREATE_INFO_EXT;
-		modifierListInfo.pNext = imageInfo.pNext;
+		modifierListInfo.pNext = std::exchange(imageInfo.pNext, &modifierListInfo);
 		modifierListInfo.pDrmFormatModifiers = modifiers.data();
 		modifierListInfo.drmFormatModifierCount = modifiers.size();
-
-		imageInfo.pNext = &modifierListInfo;
 
 		imageInfo.tiling = tiling = VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT;
 	}
@@ -454,18 +484,14 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, VkFormat format, cr
 		// We want to scan-out the image
 		wsiImageCreateInfo.sType = VK_STRUCTURE_TYPE_WSI_IMAGE_CREATE_INFO_MESA;
 		wsiImageCreateInfo.scanout = VK_TRUE;
-		wsiImageCreateInfo.pNext = imageInfo.pNext;
-		
-		imageInfo.pNext = &wsiImageCreateInfo;
+		wsiImageCreateInfo.pNext = std::exchange(imageInfo.pNext, &wsiImageCreateInfo);
 	}
 	
 	if ( pDMA != nullptr )
 	{
 		externalImageCreateInfo.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO;
 		externalImageCreateInfo.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
-		externalImageCreateInfo.pNext = imageInfo.pNext;
-		
-		imageInfo.pNext = &externalImageCreateInfo;
+		externalImageCreateInfo.pNext = std::exchange(imageInfo.pNext, &externalImageCreateInfo);
 	}
 
 	m_width = width;
@@ -581,7 +607,7 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, VkFormat format, cr
 		struct wlr_dmabuf_attributes dmabuf = {};
 		dmabuf.width = width;
 		dmabuf.height = height;
-		dmabuf.format = VulkanFormatToDRM( format );
+		dmabuf.format = drmFormat;
 		assert( dmabuf.format != DRM_FORMAT_INVALID );
 
 		// TODO: disjoint planes support
@@ -609,10 +635,10 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, VkFormat format, cr
 			}
 			dmabuf.modifier = imgModifierProps.drmFormatModifier;
 
-			assert( DRMModifierProps.count( format ) > 0);
-			assert( DRMModifierProps[ format ].count( dmabuf.modifier ) > 0);
+			assert( DRMModifierProps.count( m_format ) > 0);
+			assert( DRMModifierProps[ m_format ].count( dmabuf.modifier ) > 0);
 
-			dmabuf.n_planes = DRMModifierProps[ format ][ dmabuf.modifier ].drmFormatModifierPlaneCount;
+			dmabuf.n_planes = DRMModifierProps[ m_format ][ dmabuf.modifier ].drmFormatModifierPlaneCount;
 
 			const VkImageAspectFlagBits planeAspects[] = {
 				VK_IMAGE_ASPECT_MEMORY_PLANE_0_BIT_EXT,
@@ -684,7 +710,7 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, VkFormat format, cr
 		createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
 		createInfo.image = m_vkImage;
 		createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-		createInfo.format = format;
+		createInfo.format = DRMFormatToVulkan(drmFormat, false);;
 		createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
 		createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
 		createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
@@ -695,12 +721,25 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, VkFormat format, cr
 		createInfo.subresourceRange.baseArrayLayer = 0;
 		createInfo.subresourceRange.layerCount = 1;
 
-		res = vkCreateImageView(device, &createInfo, nullptr, &m_vkImageView);
+		res = vkCreateImageView(device, &createInfo, nullptr, &m_srgbView);
 		if ( res != VK_SUCCESS ) {
 			vk_errorf( res, "vkCreateImageView failed" );
 			return false;
 		}
 
+		if ( flags.bSampled )
+		{
+			VkImageViewUsageCreateInfo viewUsageInfo = {};
+			viewUsageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO;
+			viewUsageInfo.usage = usage & ~VK_IMAGE_USAGE_STORAGE_BIT;
+			createInfo.pNext = &viewUsageInfo;
+			createInfo.format = DRMFormatToVulkan(drmFormat, true);
+			res = vkCreateImageView(device, &createInfo, nullptr, &m_linearView);
+			if ( res != VK_SUCCESS ) {
+				vk_errorf( res, "vkCreateImageView failed" );
+				return false;
+			}
+		}
 	}
 
 	if ( flags.bMappable )
@@ -730,10 +769,16 @@ CVulkanTexture::~CVulkanTexture( void )
 		m_pMappedData = nullptr;
 	}
 
-	if ( m_vkImageView != VK_NULL_HANDLE )
+	if ( m_srgbView != VK_NULL_HANDLE )
 	{
-		vkDestroyImageView( device, m_vkImageView, nullptr );
-		m_vkImageView = VK_NULL_HANDLE;
+		vkDestroyImageView( device, m_srgbView, nullptr );
+		m_srgbView = VK_NULL_HANDLE;
+	}
+
+	if ( m_linearView != VK_NULL_HANDLE )
+	{
+		vkDestroyImageView( device, m_linearView, nullptr );
+		m_linearView = VK_NULL_HANDLE;
 	}
 
 	if ( m_FBID != 0 )
@@ -1186,11 +1231,12 @@ retry:
 	if ( g_vulkanSupportsModifiers )
 	{
 		vecEnabledDeviceExtensions.push_back( VK_EXT_IMAGE_DRM_FORMAT_MODIFIER_EXTENSION_NAME );
-		vecEnabledDeviceExtensions.push_back( VK_KHR_IMAGE_FORMAT_LIST_EXTENSION_NAME ); // Required.
 
 		if ( !BIsNested() )
 			vecEnabledDeviceExtensions.push_back( VK_EXT_QUEUE_FAMILY_FOREIGN_EXTENSION_NAME );
 	}
+
+	vecEnabledDeviceExtensions.push_back( VK_KHR_IMAGE_FORMAT_LIST_EXTENSION_NAME );
 
 	vecEnabledDeviceExtensions.push_back( VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME );
 	vecEnabledDeviceExtensions.push_back( VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME );
@@ -1648,7 +1694,7 @@ static bool vulkan_make_output_images( VulkanOutput_t *pOutput )
 	pOutput->outputImage[1] = nullptr;
 
 	pOutput->outputImage[0] = std::make_shared<CVulkanTexture>();
-	bool bSuccess = pOutput->outputImage[0]->BInit( g_nOutputWidth, g_nOutputHeight, pOutput->outputFormat, outputImageflags );
+	bool bSuccess = pOutput->outputImage[0]->BInit( g_nOutputWidth, g_nOutputHeight, VulkanFormatToDRM(pOutput->outputFormat), outputImageflags );
 	if ( bSuccess != true )
 	{
 		vk_log.errorf( "failed to allocate buffer for KMS" );
@@ -1656,7 +1702,7 @@ static bool vulkan_make_output_images( VulkanOutput_t *pOutput )
 	}
 
 	pOutput->outputImage[1] = std::make_shared<CVulkanTexture>();
-	bSuccess = pOutput->outputImage[1]->BInit( g_nOutputWidth, g_nOutputHeight, pOutput->outputFormat, outputImageflags );
+	bSuccess = pOutput->outputImage[1]->BInit( g_nOutputWidth, g_nOutputHeight, VulkanFormatToDRM(pOutput->outputFormat), outputImageflags );
 	if ( bSuccess != true )
 	{
 		vk_log.errorf( "failed to allocate buffer for KMS" );
@@ -1932,20 +1978,20 @@ std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_dmabuf( struct wlr_dm
 	CVulkanTexture::createFlags texCreateFlags;
 	texCreateFlags.bSampled = true;
 	
-	if ( pTex->BInit( pDMA->width, pDMA->height, DRMFormatToVulkan( pDMA->format, true ), texCreateFlags, pDMA ) == false )
+	if ( pTex->BInit( pDMA->width, pDMA->height, pDMA->format, texCreateFlags, pDMA ) == false )
 		return nullptr;
 	
 	return pTex;
 }
 
-std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_bits( uint32_t width, uint32_t height, VkFormat format, CVulkanTexture::createFlags texCreateFlags, void *bits )
+std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_bits( uint32_t width, uint32_t height, uint32_t drmFormat, CVulkanTexture::createFlags texCreateFlags, void *bits )
 {
 	std::shared_ptr<CVulkanTexture> pTex = std::make_shared<CVulkanTexture>();
 
 	texCreateFlags.bSampled = true;
 	texCreateFlags.bTransferDst = true;
 
-	if ( pTex->BInit( width, height, format, texCreateFlags ) == false )
+	if ( pTex->BInit( width, height, drmFormat, texCreateFlags ) == false )
 		return nullptr;
 	
 	memcpy( pUploadBuffer, bits, width * height * 4 );
@@ -2050,7 +2096,7 @@ void vulkan_update_descriptor( struct Composite_t *pComposite, struct VulkanPipe
 		}
 		else
 		{
-			targetImageView = g_output.outputImage[ g_output.nOutImage ]->m_vkImageView;
+			targetImageView = g_output.outputImage[ g_output.nOutImage ]->m_srgbView;
 		}
 
 		VkDescriptorImageInfo imageInfo = {
@@ -2083,7 +2129,7 @@ void vulkan_update_descriptor( struct Composite_t *pComposite, struct VulkanPipe
 							 float_is_integer(pComposite->data.vOffset[i].y);
 
 		VkImageView imageView = pPipeline->layerBindings[ i ].tex
-			? pPipeline->layerBindings[ i ].tex->m_vkImageView
+			? pPipeline->layerBindings[ i ].tex->m_linearView
 			: VK_NULL_HANDLE;
 
 		VulkanSamplerCacheKey_t samplerKey;
@@ -2287,7 +2333,7 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 				screenshotImageFlags.bMappable = true;
 				screenshotImageFlags.bTransferDst = true;
 
-				bool bSuccess = pScreenshotImage->BInit( currentOutputWidth, currentOutputHeight, g_output.outputFormat, screenshotImageFlags );
+				bool bSuccess = pScreenshotImage->BInit( currentOutputWidth, currentOutputHeight, VulkanFormatToDRM(g_output.outputFormat), screenshotImageFlags );
 
 				assert( bSuccess );
 
@@ -2580,7 +2626,6 @@ std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struct wl
 		return 0;
 	}
 
-	VkFormat format = DRMFormatToVulkan( drmFormat, true );
 	uint32_t width = buf->width;
 	uint32_t height = buf->height;
 
@@ -2644,7 +2689,7 @@ std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struct wl
 	CVulkanTexture::createFlags texCreateFlags = {};
 	texCreateFlags.bSampled = true;
 	texCreateFlags.bTransferDst = true;
-	if ( pTex->BInit( width, height, format, texCreateFlags ) == false )
+	if ( pTex->BInit( width, height, drmFormat, texCreateFlags ) == false )
 		return nullptr;
 
 	VkCommandBuffer commandBuffer;
