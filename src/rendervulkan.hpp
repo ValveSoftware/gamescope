@@ -24,7 +24,6 @@ struct VulkanPipeline_t
 		
 		int zpos;
 
-		// These fields below count for the sampler cache
 		bool bFilter;
 	} layerBindings[ k_nMaxLayers ];
 };

@@ -107,14 +107,37 @@ struct VkPhysicalDeviceMemoryProperties memoryProperties;
 
 VulkanOutput_t g_output;
 
-struct VulkanSamplerCacheEntry_t
+struct VulkanSamplerCacheKey_t
 {
-	VulkanPipeline_t::LayerBinding_t key;
-	VkSampler sampler;
-	bool bForceNearest;
+	bool bNearest : 1;
+	bool bUnnormalized : 1;
+
+	VulkanSamplerCacheKey_t( void )
+	{
+		bNearest = false;
+		bUnnormalized = false;
+	}
+
+	bool operator==( const VulkanSamplerCacheKey_t& other ) const
+	{
+		return this->bNearest == other.bNearest
+			&& this->bUnnormalized == other.bUnnormalized;
+	}
 };
 
-std::vector< VulkanSamplerCacheEntry_t > g_vecVulkanSamplerCache;
+namespace std
+{
+	template <>
+	struct hash<VulkanSamplerCacheKey_t>
+	{
+		size_t operator()( const VulkanSamplerCacheKey_t& k ) const
+		{
+			return k.bNearest | (k.bUnnormalized << 1);
+		}
+	};
+}
+
+std::unordered_map< VulkanSamplerCacheKey_t, VkSampler > g_vulkanSamplerCache;
 
 std::shared_ptr<CVulkanTexture> g_emptyTex;
 
@@ -1910,32 +1933,29 @@ std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_bits( uint32_t width,
 	return pTex;
 }
 
-bool operator==(const struct VulkanPipeline_t::LayerBinding_t& lhs, struct VulkanPipeline_t::LayerBinding_t& rhs)
+VkSampler vulkan_make_sampler( VulkanSamplerCacheKey_t key )
 {
-	if ( lhs.bFilter != rhs.bFilter )
-		return false;
+	if ( g_vulkanSamplerCache.count(key) != 0 )
+		return g_vulkanSamplerCache[key];
 
-	return true;
-}
-
-VkSampler vulkan_make_sampler( struct VulkanPipeline_t::LayerBinding_t *pBinding, bool bForceNearest )
-{
 	VkSampler ret = VK_NULL_HANDLE;
 
 	VkSamplerCreateInfo samplerCreateInfo = {
 		.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
 		.pNext = nullptr,
-		.magFilter = (pBinding->bFilter && !bForceNearest) ? VK_FILTER_LINEAR : VK_FILTER_NEAREST,
-		.minFilter = (pBinding->bFilter && !bForceNearest) ? VK_FILTER_LINEAR : VK_FILTER_NEAREST,
+		.magFilter = key.bNearest ? VK_FILTER_NEAREST : VK_FILTER_LINEAR,
+		.minFilter = key.bNearest ? VK_FILTER_NEAREST : VK_FILTER_LINEAR,
 		.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
 		.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
 		.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-		.borderColor = VK_BORDER_COLOR_INT_TRANSPARENT_BLACK,
-		.unnormalizedCoordinates = VK_TRUE,
+		.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK,
+		.unnormalizedCoordinates = key.bUnnormalized,
 	};
-	
+
 	vkCreateSampler( device, &samplerCreateInfo, nullptr, &ret );
-	
+
+	g_vulkanSamplerCache[key] = ret;
+
 	return ret;
 }
 
@@ -1984,7 +2004,6 @@ void vulkan_update_descriptor( struct Composite_t *pComposite, struct VulkanPipe
 	std::array< VkDescriptorImageInfo, k_nMaxLayers > imageDescriptors = {};
 	for ( uint32_t i = 0; i < k_nMaxLayers; i++ )
 	{
-		VkSampler sampler = VK_NULL_HANDLE;
 		bool bForceNearest = pComposite->data.vScale[i].x == 1.0f &&
 							 pComposite->data.vScale[i].y == 1.0f &&
 							 float_is_integer(pComposite->data.vOffset[i].x);
@@ -1993,27 +2012,13 @@ void vulkan_update_descriptor( struct Composite_t *pComposite, struct VulkanPipe
 		const std::shared_ptr<CVulkanTexture>& pTex = pPipeline->layerBindings[ i ].tex
 			? pPipeline->layerBindings[ i ].tex
 			: g_emptyTex;
-		
-		// First try to look up the sampler in the cache.
-		for ( uint32_t j = 0; j < g_vecVulkanSamplerCache.size(); j++ )
-		{
-			if ( g_vecVulkanSamplerCache[ j ].key == pPipeline->layerBindings[ i ] &&
-				 g_vecVulkanSamplerCache[ j ].bForceNearest == bForceNearest )
-			{
-				sampler = g_vecVulkanSamplerCache[ j ].sampler;
-				break;
-			}
-		}
-		
-		if ( sampler == VK_NULL_HANDLE )
-		{
-			sampler = vulkan_make_sampler( &pPipeline->layerBindings[ i ], bForceNearest );
-			
-			assert( sampler != VK_NULL_HANDLE );
-			
-			VulkanSamplerCacheEntry_t entry = { pPipeline->layerBindings[ i ], sampler, bForceNearest };
-			g_vecVulkanSamplerCache.push_back( entry );
-		}
+
+		VulkanSamplerCacheKey_t samplerKey;
+		samplerKey.bNearest = bForceNearest || !pPipeline->layerBindings[i].bFilter;
+		samplerKey.bUnnormalized = true;
+
+		VkSampler sampler = vulkan_make_sampler(samplerKey);
+		assert ( sampler != VK_NULL_HANDLE );
 
 		{
 			VkDescriptorImageInfo imageInfo = {
