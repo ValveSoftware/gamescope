@@ -16,6 +16,8 @@
 #include "log.hpp"
 
 #include "cs_composite_blit.h"
+#include "cs_composite_rcas.h"
+#include "cs_easu.h"
 
 bool g_bIsCompositeDebug = false;
 
@@ -64,6 +66,7 @@ VkPhysicalDevice physicalDevice;
 uint32_t queueFamilyIndex;
 VkQueue queue;
 VkShaderModule shaderModule;
+VkShaderModule rcasModule;
 VkDevice device;
 VkCommandPool commandPool;
 VkDescriptorPool descriptorPool;
@@ -84,7 +87,8 @@ VkPipelineLayout pipelineLayout;
 std::array<VkDescriptorSet, 1> descriptorSets;
 size_t nCurrentDescriptorSet = 0;
 
-std::array<std::array<VkPipeline, k_nMaxYcbcrMask>, k_nMaxLayers> pipelines = {};
+VkPipeline easuPipeline;
+std::array<std::array<std::array<VkPipeline,  2>, k_nMaxYcbcrMask>, k_nMaxLayers> pipelines = {};
 std::mutex pipelineMutex;
 
 VkBuffer uploadBuffer;
@@ -923,7 +927,7 @@ static bool is_vulkan_1_1_device(VkPhysicalDevice device)
 	return properties.apiVersion >= VK_API_VERSION_1_1;
 }
 
-static VkPipeline compile_vk_pipeline(uint32_t layerCount, uint32_t ycbcrMask)
+static VkPipeline compile_vk_pipeline(uint32_t layerCount, uint32_t ycbcrMask, bool rcas)
 {
 	const std::array<VkSpecializationMapEntry, 3> specializationEntries = {{
 		{
@@ -969,7 +973,7 @@ static VkPipeline compile_vk_pipeline(uint32_t layerCount, uint32_t ycbcrMask)
 			nullptr,
 			0,
 			VK_SHADER_STAGE_COMPUTE_BIT,
-			shaderModule,
+			rcas ? rcasModule : shaderModule,
 			"main",
 			&specializationInfo
 		},
@@ -991,31 +995,33 @@ static VkPipeline compile_vk_pipeline(uint32_t layerCount, uint32_t ycbcrMask)
 
 static void compile_all_pipelines(void)
 {
-	for (uint32_t layerCount = 0; layerCount < k_nMaxLayers; layerCount++) {
-		for (uint32_t ycbcrMask = 0; ycbcrMask < k_nMaxYcbcrMask; ycbcrMask++) {
-			if (ycbcrMask >= (1u << (layerCount + 1)))
-				continue;
+	for (uint32_t rcas = 0; rcas < 2; rcas++) {
+		for (uint32_t layerCount = 0; layerCount < k_nMaxLayers; layerCount++) {
+			for (uint32_t ycbcrMask = 0; ycbcrMask < k_nMaxYcbcrMask; ycbcrMask++) {
+				if (ycbcrMask >= (1u << (layerCount + 1)))
+					continue;
 
-			VkPipeline newPipeline = compile_vk_pipeline(layerCount, ycbcrMask);
-			{
-				std::lock_guard<std::mutex> lock(pipelineMutex);
-				if (pipelines[layerCount][ycbcrMask])
-					vkDestroyPipeline(device, newPipeline, nullptr);
-				else
-					pipelines[layerCount][ycbcrMask] = newPipeline;
+				VkPipeline newPipeline = compile_vk_pipeline(layerCount, ycbcrMask, rcas);
+				{
+					std::lock_guard<std::mutex> lock(pipelineMutex);
+					if (pipelines[layerCount][ycbcrMask][rcas])
+						vkDestroyPipeline(device, newPipeline, nullptr);
+					else
+						pipelines[layerCount][ycbcrMask][rcas] = newPipeline;
+				}
 			}
 		}
 	}
 }
 
-static VkPipeline get_vk_pipeline(uint32_t layerCount, uint32_t ycbcrMask)
+static VkPipeline get_vk_pipeline(uint32_t layerCount, uint32_t ycbcrMask, bool rcas)
 {
 
 	std::lock_guard<std::mutex> lock(pipelineMutex);
-	if (!pipelines[layerCount][ycbcrMask])
-		pipelines[layerCount][ycbcrMask] = compile_vk_pipeline(layerCount, ycbcrMask);
+	if (!pipelines[layerCount][ycbcrMask][rcas])
+		pipelines[layerCount][ycbcrMask][rcas] = compile_vk_pipeline(layerCount, ycbcrMask, rcas);
 
-	return pipelines[layerCount][ycbcrMask];
+	return pipelines[layerCount][ycbcrMask][rcas];
 }
 
 static bool init_device()
@@ -1303,7 +1309,16 @@ retry:
 		vk_errorf( res, "vkCreateShaderModule failed" );
 		return false;
 	}
-	
+
+	shaderModuleCreateInfo.codeSize = sizeof(cs_composite_rcas);
+	shaderModuleCreateInfo.pCode = cs_composite_rcas;
+	res = vkCreateShaderModule( device, &shaderModuleCreateInfo, nullptr, &rcasModule );
+	if ( res != VK_SUCCESS )
+	{
+		vk_errorf( res, "vkCreateShaderModule failed" );
+		return false;
+	}
+
 	VkCommandPoolCreateInfo commandPoolCreateInfo = {
 		.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
 		.pNext = nullptr,
@@ -1456,6 +1471,46 @@ retry:
 	
 	std::thread piplelineThread(compile_all_pipelines);
 	piplelineThread.detach();
+
+	VkShaderModule easuModule;
+
+	VkShaderModuleCreateInfo shaderCreateInfo = {};
+	shaderCreateInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+	shaderCreateInfo.codeSize = sizeof(cs_easu);
+	shaderCreateInfo.pCode = cs_easu;
+
+	res = vkCreateShaderModule( device, &shaderCreateInfo, nullptr, &easuModule );
+	if ( res != VK_SUCCESS )
+	{
+		vk_errorf( res, "vkCreateShaderModule failed" );
+		return false;
+	}
+
+	VkComputePipelineCreateInfo computePipelineCreateInfo = {
+		VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+		nullptr,
+		0,
+		{
+			VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+			nullptr,
+			0,
+			VK_SHADER_STAGE_COMPUTE_BIT,
+			easuModule,
+			"main",
+			nullptr
+		},
+		pipelineLayout,
+		0,
+		0
+	};
+
+	res = vkCreateComputePipelines(device, 0, 1, &computePipelineCreateInfo, 0, &easuPipeline);
+	if (res != VK_SUCCESS) {
+		vk_errorf( res, "vkCreateComputePipelines failed" );
+		return false;
+	}
+
+	vkDestroyShaderModule(device, easuModule, nullptr);
 	
 	std::vector<VkDescriptorSetLayout> descriptorSetLayouts(descriptorSets.size(), descriptorSetLayout);
 	
@@ -2313,7 +2368,7 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 			      		0, 0, nullptr, 0, nullptr, textureBarriers.size(), textureBarriers.data() );
 
 	assert(pComposite->nYCBCRMask < (1 << (pComposite->nLayerCount + 1)));
-	vkCmdBindPipeline(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, get_vk_pipeline(pComposite->nLayerCount - 1, pComposite->nYCBCRMask));
+	vkCmdBindPipeline(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, get_vk_pipeline(pComposite->nLayerCount - 1, pComposite->nYCBCRMask, false));
 	
 	vkCmdBindDescriptorSets(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE,
 							pipelineLayout, 0, 1, &descriptorSet, 0, 0);
