@@ -28,7 +28,7 @@ uniform layers_t {
 
 layout(binding = 1) uniform sampler2D s_samplers[MaxLayers];
 
-layout(binding = 5) uniform sampler2D s_ycbcr_samplers[MaxLayers];
+layout(binding = 2) uniform sampler2D s_ycbcr_samplers[MaxLayers];
 
 vec3 srgbToLinear(vec3 color) {
     bvec3 isLo = lessThanEqual(color, vec3(0.04045f));

@@ -1227,7 +1227,7 @@ retry:
 
 	vecLayoutBindings.push_back( descriptorSetLayoutBindings );
 
-	descriptorSetLayoutBindings.binding = 1 + k_nMaxLayers;
+	descriptorSetLayoutBindings.binding = 2;
 	descriptorSetLayoutBindings.descriptorCount = k_nMaxLayers;
 	descriptorSetLayoutBindings.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 	descriptorSetLayoutBindings.pImmutableSamplers = ycbcrSamplers.data();
@@ -2057,7 +2057,7 @@ void vulkan_update_descriptor( struct Composite_t *pComposite, struct VulkanPipe
 		.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 		.pNext = nullptr,
 		.dstSet = descriptorSet,
-		.dstBinding = 1 + k_nMaxLayers,
+		.dstBinding = 2,
 		.dstArrayElement = 0,
 		.descriptorCount = ycbcrImageDescriptors.size(),
 		.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
