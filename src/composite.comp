@@ -15,7 +15,7 @@ layout(constant_id = 1) const bool c_swapChannels = false;
 layout(constant_id = 2) const uint c_ycbcrMask    = 0;
 layout(constant_id = 3) const bool c_compositing_debug = false;
 
-layout(binding = 0, rgba8) writeonly uniform image2D dst;
+layout(binding = 0) writeonly uniform image2D dst;
 
 layout(std430, push_constant)
 uniform layers_t {
