@@ -152,6 +152,9 @@ void inputSDLThreadRun( void )
 						case KEY_N:
 							g_bFilterGameWindow = !g_bFilterGameWindow;
 							break;
+						case KEY_U:
+							g_fsrUpscale = !g_fsrUpscale;
+							break;
 						case KEY_S:
 							take_screenshot();
 							break;

@@ -37,6 +37,7 @@ const struct option *gamescope_options = (struct option[]){
 	{ "output-width", required_argument, nullptr, 'W' },
 	{ "output-height", required_argument, nullptr, 'H' },
 	{ "nearest-neighbor-filter", no_argument, nullptr, 'n' },
+	{ "fsr-upscaling", no_argument, nullptr, 'U' },
 
 	// nested mode options
 	{ "nested-unfocused-refresh", required_argument, nullptr, 'o' },
@@ -85,6 +86,7 @@ const char usage[] =
 	"  -W, --output-width             output width\n"
 	"  -H, --output-height            output height\n"
 	"  -n, --nearest-neighbor-filter  use nearest neighbor filtering\n"
+	"  -U  --fsr-upscaling            use AMD FidelityFX™ Super Resolution 1.0 for upscaling"
 	"  --cursor                       path to default cursor image\n"
 	"  -R, --ready-fd                 notify FD when ready\n"
 	"  -T, --stats-path               write statistics to path\n"
@@ -116,6 +118,7 @@ const char usage[] =
 	"Keyboard shortcuts:\n"
 	"  Super + F                      toggle fullscreen\n"
 	"  Super + N                      toggle nearest neighbour filtering\n"
+	"  Super + U                      toggle FSR upscaling\n"
 	"  Super + S                      take a screenshot\n"
 	"";
 
@@ -135,6 +138,7 @@ bool g_bFullscreen = false;
 bool g_bIsNested = false;
 
 bool g_bFilterGameWindow = true;
+bool g_fsrUpscale = false;
 
 bool g_bBorderlessOutputWindow = false;
 
@@ -252,6 +256,9 @@ int main(int argc, char **argv)
 				break;
 			case 'O':
 				g_sOutputName = optarg;
+				break;
+			case 'U':
+				g_fsrUpscale = true;
 				break;
 			case 0: // long options without a short option
 				opt_name = gamescope_options[opt_index].name;

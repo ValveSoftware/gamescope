@@ -22,6 +22,8 @@ extern bool g_bFullscreen;
 
 extern bool g_bFilterGameWindow;
 
+extern bool g_fsrUpscale;
+
 extern bool g_bBorderlessOutputWindow;
 
 extern bool g_bNiceCap;

@@ -1506,6 +1506,8 @@ paint_all()
 				}
 				// Just draw focused window as normal, be it Steam or the game
 				paint_window(w, w, &composite, &pipeline, global_focus.cursor, PaintWindowFlag::BasePlane | PaintWindowFlag::DrawBorders, 1.0f);
+
+				composite.useFSRLayer0 = g_fsrUpscale;
 			}
 			update_touch_scaling( &composite );
 		}
