@@ -1,0 +1,96 @@
+#version 460
+
+#extension GL_ARB_shader_clock : require
+#extension GL_EXT_scalar_block_layout : require
+#extension GL_GOOGLE_include_directive : require
+
+#include "descriptor_set.h"
+
+layout(
+  local_size_x = 64,
+  local_size_y = 1,
+  local_size_z = 1) in;
+
+layout(std430, push_constant)
+uniform layers_t {
+    uvec2 u_layer0Offset;
+    vec2 u_scale[MaxLayers - 1];
+    vec2 u_offset[MaxLayers - 1];
+    float u_opacity[MaxLayers];
+    uint u_borderMask;
+    uint u_frameId;
+    uint u_c1;
+};
+
+#include "composite.h"
+
+#define A_GPU 1
+#define A_GLSL 1
+#include "ffx_a.h"
+#define FSR_RCAS_F 1
+vec4 FsrRcasLoadF(ivec2 p) { return texelFetch(s_samplers[0], ivec2(p), 0); }
+// our input is already srgb
+void FsrRcasInputF(inout float r, inout float g, inout float b) {}
+#include "ffx_fsr1.h"
+
+vec4 sampleLayer(uint layerIdx, vec2 uv) {
+    if ((c_ycbcrMask & (1 << layerIdx)) != 0)
+        return srgbToLinear(sampleLayer(s_ycbcr_samplers[layerIdx], layerIdx - 1, uv, false));
+    return sampleLayer(s_samplers[layerIdx], layerIdx - 1, uv, true);
+}
+
+
+void rcasComposite(uvec2 pos)
+{
+    vec3 outputValue = vec3(0.0f);
+
+    if (c_layerCount > 0) {
+        // this is actually signed, underflow will be filtered out by the branch below
+        uvec2 rcasPos = pos + u_layer0Offset;
+        uvec2 layer0Extent = uvec2(textureSize(s_samplers[0], 0));
+
+        if (all(lessThan(rcasPos, layer0Extent))) {
+            FsrRcasF(outputValue.r, outputValue.g, outputValue.b, rcasPos, u_c1.xxxx);
+
+            // Technically the wrong color space but doing srgb -> linear -> srgb just for
+            // scaling is silly. This is good enough.
+            outputValue *= u_opacity[0];
+        }
+    }
+
+    if (c_layerCount > 1) {
+        outputValue = srgbToLinear(outputValue);
+        vec2 uv = vec2(pos);
+
+        for (int i = 1; i < c_layerCount; i++) {
+            vec4 layerColor = sampleLayer(i, uv);
+            float opacity = u_opacity[i];
+            float layerAlpha = opacity * layerColor.a;
+            outputValue = layerColor.rgb * opacity + outputValue * (1.0f - layerAlpha);
+        }
+
+        outputValue = linearToSrgb(outputValue);
+    }
+
+
+    float undef;
+    imageStore(dst, ivec2(pos), vec4(outputValue, undef));
+
+    if (c_compositing_debug)
+        compositing_debug(uvec2(0), ivec2(pos));
+}
+
+void main()
+{
+    // AMD recommends to use this swizzle and to process 4 pixel per invocation
+    // for better cache utilisation
+    uvec2 pos = ARmp8x8(gl_LocalInvocationID.x) + uvec2(gl_WorkGroupID.x << 4u, gl_WorkGroupID.y << 4u);
+    rcasComposite(pos);
+    pos.x += 8u;
+    rcasComposite(pos);
+    pos.y += 8u;
+    rcasComposite(pos);
+    pos.x -= 8u;
+    rcasComposite(pos);
+}
+

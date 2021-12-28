@@ -1,0 +1,47 @@
+#version 460
+
+#extension GL_EXT_scalar_block_layout : require
+#extension GL_GOOGLE_include_directive : require
+
+#include "descriptor_set.h"
+
+layout(
+  local_size_x = 64,
+  local_size_y = 1,
+  local_size_z = 1) in;
+
+layout(std430, push_constant)
+uniform layers_t {
+    uvec4 c1, c2, c3, c4;
+};
+
+#define A_GPU 1
+#define A_GLSL 1
+#include "ffx_a.h"
+#define FSR_EASU_F 1
+AF4 FsrEasuRF(AF2 p){return AF4(textureGather(s_samplers[0], p, 0));}
+AF4 FsrEasuGF(AF2 p){return AF4(textureGather(s_samplers[0], p, 1));}
+AF4 FsrEasuBF(AF2 p){return AF4(textureGather(s_samplers[0], p, 2));}
+#include "ffx_fsr1.h"
+
+void easuPass(uvec2 pos)
+{
+    vec3 color;
+    FsrEasuF(color, pos, c1, c2, c3, c4);
+    imageStore(dst, ivec2(pos), vec4(color, 1));
+}
+
+void main()
+{
+    // AMD recommends to use this swizzle and to process 4 pixel per invocation
+    // for better cache utilisation
+    uvec2 pos = ARmp8x8(gl_LocalInvocationID.x) + uvec2(gl_WorkGroupID.x << 4u, gl_WorkGroupID.y << 4u);
+    easuPass(pos);
+    pos.x += 8u;
+    easuPass(pos);
+    pos.y += 8u;
+    easuPass(pos);
+    pos.x -= 8u;
+    easuPass(pos);
+}
+

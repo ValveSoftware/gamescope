@@ -89,6 +89,8 @@ endif
 
 shader_src = [
   'src/shaders/cs_composite_blit.comp',
+  'src/shaders/cs_composite_rcas.comp',
+  'src/shaders/cs_easu.comp',
 ]
 
 spirv_shaders = glsl_generator.process(shader_src)
