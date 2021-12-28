@@ -52,6 +52,7 @@ struct Composite_t
 {
 	int nLayerCount;
 	int nYCBCRMask;
+	bool useFSRLayer0;
 
 	struct CompositeData_t
 	{
@@ -120,6 +121,11 @@ public:
 	};
 
 	bool BInit( uint32_t width, uint32_t height, uint32_t drmFormat, createFlags flags, wlr_dmabuf_attributes *pDMA = nullptr );
+
+	inline VkImageView getView( bool linear )
+	{
+		return linear ? m_linearView : m_srgbView;
+	}
 
 	CVulkanTexture( void );
 	~CVulkanTexture( void );
