@@ -33,8 +33,6 @@ const VkApplicationInfo appInfo = {
 
 VkInstance instance;
 
-#define k_nMaxSets 8 // should only need one or two per output tops
-
 struct VulkanOutput_t
 {
 	VkSurfaceKHR surface;
@@ -79,7 +77,12 @@ static int g_drmRenderFd = -1;
 
 VkDescriptorSetLayout descriptorSetLayout;
 VkPipelineLayout pipelineLayout;
-VkDescriptorSet descriptorSet;
+
+// currently just one set, no need to double buffer because we
+// vkQueueWaitIdle after each submit.
+// should be moved to the output if we are going to support multiple outputs
+std::array<VkDescriptorSet, 1> descriptorSets;
+size_t nCurrentDescriptorSet = 0;
 
 std::array<std::array<VkPipeline, k_nMaxYcbcrMask>, k_nMaxLayers> pipelines = {};
 std::mutex pipelineMutex;
@@ -1318,11 +1321,11 @@ retry:
 	VkDescriptorPoolSize descriptorPoolSize[] = {
 		{
 			VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-			k_nMaxSets * 1,
+			descriptorSets.size() * 1,
 		},
 		{
 			VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-			2 * k_nMaxSets * k_nMaxLayers,
+			2 * descriptorSets.size() * k_nMaxLayers,
 		},
 	};
 	
@@ -1330,7 +1333,7 @@ retry:
 		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
 		.pNext = nullptr,
 		.flags = 0,
-		.maxSets = k_nMaxSets,
+		.maxSets = descriptorSets.size(),
 		.poolSizeCount = sizeof(descriptorPoolSize) / sizeof(descriptorPoolSize[0]),
 		.pPoolSizes = descriptorPoolSize
 	};
@@ -1454,16 +1457,18 @@ retry:
 	std::thread piplelineThread(compile_all_pipelines);
 	piplelineThread.detach();
 	
+	std::vector<VkDescriptorSetLayout> descriptorSetLayouts(descriptorSets.size(), descriptorSetLayout);
+	
 	VkDescriptorSetAllocateInfo descriptorSetAllocateInfo = {
 		VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
 		nullptr,
 		descriptorPool,
-		1,
-		&descriptorSetLayout
+		(uint32_t)descriptorSetLayouts.size(),
+		descriptorSetLayouts.data(),
 	};
 	
-	res = vkAllocateDescriptorSets(device, &descriptorSetAllocateInfo, &descriptorSet);
-	if ( res != VK_SUCCESS || descriptorSet == VK_NULL_HANDLE )
+	res = vkAllocateDescriptorSets(device, &descriptorSetAllocateInfo, descriptorSets.data());
+	if ( res != VK_SUCCESS )
 	{
 		vk_log.errorf( "vkAllocateDescriptorSets failed" );
 		return false;
@@ -2085,8 +2090,11 @@ bool float_is_integer(float x)
 
 static uint32_t s_frameId = 0;
 
-void vulkan_update_descriptor( struct Composite_t *pComposite, struct VulkanPipeline_t *pPipeline, int nYCBCRMask )
+VkDescriptorSet vulkan_update_descriptor( struct Composite_t *pComposite, struct VulkanPipeline_t *pPipeline, int nYCBCRMask )
 {
+    VkDescriptorSet descriptorSet = descriptorSets[nCurrentDescriptorSet];
+    nCurrentDescriptorSet = (nCurrentDescriptorSet + 1) % descriptorSets.size();
+
 	{
 		VkImageView targetImageView;
 		
@@ -2195,6 +2203,8 @@ void vulkan_update_descriptor( struct Composite_t *pComposite, struct VulkanPipe
 	};
 
 	vkUpdateDescriptorSets(device, writeDescriptorSets.size(), writeDescriptorSets.data(), 0, nullptr);
+
+    return descriptorSet;
 }
 
 bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *pPipeline, std::shared_ptr<CVulkanTexture> *pScreenshotTexture )
@@ -2221,7 +2231,7 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 		}
 	}
 
-	vulkan_update_descriptor( pComposite, pPipeline, pComposite->nYCBCRMask );
+	VkDescriptorSet descriptorSet = vulkan_update_descriptor( pComposite, pPipeline, pComposite->nYCBCRMask );
 
 	for ( int i = 0; i < pComposite->nLayerCount; i++ )
 	{
