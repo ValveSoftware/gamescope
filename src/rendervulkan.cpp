@@ -2221,7 +2221,7 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 				{
 					.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
 					.srcAccessMask = 0,
-					.dstAccessMask = 0,
+					.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
 					.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
 					.newLayout = VK_IMAGE_LAYOUT_GENERAL,
 					.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
