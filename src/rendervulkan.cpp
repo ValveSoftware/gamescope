@@ -1105,6 +1105,7 @@ retry:
 	bool hasDrmProps = false;
 	bool hasPciBusProps = false;
 	bool supportsForeignQueue = false;
+	bool supportsFp16 = false;
 	for ( uint32_t i = 0; i < supportedExtensionCount; ++i )
 	{
 		if ( strcmp(vecSupportedExtensions[i].extensionName,
@@ -1122,6 +1123,10 @@ retry:
 		if ( strcmp(vecSupportedExtensions[i].extensionName,
 		     VK_EXT_QUEUE_FAMILY_FOREIGN_EXTENSION_NAME) == 0 )
 			supportsForeignQueue = true;
+
+		if ( strcmp(vecSupportedExtensions[i].extensionName,
+		     VK_KHR_SHADER_FLOAT16_INT8_EXTENSION_NAME) == 0 )
+			supportsFp16 = true;
 	}
 
 	vk_log.infof( "physical device %s DRM format modifiers", g_vulkanSupportsModifiers ? "supports" : "does not support" );
@@ -1216,6 +1221,21 @@ retry:
 		g_vulkanSupportsModifiers = false;
 	}
 
+	if ( supportsFp16 )
+	{
+		VkPhysicalDeviceShaderFloat16Int8Features fp16Features = {
+			.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES,
+		};
+		VkPhysicalDeviceFeatures2 features2 = {
+			.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+			.pNext = &fp16Features,
+		};
+		vkGetPhysicalDeviceFeatures2( physicalDevice, &features2 );
+
+		if ( !fp16Features.shaderFloat16 || !features2.features.shaderInt16 )
+			supportsFp16 = false;
+	}
+
 	float queuePriorities = 1.0f;
 
 	VkDeviceQueueGlobalPriorityCreateInfoEXT queueCreateInfoEXT = {
@@ -1260,9 +1280,13 @@ retry:
 	vecEnabledDeviceExtensions.push_back( VK_KHR_SHADER_CLOCK_EXTENSION_NAME );
 
 	vecEnabledDeviceExtensions.push_back( VK_EXT_ROBUSTNESS_2_EXTENSION_NAME );
-	
+
+	if ( supportsFp16 )
+		vecEnabledDeviceExtensions.push_back( VK_KHR_SHADER_FLOAT16_INT8_EXTENSION_NAME );
+
 	VkPhysicalDeviceFeatures2 features2 = {};
 	features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+	features2.features.shaderInt16 = supportsFp16;
 	
 	VkDeviceCreateInfo deviceCreateInfo = {
 		.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
@@ -1290,6 +1314,13 @@ retry:
 	robustness2Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT;
 	robustness2Features.pNext = std::exchange(features2.pNext, &robustness2Features);
 	robustness2Features.nullDescriptor = VK_TRUE;
+
+	VkPhysicalDeviceShaderFloat16Int8Features fp16Features = {};
+	fp16Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES;
+	fp16Features.shaderFloat16 = VK_TRUE;
+
+	if ( supportsFp16 )
+		fp16Features.pNext = std::exchange(features2.pNext, &fp16Features);
 
 	VkResult res = vkCreateDevice(physicalDevice, &deviceCreateInfo, NULL, &device);
 	if ( res != VK_SUCCESS )
