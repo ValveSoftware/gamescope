@@ -18,6 +18,8 @@
 #include "cs_composite_blit.h"
 #include "cs_composite_rcas.h"
 #include "cs_easu.h"
+#include "cs_easu_fp16.h"
+
 
 #define A_CPU
 #include "shaders/ffx_a.h"
@@ -1514,8 +1516,8 @@ retry:
 
 	VkShaderModuleCreateInfo shaderCreateInfo = {};
 	shaderCreateInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-	shaderCreateInfo.codeSize = sizeof(cs_easu);
-	shaderCreateInfo.pCode = cs_easu;
+	shaderCreateInfo.codeSize = supportsFp16 ? sizeof(cs_easu_fp16) : sizeof(cs_easu);
+	shaderCreateInfo.pCode = supportsFp16 ? cs_easu_fp16 : cs_easu;
 
 	res = vkCreateShaderModule( device, &shaderCreateInfo, nullptr, &easuModule );
 	if ( res != VK_SUCCESS )
