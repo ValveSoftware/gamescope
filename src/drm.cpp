@@ -1047,12 +1047,15 @@ drm_prepare_basic( struct drm_t *drm, const struct Composite_t *pComposite, cons
 	add_plane_property(req, drm->primary, "CRTC_ID", drm->crtc->id);
 	add_plane_property(req, drm->primary, "SRC_X", 0);
 	add_plane_property(req, drm->primary, "SRC_Y", 0);
-	add_plane_property(req, drm->primary, "SRC_W", pPipeline->layerBindings[ 0 ].surfaceWidth << 16);
-	add_plane_property(req, drm->primary, "SRC_H", pPipeline->layerBindings[ 0 ].surfaceHeight << 16);
+
+	const uint16_t srcWidth = pPipeline->layerBindings[ 0 ].surfaceWidth;
+	const uint16_t srcHeight = pPipeline->layerBindings[ 0 ].surfaceHeight;
+
+	add_plane_property(req, drm->primary, "SRC_W", srcWidth << 16);
+	add_plane_property(req, drm->primary, "SRC_H", srcHeight << 16);
 
 	gpuvis_trace_printf ( "legacy flip fb_id %u src %ix%i", fb_id,
-						 pPipeline->layerBindings[ 0 ].surfaceWidth,
-						 pPipeline->layerBindings[ 0 ].surfaceHeight );
+						 srcWidth, srcHeight );
 
 	int64_t crtcX = pComposite->data.vOffset[ 0 ].x * -1;
 	int64_t crtcY = pComposite->data.vOffset[ 0 ].y * -1;
@@ -1062,7 +1065,7 @@ drm_prepare_basic( struct drm_t *drm, const struct Composite_t *pComposite, cons
 	if ( g_bRotated )
 	{
 		int64_t tmp = crtcX;
-		crtcX = crtcY;
+		crtcX = crtcY + (g_nOutputHeight - crtcH);
 		crtcY = tmp;
 
 		tmp = crtcW;
@@ -1124,7 +1127,7 @@ drm_prepare_liftoff( struct drm_t *drm, const struct Composite_t *pComposite, co
 			if (g_bRotated) {
 				const int32_t x = crtcX;
 				const uint64_t w = crtcW;
-				crtcX = crtcY;
+				crtcX = crtcY + (g_nOutputHeight - crtcH);
 				crtcY = x;
 				crtcW = crtcH;
 				crtcH = w;
