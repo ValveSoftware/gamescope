@@ -29,6 +29,7 @@
  *   says above. Not that I can really do anything about it
  */
 
+#include <cstdint>
 #include <thread>
 #include <condition_variable>
 #include <mutex>
@@ -1183,9 +1184,17 @@ paint_cached_base_layer(const std::shared_ptr<commit_t>& commit, const BaseLayer
 	pComposite->nLayerCount++;
 }
 
+namespace PaintWindowFlag
+{
+	static const uint32_t BasePlane = 1u << 0;
+	static const uint32_t FadeTarget = 1u << 1;
+	static const uint32_t NotificationMode = 1u << 2;
+}
+using PaintWindowFlags = uint32_t;
+
 static void
 paint_window(Display *dpy, win *w, win *scaleW, struct Composite_t *pComposite,
-			  struct VulkanPipeline_t *pPipeline, bool notificationMode, MouseCursor *cursor, bool bBasePlane = false, float flOpacityScale = 1.0f, bool bFadeTarget = false)
+			  struct VulkanPipeline_t *pPipeline, MouseCursor *cursor, PaintWindowFlags flags = 0, float flOpacityScale = 1.0f)
 {
 	uint32_t sourceWidth, sourceHeight;
 	int drawXOffset = 0, drawYOffset = 0;
@@ -1194,7 +1203,7 @@ paint_window(Display *dpy, win *w, win *scaleW, struct Composite_t *pComposite,
 	if ( w )
 		get_window_last_done_commit( w, lastCommit );
 
-	if ( bBasePlane )
+	if ( flags & PaintWindowFlag::BasePlane )
 	{
 		if ( !lastCommit )
 		{
@@ -1233,6 +1242,7 @@ paint_window(Display *dpy, win *w, win *scaleW, struct Composite_t *pComposite,
 
 	win *mainOverlayWindow = find_win(dpy, currentOverlayWindow);
 
+	const bool notificationMode = flags & PaintWindowFlag::NotificationMode;
 	if (notificationMode && !mainOverlayWindow)
 		return;
 
@@ -1334,7 +1344,7 @@ paint_window(Display *dpy, win *w, win *scaleW, struct Composite_t *pComposite,
 
 	pPipeline->layerBindings[ curLayer ].bFilter = (w->isOverlay || w->isExternalOverlay) ? true : g_bFilterGameWindow;
 
-	if ( bBasePlane )
+	if ( flags & PaintWindowFlag::BasePlane )
 	{
 		BaseLayerInfo_t basePlane = {};
 		basePlane.scale[0] = pComposite->data.vScale[ curLayer ].x;
@@ -1344,7 +1354,7 @@ paint_window(Display *dpy, win *w, win *scaleW, struct Composite_t *pComposite,
 		basePlane.opacity = pComposite->data.flOpacity[ curLayer ];
 
 		g_CachedPlanes[ HELD_COMMIT_BASE ] = basePlane;
-		if ( !bFadeTarget )
+		if ( !(flags & PaintWindowFlag::FadeTarget) )
 			g_CachedPlanes[ HELD_COMMIT_FADE ] = basePlane;
 	}
 
@@ -1501,7 +1511,7 @@ paint_all(Display *dpy, MouseCursor *cursor)
 			if ( videow->isSteamStreamingClientVideo == true )
 			{
 				// TODO: also check matching AppID so we can have several pairs
-				paint_window(dpy, videow, videow, &composite, &pipeline, false, cursor, true);
+				paint_window(dpy, videow, videow, &composite, &pipeline, cursor, PaintWindowFlag::BasePlane);
 				bHasVideoUnderlay = true;
 				break;
 			}
@@ -1509,7 +1519,10 @@ paint_all(Display *dpy, MouseCursor *cursor)
 		
 		int nOldLayerCount = composite.nLayerCount;
 
-		paint_window(dpy, w, w, &composite, &pipeline, false, cursor, !bHasVideoUnderlay);
+		uint32_t flags = 0;
+		if ( !bHasVideoUnderlay )
+			flags |= PaintWindowFlag::BasePlane;
+		paint_window(dpy, w, w, &composite, &pipeline, cursor, flags);
 		update_touch_scaling( &composite );
 		
 		// paint UI unless it's fully hidden, which it communicates to us through opacity=0
@@ -1526,7 +1539,7 @@ paint_all(Display *dpy, MouseCursor *cursor)
 				: ((currentTime - fadeOutStartTime) / (float)g_FadeOutDuration);
 	
 			paint_cached_base_layer(g_HeldCommits[HELD_COMMIT_FADE], g_CachedPlanes[HELD_COMMIT_FADE], &composite, &pipeline, 1.0f - opacityScale);
-			paint_window(dpy, w, w, &composite, &pipeline, false, cursor, true, opacityScale, true);
+			paint_window(dpy, w, w, &composite, &pipeline, cursor, PaintWindowFlag::BasePlane | PaintWindowFlag::FadeTarget, opacityScale);
 		}
 		else
 		{
@@ -1540,7 +1553,7 @@ paint_all(Display *dpy, MouseCursor *cursor)
 				}
 			}
 			// Just draw focused window as normal, be it Steam or the game
-			paint_window(dpy, w, w, &composite, &pipeline, false, cursor, true);
+			paint_window(dpy, w, w, &composite, &pipeline, cursor, PaintWindowFlag::BasePlane);
 		}
 		update_touch_scaling( &composite );
 	}
@@ -1551,7 +1564,7 @@ paint_all(Display *dpy, MouseCursor *cursor)
 	// as we will have too many layers. Better to be safe than sorry.
 	if ( override && !w->isSteamStreamingClient )
 	{
-		paint_window(dpy, override, w, &composite, &pipeline, false, cursor);
+		paint_window(dpy, override, w, &composite, &pipeline, cursor);
     	update_touch_scaling( &composite );
   	}
 
@@ -1559,7 +1572,7 @@ paint_all(Display *dpy, MouseCursor *cursor)
 	{
 		if (externalOverlay->opacity)
 		{
-			paint_window(dpy, externalOverlay, externalOverlay, &composite, &pipeline, false, cursor);
+			paint_window(dpy, externalOverlay, externalOverlay, &composite, &pipeline, cursor);
 
 			if ( externalOverlay->id == currentInputFocusWindow )
 				update_touch_scaling( &composite );
@@ -1570,7 +1583,7 @@ paint_all(Display *dpy, MouseCursor *cursor)
 	{
 		if (overlay->opacity)
 		{
-			paint_window(dpy, overlay, overlay, &composite, &pipeline, false, cursor);
+			paint_window(dpy, overlay, overlay, &composite, &pipeline, cursor);
 
 			if ( overlay->id == currentInputFocusWindow )
 				update_touch_scaling( &composite );
@@ -1581,7 +1594,7 @@ paint_all(Display *dpy, MouseCursor *cursor)
 	{
 		if (notification->opacity)
 		{
-			paint_window(dpy, notification, notification, &composite, &pipeline, true, cursor);
+			paint_window(dpy, notification, notification, &composite, &pipeline, cursor, PaintWindowFlag::NotificationMode);
 		}
 	}
 
