@@ -1315,6 +1315,9 @@ retry:
 	
 	for (uint32_t layerCount = 0; layerCount < k_nMaxLayers; layerCount++) {
 		for (uint32_t ycbcrMask = 0; ycbcrMask < k_nMaxYcbcrMask; ycbcrMask++) {
+			if (ycbcrMask >= (1u << (layerCount + 1)))
+				continue;
+
 			struct {
 				uint32_t layerCount;
 				uint32_t ycbcrMask;
@@ -2205,7 +2208,7 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 	vkCmdPipelineBarrier( curCommandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 			      		0, 0, nullptr, 0, nullptr, textureBarriers.size(), textureBarriers.data() );
 
-	
+	assert(pComposite->nYCBCRMask < (1 << (pComposite->nLayerCount + 1)));
 	vkCmdBindPipeline(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelines[pComposite->nLayerCount - 1][pComposite->nYCBCRMask]);
 	
 	vkCmdBindDescriptorSets(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE,
