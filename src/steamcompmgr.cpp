@@ -1189,6 +1189,7 @@ namespace PaintWindowFlag
 	static const uint32_t BasePlane = 1u << 0;
 	static const uint32_t FadeTarget = 1u << 1;
 	static const uint32_t NotificationMode = 1u << 2;
+	static const uint32_t DrawBorders = 1u << 3;
 }
 using PaintWindowFlags = uint32_t;
 
@@ -1316,9 +1317,10 @@ paint_window(Display *dpy, win *w, win *scaleW, struct Composite_t *pComposite,
 	{
 		pComposite->data.vOffset[ curLayer ].x = -drawXOffset;
 		pComposite->data.vOffset[ curLayer ].y = -drawYOffset;
-
-		pComposite->data.nBorderMask |= (1u << curLayer);
 	}
+
+	if ( flags & PaintWindowFlag::DrawBorders )
+		pComposite->data.nBorderMask |= (1u << curLayer);
 
 	pPipeline->layerBindings[ curLayer ].surfaceWidth = w->a.width;
 	pPipeline->layerBindings[ curLayer ].surfaceHeight = w->a.height;
@@ -1511,7 +1513,7 @@ paint_all(Display *dpy, MouseCursor *cursor)
 			if ( videow->isSteamStreamingClientVideo == true )
 			{
 				// TODO: also check matching AppID so we can have several pairs
-				paint_window(dpy, videow, videow, &composite, &pipeline, cursor, PaintWindowFlag::BasePlane);
+				paint_window(dpy, videow, videow, &composite, &pipeline, cursor, PaintWindowFlag::BasePlane | PaintWindowFlag::DrawBorders);
 				bHasVideoUnderlay = true;
 				break;
 			}
@@ -1519,7 +1521,7 @@ paint_all(Display *dpy, MouseCursor *cursor)
 		
 		int nOldLayerCount = composite.nLayerCount;
 
-		uint32_t flags = 0;
+		uint32_t flags = PaintWindowFlag::DrawBorders;
 		if ( !bHasVideoUnderlay )
 			flags |= PaintWindowFlag::BasePlane;
 		paint_window(dpy, w, w, &composite, &pipeline, cursor, flags);
@@ -1539,7 +1541,7 @@ paint_all(Display *dpy, MouseCursor *cursor)
 				: ((currentTime - fadeOutStartTime) / (float)g_FadeOutDuration);
 	
 			paint_cached_base_layer(g_HeldCommits[HELD_COMMIT_FADE], g_CachedPlanes[HELD_COMMIT_FADE], &composite, &pipeline, 1.0f - opacityScale);
-			paint_window(dpy, w, w, &composite, &pipeline, cursor, PaintWindowFlag::BasePlane | PaintWindowFlag::FadeTarget, opacityScale);
+			paint_window(dpy, w, w, &composite, &pipeline, cursor, PaintWindowFlag::BasePlane | PaintWindowFlag::FadeTarget | PaintWindowFlag::DrawBorders, opacityScale);
 		}
 		else
 		{
@@ -1553,7 +1555,7 @@ paint_all(Display *dpy, MouseCursor *cursor)
 				}
 			}
 			// Just draw focused window as normal, be it Steam or the game
-			paint_window(dpy, w, w, &composite, &pipeline, cursor, PaintWindowFlag::BasePlane);
+			paint_window(dpy, w, w, &composite, &pipeline, cursor, PaintWindowFlag::BasePlane | PaintWindowFlag::DrawBorders);
 		}
 		update_touch_scaling( &composite );
 	}
@@ -1583,7 +1585,7 @@ paint_all(Display *dpy, MouseCursor *cursor)
 	{
 		if (overlay->opacity)
 		{
-			paint_window(dpy, overlay, overlay, &composite, &pipeline, cursor);
+			paint_window(dpy, overlay, overlay, &composite, &pipeline, cursor, PaintWindowFlag::DrawBorders);
 
 			if ( overlay->id == currentInputFocusWindow )
 				update_touch_scaling( &composite );
