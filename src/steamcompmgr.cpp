@@ -1906,6 +1906,7 @@ determine_and_apply_focus(Display *dpy, MouseCursor *cursor)
 
 	Window prevFocusWindow = currentFocusWindow;
 	Window prevOverlayWindow = currentOverlayWindow;
+	Window prevExternalOverlayWindow = currentExternalOverlayWindow;
 	Window prevNotificationWindow = currentNotificationWindow;
 	Window prevOverrideWindow = currentOverrideWindow;
 	currentFocusWindow = None;
@@ -1915,6 +1916,7 @@ determine_and_apply_focus(Display *dpy, MouseCursor *cursor)
 	currentOverrideWindow = None;
 
 	unsigned int maxOpacity = 0;
+	unsigned int maxOpacityExternal = 0;
 	std::vector< win* > vecPossibleFocusWindows;
 	for (w = list; w; w = w->next)
 	{
@@ -1946,9 +1948,10 @@ determine_and_apply_focus(Display *dpy, MouseCursor *cursor)
 
 		if (w->isExternalOverlay)
 		{
-			if(w->opacity >= maxOpacity)
+			if (w->opacity >= maxOpacityExternal)
 			{
 				currentExternalOverlayWindow = w->id;
+				maxOpacityExternal = w->opacity;
 			}
 		}
 
@@ -1958,7 +1961,8 @@ determine_and_apply_focus(Display *dpy, MouseCursor *cursor)
 		}
 	}
 
-	if ( prevOverlayWindow != currentOverlayWindow ||
+	if ( prevExternalOverlayWindow != currentExternalOverlayWindow ||
+		 prevOverlayWindow != currentOverlayWindow ||
 	     prevNotificationWindow != currentNotificationWindow )
 	{
 		hasRepaint = true;
@@ -3101,6 +3105,7 @@ handle_property_notify(Display *dpy, XPropertyEvent *ev)
 			}
 
 			unsigned int maxOpacity = 0;
+			unsigned int maxOpacityExternal = 0;
 
 			for (w = list; w; w = w->next)
 			{
@@ -3114,7 +3119,11 @@ handle_property_notify(Display *dpy, XPropertyEvent *ev)
 				}
 				if (w->isExternalOverlay)
 				{
-					currentExternalOverlayWindow = w->id;
+					if (w->opacity >= maxOpacityExternal)
+					{
+						currentExternalOverlayWindow = w->id;
+						maxOpacityExternal = w->opacity;
+					}
 				}
 			}
 		}
@@ -3199,6 +3208,15 @@ handle_property_notify(Display *dpy, XPropertyEvent *ev)
 		if (w)
 		{
 			w->isOverlay = get_prop(dpy, w->id, overlayAtom, 0);
+			focusDirty = true;
+		}
+	}
+	if (ev->atom == externalOverlayAtom)
+	{
+		win * w = find_win(dpy, ev->window);
+		if (w)
+		{
+			w->isExternalOverlay = get_prop(dpy, w->id, externalOverlayAtom, 0);
 			focusDirty = true;
 		}
 	}
