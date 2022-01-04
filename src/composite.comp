@@ -8,7 +8,7 @@ layout(
   local_size_y = 8,
   local_size_z = 1) in;
 
-const int MaxLayers = 4;
+const int MaxLayers = 6;
 
 layout(constant_id = 0) const int  c_layerCount   = 1;
 layout(constant_id = 1) const bool c_swapChannels = false;

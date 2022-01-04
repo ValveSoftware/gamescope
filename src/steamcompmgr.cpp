@@ -1528,7 +1528,9 @@ paint_all(Display *dpy, MouseCursor *cursor)
 
 	// TODO: We want to paint this at the same scale as the normal window and probably
 	// with an offset.
-	if (override)
+	// Josh: No override if we're streaming video
+	// as we will have too many layers. Better to be safe than sorry.
+	if ( override && !w->isSteamStreamingClient )
 	{
 		paint_window(dpy, override, w, &composite, &pipeline, false, cursor);
 		update_touch_scaling( &composite );
