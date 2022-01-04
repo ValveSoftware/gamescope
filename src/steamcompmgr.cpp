@@ -1580,7 +1580,7 @@ paint_all(Display *dpy, MouseCursor *cursor)
 	{
 		if (externalOverlay->opacity)
 		{
-			paint_window(dpy, externalOverlay, externalOverlay, &composite, &pipeline, cursor);
+			paint_window(dpy, externalOverlay, externalOverlay, &composite, &pipeline, cursor, PaintWindowFlag::NoScale);
 
 			if ( externalOverlay->id == currentInputFocusWindow )
 				update_touch_scaling( &composite );
