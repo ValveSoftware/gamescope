@@ -6,7 +6,22 @@
 #include <stdint.h>
 #include <memory>
 
-#define k_nMaxLayers 4
+// 1: Fade Plane (Fade outs between switching focus)
+// 2: Video Underlay (The actual video)
+// 3: Video Streaming UI (Game, App)
+// 4: External Overlay (Mangoapp, etc)
+// 5: Primary Overlay (Steam Overlay)
+// 6: Cursor
+
+// or
+
+// 1: Fade Plane (Fade outs between switching focus)
+// 2: Base Plane (Game, App)
+// 3: Override Plane (Dropdowns, etc)
+// 4: External Overlay (Mangoapp, etc)
+// 5: Primary Overlay (Steam Overlay)
+// 6: Cursor
+#define k_nMaxLayers 6
 #define k_nMaxYcbcrMask 16
 
 class CVulkanTexture;
