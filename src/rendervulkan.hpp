@@ -45,8 +45,9 @@ struct Composite_t
 		vec2_t vScale[k_nMaxLayers];
 		vec2_t vOffset[k_nMaxLayers];
 		float flOpacity[k_nMaxLayers];
-		float flBorderAlpha[k_nMaxLayers];
+		uint32_t nBorderMask;
 	} data;
+
 };
 
 #include "drm.hpp"
