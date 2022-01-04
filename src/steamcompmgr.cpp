@@ -1134,8 +1134,6 @@ void MouseCursor::paint(win *window, struct Composite_t *pComposite,
 	pComposite->data.vOffset[ curLayer ].x = -scaledX;
 	pComposite->data.vOffset[ curLayer ].y = -scaledY;
 
-	pComposite->data.flBorderAlpha[ curLayer ] = 0.0f;
-
 	pPipeline->layerBindings[ curLayer ].surfaceWidth = m_width;
 	pPipeline->layerBindings[ curLayer ].surfaceHeight = m_height;
 
@@ -1173,6 +1171,8 @@ paint_cached_base_layer(const std::shared_ptr<commit_t>& commit, const BaseLayer
 	pPipeline->layerBindings[ curLayer ].tex = commit->vulkanTex;
 	pPipeline->layerBindings[ curLayer ].fbid = commit->fb_id;
 	pPipeline->layerBindings[ curLayer ].bFilter = true;
+
+	pComposite->data.nBorderMask |= (1u << curLayer);
 
 	pComposite->nLayerCount++;
 }
@@ -1279,8 +1279,6 @@ paint_window(Display *dpy, win *w, win *scaleW, struct Composite_t *pComposite,
 	{
 		pComposite->data.vOffset[ curLayer ].x = -drawXOffset;
 		pComposite->data.vOffset[ curLayer ].y = -drawYOffset;
-
-		pComposite->data.flBorderAlpha[ curLayer ] = 0.0f;
 	}
 	else if (notificationMode)
 	{
@@ -1297,15 +1295,13 @@ paint_window(Display *dpy, win *w, win *scaleW, struct Composite_t *pComposite,
 
 		pComposite->data.vOffset[ curLayer ].x = (currentOutputWidth - xOffset - width) * -1.0f;
 		pComposite->data.vOffset[ curLayer ].y = (currentOutputHeight - yOffset - height) * -1.0f;
-
-		pComposite->data.flBorderAlpha[ curLayer ] = 0.0f;
 	}
 	else
 	{
 		pComposite->data.vOffset[ curLayer ].x = -drawXOffset;
 		pComposite->data.vOffset[ curLayer ].y = -drawYOffset;
 
-		pComposite->data.flBorderAlpha[ curLayer ] = 1.0f;
+		pComposite->data.nBorderMask |= (1u << curLayer);
 	}
 
 	pPipeline->layerBindings[ curLayer ].surfaceWidth = w->a.width;
