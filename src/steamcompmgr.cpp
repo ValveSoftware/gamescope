@@ -146,6 +146,7 @@ struct win {
 	uint32_t inputFocusMode;
 	uint32_t appID;
 	bool isOverlay;
+	bool isExternalOverlay;
 	bool isFullscreen;
 	bool isSysTrayIcon;
 	bool sizeHintsSpecified;
@@ -189,6 +190,7 @@ static Window	currentInputFocusWindow;
 uint32_t		currentInputFocusMode;
 static Window 	currentKeyboardFocusWindow;
 static Window	currentOverlayWindow;
+static Window	currentExternalOverlayWindow;
 static Window	currentNotificationWindow;
 static Window	currentOverrideWindow;
 static Window   currentFadeWindow;
@@ -236,6 +238,7 @@ extern bool g_bIntegerScale;
 static Atom		steamAtom;
 static Atom		gameAtom;
 static Atom		overlayAtom;
+static Atom		externalOverlayAtom;
 static Atom		gamesRunningAtom;
 static Atom		screenZoomAtom;
 static Atom		screenScaleAtom;
@@ -293,6 +296,7 @@ bool g_bPendingFade = false;
 #define GAME_PROP			"STEAM_GAME"
 #define STEAM_PROP			"STEAM_BIGPICTURE"
 #define OVERLAY_PROP		"STEAM_OVERLAY"
+#define EXTERNAL_OVERLAY_PROP		"GAMESCOPE_EXTERNAL_OVERLAY"
 #define GAMES_RUNNING_PROP 	"STEAM_GAMES_RUNNING"
 #define SCREEN_SCALE_PROP	"STEAM_SCREEN_SCALE"
 #define SCREEN_MAGNIFICATION_PROP	"STEAM_SCREEN_MAGNIFICATION"
@@ -355,13 +359,15 @@ static LogScope xwm_log("xwm");
 #ifdef WORKAROUND_ZPOS_BUG
 static const uint32_t g_zposBase = 0;
 static const uint32_t g_zposOverride = 0;
-static const uint32_t g_zposOverlay = 1;
-static const uint32_t g_zposCursor = 2;
+static const uint32_t g_zposExternalOverlay = 1;
+static const uint32_t g_zposOverlay = 2;
+static const uint32_t g_zposCursor = 3;
 #else
 static const uint32_t g_zposBase = 0;
 static const uint32_t g_zposOverride = 1;
-static const uint32_t g_zposOverlay = 2;
-static const uint32_t g_zposCursor = 3;
+static const uint32_t g_zposExternalOverlay = 2;
+static const uint32_t g_zposOverlay = 3;
+static const uint32_t g_zposCursor = 4;
 #endif
 
 // poor man's semaphore
@@ -1270,7 +1276,7 @@ paint_window(Display *dpy, win *w, win *scaleW, struct Composite_t *pComposite,
 
 	int curLayer = pComposite->nLayerCount;
 
-	pComposite->data.flOpacity[ curLayer ] = ( w->isOverlay ? w->opacity / (float)OPAQUE : 1.0f ) * flOpacityScale;
+	pComposite->data.flOpacity[ curLayer ] = ( (w->isOverlay || w->isExternalOverlay) ? w->opacity / (float)OPAQUE : 1.0f ) * flOpacityScale;
 
 	pComposite->data.vScale[ curLayer ].x = 1.0 / currentScaleRatio;
 	pComposite->data.vScale[ curLayer ].y = 1.0 / currentScaleRatio;
@@ -1318,11 +1324,15 @@ paint_window(Display *dpy, win *w, win *scaleW, struct Composite_t *pComposite,
 	{
 		pPipeline->layerBindings[ curLayer ].zpos = g_zposOverlay;
 	}
+	if ( w->isExternalOverlay )
+	{
+		pPipeline->layerBindings[ curLayer ].zpos = g_zposExternalOverlay;
+	}
 
 	pPipeline->layerBindings[ curLayer ].tex = lastCommit->vulkanTex;
 	pPipeline->layerBindings[ curLayer ].fbid = lastCommit->fb_id;
 
-	pPipeline->layerBindings[ curLayer ].bFilter = w->isOverlay ? true : g_bFilterGameWindow;
+	pPipeline->layerBindings[ curLayer ].bFilter = (w->isOverlay || w->isExternalOverlay) ? true : g_bFilterGameWindow;
 
 	if ( bBasePlane )
 	{
@@ -1376,11 +1386,18 @@ paint_debug_info(Display *dpy)
 	}
 
 	win *overlay = find_win(dpy, currentOverlayWindow);
+	win *externalOverlay = find_win(dpy, currentExternalOverlayWindow);
 	win *notification = find_win(dpy, currentNotificationWindow);
 
 	if (overlay && gamesRunningCount && overlay->opacity)
 	{
 		sprintf(messageBuffer, "Compositing overlay at opacity %f", overlay->opacity / (float)OPAQUE);
+		paint_message(messageBuffer, Y, 1.0f, 0.0f, 1.0f); Y += textYMax;
+	}
+
+	if (externalOverlay && externalOverlay->opacity)
+	{
+		sprintf(messageBuffer, "Compositing external overlay at opacity %f", externalOverlay->opacity / (float)OPAQUE);
 		paint_message(messageBuffer, Y, 1.0f, 0.0f, 1.0f); Y += textYMax;
 	}
 
@@ -1422,6 +1439,7 @@ paint_all(Display *dpy, MouseCursor *cursor)
 	gpuvis_trace_begin_ctx_printf( paintID, "paint_all" );
 	win	*w;
 	win	*overlay;
+	win *externalOverlay;
 	win	*notification;
 	win	*override;
 	win *input;
@@ -1431,6 +1449,7 @@ paint_all(Display *dpy, MouseCursor *cursor)
 
 	w = find_win(dpy, currentFocusWindow);
 	overlay = find_win(dpy, currentOverlayWindow);
+	externalOverlay = find_win(dpy, currentExternalOverlayWindow);
 	notification = find_win(dpy, currentNotificationWindow);
 	override = find_win(dpy, currentOverrideWindow);
 	input = find_win(dpy, currentInputFocusWindow);
@@ -1533,7 +1552,18 @@ paint_all(Display *dpy, MouseCursor *cursor)
 	if ( override && !w->isSteamStreamingClient )
 	{
 		paint_window(dpy, override, w, &composite, &pipeline, false, cursor);
-		update_touch_scaling( &composite );
+    	update_touch_scaling( &composite );
+  	}
+
+  	if (externalOverlay)
+	{
+		if (externalOverlay->opacity)
+		{
+			paint_window(dpy, externalOverlay, externalOverlay, &composite, &pipeline, false, cursor);
+
+			if ( externalOverlay->id == currentInputFocusWindow )
+				update_touch_scaling( &composite );
+		}
 	}
 
 	if (inGame && overlay)
@@ -1895,7 +1925,7 @@ determine_and_apply_focus(Display *dpy, MouseCursor *cursor)
 		}
 
 		if ( w->a.map_state == IsViewable && w->a.c_class == InputOutput && w->isOverlay == false &&
-			( win_has_game_id( w ) || w->isSteam || w->isSteamStreamingClient ) &&
+			w->isExternalOverlay == false && ( win_has_game_id( w ) || w->isSteam || w->isSteamStreamingClient ) &&
 			 (w->opacity > TRANSLUCENT || w->isSteamStreamingClient == true ) )
 		{
 			vecPossibleFocusWindows.push_back( w );
@@ -1911,6 +1941,14 @@ determine_and_apply_focus(Display *dpy, MouseCursor *cursor)
 			else
 			{
 				currentNotificationWindow = w->id;
+			}
+		}
+
+		if (w->isExternalOverlay)
+		{
+			if(w->opacity >= maxOpacity)
+			{
+				currentExternalOverlayWindow = w->id;
 			}
 		}
 
@@ -2412,6 +2450,7 @@ map_win(Display *dpy, Window id, unsigned long sequence)
 		w->appID = w->id;
 	}
 	w->isOverlay = get_prop(dpy, w->id, overlayAtom, 0);
+	w->isExternalOverlay = get_prop(dpy, w->id, externalOverlayAtom, 0);
 
 	get_size_hints(dpy, w);
 
@@ -2623,6 +2662,7 @@ add_win(Display *dpy, Window id, Window prev, unsigned long sequence)
 	}
 
 	new_win->isOverlay = false;
+	new_win->isExternalOverlay = false;
 	new_win->isSteam = false;
 	new_win->isSteamStreamingClient = false;
 	new_win->isSteamStreamingClientVideo = false;
@@ -2830,6 +2870,8 @@ destroy_win(Display *dpy, Window id, bool gone, bool fade)
 		currentInputFocusWindow = None;
 	if (currentOverlayWindow == id && gone)
 		currentOverlayWindow = None;
+	if (currentExternalOverlayWindow == id && gone)
+		currentExternalOverlayWindow = None;
 	if (currentNotificationWindow == id && gone)
 		currentNotificationWindow = None;
 	if (currentOverrideWindow == id && gone)
@@ -2850,7 +2892,7 @@ damage_win(Display *dpy, XDamageNotifyEvent *de)
 	if (!w)
 		return;
 
-	if (w->isOverlay && !w->opacity)
+	if ((w->isOverlay || w->isExternalOverlay) && !w->opacity)
 		return;
 
 	// First damage event we get, compute focus; we only want to focus damaged
@@ -3052,6 +3094,10 @@ handle_property_notify(Display *dpy, XPropertyEvent *ev)
 				{
 					hasRepaint = true;
 				}
+				if ( w->id == currentExternalOverlayWindow )
+				{
+					hasRepaint = true;
+				}
 			}
 
 			unsigned int maxOpacity = 0;
@@ -3065,6 +3111,10 @@ handle_property_notify(Display *dpy, XPropertyEvent *ev)
 						currentOverlayWindow = w->id;
 						maxOpacity = w->opacity;
 					}
+				}
+				if (w->isExternalOverlay)
+				{
+					currentExternalOverlayWindow = w->id;
 				}
 			}
 		}
@@ -3411,7 +3461,11 @@ void handle_done_commits( void )
 							hasRepaint = true;
 						}
 					}
-
+					// If this is an external overlay, repaint
+					if ( w->id == currentExternalOverlayWindow && w->opacity != TRANSLUCENT )
+					{
+						hasRepaint = true;
+					}
 					// If this is the main plane, repaint
 					if ( w->id == currentFocusWindow && !w->isSteamStreamingClient )
 					{
@@ -4050,6 +4104,7 @@ steamcompmgr_main(int argc, char **argv)
 	steamTouchClickModeAtom = XInternAtom(dpy, "STEAM_TOUCH_CLICK_MODE", false);
 	gameAtom = XInternAtom(dpy, GAME_PROP, false);
 	overlayAtom = XInternAtom(dpy, OVERLAY_PROP, false);
+	externalOverlayAtom = XInternAtom(dpy, EXTERNAL_OVERLAY_PROP, false);
 	opacityAtom = XInternAtom(dpy, OPACITY_PROP, false);
 	gamesRunningAtom = XInternAtom(dpy, GAMES_RUNNING_PROP, false);
 	screenScaleAtom = XInternAtom(dpy, SCREEN_SCALE_PROP, false);
