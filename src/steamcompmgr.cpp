@@ -1190,6 +1190,7 @@ namespace PaintWindowFlag
 	static const uint32_t FadeTarget = 1u << 1;
 	static const uint32_t NotificationMode = 1u << 2;
 	static const uint32_t DrawBorders = 1u << 3;
+	static const uint32_t NoScale = 1u << 4;
 }
 using PaintWindowFlags = uint32_t;
 
@@ -1251,6 +1252,11 @@ paint_window(Display *dpy, win *w, win *scaleW, struct Composite_t *pComposite,
 	{
 		sourceWidth = mainOverlayWindow->a.width;
 		sourceHeight = mainOverlayWindow->a.height;
+	}
+	else if ( flags & PaintWindowFlag::NoScale )
+	{
+		sourceWidth = currentOutputWidth;
+		sourceHeight = currentOutputHeight;
 	}
 	else
 	{
