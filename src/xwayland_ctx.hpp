@@ -35,18 +35,17 @@ struct xwayland_ctx_t
 	int				composite_opcode;
 	Window			ourWindow;
 
-	Window			currentFocusWindow;
-	win*			currentFocusWin;
-	Window			currentInputFocusWindow;
+	win				*currentFocusWindow;
+	win				*currentInputFocusWindow;
 	uint32_t		currentInputFocusMode;
 	Window 			currentKeyboardFocusWindow;
-	Window			currentOverlayWindow;
-	Window			currentExternalOverlayWindow;
-	Window			currentNotificationWindow;
-	Window			currentOverrideWindow;
-	Window  	 	currentFadeWindow;
+	win				*currentOverlayWindow;
+	win				*currentExternalOverlayWindow;
+	win				*currentNotificationWindow;
+	win				*currentOverrideWindow;
+	win	  	 		*currentFadeWindow;
 
-	Window 			focusControlWindow;
+	Window			focusControlWindow;
 
 	std::unique_ptr<MouseCursor> cursor;
 
