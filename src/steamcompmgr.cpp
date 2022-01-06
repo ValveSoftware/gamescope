@@ -30,6 +30,7 @@
  */
 
 #include <cstdint>
+#include <memory>
 #include <thread>
 #include <condition_variable>
 #include <mutex>
@@ -60,16 +61,7 @@
 #include <signal.h>
 #include <linux/input-event-codes.h>
 
-
-#include <X11/Xlib.h>
-#include <X11/Xutil.h>
-#include <X11/Xatom.h>
-#include <X11/extensions/Xcomposite.h>
-#include <X11/extensions/Xdamage.h>
-#include <X11/extensions/Xrender.h>
-#include <X11/extensions/XRes.h>
-#include <X11/extensions/shape.h>
-#include <X11/extensions/xf86vmode.h>
+#include "xwayland_ctx.hpp"
 
 #include "main.hpp"
 #include "wlserver.hpp"
@@ -92,10 +84,10 @@
 #define GPUVIS_TRACE_IMPLEMENTATION
 #include "gpuvis_trace_utils.h"
 
-typedef struct _ignore {
-	struct _ignore	*next;
+struct ignore {
+	struct ignore	*next;
 	unsigned long	sequence;
-} ignore;
+};
 
 struct commit_t
 {
@@ -207,92 +199,6 @@ extern float g_flMaxWindowScale;
 extern bool g_bIntegerScale;
 
 bool			synchronize;
-
-struct xwayland_ctx_t
-{
-	xwayland_ctx_t()
-	{
-		ignore_tail = &ignore_head;
-	}
-
-	gamescope_xwayland_server_t *xwayland_server;
-	Display			*dpy;
-
-	win				*list;
-	int				scr;
-	Window			root;
-	XserverRegion	allDamage;
-	bool			clipChanged;
-	int				root_height, root_width;
-	ignore			*ignore_head, **ignore_tail;
-	int				xfixes_event, xfixes_error;
-	int				damage_event, damage_error;
-	int				composite_event, composite_error;
-	int				render_event, render_error;
-	int				xshape_event, xshape_error;
-	int				composite_opcode;
-	Window			ourWindow;
-
-	Window			currentFocusWindow;
-	win*			currentFocusWin;
-	Window			currentInputFocusWindow;
-	uint32_t		currentInputFocusMode;
-	Window 			currentKeyboardFocusWindow;
-	Window			currentOverlayWindow;
-	Window			currentExternalOverlayWindow;
-	Window			currentNotificationWindow;
-	Window			currentOverrideWindow;
-	Window  	 	currentFadeWindow;
-
-	Window 			focusControlWindow;
-
-	struct {
-		Atom steamAtom;
-		Atom gameAtom;
-		Atom overlayAtom;
-		Atom externalOverlayAtom;
-		Atom gamesRunningAtom;
-		Atom screenZoomAtom;
-		Atom screenScaleAtom;
-		Atom opacityAtom;
-		Atom winTypeAtom;
-		Atom winDesktopAtom;
-		Atom winDockAtom;
-		Atom winToolbarAtom;
-		Atom winMenuAtom;
-		Atom winUtilAtom;
-		Atom winSplashAtom;
-		Atom winDialogAtom;
-		Atom winNormalAtom;
-		Atom sizeHintsAtom;
-		Atom netWMStateFullscreenAtom;
-		Atom activeWindowAtom;
-		Atom netWMStateAtom;
-		Atom WMTransientForAtom;
-		Atom netWMStateHiddenAtom;
-		Atom netWMStateFocusedAtom;
-		Atom netWMStateSkipTaskbarAtom;
-		Atom netWMStateSkipPagerAtom;
-		Atom WLSurfaceIDAtom;
-		Atom WMStateAtom;
-		Atom steamInputFocusAtom;
-		Atom WMChangeStateAtom;
-		Atom steamTouchClickModeAtom;
-		Atom utf8StringAtom;
-		Atom netWMNameAtom;
-		Atom netSystemTrayOpcodeAtom;
-		Atom steamStreamingClientAtom;
-		Atom steamStreamingClientVideoAtom;
-		Atom gamescopeFocusableAppsAtom;
-		Atom gamescopeFocusableWindowsAtom;
-		Atom gamescopeFocusedWindowAtom;
-		Atom gamescopeFocusedAppAtom;
-		Atom gamescopeCtrlAppIDAtom;
-		Atom gamescopeCtrlWindowAtom;
-		Atom gamescopeInputCounterAtom;
-		Atom gamescopeScreenShotAtom;
-	} atoms;
-};
 
 enum HeldCommitTypes_t
 {
@@ -1868,7 +1774,7 @@ static bool is_good_override_candidate( win *override, win* focus )
 } 
 
 static void
-determine_and_apply_focus(xwayland_ctx_t *ctx, MouseCursor *cursor)
+determine_and_apply_focus(xwayland_ctx_t *ctx)
 {
 	win *w, *focus = NULL, *override_focus = NULL;
 	win *inputFocus = NULL;
@@ -2189,7 +2095,7 @@ found:
 				// for focus.
 				// Fixes dropdowns not working.
 				wlserver_mousebutton( BTN_LEFT, false, 0 );
-				wlserver_mousefocus( inputFocus->surface.wlr, cursor->x(), cursor->y() );
+				wlserver_mousefocus( inputFocus->surface.wlr, ctx->cursor->x(), ctx->cursor->y() );
 			}
 
 			if ( keyboardFocusWin->surface.wlr != nullptr )
@@ -2206,12 +2112,12 @@ found:
 		ctx->currentKeyboardFocusWindow = keyboardFocusWin->id;
 
 		// cursor is likely not interactable anymore in its original context, hide
-		cursor->hide();
+		ctx->cursor->hide();
 	}
 
 	w = focus;
 
-	cursor->constrainPosition();
+	ctx->cursor->constrainPosition();
 
 	if ( ctx->list[0].id != inputFocus->id )
 	{
@@ -3269,12 +3175,23 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 	}
 }
 
-extern xwayland_ctx_t g_ctx;
-
 static int
 error(Display *dpy, XErrorEvent *ev)
 {
-	xwayland_ctx_t *ctx = &g_ctx;
+	xwayland_ctx_t *ctx = NULL;
+	// Find ctx for dpy
+	{
+		gamescope_xwayland_server_t *server = NULL;
+		for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
+		{
+			if (server->ctx->dpy == dpy)
+			{
+				ctx = server->ctx.get();
+				break;
+			}
+		}
+	}
+	assert(ctx);
 	int	    o;
 	const char    *name = NULL;
 	static char buffer[256];
@@ -3689,8 +3606,9 @@ spawn_client( char **argv )
 }
 
 static void
-dispatch_x11( xwayland_ctx_t *ctx, MouseCursor *cursor )
+dispatch_x11( xwayland_ctx_t *ctx )
 {
+	MouseCursor *cursor = ctx->cursor.get();
 	bool bShouldResetCursor = false;
 	bool bSetFocus = false;
 
@@ -3940,10 +3858,10 @@ load_mouse_cursor( MouseCursor *cursor, const char *path, int hx, int hy )
 }
 
 enum event_type {
-	EVENT_X11,
 	EVENT_VBLANK,
 	EVENT_NUDGE,
-	EVENT_COUNT // keep last
+	EVENT_X11,
+	// Any past here are X11
 };
 
 const char* g_customCursorPath = nullptr;
@@ -3954,8 +3872,13 @@ xwayland_ctx_t g_ctx;
 
 static bool setup_error_handlers = false;
 
-void init_xwayland_ctx(xwayland_ctx_t *ctx, gamescope_xwayland_server_t *xwayland_server)
+void init_xwayland_ctx(gamescope_xwayland_server_t *xwayland_server)
 {
+	assert(!xwayland_server->ctx);
+	xwayland_server->ctx = std::make_unique<xwayland_ctx_t>();
+	xwayland_ctx_t *ctx = xwayland_server->ctx.get();
+	ctx->ignore_tail = &ctx->ignore_head;
+
 	int	composite_major, composite_minor;
 	int	xres_major, xres_minor;
 
@@ -4110,12 +4033,18 @@ void init_xwayland_ctx(xwayland_ctx_t *ctx, gamescope_xwayland_server_t *xwaylan
 	XUngrabServer(ctx->dpy);
 
 	XF86VidModeLockModeSwitch(ctx->dpy, ctx->scr, true);
+
+	ctx->cursor = std::make_unique<MouseCursor>(ctx);
+	if (g_customCursorPath)
+	{
+		if (!load_mouse_cursor(ctx->cursor.get(), g_customCursorPath, g_customCursorHotspotX, g_customCursorHotspotY))
+			xwm_log.errorf("Failed to load mouse cursor: %s", g_customCursorPath);
+	}
 }
 
 void
 steamcompmgr_main(int argc, char **argv)
 {
-	xwayland_ctx_t *ctx = &g_ctx;
 	int	readyPipeFD = -1;
 
 	// Reset getopt() state
@@ -4198,26 +4127,31 @@ steamcompmgr_main(int argc, char **argv)
 	int vblankFD = vblank_init();
 	assert( vblankFD >= 0 );
 
-	init_xwayland_ctx(ctx, wlserver_get_xwayland_server(0));
-
-	std::unique_ptr<MouseCursor> cursor(new MouseCursor(ctx));
-	if (g_customCursorPath)
+	// Initialize any xwayland ctxs we have
 	{
-		if (!load_mouse_cursor(cursor.get(), g_customCursorPath, g_customCursorHotspotX, g_customCursorHotspotY))
-			xwm_log.errorf("Failed to load mouse cursor: %s", g_customCursorPath);
+		gamescope_xwayland_server_t *server = NULL;
+		for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
+			init_xwayland_ctx(server);
 	}
 
-	gamesRunningCount = get_prop(ctx, ctx->root, ctx->atoms.gamesRunningAtom, 0);
-	overscanScaleRatio = get_prop(ctx, ctx->root, ctx->atoms.screenScaleAtom, 0xFFFFFFFF) / (double)0xFFFFFFFF;
-	zoomScaleRatio = get_prop(ctx, ctx->root, ctx->atoms.screenZoomAtom, 0xFFFF) / (double)0xFFFF;
+	gamescope_xwayland_server_t *root_server = wlserver_get_xwayland_server(0);
+	xwayland_ctx_t *root_ctx = root_server->ctx.get();
+
+	gamesRunningCount = get_prop(root_ctx, root_ctx->root, root_ctx->atoms.gamesRunningAtom, 0);
+	overscanScaleRatio = get_prop(root_ctx, root_ctx->root, root_ctx->atoms.screenScaleAtom, 0xFFFFFFFF) / (double)0xFFFFFFFF;
+	zoomScaleRatio = get_prop(root_ctx, root_ctx->root, root_ctx->atoms.screenZoomAtom, 0xFFFF) / (double)0xFFFF;
 
 	globalScaleRatio = overscanScaleRatio * zoomScaleRatio;
 
-	determine_and_apply_focus(ctx, cursor.get());
+	{
+		gamescope_xwayland_server_t *server = NULL;
+		for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
+			determine_and_apply_focus(server->ctx.get());
+	}
 
 	if ( readyPipeFD != -1 )
 	{
-		dprintf( readyPipeFD, "%s %s\n", ctx->xwayland_server->get_nested_display_name(), wlserver_get_wl_display_name() );
+		dprintf( readyPipeFD, "%s %s\n", root_ctx->xwayland_server->get_nested_display_name(), wlserver_get_wl_display_name() );
 		close( readyPipeFD );
 		readyPipeFD = -1;
 	}
@@ -4230,27 +4164,35 @@ steamcompmgr_main(int argc, char **argv)
 	std::thread imageWaitThread( imageWaitThreadMain );
 	imageWaitThread.detach();
 
-	struct pollfd pollfds[] = {
-		[ EVENT_X11 ] = {
-			.fd = XConnectionNumber( ctx->dpy ),
-			.events = POLLIN,
-		},
-		[ EVENT_VBLANK ] = {
-			.fd = vblankFD,
-			.events = POLLIN,
-		},
-		[ EVENT_NUDGE ] = {
+	std::vector<pollfd> pollfds;
+	// EVENT_VBLANK
+	pollfds.push_back(pollfd {
+		.fd = vblankFD,
+		.events = POLLIN,
+	});
+	// EVENT_NUDGE
+	pollfds.push_back(pollfd {
 			.fd = g_nudgePipe[ 0 ],
 			.events = POLLIN,
-		},
-	};
+	});
+	// EVENT_X11
+	{
+		gamescope_xwayland_server_t *server = NULL;
+		for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
+		{
+			pollfds.push_back(pollfd {
+				.fd = XConnectionNumber( server->ctx->dpy ),
+				.events = POLLIN,
+			});
+		}
+	}
 
 	for (;;)
 	{
 		focusDirty = false;
 		bool vblank = false;
 
-		if ( poll( pollfds, EVENT_COUNT, -1 ) < 0)
+		if ( poll( pollfds.data(), pollfds.size(), -1 ) < 0)
 		{
 			if ( errno == EAGAIN )
 				continue;
@@ -4259,17 +4201,27 @@ steamcompmgr_main(int argc, char **argv)
 			break;
 		}
 
-		if ( pollfds[ EVENT_X11 ].revents & POLLHUP )
+		for (size_t i = EVENT_X11; i < pollfds.size(); i++)
 		{
-			xwm_log.errorf( "Lost connection to the X11 server" );
-			break;
+			if ( pollfds[ i ].revents & POLLHUP )
+			{
+				xwm_log.errorf( "Lost connection to the X11 server %zd", i - EVENT_X11 );
+				break;
+			}
 		}
 
 		assert( !( pollfds[ EVENT_VBLANK ].revents & POLLHUP ) );
 		assert( !( pollfds[ EVENT_NUDGE ].revents & POLLHUP ) );
 
-		if ( pollfds[ EVENT_X11 ].revents & POLLIN )
-			dispatch_x11( ctx, cursor.get() );
+		for (size_t i = EVENT_X11; i < pollfds.size(); i++)
+		{
+			if ( pollfds[ i ].revents & POLLIN )
+			{
+				gamescope_xwayland_server_t *server = wlserver_get_xwayland_server(i - EVENT_X11);
+				assert(server);
+				dispatch_x11( server->ctx.get() );
+			}
+		}
 		if ( pollfds[ EVENT_VBLANK ].revents & POLLIN )
 			vblank = dispatch_vblank( vblankFD );
 		if ( pollfds[ EVENT_NUDGE ].revents & POLLIN )
@@ -4282,7 +4234,7 @@ steamcompmgr_main(int argc, char **argv)
 
 		if ( inputCounter != lastPublishedInputCounter )
 		{
-			XChangeProperty( ctx->dpy, ctx->root, ctx->atoms.gamescopeInputCounterAtom, XA_CARDINAL, 32, PropModeReplace,
+			XChangeProperty( root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeInputCounterAtom, XA_CARDINAL, 32, PropModeReplace,
 							 (unsigned char *)&inputCounter, 1 );
 
 			lastPublishedInputCounter = inputCounter;
@@ -4290,9 +4242,13 @@ steamcompmgr_main(int argc, char **argv)
 
 		if (focusDirty == true)
 		{
-			determine_and_apply_focus(ctx, cursor.get());
+			{
+				gamescope_xwayland_server_t *server = NULL;
+				for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
+					determine_and_apply_focus(server->ctx.get());
+			}
 
-			hasFocusWindow = ctx->currentFocusWindow != None;
+			hasFocusWindow = root_ctx->currentFocusWindow != None;
 
 			sdlwindow_pushupdate();
 		}
@@ -4331,13 +4287,21 @@ steamcompmgr_main(int argc, char **argv)
 #endif
 		}
 
-		handle_done_commits(ctx);
+		{
+			gamescope_xwayland_server_t *server = NULL;
+			for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
+				handle_done_commits(server->ctx.get());
+		}
 
-		check_new_wayland_res(ctx);
+		{
+			gamescope_xwayland_server_t *server = NULL;
+			for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
+				check_new_wayland_res(server->ctx.get());
+		}
 
 		if ( ( g_bTakeScreenshot == true || hasRepaint == true || is_fading_out() ) && vblank == true )
 		{
-			paint_all(ctx, cursor.get());
+			paint_all(root_ctx, root_ctx->cursor.get());
 
 			// Consumed the need to repaint here
 			hasRepaint = false;
@@ -4356,24 +4320,34 @@ steamcompmgr_main(int argc, char **argv)
 		struct timespec now;
 		clock_gettime(CLOCK_MONOTONIC, &now);
 
-		cursor->updatePosition();
+		{
+			gamescope_xwayland_server_t *server = NULL;
+			for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
+				server->ctx->cursor->updatePosition();
+		}
 
 		// Ask for a new surface every vblank
 		if ( vblank == true )
 		{
-			for (win *w = ctx->list; w; w = w->next)
 			{
-				if ( w->surface.wlr != nullptr )
+				gamescope_xwayland_server_t *server = NULL;
+				for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
 				{
-					// Acknowledge commit once.
-					wlserver_lock();
-
-					if ( w->surface.wlr != nullptr )
+					for (win *w = server->ctx->list; w; w = w->next)
 					{
-						wlserver_send_frame_done(w->surface.wlr, &now);
-					}
+						if ( w->surface.wlr != nullptr )
+						{
+							// Acknowledge commit once.
+							wlserver_lock();
 
-					wlserver_unlock();
+							if ( w->surface.wlr != nullptr )
+							{
+								wlserver_send_frame_done(w->surface.wlr, &now);
+							}
+
+							wlserver_unlock();
+						}
+					}
 				}
 			}
 		}
@@ -4385,8 +4359,14 @@ steamcompmgr_main(int argc, char **argv)
 
 	// Clean up any commits.
 
-	for ( win *w = ctx->list; w; w = w->next )
-        w->commit_queue.clear();
+	{
+		gamescope_xwayland_server_t *server = NULL;
+		for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
+		{
+			for ( win *w = server->ctx->list; w; w = w->next )
+				w->commit_queue.clear();
+		}
+	}
 	g_HeldCommits[ HELD_COMMIT_BASE ] = nullptr;
 	g_HeldCommits[ HELD_COMMIT_FADE ] = nullptr;
 

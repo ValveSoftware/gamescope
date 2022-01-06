@@ -11,6 +11,7 @@
 #define WLSERVER_TOUCH_COUNT 11 // Ten fingers + nose ought to be enough for anyone
 
 struct _XDisplay;
+struct xwayland_ctx_t;
 
 class gamescope_xwayland_server_t
 {
@@ -27,6 +28,8 @@ public:
 	void set_wl_id( struct wlserver_surface *surf, long id );
 
 	_XDisplay *get_xdisplay();
+
+	std::unique_ptr<xwayland_ctx_t> ctx;
 
 private:
 	struct wlr_xwayland_server *xwayland_server = NULL;

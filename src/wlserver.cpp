@@ -44,6 +44,7 @@ extern "C" {
 #include "steamcompmgr.hpp"
 #include "log.hpp"
 #include "ime.hpp"
+#include "xwayland_ctx.hpp"
 
 #if HAVE_PIPEWIRE
 #include "pipewire.hpp"
