@@ -10,6 +10,8 @@
 #define WLSERVER_BUTTON_COUNT 4
 #define WLSERVER_TOUCH_COUNT 11 // Ten fingers + nose ought to be enough for anyone
 
+struct _XDisplay;
+
 class gamescope_xwayland_server_t
 {
 public:
@@ -24,11 +26,14 @@ public:
 
 	void set_wl_id( struct wlserver_surface *surf, long id );
 
+	_XDisplay *get_xdisplay();
+
 private:
 	struct wlr_xwayland_server *xwayland_server = NULL;
 	struct wl_listener xwayland_ready_listener = { .notify = xwayland_ready_callback };
 
 	bool xwayland_ready = false;
+	_XDisplay *dpy = NULL;
 };
 
 struct wlserver_t {

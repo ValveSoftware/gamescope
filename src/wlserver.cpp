@@ -108,6 +108,8 @@ void gamescope_xwayland_server_t::on_xwayland_ready(void *data)
 
 	if (!xwayland_server->options.no_touch_pointer_emulation)
 		wl_log.infof("Xwayland doesn't support -noTouchPointerEmulation, touch events might get duplicated");
+
+	dpy = XOpenDisplay( get_nested_display_name() );
 }
 
 void gamescope_xwayland_server_t::xwayland_ready_callback(struct wl_listener *listener, void *data)
@@ -855,14 +857,13 @@ void wlserver_mousefocus( struct wlr_surface *wlrsurface, int x /* = 0 */, int y
 
 void wlserver_mousemotion( int x, int y, uint32_t time )
 {
-	// TODO: Josh: Fix me for multiple xwaylands
-#if 0
-	if ( g_XWLDpy != NULL )
+	// TODO: Pick the xwayland_server with active focus
+	auto server = wlserver_get_xwayland_server(0);
+	if ( server != NULL )
 	{
-		XTestFakeRelativeMotionEvent( g_XWLDpy, x, y, CurrentTime );
-		XFlush( g_XWLDpy );
+		XTestFakeRelativeMotionEvent( server->get_xdisplay(), x, y, CurrentTime );
+		XFlush( server->get_xdisplay() );
 	}
-#endif
 }
 
 void wlserver_mousebutton( int button, bool press, uint32_t time )
@@ -891,7 +892,8 @@ void wlserver_send_frame_done( struct wlr_surface *surf, const struct timespec *
 
 gamescope_xwayland_server_t *wlserver_get_xwayland_server( size_t index )
 {
-	assert(index < wlserver.wlr.xwayland_servers.size());
+	if (index >= wlserver.wlr.xwayland_servers.size() )
+		return NULL;
 	return wlserver.wlr.xwayland_servers[index].get();
 }
 
@@ -967,6 +969,11 @@ void gamescope_xwayland_server_t::set_wl_id( struct wlserver_surface *surf, long
 bool gamescope_xwayland_server_t::is_xwayland_ready() const
 {
 	return xwayland_ready;
+}
+
+_XDisplay *gamescope_xwayland_server_t::get_xdisplay()
+{
+	return dpy;
 }
 
 const char *gamescope_xwayland_server_t::get_nested_display_name() const

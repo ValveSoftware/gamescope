@@ -3960,7 +3960,7 @@ void init_xwayland_ctx(xwayland_ctx_t *ctx, gamescope_xwayland_server_t *xwaylan
 	int	xres_major, xres_minor;
 
 	ctx->xwayland_server = xwayland_server;
-	ctx->dpy = XOpenDisplay( ctx->xwayland_server->get_nested_display_name() );
+	ctx->dpy = xwayland_server->get_xdisplay();
 	if (!ctx->dpy)
 	{
 		xwm_log.errorf("Can't open display");
