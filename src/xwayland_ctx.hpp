@@ -43,7 +43,6 @@ struct xwayland_ctx_t
 	win				*currentExternalOverlayWindow;
 	win				*currentNotificationWindow;
 	win				*currentOverrideWindow;
-	win	  	 		*currentFadeWindow;
 
 	Window			focusControlWindow;
 

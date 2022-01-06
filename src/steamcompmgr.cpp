@@ -166,6 +166,20 @@ Window x11_win(win *w) {
 	return w->id;
 }
 
+struct global_focus_t
+{
+	win				*currentFocusWindow;
+	win				*currentInputFocusWindow;
+	uint32_t		currentInputFocusMode;
+	win				*currentOverlayWindow;
+	win				*currentExternalOverlayWindow;
+	win				*currentNotificationWindow;
+	win				*currentOverrideWindow;
+	win	  	 		*currentFadeWindow;
+	MouseCursor		*cursor;
+} global_focus;
+
+
 uint32_t		currentOutputWidth, currentOutputHeight;
 
 bool hasFocusWindow;
@@ -1121,7 +1135,7 @@ namespace PaintWindowFlag
 using PaintWindowFlags = uint32_t;
 
 static void
-paint_window(xwayland_ctx_t *ctx, win *w, win *scaleW, struct Composite_t *pComposite,
+paint_window(win *w, win *scaleW, struct Composite_t *pComposite,
 			  struct VulkanPipeline_t *pPipeline, MouseCursor *cursor, PaintWindowFlags flags = 0, float flOpacityScale = 1.0f)
 {
 	uint32_t sourceWidth, sourceHeight;
@@ -1168,7 +1182,7 @@ paint_window(xwayland_ctx_t *ctx, win *w, win *scaleW, struct Composite_t *pComp
 	// Base plane will stay as tex=0 if we don't have contents yet, which will
 	// make us fall back to compositing and use the Vulkan null texture
 
-	win *mainOverlayWindow = ctx->currentOverlayWindow;
+	win *mainOverlayWindow = global_focus.currentOverlayWindow;
 
 	const bool notificationMode = flags & PaintWindowFlag::NotificationMode;
 	if (notificationMode && !mainOverlayWindow)
@@ -1314,8 +1328,11 @@ static void update_touch_scaling( struct Composite_t *pComposite )
 }
 
 static void
-paint_all(xwayland_ctx_t *ctx, MouseCursor *cursor)
+paint_all()
 {
+	gamescope_xwayland_server_t *root_server = wlserver_get_xwayland_server(0);
+	xwayland_ctx_t *root_ctx = root_server->ctx.get();
+
 	static long long int paintID = 0;
 
 	paintID++;
@@ -1330,12 +1347,12 @@ paint_all(xwayland_ctx_t *ctx, MouseCursor *cursor)
 	unsigned int currentTime = get_time_in_milliseconds();
 	bool fadingOut = ( currentTime - fadeOutStartTime < g_FadeOutDuration || g_bPendingFade ) && g_HeldCommits[HELD_COMMIT_FADE];
 
-	w = ctx->currentFocusWindow;
-	overlay = ctx->currentOverlayWindow;
-	externalOverlay = ctx->currentExternalOverlayWindow;
-	notification = ctx->currentNotificationWindow;
-	override = ctx->currentOverrideWindow;
-	input = ctx->currentInputFocusWindow;
+	w = global_focus.currentFocusWindow;
+	overlay = global_focus.currentOverlayWindow;
+	externalOverlay = global_focus.currentExternalOverlayWindow;
+	notification = global_focus.currentNotificationWindow;
+	override = global_focus.currentOverrideWindow;
+	input = global_focus.currentInputFocusWindow;
 
 	if ( !w )
 	{
@@ -1379,14 +1396,18 @@ paint_all(xwayland_ctx_t *ctx, MouseCursor *cursor)
 		win *videow = NULL;
 		bool bHasVideoUnderlay = false;
 
-		for ( videow = ctx->list; videow; videow = videow->next )
+		gamescope_xwayland_server_t *server = NULL;
+		for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
 		{
-			if ( videow->isSteamStreamingClientVideo == true )
+			for ( videow = server->ctx->list; videow; videow = videow->next )
 			{
-				// TODO: also check matching AppID so we can have several pairs
-				paint_window(ctx, videow, videow, &composite, &pipeline, cursor, PaintWindowFlag::BasePlane | PaintWindowFlag::DrawBorders);
-				bHasVideoUnderlay = true;
-				break;
+				if ( videow->isSteamStreamingClientVideo == true )
+				{
+					// TODO: also check matching AppID so we can have several pairs
+					paint_window(videow, videow, &composite, &pipeline, global_focus.cursor, PaintWindowFlag::BasePlane | PaintWindowFlag::DrawBorders);
+					bHasVideoUnderlay = true;
+					break;
+				}
 			}
 		}
 		
@@ -1395,7 +1416,7 @@ paint_all(xwayland_ctx_t *ctx, MouseCursor *cursor)
 		uint32_t flags = PaintWindowFlag::DrawBorders;
 		if ( !bHasVideoUnderlay )
 			flags |= PaintWindowFlag::BasePlane;
-		paint_window(ctx, w, w, &composite, &pipeline, cursor, flags);
+		paint_window(w, w, &composite, &pipeline, global_focus.cursor, flags);
 		update_touch_scaling( &composite );
 		
 		// paint UI unless it's fully hidden, which it communicates to us through opacity=0
@@ -1412,7 +1433,7 @@ paint_all(xwayland_ctx_t *ctx, MouseCursor *cursor)
 				: ((currentTime - fadeOutStartTime) / (float)g_FadeOutDuration);
 	
 			paint_cached_base_layer(g_HeldCommits[HELD_COMMIT_FADE], g_CachedPlanes[HELD_COMMIT_FADE], &composite, &pipeline, 1.0f - opacityScale);
-			paint_window(ctx, w, w, &composite, &pipeline, cursor, PaintWindowFlag::BasePlane | PaintWindowFlag::FadeTarget | PaintWindowFlag::DrawBorders, opacityScale);
+			paint_window(w, w, &composite, &pipeline, global_focus.cursor, PaintWindowFlag::BasePlane | PaintWindowFlag::FadeTarget | PaintWindowFlag::DrawBorders, opacityScale);
 		}
 		else
 		{
@@ -1422,11 +1443,11 @@ paint_all(xwayland_ctx_t *ctx, MouseCursor *cursor)
 					g_HeldCommits[HELD_COMMIT_FADE] = nullptr;
 					g_bPendingFade = false;
 					fadeOutStartTime = 0;
-					ctx->currentFadeWindow = None;
+					global_focus.currentFadeWindow = None;
 				}
 			}
 			// Just draw focused window as normal, be it Steam or the game
-			paint_window(ctx, w, w, &composite, &pipeline, cursor, PaintWindowFlag::BasePlane | PaintWindowFlag::DrawBorders);
+			paint_window(w, w, &composite, &pipeline, global_focus.cursor, PaintWindowFlag::BasePlane | PaintWindowFlag::DrawBorders);
 		}
 		update_touch_scaling( &composite );
 	}
@@ -1437,7 +1458,7 @@ paint_all(xwayland_ctx_t *ctx, MouseCursor *cursor)
 	// as we will have too many layers. Better to be safe than sorry.
 	if ( override && !w->isSteamStreamingClient )
 	{
-		paint_window(ctx, override, w, &composite, &pipeline, cursor);
+		paint_window(override, w, &composite, &pipeline, global_focus.cursor);
 		update_touch_scaling( &composite );
 	}
 
@@ -1445,9 +1466,9 @@ paint_all(xwayland_ctx_t *ctx, MouseCursor *cursor)
 	{
 		if (externalOverlay->opacity)
 		{
-			paint_window(ctx, externalOverlay, externalOverlay, &composite, &pipeline, cursor, PaintWindowFlag::NoScale);
+			paint_window(externalOverlay, externalOverlay, &composite, &pipeline, global_focus.cursor, PaintWindowFlag::NoScale);
 
-			if ( externalOverlay == ctx->currentInputFocusWindow )
+			if ( externalOverlay == global_focus.currentInputFocusWindow )
 				update_touch_scaling( &composite );
 		}
 	}
@@ -1456,9 +1477,9 @@ paint_all(xwayland_ctx_t *ctx, MouseCursor *cursor)
 	{
 		if (overlay->opacity)
 		{
-			paint_window(ctx, overlay, overlay, &composite, &pipeline, cursor, PaintWindowFlag::DrawBorders);
+			paint_window(overlay, overlay, &composite, &pipeline, global_focus.cursor, PaintWindowFlag::DrawBorders);
 
-			if ( overlay == ctx->currentInputFocusWindow )
+			if ( overlay == global_focus.currentInputFocusWindow )
 				update_touch_scaling( &composite );
 		}
 	}
@@ -1467,7 +1488,7 @@ paint_all(xwayland_ctx_t *ctx, MouseCursor *cursor)
 	{
 		if (notification->opacity)
 		{
-			paint_window(ctx, notification, notification, &composite, &pipeline, cursor, PaintWindowFlag::NotificationMode);
+			paint_window(notification, notification, &composite, &pipeline, global_focus.cursor, PaintWindowFlag::NotificationMode);
 		}
 	}
 
@@ -1476,7 +1497,7 @@ paint_all(xwayland_ctx_t *ctx, MouseCursor *cursor)
 
 	// Draw cursor if we need to
 	if (input) {
-		cursor->paint(override == input ? w : input, &composite, &pipeline);
+		global_focus.cursor->paint(override == input ? w : input, &composite, &pipeline);
 	}
 
 	if ( !bValidContents || ( BIsNested() == false && g_DRM.paused == true ) )
@@ -1626,7 +1647,7 @@ paint_all(xwayland_ctx_t *ctx, MouseCursor *cursor)
 					xwm_log.errorf( "Failed to save screenshot to %s", pTimeBuffer );
 				}
 
-				XDeleteProperty( ctx->dpy, ctx->root, ctx->atoms.gamescopeScreenShotAtom );
+				XDeleteProperty( root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeScreenShotAtom );
 			});
 
 			screenshotThread.detach();
@@ -1780,7 +1801,7 @@ static bool is_good_override_candidate( win *override, win* focus )
 } 
 
 static void
-determine_and_apply_focus(xwayland_ctx_t *ctx)
+determine_and_apply_focus(xwayland_ctx_t *ctx, std::vector<win*>& vecGlobalPossibleFocusWindows)
 {
 	win *w, *focus = NULL, *override_focus = NULL;
 	win *inputFocus = NULL;
@@ -1788,10 +1809,6 @@ determine_and_apply_focus(xwayland_ctx_t *ctx)
 	gameFocused = false;
 
 	win *prevFocusWindow = ctx->currentFocusWindow;
-	win *prevOverlayWindow = ctx->currentOverlayWindow;
-	win *prevExternalOverlayWindow = ctx->currentExternalOverlayWindow;
-	win *prevNotificationWindow = ctx->currentNotificationWindow;
-	win *prevOverrideWindow = ctx->currentOverrideWindow;
 	ctx->currentFocusWindow = nullptr;
 	ctx->currentOverlayWindow = nullptr;
 	ctx->currentExternalOverlayWindow = nullptr;
@@ -1844,51 +1861,9 @@ determine_and_apply_focus(xwayland_ctx_t *ctx)
 		}
 	}
 
-	if ( prevExternalOverlayWindow != ctx->currentExternalOverlayWindow ||
-		 prevOverlayWindow != ctx->currentOverlayWindow ||
-	     prevNotificationWindow != ctx->currentNotificationWindow )
-	{
-		hasRepaint = true;
-	}
+	vecGlobalPossibleFocusWindows.insert(vecGlobalPossibleFocusWindows.end(), vecPossibleFocusWindows.begin(), vecPossibleFocusWindows.end());
 
-	std::vector< unsigned long > focusable_appids;
-	std::vector< unsigned long > focusable_windows;
-
-	for ( win *focusable_window : vecPossibleFocusWindows )
-	{
-		unsigned int unAppID = focusable_window->appID;
-		if ( unAppID != 0 )
-		{
-			unsigned long j;
-			for( j = 0; j < focusable_appids.size(); j++ )
-			{
-				if ( focusable_appids[ j ] == unAppID )
-				{
-					break;
-				}
-			}
-			if ( j == focusable_appids.size() )
-			{
-				focusable_appids.push_back( unAppID );
-			}
-		}
-
-		// list of [window, appid, pid] triplets
-		focusable_windows.push_back( focusable_window->id );
-		focusable_windows.push_back( focusable_window->appID );
-		focusable_windows.push_back( focusable_window->pid );
-	}
-
-	XChangeProperty( ctx->dpy, ctx->root, ctx->atoms.gamescopeFocusableAppsAtom, XA_CARDINAL, 32, PropModeReplace,
-					 (unsigned char *)focusable_appids.data(), focusable_appids.size() );
-
-	XChangeProperty( ctx->dpy, ctx->root, ctx->atoms.gamescopeFocusableWindowsAtom, XA_CARDINAL, 32, PropModeReplace,
-					 (unsigned char *)focusable_windows.data(), focusable_windows.size() );
-
-	std::stable_sort( vecPossibleFocusWindows.begin(), vecPossibleFocusWindows.end(),
-					  is_focus_priority_greater );
-
-	if ( ctx->focusControlWindow != None || vecFocuscontrolAppIDs.size() > 0 )
+	if ( ctx->focusControlWindow != None )
 	{
 		if ( ctx->focusControlWindow != None )
 		{
@@ -1901,22 +1876,11 @@ determine_and_apply_focus(xwayland_ctx_t *ctx)
 				}
 			}
 		}
-
-		for ( auto focusable_appid : vecFocuscontrolAppIDs )
-		{
-			for ( win *focusable_window : vecPossibleFocusWindows )
-			{
-				if ( focusable_window->appID == focusable_appid )
-				{
-					focus = focusable_window;
-					goto found;
-				}
-			}
-		}
 found:
 		gameFocused = true;
 	}
-	else if ( vecPossibleFocusWindows.size() > 0 )
+	
+	if ( !focus && vecPossibleFocusWindows.size() > 0 )
 	{
 		focus = vecPossibleFocusWindows[ 0 ];
 		gameFocused = focus->appID != 0;
@@ -1974,17 +1938,7 @@ found:
 
 	if ( !override_focus && focus )
 	{
-		if ( vecFocuscontrolAppIDs.size() > 0 )
-		{
-			for ( win *override : vecPossibleFocusWindows )
-			{
-				if ( is_good_override_candidate(override, focus) && override->appID == focus->appID ) {
-					override_focus = override;
-					break;
-				}
-			}
-		}
-		else if ( vecPossibleFocusWindows.size() > 0 )
+		if ( vecPossibleFocusWindows.size() > 0 )
 		{
 			for ( win *override : vecPossibleFocusWindows )
 			{
@@ -2001,28 +1955,10 @@ found:
 
 	ctx->currentOverrideWindow = override_focus;
 
-	if ( ctx->currentOverrideWindow != prevOverrideWindow )
-		hasRepaint = true;
-
-	unsigned long focusedWindow = 0;
-	unsigned long focusedAppId = 0;
-
 	if ( inputFocus == NULL )
 	{
 		inputFocus = override_focus ? override_focus : focus;
 	}
-
-	if ( focus )
-	{
-		focusedWindow = focus->id;
-		focusedAppId = inputFocus->appID;
-	}
-
-	XChangeProperty( ctx->dpy, ctx->root, ctx->atoms.gamescopeFocusedAppAtom, XA_CARDINAL, 32, PropModeReplace,
-					 (unsigned char *)&focusedAppId, focusedAppId != 0 ? 1 : 0 );
-
-	XChangeProperty( ctx->dpy, ctx->root, ctx->atoms.gamescopeFocusedWindowAtom, XA_CARDINAL, 32, PropModeReplace,
-					 (unsigned char *)&focusedWindow, focusedWindow != 0 ? 1 : 0 );
 
 	if (!focus)
 	{
@@ -2031,29 +1967,6 @@ found:
 
 	if ( prevFocusWindow != focus )
 	{
-		if ( g_FadeOutDuration != 0 && !g_bFirstFrame )
-		{
-			if ( !g_HeldCommits[ HELD_COMMIT_FADE ] )
-			{
-				ctx->currentFadeWindow = prevFocusWindow;
-				g_HeldCommits[ HELD_COMMIT_FADE ] = g_HeldCommits[ HELD_COMMIT_BASE ];
-				g_bPendingFade = true;
-			}
-			else
-			{
-				// If we end up fading back to what we were going to fade to, cancel the fade.
-				if ( ctx->currentFadeWindow != None && focus == ctx->currentFadeWindow )
-				{
-					g_HeldCommits[ HELD_COMMIT_FADE ] = nullptr;
-					g_bPendingFade = false;
-					fadeOutStartTime = 0;
-					ctx->currentFadeWindow = nullptr;
-				}
-			}
-		}
-
-		hasRepaint = true;
-
 		/* Some games (e.g. DOOM Eternal) don't react well to being put back as
 		* iconic, so never do that. Only take them out of iconic. */
 		uint32_t wmState[] = { ICCCM_NORMAL_STATE, None };
@@ -2070,9 +1983,6 @@ found:
 			sprintf( buf,  "xwininfo -id 0x%lx; xprop -id 0x%lx; xwininfo -root -tree", focus->id, focus->id );
 			system( buf );
 		}
-
-		if ( !focus->isSteamStreamingClient )
-			get_window_last_done_commit( focus, g_HeldCommits[ HELD_COMMIT_BASE ] );
 	}
 
 	ctx->currentFocusWindow = focus;
@@ -2089,25 +1999,6 @@ found:
 
 		if ( inputFocus->inputFocusMode )
 			keyboardFocusWin = override_focus ? override_focus : focus;
-
-		if ( inputFocus->surface.wlr != nullptr || keyboardFocusWin->surface.wlr != nullptr )
-		{
-			wlserver_lock();
-
-			if ( inputFocus->surface.wlr != nullptr )
-			{
-				// Instantly stop pressing left mouse before transitioning to a new window.
-				// for focus.
-				// Fixes dropdowns not working.
-				wlserver_mousebutton( BTN_LEFT, false, 0 );
-				wlserver_mousefocus( inputFocus->surface.wlr, ctx->cursor->x(), ctx->cursor->y() );
-			}
-
-			if ( keyboardFocusWin->surface.wlr != nullptr )
-				wlserver_keyboardfocus( keyboardFocusWin->surface.wlr );
-
-			wlserver_unlock();
-		}
 
 		if ( !override_focus || override_focus != keyboardFocusWin )
 			XSetInputFocus(ctx->dpy, keyboardFocusWin->id, RevertToNone, CurrentTime);
@@ -2163,8 +2054,219 @@ found:
 	}
 
 	XFree(children);
+}
 
-	sdlwindow_title( w->title );
+static void
+determine_and_apply_focus()
+{
+	gamescope_xwayland_server_t *root_server = wlserver_get_xwayland_server(0);
+	xwayland_ctx_t *root_ctx = root_server->ctx.get();
+	global_focus_t previous_focus = global_focus;
+	global_focus = global_focus_t{};
+	global_focus.cursor = root_ctx->cursor.get();
+
+	std::vector< unsigned long > focusable_appids;
+	std::vector< unsigned long > focusable_windows;
+
+	// Determine local context focuses
+	std::vector< win* > vecPossibleFocusWindows;
+	{
+		gamescope_xwayland_server_t *server = NULL;
+		for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
+		{
+			determine_and_apply_focus(server->ctx.get(), vecPossibleFocusWindows);
+		}
+	}
+
+	for ( win *focusable_window : vecPossibleFocusWindows )
+	{
+		unsigned int unAppID = focusable_window->appID;
+		if ( unAppID != 0 )
+		{
+			unsigned long j;
+			for( j = 0; j < focusable_appids.size(); j++ )
+			{
+				if ( focusable_appids[ j ] == unAppID )
+				{
+					break;
+				}
+			}
+			if ( j == focusable_appids.size() )
+			{
+				focusable_appids.push_back( unAppID );
+			}
+		}
+
+		// list of [window, appid, pid] triplets
+		focusable_windows.push_back( focusable_window->id );
+		focusable_windows.push_back( focusable_window->appID );
+		focusable_windows.push_back( focusable_window->pid );
+	}
+
+	XChangeProperty( root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeFocusableAppsAtom, XA_CARDINAL, 32, PropModeReplace,
+					 (unsigned char *)focusable_appids.data(), focusable_appids.size() );
+
+	XChangeProperty( root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeFocusableWindowsAtom, XA_CARDINAL, 32, PropModeReplace,
+					 (unsigned char *)focusable_windows.data(), focusable_windows.size() );
+
+	// Determine global primary focus
+	std::stable_sort( vecPossibleFocusWindows.begin(), vecPossibleFocusWindows.end(),
+					is_focus_priority_greater );
+
+	if ( root_ctx->focusControlWindow != None || vecFocuscontrolAppIDs.size() > 0 )
+	{
+		if ( root_ctx->focusControlWindow != None )
+		{
+			if ( root_ctx->currentFocusWindow->id == root_ctx->focusControlWindow )
+			{
+				global_focus.currentFocusWindow = root_ctx->currentFocusWindow;
+				goto found;
+			}
+		}
+
+		for ( auto focusable_appid : vecFocuscontrolAppIDs )
+		{
+			for ( win *focusable_window : vecPossibleFocusWindows )
+			{
+				if ( focusable_window->appID == focusable_appid )
+				{
+					global_focus.currentFocusWindow = focusable_window;
+					goto found;
+				}
+			}
+		}
+found:
+		gameFocused = true;
+	}
+	else if ( vecPossibleFocusWindows.size() > 0 )
+	{
+		global_focus.currentFocusWindow = vecPossibleFocusWindows[ 0 ];
+		gameFocused = global_focus.currentFocusWindow->appID != 0;
+	}
+
+	// Pick override and cursor from the same ctx as our primary focus.
+	{
+		gamescope_xwayland_server_t *server = NULL;
+		for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
+		{
+			if (server->ctx->currentFocusWindow == global_focus.currentFocusWindow)
+			{
+				// Cursor source can change if we have an overlay.
+				global_focus.cursor = server->ctx->cursor.get();
+				global_focus.currentOverrideWindow = server->ctx->currentOverrideWindow;
+				break;
+			}
+		}
+	}
+
+	// Pick overlay/notifications from root ctx
+	global_focus.currentOverlayWindow = root_ctx->currentOverlayWindow;
+	global_focus.currentExternalOverlayWindow = root_ctx->currentExternalOverlayWindow;
+	global_focus.currentNotificationWindow = root_ctx->currentNotificationWindow;
+
+	// Pick inputFocusWindow
+	if (global_focus.currentOverlayWindow && global_focus.currentOverlayWindow->inputFocusMode)
+	{
+		// If we have an overlay, pick our cursor from there instead.
+		global_focus.cursor = root_ctx->cursor.get();
+		global_focus.currentInputFocusWindow = global_focus.currentOverlayWindow;
+	}
+	else if (global_focus.currentOverrideWindow)
+		global_focus.currentInputFocusWindow = global_focus.currentOverrideWindow;
+	else
+		global_focus.currentInputFocusWindow = global_focus.currentFocusWindow;
+
+	if ( global_focus.currentInputFocusWindow != previous_focus.currentInputFocusWindow ||
+		 global_focus.currentInputFocusMode   != previous_focus.currentInputFocusMode )
+	{
+		win *keyboardFocusWin = global_focus.currentInputFocusWindow;
+		if ( global_focus.currentInputFocusWindow && global_focus.currentInputFocusWindow->inputFocusMode )
+		{
+			keyboardFocusWin = global_focus.currentOverrideWindow
+				? global_focus.currentOverrideWindow
+				: global_focus.currentFocusWindow;
+		}
+
+		if ( (global_focus.currentInputFocusWindow && global_focus.currentInputFocusWindow->surface.wlr != nullptr) ||
+			 (keyboardFocusWin && keyboardFocusWin->surface.wlr != nullptr) )
+		{
+			wlserver_lock();
+			if ( global_focus.currentInputFocusWindow && global_focus.currentInputFocusWindow->surface.wlr != nullptr )
+			{
+				// Instantly stop pressing left mouse before transitioning to a new window.
+				// for focus.
+				// Fixes dropdowns not working.
+				wlserver_mousebutton( BTN_LEFT, false, 0 );
+				wlserver_mousefocus( global_focus.currentInputFocusWindow->surface.wlr, global_focus.cursor->x(), global_focus.cursor->y() );
+			}
+
+			if ( keyboardFocusWin && keyboardFocusWin->surface.wlr != nullptr )
+				wlserver_keyboardfocus( keyboardFocusWin->surface.wlr );
+			wlserver_unlock();
+		}
+	}
+
+	// Determine if we need to repaints
+	if (previous_focus.currentOverlayWindow         != global_focus.currentOverlayWindow         ||
+		previous_focus.currentExternalOverlayWindow != global_focus.currentExternalOverlayWindow ||
+	    previous_focus.currentNotificationWindow    != global_focus.currentNotificationWindow    ||
+		previous_focus.currentFocusWindow           != global_focus.currentFocusWindow           ||
+		previous_focus.currentOverrideWindow        != global_focus.currentOverrideWindow)
+	{
+		hasRepaint = true;
+	}
+
+	// Backchannel to Steam
+	unsigned long focusedWindow = 0;
+	unsigned long focusedAppId = 0;
+
+	if ( global_focus.currentFocusWindow )
+	{
+		focusedWindow = global_focus.currentFocusWindow->id;
+		focusedAppId = global_focus.currentInputFocusWindow->appID;
+	}
+
+	XChangeProperty( root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeFocusedAppAtom, XA_CARDINAL, 32, PropModeReplace,
+					 (unsigned char *)&focusedAppId, focusedAppId != 0 ? 1 : 0 );
+
+	XChangeProperty( root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeFocusedWindowAtom, XA_CARDINAL, 32, PropModeReplace,
+					 (unsigned char *)&focusedWindow, focusedWindow != 0 ? 1 : 0 );
+
+	// Sort out fading.
+	if (previous_focus.currentFocusWindow != global_focus.currentFocusWindow)
+	{
+		if ( g_FadeOutDuration != 0 && !g_bFirstFrame )
+		{
+			if ( !g_HeldCommits[ HELD_COMMIT_FADE ] )
+			{
+				global_focus.currentFadeWindow = previous_focus.currentFocusWindow;
+				g_HeldCommits[ HELD_COMMIT_FADE ] = g_HeldCommits[ HELD_COMMIT_BASE ];
+				g_bPendingFade = true;
+			}
+			else
+			{
+				// If we end up fading back to what we were going to fade to, cancel the fade.
+				if ( global_focus.currentFadeWindow != nullptr && global_focus.currentFocusWindow == global_focus.currentFadeWindow )
+				{
+					g_HeldCommits[ HELD_COMMIT_FADE ] = nullptr;
+					g_bPendingFade = false;
+					fadeOutStartTime = 0;
+					global_focus.currentFadeWindow = nullptr;
+				}
+			}
+		}
+	}
+
+	// Update last focus commit
+	if ( global_focus.currentFocusWindow &&
+		 previous_focus.currentFocusWindow != global_focus.currentFocusWindow &&
+		 !global_focus.currentFocusWindow->isSteamStreamingClient )
+	{
+		get_window_last_done_commit( global_focus.currentFocusWindow, g_HeldCommits[ HELD_COMMIT_BASE ] );
+	}
+
+	if ( global_focus.currentFocusWindow )
+		sdlwindow_title( global_focus.currentFocusWindow->title );
 }
 
 static void
@@ -2748,10 +2850,9 @@ finish_destroy_win(xwayland_ctx_t *ctx, Window id, bool gone)
 static void
 destroy_win(xwayland_ctx_t *ctx, Window id, bool gone, bool fade)
 {
+	// Context
 	if (x11_win(ctx->currentFocusWindow) == id && gone)
 		ctx->currentFocusWindow = nullptr;
-	if (x11_win(ctx->currentFadeWindow) == id && gone)
-		ctx->currentFadeWindow = nullptr;
 	if (x11_win(ctx->currentInputFocusWindow) == id && gone)
 		ctx->currentInputFocusWindow = nullptr;
 	if (x11_win(ctx->currentOverlayWindow) == id && gone)
@@ -2764,6 +2865,21 @@ destroy_win(xwayland_ctx_t *ctx, Window id, bool gone, bool fade)
 		ctx->currentOverrideWindow = nullptr;
 	if (ctx->currentKeyboardFocusWindow == id && gone)
 		ctx->currentKeyboardFocusWindow = None;
+
+	// Global Focus
+	if (x11_win(global_focus.currentFocusWindow) == id && gone)
+		global_focus.currentFocusWindow = nullptr;
+	if (x11_win(global_focus.currentInputFocusWindow) == id && gone)
+		global_focus.currentInputFocusWindow = nullptr;
+	if (x11_win(global_focus.currentOverlayWindow) == id && gone)
+		global_focus.currentOverlayWindow = nullptr;
+	if (x11_win(global_focus.currentNotificationWindow) == id && gone)
+		global_focus.currentNotificationWindow = nullptr;
+	if (x11_win(global_focus.currentOverrideWindow) == id && gone)
+		global_focus.currentOverrideWindow = nullptr;
+	if (x11_win(global_focus.currentFadeWindow) == id && gone)
+		global_focus.currentFadeWindow = nullptr;
+		
 	focusDirty = true;
 
 	finish_destroy_win(ctx, id, gone);
@@ -3122,7 +3238,7 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 
 		globalScaleRatio = overscanScaleRatio * zoomScaleRatio;
 
-		if (ctx->currentFocusWindow)
+		if (global_focus.currentFocusWindow)
 		{
 			hasRepaint = true;
 		}
@@ -3135,7 +3251,7 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 
 		globalScaleRatio = overscanScaleRatio * zoomScaleRatio;
 
-		if (ctx->currentFocusWindow)
+		if (global_focus.currentFocusWindow)
 		{
 			hasRepaint = true;
 		}
@@ -3161,7 +3277,7 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 	}
 	if (ev->atom == XA_WM_NAME || ev->atom == ctx->atoms.netWMNameAtom)
 	{
-		if (ev->window == x11_win(ctx->currentFocusWindow))
+		if (ev->window == x11_win(global_focus.currentFocusWindow))
 		{
 			win *w = find_win(ctx, ev->window);
 			if (w) {
@@ -3360,12 +3476,12 @@ void handle_done_commits( xwayland_ctx_t *ctx )
 					// If this is an overlay that we're presenting, repaint
 					if ( gameFocused )
 					{
-						if ( w == ctx->currentOverlayWindow && w->opacity != TRANSLUCENT )
+						if ( w == global_focus.currentOverlayWindow && w->opacity != TRANSLUCENT )
 						{
 							hasRepaint = true;
 						}
 
-						if ( w == ctx->currentNotificationWindow && w->opacity != TRANSLUCENT )
+						if ( w == global_focus.currentNotificationWindow && w->opacity != TRANSLUCENT )
 						{
 							hasRepaint = true;
 						}
@@ -3376,7 +3492,7 @@ void handle_done_commits( xwayland_ctx_t *ctx )
 						hasRepaint = true;
 					}
 					// If this is the main plane, repaint
-					if ( w == ctx->currentFocusWindow && !w->isSteamStreamingClient )
+					if ( w == global_focus.currentFocusWindow && !w->isSteamStreamingClient )
 					{
 						// TODO: Check for a mangoapp atom in future.
 						// (Needs the win* refactor from the multiple xwayland branch)
@@ -3386,12 +3502,12 @@ void handle_done_commits( xwayland_ctx_t *ctx )
 						hasRepaint = true;
 					}
 
-					if ( w == ctx->currentOverrideWindow )
+					if ( w == global_focus.currentOverrideWindow )
 					{
 						hasRepaint = true;
 					}
 
-					if ( w->isSteamStreamingClientVideo && ctx->currentFocusWindow && ctx->currentFocusWindow->isSteamStreamingClient )
+					if ( w->isSteamStreamingClientVideo && global_focus.currentFocusWindow && global_focus.currentFocusWindow->isSteamStreamingClient )
 					{
 						if (ctx->currentExternalOverlayWindow != None)
 							mangoapp_update();
@@ -4140,11 +4256,7 @@ steamcompmgr_main(int argc, char **argv)
 
 	globalScaleRatio = overscanScaleRatio * zoomScaleRatio;
 
-	{
-		gamescope_xwayland_server_t *server = NULL;
-		for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
-			determine_and_apply_focus(server->ctx.get());
-	}
+	determine_and_apply_focus();
 
 	if ( readyPipeFD != -1 )
 	{
@@ -4239,13 +4351,9 @@ steamcompmgr_main(int argc, char **argv)
 
 		if (focusDirty == true)
 		{
-			{
-				gamescope_xwayland_server_t *server = NULL;
-				for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
-					determine_and_apply_focus(server->ctx.get());
-			}
+			determine_and_apply_focus();
 
-			hasFocusWindow = root_ctx->currentFocusWindow != None;
+			hasFocusWindow = global_focus.currentFocusWindow != nullptr;
 
 			sdlwindow_pushupdate();
 		}
@@ -4298,7 +4406,7 @@ steamcompmgr_main(int argc, char **argv)
 
 		if ( ( g_bTakeScreenshot == true || hasRepaint == true || is_fading_out() ) && vblank == true )
 		{
-			paint_all(root_ctx, root_ctx->cursor.get());
+			paint_all();
 
 			// Consumed the need to repaint here
 			hasRepaint = false;
