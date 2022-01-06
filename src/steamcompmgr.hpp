@@ -31,11 +31,12 @@ struct ResListEntry_t {
 
 struct _XDisplay;
 struct win;
+struct xwayland_ctx_t;
 
 class MouseCursor
 {
 public:
-	explicit MouseCursor(_XDisplay *display);
+	explicit MouseCursor(xwayland_ctx_t *ctx);
 
 	int x() const;
 	int y() const;
@@ -77,7 +78,7 @@ private:
 
 	PointerBarrier m_scaledFocusBarriers[4] = { None };
 
-	_XDisplay *m_display;
+	xwayland_ctx_t *m_ctx;
 };
 
 extern std::mutex wayland_commit_lock;
