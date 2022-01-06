@@ -55,8 +55,6 @@ static LogScope wl_log("wlserver");
 
 static struct wlserver_t wlserver = {};
 
-static Display *g_XWLDpy = nullptr;
-
 struct wlserver_content_override {
 	struct wlr_surface *surface;
 	uint32_t x11_window;
@@ -69,8 +67,6 @@ enum wlserver_touch_click_mode g_nDefaultTouchClickMode = WLSERVER_TOUCH_CLICK_L
 enum wlserver_touch_click_mode g_nTouchClickMode = g_nDefaultTouchClickMode;
 
 static struct wl_list pending_surfaces = {0};
-
-static bool bXwaylandReady = false;
 
 static void wlserver_surface_set_wlr( struct wlserver_surface *surf, struct wlr_surface *wlr_surf );
 
@@ -106,15 +102,19 @@ const struct wlr_surface_role xwayland_surface_role = {
 	.precommit = xwayland_surface_role_precommit,
 };
 
-static void xwayland_ready(struct wl_listener *listener, void *data)
+void gamescope_xwayland_server_t::on_xwayland_ready(void *data)
 {
-	bXwaylandReady = true;
+	xwayland_ready = true;
 
-	if (!wlserver.wlr.xwayland_server->options.no_touch_pointer_emulation)
+	if (!xwayland_server->options.no_touch_pointer_emulation)
 		wl_log.infof("Xwayland doesn't support -noTouchPointerEmulation, touch events might get duplicated");
 }
 
-struct wl_listener xwayland_ready_listener = { .notify = xwayland_ready };
+void gamescope_xwayland_server_t::xwayland_ready_callback(struct wl_listener *listener, void *data)
+{
+	gamescope_xwayland_server_t *server = wl_container_of( listener, server, xwayland_ready_listener );
+	server->on_xwayland_ready(data);
+}
 
 static void bump_input_counter()
 {
@@ -629,6 +629,22 @@ int wlsession_open_kms( const char *device_name ) {
 	return device->fd;
 }
 
+gamescope_xwayland_server_t::gamescope_xwayland_server_t(wl_display *display)
+{
+	struct wlr_xwayland_server_options xwayland_options = {
+		.lazy = false,
+		.enable_wm = false,
+		.no_touch_pointer_emulation = true,
+	};
+	xwayland_server = wlr_xwayland_server_create(display, &xwayland_options);
+	wl_signal_add(&xwayland_server->events.ready, &xwayland_ready_listener);
+}
+
+gamescope_xwayland_server_t::~gamescope_xwayland_server_t()
+{
+	wlr_xwayland_server_destroy(xwayland_server);
+}
+
 bool wlserver_init( void ) {
 	assert( wlserver.display != nullptr );
 
@@ -733,15 +749,9 @@ bool wlserver_init( void ) {
 
 	wlr_output_create_global( wlserver.wlr.output );
 
-	struct wlr_xwayland_server_options xwayland_options = {
-		.lazy = false,
-		.enable_wm = false,
-		.no_touch_pointer_emulation = true,
-	};
-	wlserver.wlr.xwayland_server = wlr_xwayland_server_create(wlserver.display, &xwayland_options);
-	wl_signal_add(&wlserver.wlr.xwayland_server->events.ready, &xwayland_ready_listener);
+	auto server = std::make_unique<gamescope_xwayland_server_t>(wlserver.display);
 
-	while (!bXwaylandReady) {
+	while (!server->is_xwayland_ready()) {
 		wl_display_flush_clients(wlserver.display);
 		if (wl_event_loop_dispatch(wlserver.event_loop, -1) < 0) {
 			wl_log.errorf("wl_event_loop_dispatch failed\n");
@@ -749,12 +759,7 @@ bool wlserver_init( void ) {
 		}
 	}
 
-	g_XWLDpy = XOpenDisplay( wlserver.wlr.xwayland_server->display_name );
-	if ( g_XWLDpy == nullptr )
-	{
-		wl_log.errorf( "Failed to connect to X11 server" );
-		return false;
-	}
+	wlserver.wlr.xwayland_servers.emplace_back(std::move(server));
 
 	return true;
 }
@@ -808,7 +813,7 @@ void wlserver_run(void)
 
 	// We need to shutdown Xwayland before disconnecting all clients, otherwise
 	// wlroots will restart it automatically.
-	wlr_xwayland_server_destroy(wlserver.wlr.xwayland_server);
+	wlserver.wlr.xwayland_servers.clear();
 	wl_display_destroy_clients(wlserver.display);
 	wl_display_destroy(wlserver.display);
 }
@@ -850,11 +855,14 @@ void wlserver_mousefocus( struct wlr_surface *wlrsurface, int x /* = 0 */, int y
 
 void wlserver_mousemotion( int x, int y, uint32_t time )
 {
+	// TODO: Josh: Fix me for multiple xwaylands
+#if 0
 	if ( g_XWLDpy != NULL )
 	{
 		XTestFakeRelativeMotionEvent( g_XWLDpy, x, y, CurrentTime );
 		XFlush( g_XWLDpy );
 	}
+#endif
 }
 
 void wlserver_mousebutton( int button, bool press, uint32_t time )
@@ -881,9 +889,10 @@ void wlserver_send_frame_done( struct wlr_surface *surf, const struct timespec *
 	wlr_surface_send_frame_done( surf, when );
 }
 
-const char *wlserver_get_nested_display_name( void )
+gamescope_xwayland_server_t *wlserver_get_xwayland_server( size_t index )
 {
-	return wlserver.wlr.xwayland_server->display_name;
+	assert(index < wlserver.wlr.xwayland_servers.size());
+	return wlserver.wlr.xwayland_servers[index].get();
 }
 
 const char *wlserver_get_wl_display_name( void )
@@ -925,7 +934,7 @@ void wlserver_surface_init( struct wlserver_surface *surf, long x11_id )
 	wl_list_init( &surf->destroy.link );
 }
 
-void wlserver_surface_set_wl_id( struct wlserver_surface *surf, long id )
+void gamescope_xwayland_server_t::set_wl_id( struct wlserver_surface *surf, long id )
 {
 	if ( surf->wl_id != 0 )
 	{
@@ -946,13 +955,23 @@ void wlserver_surface_set_wl_id( struct wlserver_surface *surf, long id )
 	}
 	else
 	{
-		struct wl_resource *resource = wl_client_get_object( wlserver.wlr.xwayland_server->client, id );
+		struct wl_resource *resource = wl_client_get_object( xwayland_server->client, id );
 		if ( resource != nullptr )
 			wlr_surf = wlr_surface_from_resource( resource );
 	}
 
 	if ( wlr_surf != nullptr )
 		wlserver_surface_set_wlr( surf, wlr_surf );
+}
+
+bool gamescope_xwayland_server_t::is_xwayland_ready() const
+{
+	return xwayland_ready;
+}
+
+const char *gamescope_xwayland_server_t::get_nested_display_name() const
+{
+	return xwayland_server->display_name;
 }
 
 void wlserver_surface_finish( struct wlserver_surface *surf )

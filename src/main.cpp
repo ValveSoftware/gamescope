@@ -392,8 +392,10 @@ int main(int argc, char **argv)
 		fprintf( stderr, "Failed to initialize wlserver\n" );
 		return 1;
 	}
+	
+	gamescope_xwayland_server_t *base_server = wlserver_get_xwayland_server(0);
 
-	setenv("DISPLAY", wlserver_get_nested_display_name(), 1);
+	setenv("DISPLAY", base_server->get_nested_display_name(), 1);
 	setenv("GAMESCOPE_WAYLAND_DISPLAY", wlserver_get_wl_display_name(), 1);
 
 #if HAVE_PIPEWIRE

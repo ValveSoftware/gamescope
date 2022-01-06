@@ -4,9 +4,32 @@
 
 #include <wayland-server-core.h>
 #include <atomic>
+#include <vector>
+#include <memory>
 
 #define WLSERVER_BUTTON_COUNT 4
 #define WLSERVER_TOUCH_COUNT 11 // Ten fingers + nose ought to be enough for anyone
+
+class gamescope_xwayland_server_t
+{
+public:
+	gamescope_xwayland_server_t(wl_display *display);
+	~gamescope_xwayland_server_t();
+
+	void on_xwayland_ready(void *data);
+	static void xwayland_ready_callback(struct wl_listener *listener, void *data);
+
+	bool is_xwayland_ready() const;
+	const char *get_nested_display_name() const;
+
+	void set_wl_id( struct wlserver_surface *surf, long id );
+
+private:
+	struct wlr_xwayland_server *xwayland_server = NULL;
+	struct wl_listener xwayland_ready_listener = { .notify = xwayland_ready_callback };
+
+	bool xwayland_ready = false;
+};
 
 struct wlserver_t {
 	struct wl_display *display;
@@ -20,13 +43,14 @@ struct wlserver_t {
 
 		struct wlr_renderer *renderer;
 		struct wlr_compositor *compositor;
-		struct wlr_xwayland_server *xwayland_server;
 		struct wlr_session *session;	
 		struct wlr_seat *seat;
 		struct wlr_output *output;
 
 		// Used to simulate key events and set the keymap
 		struct wlr_input_device *virtual_keyboard_device;
+
+		std::vector<std::unique_ptr<gamescope_xwayland_server_t>> xwayland_servers;
 	} wlr;
 	
 	struct wlr_surface *mouse_focus_surface;
@@ -97,7 +121,7 @@ void wlserver_mousewheel( int x, int y, uint32_t time );
 
 void wlserver_send_frame_done( struct wlr_surface *surf, const struct timespec *when );
 
-const char *wlserver_get_nested_display_name( void );
+gamescope_xwayland_server_t *wlserver_get_xwayland_server( size_t index );
 const char *wlserver_get_wl_display_name( void );
 
 struct wlserver_surface
@@ -112,5 +136,4 @@ struct wlserver_surface
 };
 
 void wlserver_surface_init( struct wlserver_surface *surf, long x11_id );
-void wlserver_surface_set_wl_id( struct wlserver_surface *surf, long id );
 void wlserver_surface_finish( struct wlserver_surface *surf );

@@ -215,6 +215,7 @@ struct xwayland_ctx_t
 		ignore_tail = &ignore_head;
 	}
 
+	gamescope_xwayland_server_t *xwayland_server;
 	Display			*dpy;
 
 	win				*list;
@@ -2903,7 +2904,7 @@ handle_wl_surface_id(xwayland_ctx_t *ctx, win *w, long surfaceID)
 
 	wlserver_lock();
 
-	wlserver_surface_set_wl_id( &w->surface, surfaceID );
+	ctx->xwayland_server->set_wl_id( &w->surface, surfaceID );
 
 	surface = w->surface.wlr;
 	if ( surface == NULL )
@@ -4036,7 +4037,8 @@ steamcompmgr_main(int argc, char **argv)
 		alwaysComposite = true;
 	}
 
-	ctx->dpy = XOpenDisplay( wlserver_get_nested_display_name() );
+	ctx->xwayland_server = wlserver_get_xwayland_server(0);
+	ctx->dpy = XOpenDisplay( ctx->xwayland_server->get_nested_display_name() );
 	if (!ctx->dpy)
 	{
 		xwm_log.errorf("Can't open display");
@@ -4199,7 +4201,7 @@ steamcompmgr_main(int argc, char **argv)
 
 	if ( readyPipeFD != -1 )
 	{
-		dprintf( readyPipeFD, "%s %s\n", wlserver_get_nested_display_name(), wlserver_get_wl_display_name() );
+		dprintf( readyPipeFD, "%s %s\n", ctx->xwayland_server->get_nested_display_name(), wlserver_get_wl_display_name() );
 		close( readyPipeFD );
 		readyPipeFD = -1;
 	}
