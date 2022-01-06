@@ -3952,102 +3952,31 @@ int g_customCursorHotspotY = 0;
 
 xwayland_ctx_t g_ctx;
 
-void
-steamcompmgr_main(int argc, char **argv)
+static bool setup_error_handlers = false;
+
+void init_xwayland_ctx(xwayland_ctx_t *ctx, gamescope_xwayland_server_t *xwayland_server)
 {
-	xwayland_ctx_t *ctx = &g_ctx;
-	Window	    root_return, parent_return;
-	Window	    *children;
-	unsigned int    nchildren;
-	int		    composite_major, composite_minor;
-	int			xres_major, xres_minor;
-	int		    o;
-	int			readyPipeFD = -1;
+	int	composite_major, composite_minor;
+	int	xres_major, xres_minor;
 
-	// Reset getopt() state
-	optind = 1;
-
-	int opt_index = -1;
-	while ((o = getopt_long(argc, argv, gamescope_optstring, gamescope_options, &opt_index)) != -1)
-	{
-		const char *opt_name;
-		switch (o) {
-			case 'R':
-				readyPipeFD = open( optarg, O_WRONLY | O_CLOEXEC );
-				break;
-			case 'T':
-				statsThreadPath = optarg;
-				{
-					statsThreadRun = true;
-					std::thread statsThreads( statsThreadMain );
-					statsThreads.detach();
-				}
-				break;
-			case 'C':
-				cursorHideTime = atoi( optarg );
-				break;
-			case 'v':
-				drawDebugInfo = true;
-				break;
-			case 'e':
-				steamMode = true;
-				break;
-			case 'c':
-				alwaysComposite = true;
-				break;
-			case 'x':
-				useXRes = false;
-				break;
-			case 0: // long options without a short option
-				opt_name = gamescope_options[opt_index].name;
-				if (strcmp(opt_name, "debug-focus") == 0) {
-					debugFocus = true;
-				} else if (strcmp(opt_name, "synchronous-x11") == 0) {
-					synchronize = true;
-				} else if (strcmp(opt_name, "debug-events") == 0) {
-					debugEvents = true;
-				} else if (strcmp(opt_name, "cursor") == 0) {
-					g_customCursorPath = optarg;
-				} else if (strcmp(opt_name, "cursor-hotspot") == 0) {
-					sscanf(optarg, "%d,%d", &g_customCursorHotspotX, &g_customCursorHotspotY);
-				} else if (strcmp(opt_name, "fade-out-duration") == 0) {
-					g_FadeOutDuration = atoi(optarg);
-				}
-				break;
-			case '?':
-				assert(false); // unreachable
-		}
-	}
-
-	int subCommandArg = -1;
-	if ( optind < argc )
-	{
-		subCommandArg = optind;
-	}
-
-	if ( pipe2( g_nudgePipe, O_CLOEXEC | O_NONBLOCK ) != 0 )
-	{
-		xwm_log.errorf_errno( "steamcompmgr: pipe2 failed" );
-		exit( 1 );
-	}
-
-	const char *pchEnableVkBasalt = getenv( "ENABLE_VKBASALT" );
-	if ( pchEnableVkBasalt != nullptr && pchEnableVkBasalt[0] == '1' )
-	{
-		alwaysComposite = true;
-	}
-
-	ctx->xwayland_server = wlserver_get_xwayland_server(0);
+	ctx->xwayland_server = xwayland_server;
 	ctx->dpy = XOpenDisplay( ctx->xwayland_server->get_nested_display_name() );
 	if (!ctx->dpy)
 	{
 		xwm_log.errorf("Can't open display");
 		exit(1);
 	}
-	XSetErrorHandler(error);
-	XSetIOErrorHandler(handle_io_error);
+
+	if (!setup_error_handlers)
+	{
+		XSetErrorHandler(error);
+		XSetIOErrorHandler(handle_io_error);
+		setup_error_handlers = true;
+	}
+
 	if (synchronize)
 		XSynchronize(ctx->dpy, 1);
+
 	ctx->scr = DefaultScreen(ctx->dpy);
 	ctx->root = RootWindow(ctx->dpy, ctx->scr);
 
@@ -4154,15 +4083,13 @@ steamcompmgr_main(int argc, char **argv)
 	ctx->allDamage = None;
 	ctx->clipChanged = true;
 
-	int vblankFD = vblank_init();
-	assert( vblankFD >= 0 );
-
-	currentOutputWidth = g_nOutputWidth;
-	currentOutputHeight = g_nOutputHeight;
-
 	XGrabServer(ctx->dpy);
 
 	XCompositeRedirectSubwindows(ctx->dpy, ctx->root, CompositeRedirectManual);
+
+	Window			root_return, parent_return;
+	Window			*children;
+	unsigned int	nchildren;
 
 	XSelectInput(ctx->dpy, ctx->root,
 				  SubstructureNotifyMask|
@@ -4183,6 +4110,95 @@ steamcompmgr_main(int argc, char **argv)
 	XUngrabServer(ctx->dpy);
 
 	XF86VidModeLockModeSwitch(ctx->dpy, ctx->scr, true);
+}
+
+void
+steamcompmgr_main(int argc, char **argv)
+{
+	xwayland_ctx_t *ctx = &g_ctx;
+	int	readyPipeFD = -1;
+
+	// Reset getopt() state
+	optind = 1;
+
+	int o;
+	int opt_index = -1;
+	while ((o = getopt_long(argc, argv, gamescope_optstring, gamescope_options, &opt_index)) != -1)
+	{
+		const char *opt_name;
+		switch (o) {
+			case 'R':
+				readyPipeFD = open( optarg, O_WRONLY | O_CLOEXEC );
+				break;
+			case 'T':
+				statsThreadPath = optarg;
+				{
+					statsThreadRun = true;
+					std::thread statsThreads( statsThreadMain );
+					statsThreads.detach();
+				}
+				break;
+			case 'C':
+				cursorHideTime = atoi( optarg );
+				break;
+			case 'v':
+				drawDebugInfo = true;
+				break;
+			case 'e':
+				steamMode = true;
+				break;
+			case 'c':
+				alwaysComposite = true;
+				break;
+			case 'x':
+				useXRes = false;
+				break;
+			case 0: // long options without a short option
+				opt_name = gamescope_options[opt_index].name;
+				if (strcmp(opt_name, "debug-focus") == 0) {
+					debugFocus = true;
+				} else if (strcmp(opt_name, "synchronous-x11") == 0) {
+					synchronize = true;
+				} else if (strcmp(opt_name, "debug-events") == 0) {
+					debugEvents = true;
+				} else if (strcmp(opt_name, "cursor") == 0) {
+					g_customCursorPath = optarg;
+				} else if (strcmp(opt_name, "cursor-hotspot") == 0) {
+					sscanf(optarg, "%d,%d", &g_customCursorHotspotX, &g_customCursorHotspotY);
+				} else if (strcmp(opt_name, "fade-out-duration") == 0) {
+					g_FadeOutDuration = atoi(optarg);
+				}
+				break;
+			case '?':
+				assert(false); // unreachable
+		}
+	}
+
+	int subCommandArg = -1;
+	if ( optind < argc )
+	{
+		subCommandArg = optind;
+	}
+
+	if ( pipe2( g_nudgePipe, O_CLOEXEC | O_NONBLOCK ) != 0 )
+	{
+		xwm_log.errorf_errno( "steamcompmgr: pipe2 failed" );
+		exit( 1 );
+	}
+
+	const char *pchEnableVkBasalt = getenv( "ENABLE_VKBASALT" );
+	if ( pchEnableVkBasalt != nullptr && pchEnableVkBasalt[0] == '1' )
+	{
+		alwaysComposite = true;
+	}
+
+	currentOutputWidth = g_nOutputWidth;
+	currentOutputHeight = g_nOutputHeight;
+
+	int vblankFD = vblank_init();
+	assert( vblankFD >= 0 );
+
+	init_xwayland_ctx(ctx, wlserver_get_xwayland_server(0));
 
 	std::unique_ptr<MouseCursor> cursor(new MouseCursor(ctx));
 	if (g_customCursorPath)
