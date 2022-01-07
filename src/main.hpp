@@ -28,4 +28,6 @@ extern bool g_bNiceCap;
 extern int g_nOldNice;
 extern int g_nNewNice;
 
+extern int g_nXWaylandCount;
+
 bool BIsNested( void );

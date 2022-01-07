@@ -1,5 +1,6 @@
 #include <X11/Xlib.h>
 
+#include <cstdio>
 #include <thread>
 #include <mutex>
 #include <vector>
@@ -49,6 +50,9 @@ const struct option *gamescope_options = (struct option[]){
 	{ "default-touch-mode", required_argument, nullptr, 0 },
 	{ "generate-drm-mode", required_argument, nullptr, 0 },
 
+	// wlserver options
+	{ "xwayland-count", required_argument, nullptr, 0 },
+
 	// steamcompmgr options
 	{ "cursor", required_argument, nullptr, 0 },
 	{ "cursor-hotspot", required_argument, nullptr, 0 },
@@ -86,6 +90,7 @@ const char usage[] =
 	"  -T, --stats-path               write statistics to path\n"
 	"  -C, --hide-cursor-delay        hide cursor image after delay\n"
 	"  -e, --steam                    enable Steam integration\n"
+	" --xwayland-count                create N xwayland servers\n"
 	"\n"
 	"Nested mode options:\n"
 	"  -o, --nested-unfocused-refresh game refresh rate when unfocused\n"
@@ -132,6 +137,8 @@ bool g_bIsNested = false;
 bool g_bFilterGameWindow = true;
 
 bool g_bBorderlessOutputWindow = false;
+
+int g_nXWaylandCount = 1;
 
 bool g_bNiceCap = false;
 int g_nOldNice = 0;
@@ -255,6 +262,8 @@ int main(int argc, char **argv)
 					g_bUseLayers = false;
 				} else if (strcmp(opt_name, "debug-layers") == 0) {
 					g_bDebugLayers = true;
+				} else if (strcmp(opt_name, "xwayland-count") == 0) {
+					g_nXWaylandCount = atoi( optarg );
 				} else if (strcmp(opt_name, "composite-debug") == 0) {
 					g_bIsCompositeDebug = true;
 				} else if (strcmp(opt_name, "default-touch-mode") == 0) {
@@ -396,6 +405,20 @@ int main(int argc, char **argv)
 	gamescope_xwayland_server_t *base_server = wlserver_get_xwayland_server(0);
 
 	setenv("DISPLAY", base_server->get_nested_display_name(), 1);
+	if (g_nXWaylandCount > 1)
+	{
+		for (int i = 1; i < g_nXWaylandCount; i++)
+		{
+			char env_name[64];
+			snprintf(env_name, sizeof(env_name), "STEAM_GAME_DISPLAY_%d", i - 1);
+			gamescope_xwayland_server_t *server = wlserver_get_xwayland_server(i);
+			setenv(env_name, server->get_nested_display_name(), 1);
+		}
+	}
+	else
+	{
+		setenv("STEAM_GAME_DISPLAY_0", base_server->get_nested_display_name(), 1);
+	}
 	setenv("GAMESCOPE_WAYLAND_DISPLAY", wlserver_get_wl_display_name(), 1);
 
 #if HAVE_PIPEWIRE

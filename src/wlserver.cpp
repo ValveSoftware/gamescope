@@ -779,17 +779,20 @@ bool wlserver_init( void ) {
 
 	wlr_output_create_global( wlserver.wlr.output );
 
-	auto server = std::make_unique<gamescope_xwayland_server_t>(wlserver.display);
+	for (int i = 0; i < g_nXWaylandCount; i++)
+	{
+		auto server = std::make_unique<gamescope_xwayland_server_t>(wlserver.display);
 
-	while (!server->is_xwayland_ready()) {
-		wl_display_flush_clients(wlserver.display);
-		if (wl_event_loop_dispatch(wlserver.event_loop, -1) < 0) {
-			wl_log.errorf("wl_event_loop_dispatch failed\n");
-			return false;
+		while (!server->is_xwayland_ready()) {
+			wl_display_flush_clients(wlserver.display);
+			if (wl_event_loop_dispatch(wlserver.event_loop, -1) < 0) {
+				wl_log.errorf("wl_event_loop_dispatch failed\n");
+				return false;
+			}
 		}
-	}
 
-	wlserver.wlr.xwayland_servers.emplace_back(std::move(server));
+		wlserver.wlr.xwayland_servers.emplace_back(std::move(server));
+	}
 
 	return true;
 }
