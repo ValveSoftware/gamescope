@@ -154,6 +154,8 @@ struct win {
 
 	struct wlserver_surface surface;
 
+	xwayland_ctx_t *ctx;
+
 	std::vector< std::shared_ptr<commit_t> > commit_queue;
 };
 
@@ -2143,18 +2145,10 @@ found:
 	}
 
 	// Pick override and cursor from the same ctx as our primary focus.
+	if (global_focus.currentFocusWindow)
 	{
-		gamescope_xwayland_server_t *server = NULL;
-		for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
-		{
-			if (server->ctx->currentFocusWindow == global_focus.currentFocusWindow)
-			{
-				// Cursor source can change if we have an overlay.
-				global_focus.cursor = server->ctx->cursor.get();
-				global_focus.currentOverrideWindow = server->ctx->currentOverrideWindow;
-				break;
-			}
-		}
+		global_focus.currentOverrideWindow = global_focus.currentFocusWindow->ctx->currentOverrideWindow;
+		global_focus.cursor = global_focus.currentFocusWindow->ctx->cursor.get();
 	}
 
 	// Pick overlay/notifications from root ctx
@@ -2630,6 +2624,7 @@ add_win(xwayland_ctx_t *ctx, Window id, Window prev, unsigned long sequence)
 		return;
 	}
 
+	new_win->ctx = ctx;
 	new_win->damage_sequence = 0;
 	new_win->map_sequence = 0;
 	if (new_win->a.c_class == InputOnly)
