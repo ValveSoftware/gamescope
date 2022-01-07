@@ -19,7 +19,8 @@ cppc = meson.get_compiler('cpp')
 add_project_arguments(cppc.get_supported_arguments([
   '-Wno-unused-parameter',
   '-Wno-missing-field-initializers',
-  '-Wno-c99-designator'
+  '-Wno-c99-designator',
+  '-Wno-invalid-offsetof'
 ]), language: 'cpp')
 
 dep_x11 = dependency('x11')
