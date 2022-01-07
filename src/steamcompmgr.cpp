@@ -1807,7 +1807,7 @@ determine_and_apply_focus(xwayland_ctx_t *ctx, std::vector<win*>& vecGlobalPossi
 	win *w, *focus = NULL, *override_focus = NULL;
 	win *inputFocus = NULL;
 
-	gameFocused = false;
+	bool localGameFocused = false;
 
 	win *prevFocusWindow = ctx->currentFocusWindow;
 	ctx->currentFocusWindow = nullptr;
@@ -1878,13 +1878,13 @@ determine_and_apply_focus(xwayland_ctx_t *ctx, std::vector<win*>& vecGlobalPossi
 			}
 		}
 found:
-		gameFocused = true;
+		localGameFocused = true;
 	}
 	
 	if ( !focus && vecPossibleFocusWindows.size() > 0 )
 	{
 		focus = vecPossibleFocusWindows[ 0 ];
-		gameFocused = focus->appID != 0;
+		localGameFocused = focus->appID != 0;
 	}
 
 	auto resolveTransientOverrides = [&]()
@@ -1912,7 +1912,7 @@ found:
 		}
 	};
 
-	if ( gameFocused && focus )
+	if ( localGameFocused && focus )
 	{
 		// Do some searches through game windows to follow transient links if needed
 		while ( true )
@@ -2068,6 +2068,7 @@ determine_and_apply_focus()
 	global_focus_t previous_focus = global_focus;
 	global_focus = global_focus_t{};
 	global_focus.cursor = root_ctx->cursor.get();
+	gameFocused = false;
 
 	std::vector< unsigned long > focusable_appids;
 	std::vector< unsigned long > focusable_windows;
