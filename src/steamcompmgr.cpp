@@ -175,6 +175,7 @@ struct global_focus_t
 	win				*currentNotificationWindow;
 	win				*currentOverrideWindow;
 	win	  	 		*currentFadeWindow;
+	win	  	 		*currentKeyboardFocusWindow;
 	MouseCursor		*cursor;
 } global_focus;
 
@@ -1987,18 +1988,21 @@ found:
 
 	ctx->currentFocusWindow = focus;
 
-	if ( ctx->currentInputFocusWindow != inputFocus ||
-		ctx->currentInputFocusMode != inputFocus->inputFocusMode )
-	{
-		win *keyboardFocusWin = inputFocus;
+	win *keyboardFocusWin = inputFocus;
 
+	if ( inputFocus && inputFocus->inputFocusMode )
+		keyboardFocusWin = override_focus ? override_focus : focus;
+
+	Window keyboardFocusWindow = keyboardFocusWin ? keyboardFocusWin->id : None;
+
+	if ( ctx->currentInputFocusWindow != inputFocus ||
+		ctx->currentInputFocusMode != inputFocus->inputFocusMode ||
+		ctx->currentKeyboardFocusWindow != keyboardFocusWindow )
+	{
 		if ( debugFocus == true )
 		{
 			xwm_log.debugf( "determine_and_apply_focus inputFocus %lu", inputFocus->id );
 		}
-
-		if ( inputFocus->inputFocusMode )
-			keyboardFocusWin = override_focus ? override_focus : focus;
 
 		if ( !override_focus || override_focus != keyboardFocusWin )
 			XSetInputFocus(ctx->dpy, keyboardFocusWin->id, RevertToNone, CurrentTime);
@@ -2171,19 +2175,19 @@ found:
 	if (global_focus.currentInputFocusWindow)
 		global_focus.currentInputFocusMode = global_focus.currentInputFocusWindow->inputFocusMode;
 
-	win *keyboardFocusWin = global_focus.currentInputFocusWindow;
+	global_focus.currentKeyboardFocusWindow = global_focus.currentInputFocusWindow;
 	if ( global_focus.currentInputFocusMode )
 	{
-		keyboardFocusWin = global_focus.currentOverrideWindow
+		global_focus.currentKeyboardFocusWindow = global_focus.currentOverrideWindow
 			? global_focus.currentOverrideWindow
 			: global_focus.currentFocusWindow;
 	}
 
-	if ( global_focus.currentInputFocusWindow != previous_focus.currentInputFocusWindow ||
-		 global_focus.currentInputFocusMode   != previous_focus.currentInputFocusMode )
+	if ( global_focus.currentInputFocusWindow    != previous_focus.currentInputFocusWindow ||
+		 global_focus.currentKeyboardFocusWindow != previous_focus.currentKeyboardFocusWindow )
 	{
 		if ( (global_focus.currentInputFocusWindow && global_focus.currentInputFocusWindow->surface.wlr != nullptr) ||
-			 (keyboardFocusWin && keyboardFocusWin->surface.wlr != nullptr) )
+			 (global_focus.currentKeyboardFocusWindow && global_focus.currentKeyboardFocusWindow->surface.wlr != nullptr) )
 		{
 			wlserver_lock();
 			if ( global_focus.currentInputFocusWindow && global_focus.currentInputFocusWindow->surface.wlr != nullptr )
@@ -2195,8 +2199,8 @@ found:
 				wlserver_mousefocus( global_focus.currentInputFocusWindow->surface.wlr, global_focus.cursor->x(), global_focus.cursor->y() );
 			}
 
-			if ( keyboardFocusWin && keyboardFocusWin->surface.wlr != nullptr )
-				wlserver_keyboardfocus( keyboardFocusWin->surface.wlr );
+			if ( global_focus.currentKeyboardFocusWindow && global_focus.currentKeyboardFocusWindow->surface.wlr != nullptr )
+				wlserver_keyboardfocus( global_focus.currentKeyboardFocusWindow->surface.wlr );
 			wlserver_unlock();
 		}
 	}
@@ -2230,9 +2234,9 @@ found:
 		focused_mouse_display = global_focus.currentInputFocusWindow->ctx->xwayland_server->get_nested_display_name();
 	}
 
-	if ( keyboardFocusWin )
+	if ( global_focus.currentKeyboardFocusWindow )
 	{
-		focused_keyboard_display = keyboardFocusWin->ctx->xwayland_server->get_nested_display_name();
+		focused_keyboard_display = global_focus.currentKeyboardFocusWindow->ctx->xwayland_server->get_nested_display_name();
 	}
 
 	XChangeProperty( root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeFocusedAppAtom, XA_CARDINAL, 32, PropModeReplace,
