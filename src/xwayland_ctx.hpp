@@ -1,5 +1,9 @@
 #pragma once
 
+#include <mutex>
+#include <memory>
+#include <vector>
+
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <X11/Xatom.h>
@@ -47,6 +51,9 @@ struct xwayland_ctx_t
 	Window			focusControlWindow;
 
 	std::unique_ptr<MouseCursor> cursor;
+
+	std::mutex listCommitsDoneLock;
+	std::vector< uint64_t > listCommitsDone;
 
 	struct {
 		Atom steamAtom;

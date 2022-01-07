@@ -116,9 +116,6 @@ struct commit_t
 	bool done = false;
 };
 
-std::mutex listCommitsDoneLock;
-std::vector< uint64_t > listCommitsDone;
-
 struct win {
 	struct win		*next;
 	Window		id;
@@ -334,9 +331,16 @@ private:
 	int count = 0;
 };
 
+struct WaitListEntry_t
+{
+	xwayland_ctx_t *ctx;
+	int fence;
+	uint64_t commitID;
+};
+
 sem waitListSem;
 std::mutex waitListLock;
-std::vector< std::pair< int, uint64_t > > waitList;
+std::vector< WaitListEntry_t > waitList;
 
 bool imageWaitThreadRun = true;
 
@@ -353,8 +357,7 @@ wait:
 	}
 
 	bool bFound = false;
-	int fence;
-	uint64_t commitID;
+	WaitListEntry_t entry;
 
 retry:
 	{
@@ -365,29 +368,27 @@ retry:
 			goto wait;
 		}
 
-		fence = waitList[ 0 ].first;
-		commitID = waitList[ 0 ].second;
+		entry = waitList[ 0 ];
 		bFound = true;
 		waitList.erase( waitList.begin() );
 	}
 
 	assert( bFound == true );
 
-	gpuvis_trace_begin_ctx_printf( commitID, "wait fence" );
-	struct pollfd fd = { fence, POLLOUT, 0 };
+	gpuvis_trace_begin_ctx_printf( entry.commitID, "wait fence" );
+	struct pollfd fd = { entry.fence, POLLOUT, 0 };
 	int ret = poll( &fd, 1, 100 );
 	if ( ret < 0 )
 	{
 		xwm_log.errorf_errno( "failed to poll fence FD" );
 	}
-	gpuvis_trace_end_ctx_printf( commitID, "wait fence" );
+	gpuvis_trace_end_ctx_printf( entry.commitID, "wait fence" );
 
-	close( fence );
+	close( entry.fence );
 
 	{
-		std::unique_lock< std::mutex > lock( listCommitsDoneLock );
-
-		listCommitsDone.push_back( commitID );
+		std::unique_lock< std::mutex > lock( entry.ctx->listCommitsDoneLock );
+		entry.ctx->listCommitsDone.push_back( entry.commitID );
 	}
 
 	nudge_steamcompmgr();
@@ -3451,10 +3452,10 @@ register_systray(xwayland_ctx_t *ctx)
 
 void handle_done_commits( xwayland_ctx_t *ctx )
 {
-	std::lock_guard<std::mutex> lock( listCommitsDoneLock );
+	std::lock_guard<std::mutex> lock( ctx->listCommitsDoneLock );
 
 	// very fast loop yes
-	for ( uint32_t i = 0; i < listCommitsDone.size(); i++ )
+	for ( uint32_t i = 0; i < ctx->listCommitsDone.size(); i++ )
 	{
 		bool bFoundWindow = false;
 		for ( win *w = ctx->list; w; w = w->next )
@@ -3462,7 +3463,7 @@ void handle_done_commits( xwayland_ctx_t *ctx )
 			uint32_t j;
 			for ( j = 0; j < w->commit_queue.size(); j++ )
 			{
-				if ( w->commit_queue[ j ]->commitID == listCommitsDone[ i ] )
+				if ( w->commit_queue[ j ]->commitID == ctx->listCommitsDone[ i ] )
 				{
 					gpuvis_trace_printf( "commit %lu done", w->commit_queue[ j ]->commitID );
 					w->commit_queue[ j ]->done = true;
@@ -3528,7 +3529,7 @@ void handle_done_commits( xwayland_ctx_t *ctx )
 		}
 	}
 
-	listCommitsDone.clear();
+	ctx->listCommitsDone.clear();
 }
 
 void nudge_steamcompmgr( void )
@@ -3583,7 +3584,13 @@ void check_new_wayland_res(xwayland_ctx_t *ctx)
 			gpuvis_trace_printf( "pushing wait for commit %lu win %lx", newCommit->commitID, w->id );
 			{
 				std::unique_lock< std::mutex > lock( waitListLock );
-				waitList.push_back( std::make_pair( fence, newCommit->commitID ) );
+				WaitListEntry_t entry
+				{
+					.ctx = ctx,
+					.fence = fence,
+					.commitID = newCommit->commitID,
+				};
+				waitList.push_back( entry );
 			}
 
 			// Wake up commit wait thread if chilling
