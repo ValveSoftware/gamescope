@@ -859,7 +859,7 @@ void wlserver_mousefocus( struct wlr_surface *wlrsurface, int x /* = 0 */, int y
 void wlserver_mousemotion( int x, int y, uint32_t time )
 {
 	// TODO: Pick the xwayland_server with active focus
-	auto server = wlserver_get_xwayland_server(0);
+	auto server = steamcompmgr_get_focused_server();
 	if ( server != NULL )
 	{
 		XTestFakeRelativeMotionEvent( server->get_xdisplay(), x, y, CurrentTime );

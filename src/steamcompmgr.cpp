@@ -4486,3 +4486,18 @@ steamcompmgr_main(int argc, char **argv)
 
 	finish_drm( &g_DRM );
 }
+
+gamescope_xwayland_server_t *steamcompmgr_get_focused_server()
+{
+	if (global_focus.currentInputFocusWindow != nullptr)
+	{
+		gamescope_xwayland_server_t *server = NULL;
+		for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
+		{
+			if (server->ctx->currentInputFocusWindow == global_focus.currentInputFocusWindow)
+				return server;
+		}
+	}
+
+	return wlserver_get_xwayland_server(0);
+}

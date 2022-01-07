@@ -32,6 +32,7 @@ struct ResListEntry_t {
 struct _XDisplay;
 struct win;
 struct xwayland_ctx_t;
+class gamescope_xwayland_server_t;
 
 class MouseCursor
 {
@@ -100,3 +101,4 @@ void nudge_steamcompmgr( void );
 void take_screenshot( void );
 
 extern void mangoapp_update();
+gamescope_xwayland_server_t *steamcompmgr_get_focused_server();
