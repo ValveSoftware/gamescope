@@ -73,6 +73,31 @@ static void wlserver_surface_set_wlr( struct wlserver_surface *surf, struct wlr_
 
 extern const struct wlr_surface_role xwayland_surface_role;
 
+std::vector<ResListEntry_t> gamescope_xwayland_server_t::retrieve_commits()
+{
+	std::vector<ResListEntry_t> commits;
+	{
+		std::lock_guard<std::mutex> lock( wayland_commit_lock );
+		commits = std::move(wayland_commit_queue);
+	}
+	return commits;
+}
+
+void gamescope_xwayland_server_t::wayland_commit(struct wlr_surface *surf, struct wlr_buffer *buf)
+{
+	{
+		std::lock_guard<std::mutex> lock( wayland_commit_lock );
+
+		ResListEntry_t newEntry = {
+			.surf = surf,
+			.buf = buf,
+		};
+		wayland_commit_queue.push_back( newEntry );
+	}
+
+	nudge_steamcompmgr();
+}
+
 void xwayland_surface_role_commit(struct wlr_surface *wlr_surface) {
 	assert(wlr_surface->role == &xwayland_surface_role);
 
@@ -86,7 +111,9 @@ void xwayland_surface_role_commit(struct wlr_surface *wlr_surface) {
 
 	gpuvis_trace_printf( "xwayland_surface_role_commit wlr_surface %p", wlr_surface );
 
-	wayland_commit( wlr_surface, buf );
+	gamescope_xwayland_server_t *server = (gamescope_xwayland_server_t *)wlr_surface->data;
+	assert(server);
+	server->wayland_commit( wlr_surface, buf );
 }
 
 static void xwayland_surface_role_precommit(struct wlr_surface *wlr_surface) {
@@ -964,7 +991,10 @@ void gamescope_xwayland_server_t::set_wl_id( struct wlserver_surface *surf, long
 	}
 
 	if ( wlr_surf != nullptr )
+	{
+		wlr_surf->data = reinterpret_cast<void*>(this);
 		wlserver_surface_set_wlr( surf, wlr_surf );
+	}
 }
 
 bool gamescope_xwayland_server_t::is_xwayland_ready() const

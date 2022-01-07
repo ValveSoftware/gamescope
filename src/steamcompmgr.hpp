@@ -24,11 +24,6 @@ void steamcompmgr_main(int argc, char **argv);
 
 #include <X11/extensions/Xfixes.h>
 
-struct ResListEntry_t {
-	struct wlr_surface *surf;
-	struct wlr_buffer *buf;
-};
-
 struct _XDisplay;
 struct win;
 struct xwayland_ctx_t;
@@ -81,9 +76,6 @@ private:
 
 	xwayland_ctx_t *m_ctx;
 };
-
-extern std::mutex wayland_commit_lock;
-extern std::vector<ResListEntry_t> wayland_commit_queue;
 
 extern std::vector< wlr_surface * > wayland_surfaces_deleted;
 

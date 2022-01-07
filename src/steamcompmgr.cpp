@@ -269,9 +269,6 @@ bool			steamMode = false;
 static bool		alwaysComposite = false;
 static bool		useXRes = true;
 
-std::mutex wayland_commit_lock;
-std::vector<ResListEntry_t> wayland_commit_queue;
-
 struct wlr_buffer_map_entry {
 	struct wl_listener listener;
 	struct wlr_buffer *buf;
@@ -3551,12 +3548,7 @@ void check_new_wayland_res(xwayland_ctx_t *ctx)
 	// When importing buffer, we'll potentially need to perform operations with
 	// a wlserver lock (e.g. wlr_buffer_lock). We can't do this with a
 	// wayland_commit_queue lock because that causes deadlocks.
-	std::vector<ResListEntry_t> tmp_queue;
-	{
-		std::lock_guard<std::mutex> lock( wayland_commit_lock );
-		tmp_queue = std::move(wayland_commit_queue);
-		wayland_commit_queue = {};
-	}
+	std::vector<ResListEntry_t> tmp_queue = ctx->xwayland_server->retrieve_commits();
 
 	for ( uint32_t i = 0; i < tmp_queue.size(); i++ )
 	{

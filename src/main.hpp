@@ -7,8 +7,6 @@
 extern const char *gamescope_optstring;
 extern const struct option *gamescope_options;
 
-void wayland_commit(struct wlr_surface *surf, struct wlr_buffer *buf);
-
 extern std::atomic< bool > g_bRun;
 
 extern int g_nNestedWidth;

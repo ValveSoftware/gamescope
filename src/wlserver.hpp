@@ -6,12 +6,18 @@
 #include <atomic>
 #include <vector>
 #include <memory>
+#include <mutex>
 
 #define WLSERVER_BUTTON_COUNT 4
 #define WLSERVER_TOUCH_COUNT 11 // Ten fingers + nose ought to be enough for anyone
 
 struct _XDisplay;
 struct xwayland_ctx_t;
+
+struct ResListEntry_t {
+	struct wlr_surface *surf;
+	struct wlr_buffer *buf;
+};
 
 class gamescope_xwayland_server_t
 {
@@ -31,12 +37,19 @@ public:
 
 	std::unique_ptr<xwayland_ctx_t> ctx;
 
+	void wayland_commit(struct wlr_surface *surf, struct wlr_buffer *buf);
+
+	std::vector<ResListEntry_t> retrieve_commits();
+
 private:
 	struct wlr_xwayland_server *xwayland_server = NULL;
 	struct wl_listener xwayland_ready_listener = { .notify = xwayland_ready_callback };
 
 	bool xwayland_ready = false;
 	_XDisplay *dpy = NULL;
+
+	std::mutex wayland_commit_lock;
+	std::vector<ResListEntry_t> wayland_commit_queue;
 };
 
 struct wlserver_t {
