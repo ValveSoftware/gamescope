@@ -2958,13 +2958,13 @@ handle_wl_surface_id(xwayland_ctx_t *ctx, win *w, long surfaceID)
 
 	// If we already focused on our side and are handling this late,
 	// let wayland know now.
-	if ( w == ctx->currentInputFocusWindow )
+	if ( w == global_focus.currentInputFocusWindow )
 		wlserver_mousefocus( surface );
 
-	win *keyboardFocusWindow = ctx->currentInputFocusWindow;
+	win *keyboardFocusWindow = global_focus.currentInputFocusWindow;
 
 	if ( keyboardFocusWindow && keyboardFocusWindow->inputFocusMode )
-		keyboardFocusWindow = ctx->currentFocusWindow;
+		keyboardFocusWindow = global_focus.currentFocusWindow;
 
 	if ( w == keyboardFocusWindow )
 		wlserver_keyboardfocus( surface );
