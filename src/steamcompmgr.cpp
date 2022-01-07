@@ -2168,17 +2168,20 @@ found:
 	else
 		global_focus.currentInputFocusWindow = global_focus.currentFocusWindow;
 
+	if (global_focus.currentInputFocusWindow)
+		global_focus.currentInputFocusMode = global_focus.currentInputFocusWindow->inputFocusMode;
+
+	win *keyboardFocusWin = global_focus.currentInputFocusWindow;
+	if ( global_focus.currentInputFocusMode )
+	{
+		keyboardFocusWin = global_focus.currentOverrideWindow
+			? global_focus.currentOverrideWindow
+			: global_focus.currentFocusWindow;
+	}
+
 	if ( global_focus.currentInputFocusWindow != previous_focus.currentInputFocusWindow ||
 		 global_focus.currentInputFocusMode   != previous_focus.currentInputFocusMode )
 	{
-		win *keyboardFocusWin = global_focus.currentInputFocusWindow;
-		if ( global_focus.currentInputFocusWindow && global_focus.currentInputFocusWindow->inputFocusMode )
-		{
-			keyboardFocusWin = global_focus.currentOverrideWindow
-				? global_focus.currentOverrideWindow
-				: global_focus.currentFocusWindow;
-		}
-
 		if ( (global_focus.currentInputFocusWindow && global_focus.currentInputFocusWindow->surface.wlr != nullptr) ||
 			 (keyboardFocusWin && keyboardFocusWin->surface.wlr != nullptr) )
 		{
@@ -2211,11 +2214,25 @@ found:
 	// Backchannel to Steam
 	unsigned long focusedWindow = 0;
 	unsigned long focusedAppId = 0;
+	const char *focused_display = root_ctx->xwayland_server->get_nested_display_name();
+	const char *focused_keyboard_display = root_ctx->xwayland_server->get_nested_display_name();
+	const char *focused_mouse_display = root_ctx->xwayland_server->get_nested_display_name();
 
 	if ( global_focus.currentFocusWindow )
 	{
 		focusedWindow = global_focus.currentFocusWindow->id;
 		focusedAppId = global_focus.currentInputFocusWindow->appID;
+		focused_display = global_focus.currentFocusWindow->ctx->xwayland_server->get_nested_display_name();
+	}
+
+	if ( global_focus.currentInputFocusWindow )
+	{
+		focused_mouse_display = global_focus.currentInputFocusWindow->ctx->xwayland_server->get_nested_display_name();
+	}
+
+	if ( keyboardFocusWin )
+	{
+		focused_keyboard_display = keyboardFocusWin->ctx->xwayland_server->get_nested_display_name();
 	}
 
 	XChangeProperty( root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeFocusedAppAtom, XA_CARDINAL, 32, PropModeReplace,
@@ -2223,6 +2240,15 @@ found:
 
 	XChangeProperty( root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeFocusedWindowAtom, XA_CARDINAL, 32, PropModeReplace,
 					 (unsigned char *)&focusedWindow, focusedWindow != 0 ? 1 : 0 );
+
+	XChangeProperty( root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeFocusDisplay, XA_CARDINAL, 32, PropModeReplace,
+					 (unsigned char *)focused_display, strlen(focused_display) + 1 );
+
+	XChangeProperty( root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeMouseFocusDisplay, XA_CARDINAL, 32, PropModeReplace,
+					 (unsigned char *)focused_mouse_display, strlen(focused_mouse_display) + 1 );
+
+	XChangeProperty( root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeKeyboardFocusDisplay, XA_CARDINAL, 32, PropModeReplace,
+					 (unsigned char *)focused_keyboard_display, strlen(focused_keyboard_display) + 1 );
 
 	// Sort out fading.
 	if (previous_focus.currentFocusWindow != global_focus.currentFocusWindow)
@@ -4106,6 +4132,10 @@ void init_xwayland_ctx(gamescope_xwayland_server_t *xwayland_server)
 	ctx->atoms.WMChangeStateAtom = XInternAtom(ctx->dpy, "WM_CHANGE_STATE", false);
 	ctx->atoms.gamescopeInputCounterAtom = XInternAtom(ctx->dpy, "GAMESCOPE_INPUT_COUNTER", false);
 	ctx->atoms.gamescopeScreenShotAtom = XInternAtom( ctx->dpy, "GAMESCOPECTRL_REQUEST_SCREENSHOT", false );
+
+	ctx->atoms.gamescopeFocusDisplay = XInternAtom(ctx->dpy, "GAMESCOPE_FOCUS_DISPLAY", false);
+	ctx->atoms.gamescopeMouseFocusDisplay = XInternAtom(ctx->dpy, "GAMESCOPE_MOUSE_FOCUS_DISPLAY", false);
+	ctx->atoms.gamescopeKeyboardFocusDisplay = XInternAtom( ctx->dpy, "GAMESCOPE_KEYBOARD_FOCUS_DISPLAY", false );
 
 	ctx->root_width = DisplayWidth(ctx->dpy, ctx->scr);
 	ctx->root_height = DisplayHeight(ctx->dpy, ctx->scr);
