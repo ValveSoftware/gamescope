@@ -5,9 +5,7 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <string.h>
-#include <poll.h>
-
-#include <map>
+#include <poll.h>	
 
 #include <linux/input-event-codes.h>
 
@@ -61,8 +59,6 @@ struct wlserver_content_override {
 	uint32_t x11_window;
 	struct wl_listener surface_destroy_listener;
 };
-
-static std::map<uint32_t, struct wlserver_content_override *> content_overrides;
 
 enum wlserver_touch_click_mode g_nDefaultTouchClickMode = WLSERVER_TOUCH_CLICK_LEFT;
 enum wlserver_touch_click_mode g_nTouchClickMode = g_nDefaultTouchClickMode;
@@ -490,7 +486,7 @@ static void wlserver_new_surface(struct wl_listener *l, void *data)
 
 static struct wl_listener new_surface_listener = { .notify = wlserver_new_surface };
 
-static void destroy_content_override( struct wlserver_content_override *co )
+void gamescope_xwayland_server_t::destroy_content_override( struct wlserver_content_override *co )
 {
 	wl_list_remove( &co->surface_destroy_listener.link );
 	content_overrides.erase( co->x11_window );
@@ -500,10 +496,13 @@ static void destroy_content_override( struct wlserver_content_override *co )
 static void content_override_handle_surface_destroy( struct wl_listener *listener, void *data )
 {
 	struct wlserver_content_override *co = wl_container_of( listener, co, surface_destroy_listener );
-	destroy_content_override( co );
+	assert(co->surface);
+	gamescope_xwayland_server_t *server = (gamescope_xwayland_server_t *)co->surface->data;
+	assert(server);
+	server->destroy_content_override( co );
 }
 
-static void gamescope_xwayland_handle_override_window_content( struct wl_client *client, struct wl_resource *resource, struct wl_resource *surface_resource, uint32_t x11_window )
+void gamescope_xwayland_server_t::handle_override_window_content( struct wl_client *client, struct wl_resource *resource, struct wl_resource *surface_resource, uint32_t x11_window )
 {
 	struct wlr_surface *surface = wlr_surface_from_resource( surface_resource );
 
@@ -517,6 +516,14 @@ static void gamescope_xwayland_handle_override_window_content( struct wl_client 
 	co->surface_destroy_listener.notify = content_override_handle_surface_destroy;
 	wl_signal_add( &surface->events.destroy, &co->surface_destroy_listener );
 	content_overrides[ x11_window ] = co;
+}
+
+static void gamescope_xwayland_handle_override_window_content( struct wl_client *client, struct wl_resource *resource, struct wl_resource *surface_resource, uint32_t x11_window )
+{
+	struct wlr_surface *surface = wlr_surface_from_resource( surface_resource );
+	gamescope_xwayland_server_t *server = (gamescope_xwayland_server_t *)surface->data;
+	assert(server);
+	server->handle_override_window_content(client, resource, surface_resource, x11_window);
 }
 
 static void gamescope_xwayland_handle_destroy( struct wl_client *client, struct wl_resource *resource )

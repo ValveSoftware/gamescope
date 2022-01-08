@@ -7,6 +7,7 @@
 #include <vector>
 #include <memory>
 #include <mutex>
+#include <map>
 
 #define WLSERVER_BUTTON_COUNT 4
 #define WLSERVER_TOUCH_COUNT 11 // Ten fingers + nose ought to be enough for anyone
@@ -18,6 +19,8 @@ struct ResListEntry_t {
 	struct wlr_surface *surf;
 	struct wlr_buffer *buf;
 };
+
+struct wlserver_content_override;
 
 class gamescope_xwayland_server_t
 {
@@ -41,9 +44,14 @@ public:
 
 	std::vector<ResListEntry_t> retrieve_commits();
 
+	void handle_override_window_content( struct wl_client *client, struct wl_resource *resource, struct wl_resource *surface_resource, uint32_t x11_window );
+	void destroy_content_override(struct wlserver_content_override *co);
+
 private:
 	struct wlr_xwayland_server *xwayland_server = NULL;
 	struct wl_listener xwayland_ready_listener = { .notify = xwayland_ready_callback };
+
+	std::map<uint32_t, wlserver_content_override *> content_overrides;
 
 	bool xwayland_ready = false;
 	_XDisplay *dpy = NULL;
