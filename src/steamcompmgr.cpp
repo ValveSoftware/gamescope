@@ -2191,6 +2191,9 @@ found:
 	{
 		global_focus.overrideWindow = global_focus.focusWindow->ctx->currentOverrideWindow;
 		global_focus.cursor = global_focus.focusWindow->ctx->cursor.get();
+		// Pick the focus window from the ctx to avoid needing to resolve transient overrides again.
+		// This assumption only holds true if we have 1 app per xwayland in multi-xwayland mode.
+		global_focus.focusWindow = global_focus.focusWindow->ctx->currentFocusWindow;
 	}
 
 	// Pick overlay/notifications from root ctx
