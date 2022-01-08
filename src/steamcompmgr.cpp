@@ -1862,9 +1862,12 @@ determine_and_apply_focus(xwayland_ctx_t *ctx, std::vector<win*>& vecGlobalPossi
 		}
 	}
 
+	std::stable_sort( vecPossibleFocusWindows.begin(), vecPossibleFocusWindows.end(),
+					  is_focus_priority_greater );
+
 	vecGlobalPossibleFocusWindows.insert(vecGlobalPossibleFocusWindows.end(), vecPossibleFocusWindows.begin(), vecPossibleFocusWindows.end());
 
-	if ( ctx->focusControlWindow != None )
+	if ( ctx->focusControlWindow != None || ( g_nXWaylandCount == 1 && vecFocuscontrolAppIDs.size() > 0 ) )
 	{
 		if ( ctx->focusControlWindow != None )
 		{
@@ -1877,6 +1880,22 @@ determine_and_apply_focus(xwayland_ctx_t *ctx, std::vector<win*>& vecGlobalPossi
 				}
 			}
 		}
+
+		if (g_nXWaylandCount == 1)
+		{
+			for ( auto focusable_appid : vecFocuscontrolAppIDs )
+			{
+				for ( win *focusable_window : vecPossibleFocusWindows )
+				{
+					if ( focusable_window->appID == focusable_appid )
+					{
+						focus = focusable_window;
+						goto found;
+					}
+				}
+			}
+		}
+
 found:
 		localGameFocused = true;
 	}
@@ -1939,7 +1958,17 @@ found:
 
 	if ( !override_focus && focus )
 	{
-		if ( vecPossibleFocusWindows.size() > 0 )
+		if (g_nXWaylandCount == 1 && vecFocuscontrolAppIDs.size() > 0)
+		{
+			for ( win *override : vecPossibleFocusWindows )
+			{
+				if ( is_good_override_candidate(override, focus) && override->appID == focus->appID ) {
+					override_focus = override;
+					break;
+				}
+			}
+		}
+		else if ( vecPossibleFocusWindows.size() > 0 )
 		{
 			for ( win *override : vecPossibleFocusWindows )
 			{
