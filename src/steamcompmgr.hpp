@@ -98,4 +98,4 @@ extern uint32_t inputCounter;
 void nudge_steamcompmgr( void );
 void take_screenshot( void );
 
-extern void frame_timing();
+extern void mangoapp_update();

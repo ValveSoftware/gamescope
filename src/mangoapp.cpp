@@ -29,7 +29,7 @@ void init_mangoapp(){
     inited = true;
 }
 
-void frame_timing(){
+void mangoapp_update(){
     if (!inited)
         init_mangoapp();
 

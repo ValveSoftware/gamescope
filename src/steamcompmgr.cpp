@@ -3508,7 +3508,10 @@ void handle_done_commits( void )
 					// If this is the main plane, repaint
 					if ( w->id == currentFocusWindow && !w->isSteamStreamingClient )
 					{
-						frame_timing();
+						// TODO: Check for a mangoapp atom in future.
+						// (Needs the win* refactor from the multiple xwayland branch)
+						if (currentExternalOverlayWindow != None)
+							mangoapp_update();
 						g_HeldCommits[ HELD_COMMIT_BASE ] = w->commit_queue[ j ];
 						hasRepaint = true;
 					}
