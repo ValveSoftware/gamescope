@@ -3508,14 +3508,15 @@ void handle_done_commits( void )
 					// If this is the main plane, repaint
 					if ( w->id == currentFocusWindow && !w->isSteamStreamingClient )
 					{
-						frame_timing();
+						if (currentExternalOverlayWindow != None)
+							mangoapp_update();
+
 						g_HeldCommits[ HELD_COMMIT_BASE ] = w->commit_queue[ j ];
 						hasRepaint = true;
 					}
 
 					if ( w->id == currentOverrideWindow )
 					{
-						frame_timing();
 						hasRepaint = true;
 					}
 

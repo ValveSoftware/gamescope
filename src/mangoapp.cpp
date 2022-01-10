@@ -4,9 +4,6 @@
 #include <cstring>
 
 #include "steamcompmgr.hpp"
-static bool inited = false;
-static int msgid = 0;
-uint64_t now, last_frametime = 0;
 
 struct mangoapp_msg_header {
     long msg_type;  // Message queue ID, never change
@@ -18,8 +15,11 @@ struct mangoapp_msg_v1 {
     
     uint32_t pid;
     uint64_t frametime_ns;
-    // WARNING: Always ADD fields, never remove or repurpose fields
+    // WARNING: Always ADD fields, never remove or re-purpose fields
 } __attribute__((packed)) mangoapp_msg_v1;
+
+static bool inited = false;
+static int msgid;
 
 void init_mangoapp(){
     int key = ftok("mangoapp", 65);
@@ -29,7 +29,8 @@ void init_mangoapp(){
     inited = true;
 }
 
-void frame_timing(){
+void mangoapp_update() {
+    static uint64_t now, last_frametime = 0;
     if (!inited)
         init_mangoapp();
 
