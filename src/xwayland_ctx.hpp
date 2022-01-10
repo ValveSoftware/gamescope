@@ -19,6 +19,17 @@ struct ignore;
 struct win;
 class MouseCursor;
 
+struct focus_t
+{
+	win				*focusWindow;
+	win				*inputFocusWindow;
+	uint32_t		inputFocusMode;
+	win				*overlayWindow;
+	win				*externalOverlayWindow;
+	win				*notificationWindow;
+	win				*overrideWindow;
+};
+
 struct xwayland_ctx_t
 {
 	gamescope_xwayland_server_t *xwayland_server;
@@ -39,15 +50,8 @@ struct xwayland_ctx_t
 	int				composite_opcode;
 	Window			ourWindow;
 
-	win				*currentFocusWindow;
-	win				*currentInputFocusWindow;
-	uint32_t		currentInputFocusMode;
+	focus_t 		focus;
 	Window 			currentKeyboardFocusWindow;
-	win				*currentOverlayWindow;
-	win				*currentExternalOverlayWindow;
-	win				*currentNotificationWindow;
-	win				*currentOverrideWindow;
-
 	Window			focusControlWindow;
 
 	std::unique_ptr<MouseCursor> cursor;

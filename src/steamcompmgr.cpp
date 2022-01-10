@@ -165,17 +165,10 @@ Window x11_win(win *w) {
 	return w->id;
 }
 
-struct global_focus_t
+struct global_focus_t : public focus_t
 {
-	win				*focusWindow;
-	win				*inputFocusWindow;
-	uint32_t		inputFocusMode;
-	win				*overlayWindow;
-	win				*externalOverlayWindow;
-	win				*notificationWindow;
-	win				*overrideWindow;
-	win	  	 		*fadeWindow;
 	win	  	 		*keyboardFocusWindow;
+	win	  	 		*fadeWindow;
 	MouseCursor		*cursor;
 } global_focus;
 
@@ -185,6 +178,7 @@ uint32_t		currentOutputWidth, currentOutputHeight;
 bool hasFocusWindow;
 
 std::vector< uint32_t > vecFocuscontrolAppIDs;
+std::vector< uint32_t > vecFocuscontrolAppIDsEmpty;
 
 bool			gameFocused;
 
@@ -769,7 +763,7 @@ void MouseCursor::checkSuspension()
 	if (!m_hideForMovement && suspended) {
 		m_hideForMovement = true;
 
-		win *window = m_ctx->currentInputFocusWindow;
+		win *window = m_ctx->focus.inputFocusWindow;
 
 		// Rearm warp count
 		if (window) {
@@ -786,7 +780,7 @@ void MouseCursor::checkSuspension()
 
 void MouseCursor::warp(int x, int y)
 {
-	XWarpPointer(m_ctx->dpy, None, x11_win(m_ctx->currentInputFocusWindow), 0, 0, 0, 0, x, y);
+	XWarpPointer(m_ctx->dpy, None, x11_win(m_ctx->focus.inputFocusWindow), 0, 0, 0, 0, x, y);
 }
 
 void MouseCursor::resetPosition()
@@ -877,7 +871,7 @@ error_image:
 void MouseCursor::constrainPosition()
 {
 	int i;
-	win *window = m_ctx->currentInputFocusWindow;
+	win *window = m_ctx->focus.inputFocusWindow;
 
 	// If we had barriers before, get rid of them.
 	for (i = 0; i < 4; i++) {
@@ -920,7 +914,7 @@ void MouseCursor::move(int x, int y)
 	m_x = x;
 	m_y = y;
 
-	win *window = m_ctx->currentInputFocusWindow;
+	win *window = m_ctx->focus.inputFocusWindow;
 
 	if (window) {
 		// If mouse moved and we're on the hook for showing the cursor, repaint
@@ -1801,79 +1795,18 @@ static bool is_good_override_candidate( win *override, win* focus )
 	return win_is_override_redirect(override) && override != focus && override->a.x > 0 && override->a.y > 0;
 } 
 
-static void
-determine_and_apply_focus(xwayland_ctx_t *ctx, std::vector<win*>& vecGlobalPossibleFocusWindows)
+static bool
+pick_primary_focus_and_override(focus_t *out, Window focusControlWindow, const std::vector<win*>& vecPossibleFocusWindows, const std::vector<uint32_t>& ctxFocusControlAppIDs)
 {
-	win *w, *focus = NULL, *override_focus = NULL;
-	win *inputFocus = NULL;
-
 	bool localGameFocused = false;
-
-	win *prevFocusWindow = ctx->currentFocusWindow;
-	ctx->currentFocusWindow = nullptr;
-	ctx->currentOverlayWindow = nullptr;
-	ctx->currentExternalOverlayWindow = nullptr;
-	ctx->currentNotificationWindow = nullptr;
-	ctx->currentOverrideWindow = nullptr;
-
-	unsigned int maxOpacity = 0;
-	unsigned int maxOpacityExternal = 0;
-	std::vector< win* > vecPossibleFocusWindows;
-	for (w = ctx->list; w; w = w->next)
+	win *focus = NULL, *override_focus = NULL;
+	if ( focusControlWindow != None || ctxFocusControlAppIDs.size() > 0 )
 	{
-		// Always skip system tray icons
-		if ( w->isSysTrayIcon )
-		{
-			continue;
-		}
-
-		if ( w->a.map_state == IsViewable && w->a.c_class == InputOutput && w->isOverlay == false &&
-			w->isExternalOverlay == false && ( win_has_game_id( w ) || w->isSteam || w->isSteamStreamingClient ) &&
-			 (w->opacity > TRANSLUCENT || w->isSteamStreamingClient == true ) )
-		{
-			vecPossibleFocusWindows.push_back( w );
-		}
-
-		if (w->isOverlay)
-		{
-			if (w->a.width > 1200 && w->opacity >= maxOpacity)
-			{
-				ctx->currentOverlayWindow = w;
-				maxOpacity = w->opacity;
-			}
-			else
-			{
-				ctx->currentNotificationWindow = w;
-			}
-		}
-
-		if (w->isExternalOverlay)
-		{
-			if (w->opacity >= maxOpacityExternal)
-			{
-				ctx->currentExternalOverlayWindow = w;
-				maxOpacityExternal = w->opacity;
-			}
-		}
-
-		if ( w->isOverlay && w->inputFocusMode )
-		{
-			inputFocus = w;
-		}
-	}
-
-	std::stable_sort( vecPossibleFocusWindows.begin(), vecPossibleFocusWindows.end(),
-					  is_focus_priority_greater );
-
-	vecGlobalPossibleFocusWindows.insert(vecGlobalPossibleFocusWindows.end(), vecPossibleFocusWindows.begin(), vecPossibleFocusWindows.end());
-
-	if ( ctx->focusControlWindow != None || ( g_nXWaylandCount == 1 && vecFocuscontrolAppIDs.size() > 0 ) )
-	{
-		if ( ctx->focusControlWindow != None )
+		if ( focusControlWindow != None )
 		{
 			for ( win *focusable_window : vecPossibleFocusWindows )
 			{
-				if ( focusable_window->id == ctx->focusControlWindow )
+				if ( focusable_window->id == focusControlWindow )
 				{
 					focus = focusable_window;
 					goto found;
@@ -1881,26 +1814,21 @@ determine_and_apply_focus(xwayland_ctx_t *ctx, std::vector<win*>& vecGlobalPossi
 			}
 		}
 
-		if (g_nXWaylandCount == 1)
+		for ( auto focusable_appid : ctxFocusControlAppIDs )
 		{
-			for ( auto focusable_appid : vecFocuscontrolAppIDs )
+			for ( win *focusable_window : vecPossibleFocusWindows )
 			{
-				for ( win *focusable_window : vecPossibleFocusWindows )
+				if ( focusable_window->appID == focusable_appid )
 				{
-					if ( focusable_window->appID == focusable_appid )
-					{
-						focus = focusable_window;
-						goto found;
-					}
+					focus = focusable_window;
+					goto found;
 				}
 			}
 		}
-
 found:
 		localGameFocused = true;
 	}
-	
-	if ( !focus && vecPossibleFocusWindows.size() > 0 )
+	else if ( vecPossibleFocusWindows.size() > 0 )
 	{
 		focus = vecPossibleFocusWindows[ 0 ];
 		localGameFocused = focus->appID != 0;
@@ -1958,7 +1886,7 @@ found:
 
 	if ( !override_focus && focus )
 	{
-		if (g_nXWaylandCount == 1 && vecFocuscontrolAppIDs.size() > 0)
+		if ( ctxFocusControlAppIDs.size() > 0 )
 		{
 			for ( win *override : vecPossibleFocusWindows )
 			{
@@ -1982,50 +1910,116 @@ found:
 		resolveTransientOverrides();
 	}
 
+	out->focusWindow = focus;
+	out->overrideWindow = override_focus;
 
-	ctx->currentOverrideWindow = override_focus;
+	return localGameFocused;
+}
+
+static void
+determine_and_apply_focus(xwayland_ctx_t *ctx, std::vector<win*>& vecGlobalPossibleFocusWindows)
+{
+	win *w;
+	win *inputFocus = NULL;
+
+	win *prevFocusWindow = ctx->focus.focusWindow;
+	ctx->focus.focusWindow = nullptr;
+	ctx->focus.overlayWindow = nullptr;
+	ctx->focus.notificationWindow = nullptr;
+	ctx->focus.overrideWindow = nullptr;
+
+	unsigned int maxOpacity = 0;
+	unsigned int maxOpacityExternal = 0;
+	std::vector< win* > vecPossibleFocusWindows;
+	for (w = ctx->list; w; w = w->next)
+	{
+		// Always skip system tray icons
+		if ( w->isSysTrayIcon )
+		{
+			continue;
+		}
+
+		if ( w->a.map_state == IsViewable && w->a.c_class == InputOutput && w->isOverlay == false && w->isExternalOverlay == false &&
+			( win_has_game_id( w ) || w->isSteam || w->isSteamStreamingClient ) &&
+			 (w->opacity > TRANSLUCENT || w->isSteamStreamingClient == true ) )
+		{
+			vecPossibleFocusWindows.push_back( w );
+		}
+
+		if (w->isOverlay)
+		{
+			if (w->a.width > 1200 && w->opacity >= maxOpacity)
+			{
+				ctx->focus.overlayWindow = w;
+				maxOpacity = w->opacity;
+			}
+			else
+			{
+				ctx->focus.notificationWindow = w;
+			}
+		}
+
+		if (w->isExternalOverlay)
+		{
+			if (w->opacity >= maxOpacityExternal)
+			{
+				ctx->focus.externalOverlayWindow = w;
+				maxOpacityExternal = w->opacity;
+			}
+		}
+
+		if ( w->isOverlay && w->inputFocusMode )
+		{
+			inputFocus = w;
+		}
+	}
+
+	std::stable_sort( vecPossibleFocusWindows.begin(), vecPossibleFocusWindows.end(),
+					  is_focus_priority_greater );
+
+	vecGlobalPossibleFocusWindows.insert(vecGlobalPossibleFocusWindows.end(), vecPossibleFocusWindows.begin(), vecPossibleFocusWindows.end());
+
+	pick_primary_focus_and_override( &ctx->focus, ctx->focusControlWindow, vecPossibleFocusWindows, g_nXWaylandCount == 1 ? vecFocuscontrolAppIDs : vecFocuscontrolAppIDsEmpty );
 
 	if ( inputFocus == NULL )
 	{
-		inputFocus = override_focus ? override_focus : focus;
+		inputFocus = ctx->focus.overrideWindow ? ctx->focus.overrideWindow : ctx->focus.focusWindow;
 	}
 
-	if (!focus)
+	if ( !ctx->focus.focusWindow )
 	{
 		return;
 	}
 
-	if ( prevFocusWindow != focus )
+	if ( prevFocusWindow != ctx->focus.focusWindow )
 	{
 		/* Some games (e.g. DOOM Eternal) don't react well to being put back as
 		* iconic, so never do that. Only take them out of iconic. */
 		uint32_t wmState[] = { ICCCM_NORMAL_STATE, None };
-		XChangeProperty(ctx->dpy, focus->id, ctx->atoms.WMStateAtom, ctx->atoms.WMStateAtom, 32,
+		XChangeProperty(ctx->dpy, ctx->focus.focusWindow->id, ctx->atoms.WMStateAtom, ctx->atoms.WMStateAtom, 32,
 					PropModeReplace, (unsigned char *)wmState,
 					sizeof(wmState) / sizeof(wmState[0]));
 
-		gpuvis_trace_printf( "determine_and_apply_focus focus %lu", focus->id );
+		gpuvis_trace_printf( "determine_and_apply_focus focus %lu", ctx->focus.focusWindow->id );
 
 		if ( debugFocus == true )
 		{
-			xwm_log.debugf( "determine_and_apply_focus focus %lu", focus->id );
+			xwm_log.debugf( "determine_and_apply_focus focus %lu", ctx->focus.focusWindow->id );
 			char buf[512];
-			sprintf( buf,  "xwininfo -id 0x%lx; xprop -id 0x%lx; xwininfo -root -tree", focus->id, focus->id );
+			sprintf( buf,  "xwininfo -id 0x%lx; xprop -id 0x%lx; xwininfo -root -tree", ctx->focus.focusWindow->id, ctx->focus.focusWindow->id );
 			system( buf );
 		}
 	}
 
-	ctx->currentFocusWindow = focus;
-
 	win *keyboardFocusWin = inputFocus;
 
 	if ( inputFocus && inputFocus->inputFocusMode )
-		keyboardFocusWin = override_focus ? override_focus : focus;
+		keyboardFocusWin = ctx->focus.overrideWindow ? ctx->focus.overrideWindow : ctx->focus.focusWindow;
 
 	Window keyboardFocusWindow = keyboardFocusWin ? keyboardFocusWin->id : None;
 
-	if ( ctx->currentInputFocusWindow != inputFocus ||
-		ctx->currentInputFocusMode != inputFocus->inputFocusMode ||
+	if ( ctx->focus.inputFocusWindow != inputFocus ||
+		ctx->focus.inputFocusMode != inputFocus->inputFocusMode ||
 		ctx->currentKeyboardFocusWindow != keyboardFocusWindow )
 	{
 		if ( debugFocus == true )
@@ -2033,18 +2027,18 @@ found:
 			xwm_log.debugf( "determine_and_apply_focus inputFocus %lu", inputFocus->id );
 		}
 
-		if ( !override_focus || override_focus != keyboardFocusWin )
+		if ( !ctx->focus.overrideWindow || ctx->focus.overrideWindow != keyboardFocusWin )
 			XSetInputFocus(ctx->dpy, keyboardFocusWin->id, RevertToNone, CurrentTime);
 
-		ctx->currentInputFocusWindow = inputFocus;
-		ctx->currentInputFocusMode = inputFocus->inputFocusMode;
+		ctx->focus.inputFocusWindow = inputFocus;
+		ctx->focus.inputFocusMode = inputFocus->inputFocusMode;
 		ctx->currentKeyboardFocusWindow = keyboardFocusWin->id;
 
 		// cursor is likely not interactable anymore in its original context, hide
 		ctx->cursor->hide();
 	}
 
-	w = focus;
+	w = ctx->focus.focusWindow;
 
 	ctx->cursor->constrainPosition();
 
@@ -2053,24 +2047,24 @@ found:
 		XRaiseWindow(ctx->dpy, inputFocus->id);
 	}
 
-	if (!focus->nudged)
+	if (!ctx->focus.focusWindow->nudged)
 	{
-		XMoveWindow(ctx->dpy, focus->id, 1, 1);
-		focus->nudged = true;
+		XMoveWindow(ctx->dpy, ctx->focus.focusWindow->id, 1, 1);
+		ctx->focus.focusWindow->nudged = true;
 	}
 
 	if (w->a.x != 0 || w->a.y != 0)
-		XMoveWindow(ctx->dpy, focus->id, 0, 0);
+		XMoveWindow(ctx->dpy, ctx->focus.focusWindow->id, 0, 0);
 
-	if ( focus->isFullscreen && ( w->a.width != ctx->root_width || w->a.height != ctx->root_height || globalScaleRatio != 1.0f ) )
+	if ( ctx->focus.focusWindow->isFullscreen && ( w->a.width != ctx->root_width || w->a.height != ctx->root_height || globalScaleRatio != 1.0f ) )
 	{
-		XResizeWindow(ctx->dpy, focus->id, ctx->root_width, ctx->root_height);
+		XResizeWindow(ctx->dpy, ctx->focus.focusWindow->id, ctx->root_width, ctx->root_height);
 	}
-	else if (!focus->isFullscreen && focus->sizeHintsSpecified &&
-		((unsigned)focus->a.width != focus->requestedWidth ||
-		(unsigned)focus->a.height != focus->requestedHeight))
+	else if (!ctx->focus.focusWindow->isFullscreen && ctx->focus.focusWindow->sizeHintsSpecified &&
+		((unsigned)ctx->focus.focusWindow->a.width != ctx->focus.focusWindow->requestedWidth ||
+		(unsigned)ctx->focus.focusWindow->a.height != ctx->focus.focusWindow->requestedHeight))
 	{
-		XResizeWindow(ctx->dpy, focus->id, focus->requestedWidth, focus->requestedHeight);
+		XResizeWindow(ctx->dpy, ctx->focus.focusWindow->id, ctx->focus.focusWindow->requestedWidth, ctx->focus.focusWindow->requestedHeight);
 	}
 
 	Window	    root_return = None, parent_return = None;
@@ -2155,63 +2149,26 @@ determine_and_apply_focus()
 	std::stable_sort( vecPossibleFocusWindows.begin(), vecPossibleFocusWindows.end(),
 					is_focus_priority_greater );
 
-	if ( root_ctx->focusControlWindow != None || vecFocuscontrolAppIDs.size() > 0 )
-	{
-		if ( root_ctx->focusControlWindow != None )
-		{
-			if ( root_ctx->currentFocusWindow->id == root_ctx->focusControlWindow )
-			{
-				global_focus.focusWindow = root_ctx->currentFocusWindow;
-				goto found;
-			}
-		}
-
-		for ( auto focusable_appid : vecFocuscontrolAppIDs )
-		{
-			for ( win *focusable_window : vecPossibleFocusWindows )
-			{
-				if ( focusable_window->appID == focusable_appid )
-				{
-					global_focus.focusWindow = focusable_window;
-					goto found;
-				}
-			}
-		}
-found:
-		gameFocused = true;
-	}
-	else if ( vecPossibleFocusWindows.size() > 0 )
-	{
-		global_focus.focusWindow = vecPossibleFocusWindows[ 0 ];
-		gameFocused = global_focus.focusWindow->appID != 0;
-	}
-
-	// Pick override and cursor from the same ctx as our primary focus.
-	if (global_focus.focusWindow)
-	{
-		global_focus.overrideWindow = global_focus.focusWindow->ctx->currentOverrideWindow;
-		global_focus.cursor = global_focus.focusWindow->ctx->cursor.get();
-		// Pick the focus window from the ctx to avoid needing to resolve transient overrides again.
-		// This assumption only holds true if we have 1 app per xwayland in multi-xwayland mode.
-		global_focus.focusWindow = global_focus.focusWindow->ctx->currentFocusWindow;
-	}
+	gameFocused = pick_primary_focus_and_override(&global_focus, root_ctx->focusControlWindow, vecPossibleFocusWindows, vecFocuscontrolAppIDs);
 
 	// Pick overlay/notifications from root ctx
-	global_focus.overlayWindow = root_ctx->currentOverlayWindow;
-	global_focus.externalOverlayWindow = root_ctx->currentExternalOverlayWindow;
-	global_focus.notificationWindow = root_ctx->currentNotificationWindow;
+	global_focus.overlayWindow = root_ctx->focus.overlayWindow;
+	global_focus.externalOverlayWindow = root_ctx->focus.externalOverlayWindow;
+	global_focus.notificationWindow = root_ctx->focus.notificationWindow;
 
 	// Pick inputFocusWindow
 	if (global_focus.overlayWindow && global_focus.overlayWindow->inputFocusMode)
-	{
-		// If we have an overlay, pick our cursor from there instead.
-		global_focus.cursor = global_focus.overlayWindow->ctx->cursor.get();
 		global_focus.inputFocusWindow = global_focus.overlayWindow;
-	}
 	else if (global_focus.overrideWindow)
 		global_focus.inputFocusWindow = global_focus.overrideWindow;
 	else
 		global_focus.inputFocusWindow = global_focus.focusWindow;
+
+	// Pick cursor from our input focus window
+
+	// Initially pick cursor from the ctx of our input focus.
+	if (global_focus.inputFocusWindow)
+		global_focus.cursor = global_focus.inputFocusWindow->ctx->cursor.get();
 
 	if (global_focus.inputFocusWindow)
 		global_focus.inputFocusMode = global_focus.inputFocusWindow->inputFocusMode;
@@ -2918,18 +2875,18 @@ static void
 destroy_win(xwayland_ctx_t *ctx, Window id, bool gone, bool fade)
 {
 	// Context
-	if (x11_win(ctx->currentFocusWindow) == id && gone)
-		ctx->currentFocusWindow = nullptr;
-	if (x11_win(ctx->currentInputFocusWindow) == id && gone)
-		ctx->currentInputFocusWindow = nullptr;
-	if (x11_win(ctx->currentOverlayWindow) == id && gone)
-		ctx->currentOverlayWindow = nullptr;
-	if (x11_win(ctx->currentExternalOverlayWindow) == id && gone)
-		ctx->currentExternalOverlayWindow = nullptr;
-	if (x11_win(ctx->currentNotificationWindow) == id && gone)
-		ctx->currentNotificationWindow = nullptr;
-	if (x11_win(ctx->currentOverrideWindow) == id && gone)
-		ctx->currentOverrideWindow = nullptr;
+	if (x11_win(ctx->focus.focusWindow) == id && gone)
+		ctx->focus.focusWindow = nullptr;
+	if (x11_win(ctx->focus.inputFocusWindow) == id && gone)
+		ctx->focus.inputFocusWindow = nullptr;
+	if (x11_win(ctx->focus.overlayWindow) == id && gone)
+		ctx->focus.overlayWindow = nullptr;
+	if (x11_win(ctx->focus.externalOverlayWindow) == id && gone)
+		ctx->focus.externalOverlayWindow = nullptr;
+	if (x11_win(ctx->focus.notificationWindow) == id && gone)
+		ctx->focus.notificationWindow = nullptr;
+	if (x11_win(ctx->focus.overrideWindow) == id && gone)
+		ctx->focus.overrideWindow = nullptr;
 	if (ctx->currentKeyboardFocusWindow == id && gone)
 		ctx->currentKeyboardFocusWindow = None;
 
@@ -2956,7 +2913,7 @@ static void
 damage_win(xwayland_ctx_t *ctx, XDamageNotifyEvent *de)
 {
 	win	*w = find_win(ctx, de->drawable);
-	win *focus = ctx->currentFocusWindow;
+	win *focus = ctx->focus.focusWindow;
 
 	if (!w)
 		return;
@@ -3158,11 +3115,11 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 			{
 				w->opacity = newOpacity;
 
-				if ( gameFocused && ( w == ctx->currentOverlayWindow || w == ctx->currentNotificationWindow ) )
+				if ( gameFocused && ( w == ctx->focus.overlayWindow || w == ctx->focus.notificationWindow ) )
 				{
 					hasRepaint = true;
 				}
-				if ( w == ctx->currentExternalOverlayWindow )
+				if ( w == ctx->focus.externalOverlayWindow )
 				{
 					hasRepaint = true;
 				}
@@ -3177,7 +3134,7 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 				{
 					if (w->a.width > 1200 && w->opacity >= maxOpacity)
 					{
-						ctx->currentOverlayWindow = w;
+						ctx->focus.overlayWindow = w;
 						maxOpacity = w->opacity;
 					}
 				}
@@ -3185,7 +3142,7 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 				{
 					if (w->opacity >= maxOpacityExternal)
 					{
-						ctx->currentExternalOverlayWindow = w;
+						ctx->focus.externalOverlayWindow = w;
 						maxOpacityExternal = w->opacity;
 					}
 				}
@@ -3521,6 +3478,9 @@ register_systray(xwayland_ctx_t *ctx)
 
 void handle_done_commits( xwayland_ctx_t *ctx )
 {
+	gamescope_xwayland_server_t *root_server = wlserver_get_xwayland_server(0);
+	xwayland_ctx_t *root_ctx = root_server->ctx.get();
+
 	std::lock_guard<std::mutex> lock( ctx->listCommitsDoneLock );
 
 	// very fast loop yes
@@ -3554,7 +3514,7 @@ void handle_done_commits( xwayland_ctx_t *ctx )
 						}
 					}
 					// If this is an external overlay, repaint
-					if ( w == ctx->currentExternalOverlayWindow && w->opacity != TRANSLUCENT )
+					if ( w == ctx->focus.externalOverlayWindow && w->opacity != TRANSLUCENT )
 					{
 						hasRepaint = true;
 					}
@@ -3563,7 +3523,7 @@ void handle_done_commits( xwayland_ctx_t *ctx )
 					{
 						// TODO: Check for a mangoapp atom in future.
 						// (Needs the win* refactor from the multiple xwayland branch)
-						if (ctx->currentExternalOverlayWindow != None)
+						if (root_ctx->focus.externalOverlayWindow != None)
 							mangoapp_update();
 						g_HeldCommits[ HELD_COMMIT_BASE ] = w->commit_queue[ j ];
 						hasRepaint = true;
@@ -3576,7 +3536,7 @@ void handle_done_commits( xwayland_ctx_t *ctx )
 
 					if ( w->isSteamStreamingClientVideo && global_focus.focusWindow && global_focus.focusWindow->isSteamStreamingClient )
 					{
-						if (ctx->currentExternalOverlayWindow != None)
+						if (root_ctx->focus.externalOverlayWindow != None)
 							mangoapp_update();
 						g_HeldCommits[ HELD_COMMIT_BASE ] = w->commit_queue[ j ];
 						hasRepaint = true;
@@ -3916,7 +3876,7 @@ dispatch_x11( xwayland_ctx_t *ctx )
 				handle_client_message(ctx, &ev.xclient);
 				break;
 			case LeaveNotify:
-				if (ev.xcrossing.window == x11_win(ctx->currentInputFocusWindow))
+				if (ev.xcrossing.window == x11_win(ctx->focus.inputFocusWindow))
 				{
 					// Josh: need to defer this as we could have a destroy later on
 					// and end up submitting commands with the currentInputFocusWIndow
@@ -3926,7 +3886,7 @@ dispatch_x11( xwayland_ctx_t *ctx )
 			case MotionNotify:
 				{
 					win * w = find_win(ctx, ev.xmotion.window);
-					if (w && w == ctx->currentInputFocusWindow)
+					if (w && w == ctx->focus.inputFocusWindow)
 					{
 						cursor->move(ev.xmotion.x, ev.xmotion.y);
 					}
@@ -4566,7 +4526,7 @@ gamescope_xwayland_server_t *steamcompmgr_get_focused_server()
 		gamescope_xwayland_server_t *server = NULL;
 		for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
 		{
-			if (server->ctx->currentInputFocusWindow == global_focus.inputFocusWindow)
+			if (server->ctx->focus.inputFocusWindow == global_focus.inputFocusWindow)
 				return server;
 		}
 	}
