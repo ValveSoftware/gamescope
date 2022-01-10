@@ -2205,7 +2205,7 @@ found:
 	if (global_focus.overlayWindow && global_focus.overlayWindow->inputFocusMode)
 	{
 		// If we have an overlay, pick our cursor from there instead.
-		global_focus.cursor = root_ctx->cursor.get();
+		global_focus.cursor = global_focus.overlayWindow->ctx->cursor.get();
 		global_focus.inputFocusWindow = global_focus.overlayWindow;
 	}
 	else if (global_focus.overrideWindow)
