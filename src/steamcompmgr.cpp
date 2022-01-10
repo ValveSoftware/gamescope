@@ -3523,6 +3523,8 @@ void handle_done_commits( void )
 
 					if ( w->isSteamStreamingClientVideo && currentFocusWin && currentFocusWin->isSteamStreamingClient )
 					{
+						if (currentExternalOverlayWindow != None)
+							mangoapp_update();
 						g_HeldCommits[ HELD_COMMIT_BASE ] = w->commit_queue[ j ];
 						hasRepaint = true;
 					}
