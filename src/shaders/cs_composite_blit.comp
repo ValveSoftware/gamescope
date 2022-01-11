@@ -1,20 +1,19 @@
 #version 450
 
+#extension GL_GOOGLE_include_directive : require
 #extension GL_EXT_scalar_block_layout : require
 #extension GL_ARB_shader_clock : require
+
+#include "descriptor_set.h"
 
 layout(
   local_size_x = 8,
   local_size_y = 8,
   local_size_z = 1) in;
 
-const int MaxLayers = 6;
-
 layout(constant_id = 0) const int  c_layerCount   = 1;
 layout(constant_id = 1) const uint c_ycbcrMask    = 0;
 layout(constant_id = 2) const bool c_compositing_debug = false;
-
-layout(binding = 0, rgba8) writeonly uniform image2D dst;
 
 layout(std430, push_constant)
 uniform layers_t {
@@ -24,10 +23,6 @@ uniform layers_t {
     uint u_borderMask;
     uint u_frameId;
 };
-
-layout(binding = 1) uniform sampler2D s_samplers[MaxLayers];
-
-layout(binding = 2) uniform sampler2D s_ycbcr_samplers[MaxLayers];
 
 vec3 srgbToLinear(vec3 color) {
     bvec3 isLo = lessThanEqual(color, vec3(0.04045f));
