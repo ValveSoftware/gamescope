@@ -1,5 +1,6 @@
 project(
   'gamescope',
+  'c',
   'cpp',
   meson_version: '>=0.55.0',
   default_options: [
