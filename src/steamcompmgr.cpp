@@ -332,6 +332,13 @@ struct WaitListEntry_t
 {
 	xwayland_ctx_t *ctx;
 	int fence;
+	// Josh: Whether or not to nudge mangoapp that we got
+	// a frame as soon as we know this commit is done.
+	// This could technically be out of date if we change windows
+	// but for a max couple frames of inaccuracy when switching windows
+	// compared to being all over the place from handling in the
+	// steamcompmgr thread in handle_done_commits, it is worth it.
+	bool mangoapp_nudge;
 	uint64_t commitID;
 };
 
@@ -389,6 +396,9 @@ retry:
 	}
 
 	nudge_steamcompmgr();
+
+	if ( entry.mangoapp_nudge )
+		mangoapp_update();
 
 	goto retry;
 }
@@ -3478,9 +3488,6 @@ register_systray(xwayland_ctx_t *ctx)
 
 void handle_done_commits( xwayland_ctx_t *ctx )
 {
-	gamescope_xwayland_server_t *root_server = wlserver_get_xwayland_server(0);
-	xwayland_ctx_t *root_ctx = root_server->ctx.get();
-
 	std::lock_guard<std::mutex> lock( ctx->listCommitsDoneLock );
 
 	// very fast loop yes
@@ -3521,10 +3528,6 @@ void handle_done_commits( xwayland_ctx_t *ctx )
 					// If this is the main plane, repaint
 					if ( w == global_focus.focusWindow && !w->isSteamStreamingClient )
 					{
-						// TODO: Check for a mangoapp atom in future.
-						// (Needs the win* refactor from the multiple xwayland branch)
-						if (root_ctx->focus.externalOverlayWindow != None)
-							mangoapp_update();
 						g_HeldCommits[ HELD_COMMIT_BASE ] = w->commit_queue[ j ];
 						hasRepaint = true;
 					}
@@ -3536,8 +3539,6 @@ void handle_done_commits( xwayland_ctx_t *ctx )
 
 					if ( w->isSteamStreamingClientVideo && global_focus.focusWindow && global_focus.focusWindow->isSteamStreamingClient )
 					{
-						if (root_ctx->focus.externalOverlayWindow != None)
-							mangoapp_update();
 						g_HeldCommits[ HELD_COMMIT_BASE ] = w->commit_queue[ j ];
 						hasRepaint = true;
 					}
@@ -3610,6 +3611,10 @@ void check_new_wayland_res(xwayland_ctx_t *ctx)
 				fence = vulkan_texture_get_fence( newCommit->vulkanTex );
 			}
 
+			// Whether or not to nudge mango app when this commit is done.
+			const bool mango_nudge = ( w == global_focus.focusWindow && !w->isSteamStreamingClient ) ||
+									 ( global_focus.focusWindow && global_focus.focusWindow->isSteamStreamingClient && w->isSteamStreamingClientVideo );
+
 			gpuvis_trace_printf( "pushing wait for commit %lu win %lx", newCommit->commitID, w->id );
 			{
 				std::unique_lock< std::mutex > lock( waitListLock );
@@ -3617,6 +3622,7 @@ void check_new_wayland_res(xwayland_ctx_t *ctx)
 				{
 					.ctx = ctx,
 					.fence = fence,
+					.mangoapp_nudge = mango_nudge,
 					.commitID = newCommit->commitID,
 				};
 				waitList.push_back( entry );
