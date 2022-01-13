@@ -2174,6 +2174,27 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 	
 	vkCmdPipelineBarrier( curCommandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 			      		0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
+
+	std::vector<VkImageMemoryBarrier> textureBarriers(pComposite->nLayerCount);
+	for (int32_t i = 0; i < pComposite->nLayerCount; i++)
+	{
+		textureBarriers[i].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+		textureBarriers[i].pNext = nullptr;
+		textureBarriers[i].srcAccessMask = 0;
+		textureBarriers[i].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+		textureBarriers[i].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+		textureBarriers[i].newLayout = VK_IMAGE_LAYOUT_GENERAL;
+		textureBarriers[i].srcQueueFamilyIndex = g_vulkanSupportsModifiers
+													? VK_QUEUE_FAMILY_FOREIGN_EXT
+													: VK_QUEUE_FAMILY_EXTERNAL_KHR;
+		textureBarriers[i].dstQueueFamilyIndex = queueFamilyIndex;
+		textureBarriers[i].image = pPipeline->layerBindings[i].tex->m_vkImage;
+		textureBarriers[i].subresourceRange = subResRange;
+	}
+
+	vkCmdPipelineBarrier( curCommandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+			      		0, 0, nullptr, 0, nullptr, textureBarriers.size(), textureBarriers.data() );
+
 	
 	vkCmdBindPipeline(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelines[pComposite->nLayerCount - 1][pComposite->nSwapChannels][pComposite->nYCBCRMask]);
 	
@@ -2300,7 +2321,20 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 	vkCmdPipelineBarrier( curCommandBuffer, pScreenshotTexture ? VK_PIPELINE_STAGE_TRANSFER_BIT : VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 			      useForeignQueue ? 0 : VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
 			      0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
-	
+
+	for (int32_t i = 0; i < pComposite->nLayerCount; i++)
+	{
+		textureBarriers[i].dstAccessMask = 0;
+		textureBarriers[i].oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+		textureBarriers[i].srcQueueFamilyIndex = queueFamilyIndex;
+		textureBarriers[i].dstQueueFamilyIndex = g_vulkanSupportsModifiers
+													? VK_QUEUE_FAMILY_FOREIGN_EXT
+													: VK_QUEUE_FAMILY_EXTERNAL_KHR;
+	}
+
+	vkCmdPipelineBarrier( curCommandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+			      		0, 0, nullptr, 0, nullptr, textureBarriers.size(), textureBarriers.data() );
+
 	res = vkEndCommandBuffer( curCommandBuffer );
 	
 	if ( res != VK_SUCCESS )
