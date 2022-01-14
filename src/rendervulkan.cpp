@@ -1929,8 +1929,38 @@ std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_bits( uint32_t width,
 		.height = height,
 		.depth = 1
 	};
-	
+
+	VkImageSubresourceRange subResRange =
+	{
+		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+		.levelCount = 1,
+		.layerCount = 1
+	};
+
+	VkImageMemoryBarrier memoryBarrier =
+	{
+		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+		.srcAccessMask = 0,
+		.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+		.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+		.newLayout = VK_IMAGE_LAYOUT_GENERAL,
+		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.image = pTex->m_vkImage,
+		.subresourceRange = subResRange
+	};
+
+	vkCmdPipelineBarrier( commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+			      		0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
+
 	vkCmdCopyBufferToImage( commandBuffer, uploadBuffer, pTex->m_vkImage, VK_IMAGE_LAYOUT_GENERAL, 1, &region );
+
+	memoryBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+	memoryBarrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+	memoryBarrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+	vkCmdPipelineBarrier( commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+			      		0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
 	
 	std::vector<std::shared_ptr<CVulkanTexture>> refs;
 	refs.push_back( pTex );
