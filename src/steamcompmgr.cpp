@@ -723,6 +723,13 @@ get_window_last_done_commit( win *w, std::shared_ptr<commit_t> &commit )
 		commit = w->commit_queue[ lastCommit ];
 }
 
+// For Steam, etc.
+static bool
+window_wants_no_focus_when_mouse_hidden( win *w )
+{
+	return w && w->appID == 769;
+}
+
 /**
  * Constructor for a cursor. It is hidden in the beginning (normally until moved by user).
  */
@@ -733,6 +740,8 @@ MouseCursor::MouseCursor(xwayland_ctx_t *ctx)
 	, m_hideForMovement(true)
 	, m_ctx(ctx)
 {
+	m_lastX = g_nNestedWidth / 2;
+	m_lastY = g_nNestedHeight / 2;
 }
 
 void MouseCursor::queryPositions(int &rootX, int &rootY, int &winX, int &winY)
@@ -765,9 +774,19 @@ void MouseCursor::checkSuspension()
 	unsigned int buttonMask;
 	queryButtonMask(buttonMask);
 
+	bool bWasHidden = m_hideForMovement;
+
 	if (buttonMask & ( Button1Mask | Button2Mask | Button3Mask | Button4Mask | Button5Mask )) {
 		m_hideForMovement = false;
 		m_lastMovedTime = get_time_in_milliseconds();
+
+		// Move the cursor back to where we left it if the window didn't want us to give
+		// it hover/focus where we left it and we moved it before.
+		win *window = m_ctx->focus.inputFocusWindow;
+		if (window_wants_no_focus_when_mouse_hidden(window) && bWasHidden)
+		{
+			XWarpPointer(m_ctx->dpy, None, x11_win(m_ctx->focus.inputFocusWindow), 0, 0, 0, 0, m_lastX, m_lastY);
+		}
 	}
 
 	const bool suspended = get_time_in_milliseconds() - m_lastMovedTime > cursorHideTime;
@@ -779,6 +798,15 @@ void MouseCursor::checkSuspension()
 		// Rearm warp count
 		if (window) {
 			window->mouseMoved = 0;
+
+			// Move the cursor to the bottom right corner, just off screen if we can
+			// if the window (ie. Steam) doesn't want hover/focus events.
+			if ( window_wants_no_focus_when_mouse_hidden(window) )
+			{
+				m_lastX = m_x;
+				m_lastY = m_y;
+				XWarpPointer(m_ctx->dpy, None, x11_win(m_ctx->focus.inputFocusWindow), 0, 0, 0, 0, window->a.width, window->a.height);
+			}
 		}
 
 		// We're hiding the cursor, force redraw if we were showing it
@@ -912,7 +940,15 @@ void MouseCursor::constrainPosition()
 
 	if (rootX - window->a.x >= window->a.width || rootY - window->a.y >= window->a.height ||
 		rootX - window->a.x < 0 || rootY - window->a.y < 0 ) {
-		warp(window->a.width / 2, window->a.height / 2);
+		// If this is Steam and doesn't want focus and we got OOB,
+		// then put is in the bottom right.
+		if ( window_wants_no_focus_when_mouse_hidden( window ) && m_hideForMovement )
+			warp(window->a.width, window->a.height);
+		else
+			warp(window->a.width / 2, window->a.height / 2);
+
+		m_lastX = window->a.width / 2;
+		m_lastY = window->a.height / 2;
 	}
 }
 
@@ -945,6 +981,12 @@ void MouseCursor::move(int x, int y)
 		return;
 
 	m_lastMovedTime = get_time_in_milliseconds();
+	// Move the cursor back to centre if the window didn't want us to give
+	// it hover/focus where we left it.
+	if ( m_hideForMovement && window_wants_no_focus_when_mouse_hidden(window) )
+	{
+		XWarpPointer(m_ctx->dpy, None, x11_win(m_ctx->focus.inputFocusWindow), 0, 0, 0, 0, m_lastX, m_lastY);
+	}
 	m_hideForMovement = false;
 }
 
@@ -2038,6 +2080,9 @@ determine_and_apply_focus(xwayland_ctx_t *ctx, std::vector<win*>& vecGlobalPossi
 
 	Window keyboardFocusWindow = keyboardFocusWin ? keyboardFocusWin->id : None;
 
+	bool bResetToCorner = false;
+	bool bResetToCenter = false;
+
 	if ( ctx->focus.inputFocusWindow != inputFocus ||
 		ctx->focus.inputFocusMode != inputFocus->inputFocusMode ||
 		ctx->currentKeyboardFocusWindow != keyboardFocusWindow )
@@ -2049,6 +2094,16 @@ determine_and_apply_focus(xwayland_ctx_t *ctx, std::vector<win*>& vecGlobalPossi
 
 		if ( !ctx->focus.overrideWindow || ctx->focus.overrideWindow != keyboardFocusWin )
 			XSetInputFocus(ctx->dpy, keyboardFocusWin->id, RevertToNone, CurrentTime);
+
+		// If the window doesn't want focus when hidden, move it away
+		// as we are going to hide it straight after.
+		// otherwise, if we switch from wanting it to not
+		// (steam -> game)
+		// put us back in the centre of the screen.
+		if (window_wants_no_focus_when_mouse_hidden(inputFocus))
+			bResetToCorner = true;
+		else if ( window_wants_no_focus_when_mouse_hidden(inputFocus) != window_wants_no_focus_when_mouse_hidden(ctx->focus.inputFocusWindow) )
+			bResetToCenter = true;
 
 		ctx->focus.inputFocusWindow = inputFocus;
 		ctx->focus.inputFocusMode = inputFocus->inputFocusMode;
@@ -2085,6 +2140,16 @@ determine_and_apply_focus(xwayland_ctx_t *ctx, std::vector<win*>& vecGlobalPossi
 		(unsigned)ctx->focus.focusWindow->a.height != ctx->focus.focusWindow->requestedHeight))
 	{
 		XResizeWindow(ctx->dpy, ctx->focus.focusWindow->id, ctx->focus.focusWindow->requestedWidth, ctx->focus.focusWindow->requestedHeight);
+	}
+
+	if ( inputFocus )
+	{
+		// Cannot simply XWarpPointer here as we immediately go on to
+		// do wlserver_mousefocus and need to update m_x and m_y of the cursor.
+		if ( bResetToCorner )
+			ctx->cursor->forcePosition(inputFocus->a.width, inputFocus->a.height);
+		else if ( bResetToCenter )
+			ctx->cursor->forcePosition(inputFocus->a.width / 2, inputFocus->a.height / 2);
 	}
 
 	Window	    root_return = None, parent_return = None;

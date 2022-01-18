@@ -51,6 +51,15 @@ public:
 
 	void hide() { m_lastMovedTime = 0; checkSuspension(); }
 
+	bool isHidden() { return m_hideForMovement; }
+
+	void forcePosition(int x, int y)
+	{
+		warp(x, y);
+		m_x = x;
+		m_y = y;
+	}
+
 private:
 	void warp(int x, int y);
 	void checkSuspension();
@@ -75,6 +84,9 @@ private:
 	PointerBarrier m_scaledFocusBarriers[4] = { None };
 
 	xwayland_ctx_t *m_ctx;
+
+	int m_lastX = 0;
+	int m_lastY = 0;
 };
 
 extern std::vector< wlr_surface * > wayland_surfaces_deleted;
