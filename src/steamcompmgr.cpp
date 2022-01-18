@@ -1360,109 +1360,86 @@ paint_all()
 	override = global_focus.overrideWindow;
 	input = global_focus.inputFocusWindow;
 
-	if ( !w )
-	{
-		return;
-	}
-
-	bool inGame = false;
-
-	if ( gamesRunningCount || w->appID != 0 )
-	{
-		inGame = true;
-	}
-
-	frameCounter++;
-
-	if (frameCounter == 300)
-	{
-		currentFrameRate = 300 * 1000.0f / (currentTime - lastSampledFrameTime);
-		lastSampledFrameTime = currentTime;
-		frameCounter = 0;
-
-		stats_printf( "fps=%f\n", currentFrameRate );
-
-		if ( w->isSteam )
-		{
-			stats_printf( "focus=steam\n" );
-		}
-		else
-		{
-			stats_printf( "focus=%i\n", w->appID );
-		}
-	}
 
 	struct Composite_t composite = {};
 	struct VulkanPipeline_t pipeline = {};
 
 	// If the window we'd paint as the base layer is the streaming client,
 	// find the video underlay and put it up first in the scenegraph
-	if ( w->isSteamStreamingClient == true )
+	if ( w )
 	{
-		win *videow = NULL;
-		bool bHasVideoUnderlay = false;
-
-		gamescope_xwayland_server_t *server = NULL;
-		for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
+		if ( w->isSteamStreamingClient == true )
 		{
-			for ( videow = server->ctx->list; videow; videow = videow->next )
+			win *videow = NULL;
+			bool bHasVideoUnderlay = false;
+
+			gamescope_xwayland_server_t *server = NULL;
+			for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
 			{
-				if ( videow->isSteamStreamingClientVideo == true )
+				for ( videow = server->ctx->list; videow; videow = videow->next )
 				{
-					// TODO: also check matching AppID so we can have several pairs
-					paint_window(videow, videow, &composite, &pipeline, global_focus.cursor, PaintWindowFlag::BasePlane | PaintWindowFlag::DrawBorders);
-					bHasVideoUnderlay = true;
-					break;
+					if ( videow->isSteamStreamingClientVideo == true )
+					{
+						// TODO: also check matching AppID so we can have several pairs
+						paint_window(videow, videow, &composite, &pipeline, global_focus.cursor, PaintWindowFlag::BasePlane | PaintWindowFlag::DrawBorders);
+						bHasVideoUnderlay = true;
+						break;
+					}
 				}
 			}
-		}
-		
-		int nOldLayerCount = composite.nLayerCount;
+			
+			int nOldLayerCount = composite.nLayerCount;
 
-		uint32_t flags = 0;
-		if ( !bHasVideoUnderlay )
-			flags |= PaintWindowFlag::BasePlane;
-		paint_window(w, w, &composite, &pipeline, global_focus.cursor, flags);
-		update_touch_scaling( &composite );
-		
-		// paint UI unless it's fully hidden, which it communicates to us through opacity=0
-		// we paint it to extract scaling coefficients above, then remove the layer if one was added
-		if ( w->opacity == TRANSLUCENT && bHasVideoUnderlay && nOldLayerCount < composite.nLayerCount )
-			composite.nLayerCount--;
-	}
-	else
-	{
-		if ( fadingOut )
-		{
-			float opacityScale = g_bPendingFade
-				? 0.0f
-				: ((currentTime - fadeOutStartTime) / (float)g_FadeOutDuration);
-	
-			paint_cached_base_layer(g_HeldCommits[HELD_COMMIT_FADE], g_CachedPlanes[HELD_COMMIT_FADE], &composite, &pipeline, 1.0f - opacityScale);
-			paint_window(w, w, &composite, &pipeline, global_focus.cursor, PaintWindowFlag::BasePlane | PaintWindowFlag::FadeTarget | PaintWindowFlag::DrawBorders, opacityScale);
+			uint32_t flags = 0;
+			if ( !bHasVideoUnderlay )
+				flags |= PaintWindowFlag::BasePlane;
+			paint_window(w, w, &composite, &pipeline, global_focus.cursor, flags);
+			update_touch_scaling( &composite );
+			
+			// paint UI unless it's fully hidden, which it communicates to us through opacity=0
+			// we paint it to extract scaling coefficients above, then remove the layer if one was added
+			if ( w->opacity == TRANSLUCENT && bHasVideoUnderlay && nOldLayerCount < composite.nLayerCount )
+				composite.nLayerCount--;
 		}
 		else
 		{
+			if ( fadingOut )
 			{
-				if ( g_HeldCommits[HELD_COMMIT_FADE] )
-				{
-					g_HeldCommits[HELD_COMMIT_FADE] = nullptr;
-					g_bPendingFade = false;
-					fadeOutStartTime = 0;
-					global_focus.fadeWindow = None;
-				}
+				float opacityScale = g_bPendingFade
+					? 0.0f
+					: ((currentTime - fadeOutStartTime) / (float)g_FadeOutDuration);
+		
+				paint_cached_base_layer(g_HeldCommits[HELD_COMMIT_FADE], g_CachedPlanes[HELD_COMMIT_FADE], &composite, &pipeline, 1.0f - opacityScale);
+				paint_window(w, w, &composite, &pipeline, global_focus.cursor, PaintWindowFlag::BasePlane | PaintWindowFlag::FadeTarget | PaintWindowFlag::DrawBorders, opacityScale);
 			}
-			// Just draw focused window as normal, be it Steam or the game
-			paint_window(w, w, &composite, &pipeline, global_focus.cursor, PaintWindowFlag::BasePlane | PaintWindowFlag::DrawBorders);
+			else
+			{
+				{
+					if ( g_HeldCommits[HELD_COMMIT_FADE] )
+					{
+						g_HeldCommits[HELD_COMMIT_FADE] = nullptr;
+						g_bPendingFade = false;
+						fadeOutStartTime = 0;
+						global_focus.fadeWindow = None;
+					}
+				}
+				// Just draw focused window as normal, be it Steam or the game
+				paint_window(w, w, &composite, &pipeline, global_focus.cursor, PaintWindowFlag::BasePlane | PaintWindowFlag::DrawBorders, 1.0f);
+			}
+			update_touch_scaling( &composite );
 		}
-		update_touch_scaling( &composite );
+	}
+	else
+	{
+		if ( g_HeldCommits[HELD_COMMIT_BASE] )
+			paint_cached_base_layer(g_HeldCommits[HELD_COMMIT_BASE], g_CachedPlanes[HELD_COMMIT_BASE], &composite, &pipeline, 1.0f);
 	}
 
 	// TODO: We want to paint this at the same scale as the normal window and probably
 	// with an offset.
 	// Josh: No override if we're streaming video
 	// as we will have too many layers. Better to be safe than sorry.
-	if ( override && !w->isSteamStreamingClient )
+	if ( override && w && !w->isSteamStreamingClient )
 	{
 		paint_window(override, w, &composite, &pipeline, global_focus.cursor);
 		update_touch_scaling( &composite );
@@ -1482,7 +1459,7 @@ paint_all()
 		}
 	}
 
-	if (inGame && overlay)
+	if (overlay)
 	{
 		if (overlay->opacity)
 		{
@@ -1493,7 +1470,7 @@ paint_all()
 		}
 	}
 
-	if (inGame && notification)
+	if (notification)
 	{
 		if (notification->opacity)
 		{
