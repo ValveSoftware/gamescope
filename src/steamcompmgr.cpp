@@ -702,8 +702,8 @@ import_commit ( struct wlr_buffer *buf )
 	return commit;
 }
 
-static void
-get_window_last_done_commit( win *w, std::shared_ptr<commit_t> &commit )
+static int32_t
+window_last_done_commit_id( win *w )
 {
 	int32_t lastCommit = -1;
 	for ( uint32_t i = 0; i < w->commit_queue.size(); i++ )
@@ -713,6 +713,20 @@ get_window_last_done_commit( win *w, std::shared_ptr<commit_t> &commit )
 			lastCommit = i;
 		}
 	}
+
+	return lastCommit;
+}
+
+static bool
+window_has_commits( win *w )
+{
+	return window_last_done_commit_id( w ) != -1;
+}
+
+static void
+get_window_last_done_commit( win *w, std::shared_ptr<commit_t> &commit )
+{
+	int32_t lastCommit = window_last_done_commit_id( w );
 
 	if ( lastCommit == -1 )
 	{
@@ -1907,7 +1921,13 @@ found:;
 		resolveTransientOverrides();
 	}
 
-	out->focusWindow = focus;
+	if ( focus )
+	{
+		if ( window_has_commits( focus ) ) 
+			out->focusWindow = focus;
+		else
+			out->outdatedInteractiveFocus = true;
+	}
 	out->overrideWindow = override_focus;
 
 	return localGameFocused;
@@ -1920,7 +1940,6 @@ determine_and_apply_focus(xwayland_ctx_t *ctx, std::vector<win*>& vecGlobalPossi
 	win *inputFocus = NULL;
 
 	win *prevFocusWindow = ctx->focus.focusWindow;
-	ctx->focus.focusWindow = nullptr;
 	ctx->focus.overlayWindow = nullptr;
 	ctx->focus.notificationWindow = nullptr;
 	ctx->focus.overrideWindow = nullptr;
@@ -2095,6 +2114,7 @@ determine_and_apply_focus()
 	xwayland_ctx_t *root_ctx = root_server->ctx.get();
 	global_focus_t previous_focus = global_focus;
 	global_focus = global_focus_t{};
+	global_focus.focusWindow = previous_focus.focusWindow;
 	global_focus.cursor = root_ctx->cursor.get();
 	gameFocused = false;
 
@@ -3506,6 +3526,11 @@ void handle_done_commits( xwayland_ctx_t *ctx )
 						{
 							hasRepaint = true;
 						}
+					}
+					if ( ctx->focus.outdatedInteractiveFocus )
+					{
+						focusDirty = true;
+						ctx->focus.outdatedInteractiveFocus = false;
 					}
 					// If this is an external overlay, repaint
 					if ( w == ctx->focus.externalOverlayWindow && w->opacity != TRANSLUCENT )

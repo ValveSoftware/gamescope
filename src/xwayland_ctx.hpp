@@ -28,6 +28,7 @@ struct focus_t
 	win				*externalOverlayWindow;
 	win				*notificationWindow;
 	win				*overrideWindow;
+	bool			outdatedInteractiveFocus;
 };
 
 struct xwayland_ctx_t
