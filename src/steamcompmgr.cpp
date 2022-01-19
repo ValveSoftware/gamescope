@@ -1509,6 +1509,7 @@ paint_all()
 		return;
 	}
 
+	bool bWasFirstFrame = g_bFirstFrame;
 	g_bFirstFrame = false;
 
 	bool bDoComposite = true;
@@ -1531,7 +1532,7 @@ paint_all()
 	const bool bOverrideCompositeHack = false;
 #endif
 
-	if ( BIsNested() == false && alwaysComposite == false && bCapture == false && bOverrideCompositeHack == false )
+	if ( BIsNested() == false && alwaysComposite == false && bCapture == false && bOverrideCompositeHack == false && bWasFirstFrame == false )
 	{
 		int ret = drm_prepare( &g_DRM, &composite, &pipeline );
 		if ( ret == 0 )
