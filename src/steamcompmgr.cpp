@@ -1417,7 +1417,7 @@ paint_all()
 		
 		int nOldLayerCount = composite.nLayerCount;
 
-		uint32_t flags = PaintWindowFlag::DrawBorders;
+		uint32_t flags = 0;
 		if ( !bHasVideoUnderlay )
 			flags |= PaintWindowFlag::BasePlane;
 		paint_window(w, w, &composite, &pipeline, global_focus.cursor, flags);
