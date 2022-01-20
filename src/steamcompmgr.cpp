@@ -551,6 +551,14 @@ should_ignore(xwayland_ctx_t *ctx, unsigned long sequence)
 	return ctx->ignore_head && ctx->ignore_head->sequence == sequence;
 }
 
+static bool
+x_events_queued(xwayland_ctx_t* ctx)
+{
+	// If mode is QueuedAlready, XEventsQueued() returns the number of
+	// events already in the event queue (and never performs a system call).
+	return XEventsQueued(ctx->dpy, QueuedAlready) != 0;
+}
+
 static win *
 find_win(xwayland_ctx_t *ctx, Window id, bool find_children = true)
 {
@@ -3769,7 +3777,8 @@ dispatch_x11( xwayland_ctx_t *ctx )
 	bool bShouldResetCursor = false;
 	bool bSetFocus = false;
 
-	do {
+	while (XPending(ctx->dpy))
+	{
 		XEvent ev;
 		int ret = XNextEvent(ctx->dpy, &ev);
 		if (ret != 0)
@@ -3920,7 +3929,7 @@ dispatch_x11( xwayland_ctx_t *ctx )
 				break;
 		}
 		XFlush(ctx->dpy);
-	} while (XPending(ctx->dpy));
+	}
 
 	if ( bShouldResetCursor )
 	{
@@ -4350,6 +4359,16 @@ steamcompmgr_main(int argc, char **argv)
 	{
 		focusDirty = false;
 		bool vblank = false;
+
+		{
+			gamescope_xwayland_server_t *server = NULL;
+			for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
+			{
+				assert(server);
+				if (x_events_queued(server->ctx.get()))
+					dispatch_x11(server->ctx.get());
+			}
+		}
 
 		if ( poll( pollfds.data(), pollfds.size(), -1 ) < 0)
 		{
