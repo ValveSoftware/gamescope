@@ -366,7 +366,7 @@ retry:
 	{
 		std::unique_lock< std::mutex > lock( waitListLock );
 
-		if( waitList.size() == 0 )
+		if( waitList.empty() )
 		{
 			goto wait;
 		}
@@ -440,7 +440,7 @@ retry:
 	{
 		std::unique_lock< std::mutex > lock( statsEventQueueLock );
 
-		if( statsEventQueue.size() == 0 )
+		if( statsEventQueue.empty() )
 		{
 			goto wait;
 		}
@@ -1810,7 +1810,7 @@ pick_primary_focus_and_override(focus_t *out, Window focusControlWindow, const s
 	bool localGameFocused = false;
 	win *focus = NULL, *override_focus = NULL;
 
-	bool controlledFocus = focusControlWindow != None || ctxFocusControlAppIDs.size() > 0;
+	bool controlledFocus = focusControlWindow != None || !ctxFocusControlAppIDs.empty();
 	if ( controlledFocus )
 	{
 		if ( focusControlWindow != None )
@@ -1844,7 +1844,7 @@ found:;
 
 	if ( !focus && ( !globalFocus || !controlledFocus ) )
 	{
-		if ( vecPossibleFocusWindows.size() > 0 )
+		if ( !vecPossibleFocusWindows.empty() )
 		{
 			focus = vecPossibleFocusWindows[ 0 ];
 			localGameFocused = focus->appID != 0;
@@ -1903,7 +1903,7 @@ found:;
 
 	if ( !override_focus && focus )
 	{
-		if ( ctxFocusControlAppIDs.size() > 0 )
+		if ( !ctxFocusControlAppIDs.empty() )
 		{
 			for ( win *override : vecPossibleFocusWindows )
 			{
@@ -1913,7 +1913,7 @@ found:;
 				}
 			}
 		}
-		else if ( vecPossibleFocusWindows.size() > 0 )
+		else if ( !vecPossibleFocusWindows.empty() )
 		{
 			for ( win *override : vecPossibleFocusWindows )
 			{
