@@ -1466,6 +1466,9 @@ paint_all()
 		update_touch_scaling( &composite );
 	}
 
+	// If we have any layers that aren't a cursor or overlay, then we have valid contents for presentation.
+	const bool bValidContents = composite.nLayerCount > 0;
+
   	if (externalOverlay)
 	{
 		if (externalOverlay->opacity)
@@ -1495,9 +1498,6 @@ paint_all()
 			paint_window(notification, notification, &composite, &pipeline, global_focus.cursor, PaintWindowFlag::NotificationMode);
 		}
 	}
-
-	// If we have any layers that aren't a cursor, then we have valid contents for presentation.
-	const bool bValidContents = composite.nLayerCount > 0;
 
 	// Draw cursor if we need to
 	if (input) {
