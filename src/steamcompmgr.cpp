@@ -178,7 +178,6 @@ uint32_t		currentOutputWidth, currentOutputHeight;
 bool hasFocusWindow;
 
 std::vector< uint32_t > vecFocuscontrolAppIDs;
-std::vector< uint32_t > vecFocuscontrolAppIDsEmpty;
 
 bool			gameFocused;
 
@@ -1806,11 +1805,13 @@ static bool is_good_override_candidate( win *override, win* focus )
 } 
 
 static bool
-pick_primary_focus_and_override(focus_t *out, Window focusControlWindow, const std::vector<win*>& vecPossibleFocusWindows, const std::vector<uint32_t>& ctxFocusControlAppIDs)
+pick_primary_focus_and_override(focus_t *out, Window focusControlWindow, const std::vector<win*>& vecPossibleFocusWindows, bool globalFocus, const std::vector<uint32_t>& ctxFocusControlAppIDs)
 {
 	bool localGameFocused = false;
 	win *focus = NULL, *override_focus = NULL;
-	if ( focusControlWindow != None || ctxFocusControlAppIDs.size() > 0 )
+
+	bool controlledFocus = focusControlWindow != None || ctxFocusControlAppIDs.size() > 0;
+	if ( controlledFocus )
 	{
 		if ( focusControlWindow != None )
 		{
@@ -1819,6 +1820,7 @@ pick_primary_focus_and_override(focus_t *out, Window focusControlWindow, const s
 				if ( focusable_window->id == focusControlWindow )
 				{
 					focus = focusable_window;
+					localGameFocused = true;
 					goto found;
 				}
 			}
@@ -1831,17 +1833,22 @@ pick_primary_focus_and_override(focus_t *out, Window focusControlWindow, const s
 				if ( focusable_window->appID == focusable_appid )
 				{
 					focus = focusable_window;
+					localGameFocused = true;
 					goto found;
 				}
 			}
 		}
-found:
-		localGameFocused = true;
+
+found:;
 	}
-	else if ( vecPossibleFocusWindows.size() > 0 )
+
+	if ( !focus && ( !globalFocus || !controlledFocus ) )
 	{
-		focus = vecPossibleFocusWindows[ 0 ];
-		localGameFocused = focus->appID != 0;
+		if ( vecPossibleFocusWindows.size() > 0 )
+		{
+			focus = vecPossibleFocusWindows[ 0 ];
+			localGameFocused = focus->appID != 0;
+		}
 	}
 
 	auto resolveTransientOverrides = [&]()
@@ -1869,7 +1876,7 @@ found:
 		}
 	};
 
-	if ( localGameFocused && focus )
+	if ( focus )
 	{
 		// Do some searches through game windows to follow transient links if needed
 		while ( true )
@@ -1989,7 +1996,7 @@ determine_and_apply_focus(xwayland_ctx_t *ctx, std::vector<win*>& vecGlobalPossi
 
 	vecGlobalPossibleFocusWindows.insert(vecGlobalPossibleFocusWindows.end(), vecPossibleFocusWindows.begin(), vecPossibleFocusWindows.end());
 
-	pick_primary_focus_and_override( &ctx->focus, ctx->focusControlWindow, vecPossibleFocusWindows, g_nXWaylandCount == 1 ? vecFocuscontrolAppIDs : vecFocuscontrolAppIDsEmpty );
+	pick_primary_focus_and_override( &ctx->focus, ctx->focusControlWindow, vecPossibleFocusWindows, false, vecFocuscontrolAppIDs );
 
 	if ( inputFocus == NULL )
 	{
@@ -2159,7 +2166,7 @@ determine_and_apply_focus()
 	std::stable_sort( vecPossibleFocusWindows.begin(), vecPossibleFocusWindows.end(),
 					is_focus_priority_greater );
 
-	gameFocused = pick_primary_focus_and_override(&global_focus, root_ctx->focusControlWindow, vecPossibleFocusWindows, vecFocuscontrolAppIDs);
+	gameFocused = pick_primary_focus_and_override(&global_focus, root_ctx->focusControlWindow, vecPossibleFocusWindows, true, vecFocuscontrolAppIDs);
 
 	// Pick overlay/notifications from root ctx
 	global_focus.overlayWindow = root_ctx->focus.overlayWindow;
