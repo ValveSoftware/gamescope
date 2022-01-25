@@ -25,6 +25,7 @@ extern "C" {
 #include "log.hpp"
 
 #include "gpuvis_trace_utils.h"
+#include "steamcompmgr.hpp"
 
 #include <algorithm>
 #include <thread>
@@ -846,6 +847,13 @@ int drm_commit(struct drm_t *drm, struct Composite_t *pComposite, struct VulkanP
 			drm->crtcs[i].current = drm->crtcs[i].pending;
 		}
 	}
+
+	// Update the draw time
+	// Ideally this would be updated by something right before the page flip
+	// is queued and would end up being the new page flip, rather than here.
+	// However, the page flip handler is called when the page flip occurs,
+	// not when it is successfully queued.
+	g_uVblankDrawTimeNS = get_time_in_nanos() - g_SteamCompMgrVBlankTime;
 
 	// Wait for flip handler to unlock
 	drm->flip_lock.lock();

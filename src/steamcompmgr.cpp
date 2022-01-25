@@ -215,6 +215,8 @@ bool			synchronize;
 
 std::mutex g_SteamCompMgrXWaylandServerMutex;
 
+uint64_t g_SteamCompMgrVBlankTime = 0;
+
 enum HeldCommitTypes_t
 {
 	HELD_COMMIT_BASE,
@@ -1619,6 +1621,9 @@ paint_all()
 		if ( BIsNested() == true )
 		{
 			vulkan_present_to_window();
+			// Update the time it took us to present.
+			// TODO: Use Vulkan present timing in future.
+			g_uVblankDrawTimeNS = get_time_in_nanos() - g_SteamCompMgrVBlankTime;
 		}
 		else
 		{
@@ -4055,6 +4060,7 @@ dispatch_vblank( int fd )
 			break;
 		}
 
+		g_SteamCompMgrVBlankTime = vblanktime;
 		uint64_t diff = get_time_in_nanos() - vblanktime;
 
 		// give it 1 ms of slack.. maybe too long

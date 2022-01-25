@@ -107,3 +107,5 @@ void take_screenshot( void );
 extern void mangoapp_update();
 gamescope_xwayland_server_t *steamcompmgr_get_focused_server();
 struct wlr_surface *steamcompmgr_get_server_input_surface( size_t idx );
+
+extern uint64_t g_SteamCompMgrVBlankTime;
