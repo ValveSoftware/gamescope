@@ -188,7 +188,9 @@ static void page_flip_handler(int fd, unsigned int frame, unsigned int sec, unsi
 	if ( g_DRM.crtc->id != crtc_id )
 		return;
 
-	vblank_mark_possible_vblank();
+	// This is the last vblank time
+	uint64_t vblanktime = sec * 1'000'000'000lu + usec * 1'000lu;
+	vblank_mark_possible_vblank(vblanktime);
 
 	// TODO: get the fbids_queued instance from data if we ever have more than one in flight
 

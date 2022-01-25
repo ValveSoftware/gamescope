@@ -488,7 +488,8 @@ static inline void stats_printf( const char* format, ...)
 uint64_t get_time_in_nanos()
 {
 	timespec ts;
-	clock_gettime(CLOCK_MONOTONIC_RAW, &ts);
+	// Kernel reports page flips with CLOCK_MONOTONIC.
+	clock_gettime(CLOCK_MONOTONIC, &ts);
 	return ts.tv_sec * 1'000'000'000ul + ts.tv_nsec;
 }
 

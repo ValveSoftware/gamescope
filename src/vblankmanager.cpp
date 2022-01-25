@@ -77,7 +77,7 @@ int vblank_init( void )
 	return g_vblankPipe[ 0 ];
 }
 
-void vblank_mark_possible_vblank( void )
+void vblank_mark_possible_vblank( uint64_t nanos )
 {
-	g_lastVblank = get_time_in_nanos();
+	g_lastVblank = nanos;
 }
