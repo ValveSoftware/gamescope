@@ -2513,7 +2513,7 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 		vkCmdBindDescriptorSets(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &descriptorSet, 0, 0);
 
 		uvec4_t tmp;
-		FsrRcasCon(&tmp.x, 0.2f);
+		FsrRcasCon(&tmp.x, g_fsrSharpness / 10.0f);
 		rcasConstants.u_layer0Offset.x = uint32_t(int32_t(fsrpComposite.data.vOffset[0].x));
 		rcasConstants.u_layer0Offset.y = uint32_t(int32_t(fsrpComposite.data.vOffset[0].y));
 		rcasConstants.u_opacity[0] = fsrpComposite.data.flOpacity[0];

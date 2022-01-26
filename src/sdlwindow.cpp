@@ -155,6 +155,12 @@ void inputSDLThreadRun( void )
 						case KEY_U:
 							g_fsrUpscale = !g_fsrUpscale;
 							break;
+						case KEY_I:
+							g_fsrSharpness = std::min(20, g_fsrSharpness + 1);
+							break;
+						case KEY_O:
+							g_fsrSharpness = std::max(0, g_fsrSharpness - 1);
+							break;
 						case KEY_S:
 							take_screenshot();
 							break;
