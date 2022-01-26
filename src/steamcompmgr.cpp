@@ -1507,7 +1507,7 @@ paint_all()
 				// Just draw focused window as normal, be it Steam or the game
 				paint_window(w, w, &composite, &pipeline, global_focus.cursor, PaintWindowFlag::BasePlane | PaintWindowFlag::DrawBorders, 1.0f);
 
-				composite.useFSRLayer0 = g_fsrUpscale;
+				composite.useFSRLayer0 = g_fsrUpscale && composite.data.vScale[0].x < 1.0f && composite.data.vScale[0].y < 1.0f;
 			}
 			update_touch_scaling( &composite );
 		}
@@ -1594,7 +1594,7 @@ paint_all()
 	const bool bOverrideCompositeHack = false;
 #endif
 
-	if ( BIsNested() == false && alwaysComposite == false && bCapture == false && bOverrideCompositeHack == false && bWasFirstFrame == false )
+	if ( BIsNested() == false && alwaysComposite == false && bCapture == false && bOverrideCompositeHack == false && bWasFirstFrame == false && composite.useFSRLayer0 == false)
 	{
 		int ret = drm_prepare( &g_DRM, &composite, &pipeline );
 		if ( ret == 0 )
