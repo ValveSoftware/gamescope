@@ -20,6 +20,8 @@ extern int g_nOutputRefresh; // Hz
 
 extern bool g_bFullscreen;
 
+extern bool g_bNoModKey;
+
 extern bool g_bFilterGameWindow;
 
 extern bool g_bBorderlessOutputWindow;

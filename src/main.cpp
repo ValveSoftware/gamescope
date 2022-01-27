@@ -42,6 +42,7 @@ const struct option *gamescope_options = (struct option[]){
 	{ "nested-unfocused-refresh", required_argument, nullptr, 'o' },
 	{ "borderless", no_argument, nullptr, 'b' },
 	{ "fullscreen", no_argument, nullptr, 'f' },
+	{ "no-mod-key", no_argument, nullptr, 0 },
 
 	// embedded mode options
 	{ "disable-layers", no_argument, nullptr, 0 },
@@ -96,6 +97,7 @@ const char usage[] =
 	"  -o, --nested-unfocused-refresh game refresh rate when unfocused\n"
 	"  -b, --borderless               make the window borderless\n"
 	"  -f, --fullscreen               make the window fullscreen\n"
+	"  --no-mod-key                   do not generate events for the Super key\n"
 	"\n"
 	"Embedded mode options:\n"
 	"  -O, --prefer-output            list of connectors in order of preference\n"
@@ -131,6 +133,8 @@ uint32_t g_nOutputHeight = 0;
 int g_nOutputRefresh = 0;
 
 bool g_bFullscreen = false;
+
+bool g_bNoModKey = false;
 
 bool g_bIsNested = false;
 
@@ -271,6 +275,8 @@ int main(int argc, char **argv)
 					g_nTouchClickMode = g_nDefaultTouchClickMode;
 				} else if (strcmp(opt_name, "generate-drm-mode") == 0) {
 					g_drmModeGeneration = parse_drm_mode_generation( optarg );
+				} else if (strcmp(opt_name, "no-mod-key") == 0) {
+					g_bNoModKey = true;
 				}
 				break;
 			case '?':

@@ -140,6 +140,11 @@ void inputSDLThreadRun( void )
 			case SDL_KEYUP:
 				key = SDLScancodeToLinuxKey( event.key.keysym.scancode );
 
+				if ( g_bNoModKey == true && key == KEY_LEFTMETA )
+				{
+					break;
+				}
+
 				if ( event.type == SDL_KEYUP && ( event.key.keysym.mod & KMOD_LGUI ) )
 				{
 					bool handled = true;
@@ -162,6 +167,11 @@ void inputSDLThreadRun( void )
 					{
 						break;
 					}
+				}
+
+				if ( g_bNoModKey == true && ( event.key.keysym.mod & KMOD_LGUI ) )
+				{
+					break;
 				}
 
 				// On Wayland, clients handle key repetition
