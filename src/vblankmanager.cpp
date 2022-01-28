@@ -27,17 +27,18 @@ const uint64_t g_uStartingDrawTime = 3'000'000;
 std::atomic<uint64_t> g_uVblankDrawTimeNS = { g_uStartingDrawTime };
 
 // Tuneable
-// 2.0ms
+// 2.0ms by default. (g_DefaultVBlankRedZone)
 // This is the leeway we always apply to our buffer.
 // This also accounts for some time we cannot account for (which (I think) is the drm_commit -> triggering the pageflip)
 // It would be nice to make this lower if we can find a way to track that effectively
 // Perhaps the missing time is spent elsewhere, but given we track from the pipe write
 // to after the return from `drm_commit` -- I am very doubtful.
-uint64_t g_uVblankDrawBufferRedZoneNS = 2'000'000;
+uint64_t g_uVblankDrawBufferRedZoneNS = g_uDefaultVBlankRedZone;
 
 // Tuneable
+// 93% by default. (g_uVBlankRateOfDecayPercentage)
 // The rate of decay (as a percentage) of the rolling average -> current draw time
-uint64_t g_uVBlankRateOfDecayPercentage = 93;
+uint64_t g_uVBlankRateOfDecayPercentage = g_uDefaultVBlankRateOfDecayPercentage;
 
 const uint64_t g_uVBlankRateOfDecayMax = 100;
 

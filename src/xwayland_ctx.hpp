@@ -109,5 +109,8 @@ struct xwayland_ctx_t
 		Atom gamescopeFocusDisplay;
 		Atom gamescopeMouseFocusDisplay;
 		Atom gamescopeKeyboardFocusDisplay;
+
+		Atom gamescopeTuneableVBlankRedZone;
+		Atom gamescopeTuneableRateOfDecay;
 	} atoms;
 };
