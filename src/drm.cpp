@@ -1074,8 +1074,10 @@ drm_prepare_basic( struct drm_t *drm, const struct Composite_t *pComposite, cons
 
 	if ( g_bRotated )
 	{
+		int64_t imageH = pPipeline->layerBindings[ 0 ].imageHeight / pComposite->data.vScale[ 0 ].y;
+
 		int64_t tmp = crtcX;
-		crtcX = g_nOutputHeight - crtcH - crtcY;
+		crtcX = g_nOutputHeight - imageH - crtcY;
 		crtcY = tmp;
 
 		tmp = crtcW;
@@ -1135,9 +1137,11 @@ drm_prepare_liftoff( struct drm_t *drm, const struct Composite_t *pComposite, co
 			uint64_t crtcH = srcHeight / pComposite->data.vScale[ i ].y;
 
 			if (g_bRotated) {
+				int64_t imageH = pPipeline->layerBindings[ i ].imageHeight / pComposite->data.vScale[ i ].y;
+
 				const int32_t x = crtcX;
 				const uint64_t w = crtcW;
-				crtcX = g_nOutputHeight - crtcH - crtcY;
+				crtcX = g_nOutputHeight - imageH - crtcY;
 				crtcY = x;
 				crtcW = crtcH;
 				crtcH = w;

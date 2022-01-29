@@ -1067,12 +1067,17 @@ bool MouseCursor::getTexture()
 	m_hotspotX = image->xhot;
 	m_hotspotY = image->yhot;
 
-	m_width = image->width;
-	m_height = image->height;
+	m_imageWidth = image->width;
+	m_imageHeight = image->height;
 	if ( BIsNested() == false && alwaysComposite == false )
 	{
-		m_width = g_DRM.cursor_width;
-		m_height = g_DRM.cursor_height;
+		m_surfaceWidth = g_DRM.cursor_width;
+		m_surfaceHeight = g_DRM.cursor_height;
+	}
+	else
+	{
+		m_surfaceWidth = m_imageWidth;
+		m_surfaceHeight = m_imageHeight;
 	}
 
 	m_texture = nullptr;
@@ -1080,12 +1085,12 @@ bool MouseCursor::getTexture()
 	// Assume the cursor is fully translucent unless proven otherwise.
 	bool bNoCursor = true;
 
-	auto cursorBuffer = std::vector<uint32_t>(m_width * m_height);
+	auto cursorBuffer = std::vector<uint32_t>(m_surfaceWidth * m_surfaceHeight);
 	for (int i = 0; i < image->height; i++) {
 		for (int j = 0; j < image->width; j++) {
-			cursorBuffer[i * m_width + j] = image->pixels[i * image->width + j];
+			cursorBuffer[i * m_surfaceWidth + j] = image->pixels[i * image->width + j];
 
-			if ( cursorBuffer[i * m_width + j] & 0xff000000 ) {
+			if ( cursorBuffer[i * m_surfaceWidth + j] & 0xff000000 ) {
 				bNoCursor = false;
 			}
 		}
@@ -1111,7 +1116,7 @@ bool MouseCursor::getTexture()
 		// TODO: choose format & modifiers from cursor plane
 	}
 
-	m_texture = vulkan_create_texture_from_bits(m_width, m_height, DRM_FORMAT_ARGB8888, texCreateFlags, cursorBuffer.data());
+	m_texture = vulkan_create_texture_from_bits(m_surfaceWidth, m_surfaceHeight, DRM_FORMAT_ARGB8888, texCreateFlags, cursorBuffer.data());
 	assert(m_texture);
 	XFree(image);
 	m_dirty = false;
@@ -1183,8 +1188,11 @@ void MouseCursor::paint(win *window, win *fit, struct Composite_t *pComposite,
 	pComposite->data.vOffset[ curLayer ].x = -scaledX;
 	pComposite->data.vOffset[ curLayer ].y = -scaledY;
 
-	pPipeline->layerBindings[ curLayer ].surfaceWidth = m_width;
-	pPipeline->layerBindings[ curLayer ].surfaceHeight = m_height;
+	pPipeline->layerBindings[ curLayer ].surfaceWidth = m_surfaceWidth;
+	pPipeline->layerBindings[ curLayer ].surfaceHeight = m_surfaceHeight;
+
+	pPipeline->layerBindings[ curLayer ].imageWidth = m_imageWidth;
+	pPipeline->layerBindings[ curLayer ].imageHeight = m_imageHeight;
 
 	pPipeline->layerBindings[ curLayer ].zpos = g_zposCursor; // cursor, on top of both bottom layers
 
@@ -1379,6 +1387,9 @@ paint_window(win *w, win *scaleW, struct Composite_t *pComposite,
 
 	pPipeline->layerBindings[ curLayer ].surfaceWidth = w->a.width;
 	pPipeline->layerBindings[ curLayer ].surfaceHeight = w->a.height;
+
+	pPipeline->layerBindings[ curLayer ].imageWidth = w->a.width;
+	pPipeline->layerBindings[ curLayer ].imageHeight = w->a.height;
 
 	pPipeline->layerBindings[ curLayer ].zpos = g_zposBase;
 
@@ -1686,6 +1697,9 @@ paint_all()
 			pipeline = {};
 			pipeline.layerBindings[ 0 ].surfaceWidth = g_nOutputWidth;
 			pipeline.layerBindings[ 0 ].surfaceHeight = g_nOutputHeight;
+
+			pipeline.layerBindings[ 0 ].imageWidth = g_nOutputWidth;
+			pipeline.layerBindings[ 0 ].imageHeight = g_nOutputHeight;
 
 			pipeline.layerBindings[ 0 ].fbid = vulkan_get_last_composite_fbid();
 			pipeline.layerBindings[ 0 ].bFilter = false;

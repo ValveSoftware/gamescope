@@ -33,6 +33,9 @@ struct VulkanPipeline_t
 	{
 		int surfaceWidth;
 		int surfaceHeight;
+
+		int imageWidth;
+		int imageHeight;
 		
 		std::shared_ptr<CVulkanTexture> tex;
 		uint32_t fbid;
