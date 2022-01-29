@@ -1144,6 +1144,7 @@ drm_prepare_liftoff( struct drm_t *drm, const struct Composite_t *pComposite, co
 		else
 		{
 			liftoff_layer_set_property( drm->lo_layers[ i ], "FB_ID", 0 );
+			liftoff_layer_set_property( drm->lo_layers[ i ], "zpos", 0 );
 		}
 	}
 
