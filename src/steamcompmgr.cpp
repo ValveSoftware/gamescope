@@ -939,6 +939,9 @@ void MouseCursor::constrainPosition()
 {
 	int i;
 	win *window = m_ctx->focus.inputFocusWindow;
+	win *override = m_ctx->focus.overrideWindow;
+	if (window == override)
+		window = m_ctx->focus.focusWindow;
 
 	// If we had barriers before, get rid of them.
 	for (i = 0; i < 4; i++) {
@@ -953,23 +956,32 @@ void MouseCursor::constrainPosition()
 										  x1, y1, x2, y2, 0, 0, NULL);
 	};
 
-	// Constrain it to the window; careful, the corners will leak due to a known X server bug.
-	m_scaledFocusBarriers[0] = barricade(0, window->a.y, m_ctx->root_width, window->a.y);
+	int x1 = window->a.x;
+	int y1 = window->a.y;
+	if (override)
+	{
+		x1 = std::min(x1, override->a.x);
+		y1 = std::min(y1, override->a.y);
+	}
+	int x2 = window->a.x + window->a.width;
+	int y2 = window->a.y + window->a.height;
+	if (override)
+	{
+		x2 = std::max(x2, override->a.x + override->a.width);
+		y2 = std::max(y2, override->a.y + override->a.height);
+	}
 
-	m_scaledFocusBarriers[1] = barricade(window->a.x + window->a.width, 0,
-										 window->a.x + window->a.width, m_ctx->root_height);
-	m_scaledFocusBarriers[2] = barricade(m_ctx->root_width, window->a.y + window->a.height,
-										 0, window->a.y + window->a.height);
-	m_scaledFocusBarriers[3] = barricade(window->a.x, m_ctx->root_height, window->a.x, 0);
+	// Constrain it to the window; careful, the corners will leak due to a known X server bug.
+	m_scaledFocusBarriers[0] = barricade(0, y1, m_ctx->root_width, y1);
+	m_scaledFocusBarriers[1] = barricade(x2, 0, x2, m_ctx->root_height);
+	m_scaledFocusBarriers[2] = barricade(m_ctx->root_width, y2, 0, y2);
+	m_scaledFocusBarriers[3] = barricade(x1, m_ctx->root_height, x1, 0);
 
 	// Make sure the cursor is somewhere in our jail
 	int rootX, rootY;
 	queryGlobalPosition(rootX, rootY);
 
-	if (rootX - window->a.x >= window->a.width || rootY - window->a.y >= window->a.height ||
-		rootX - window->a.x < 0 || rootY - window->a.y < 0 ) {
-		// If this is Steam and doesn't want focus and we got OOB,
-		// then put is in the bottom right.
+	if ( rootX >= x2 || rootY >= y2 || rootX < x1 || rootY < y1 ) {
 		if ( window_wants_no_focus_when_mouse_hidden( window ) && m_hideForMovement )
 			warp(window->a.width, window->a.height);
 		else
@@ -979,6 +991,7 @@ void MouseCursor::constrainPosition()
 		m_lastY = window->a.height / 2;
 	}
 }
+
 
 void MouseCursor::move(int x, int y)
 {
@@ -4026,7 +4039,8 @@ dispatch_x11( xwayland_ctx_t *ctx )
 				handle_client_message(ctx, &ev.xclient);
 				break;
 			case LeaveNotify:
-				if (ev.xcrossing.window == x11_win(ctx->focus.inputFocusWindow))
+				if (ev.xcrossing.window == x11_win(ctx->focus.inputFocusWindow) &&
+					!ctx->focus.overrideWindow)
 				{
 					// Josh: need to defer this as we could have a destroy later on
 					// and end up submitting commands with the currentInputFocusWIndow
