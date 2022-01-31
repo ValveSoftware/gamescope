@@ -860,6 +860,72 @@ static bool is_vulkan_1_1_device(VkPhysicalDevice device)
 	return properties.apiVersion >= VK_API_VERSION_1_1;
 }
 
+static VkPipeline compile_vk_pipeline(uint32_t layerCount, uint32_t ycbcrMask)
+{
+	const std::array<VkSpecializationMapEntry, 3> specializationEntries = {{
+		{
+			.constantID = 0,
+			.offset     = 0,
+			.size       = sizeof(uint32_t)
+		},
+		{
+			.constantID = 1,
+			.offset     = sizeof(uint32_t),
+			.size       = sizeof(uint32_t)
+		},
+		{
+			.constantID = 2,
+			.offset     = sizeof(uint32_t) + sizeof(uint32_t),
+			.size       = sizeof(uint32_t)
+		},
+	}};
+
+	struct {
+		uint32_t layerCount;
+		uint32_t ycbcrMask;
+		uint32_t debug;
+	} specializationData = {
+		.layerCount   = layerCount + 1,
+		.ycbcrMask    = ycbcrMask,
+		.debug        = g_bIsCompositeDebug,
+	};
+
+	VkSpecializationInfo specializationInfo = {
+		.mapEntryCount = uint32_t(specializationEntries.size()),
+		.pMapEntries   = specializationEntries.data(),
+		.dataSize      = sizeof(specializationData),
+		.pData		   = &specializationData,
+	};
+
+	VkComputePipelineCreateInfo computePipelineCreateInfo = {
+		VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+		nullptr,
+		0,
+		{
+			VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+			nullptr,
+			0,
+			VK_SHADER_STAGE_COMPUTE_BIT,
+			shaderModule,
+			"main",
+			&specializationInfo
+		},
+		pipelineLayout,
+		0,
+		0
+	};
+
+	VkPipeline result;
+
+	VkResult res = vkCreateComputePipelines(device, 0, 1, &computePipelineCreateInfo, 0, &result);
+	if (res != VK_SUCCESS) {
+		vk_errorf( res, "vkCreateComputePipelines failed" );
+		return VK_NULL_HANDLE;
+	}
+
+	return result;
+}
+
 static bool init_device()
 {
 	uint32_t physicalDeviceCount = 0;
@@ -1295,69 +1361,12 @@ retry:
 		return false;
 	}
 
-	const std::array<VkSpecializationMapEntry, 3> specializationEntries = {{
-		{
-			.constantID = 0,
-			.offset     = 0,
-			.size       = sizeof(uint32_t)
-		},
-		{
-			.constantID = 1,
-			.offset     = sizeof(uint32_t),
-			.size       = sizeof(uint32_t)
-		},
-		{
-			.constantID = 2,
-			.offset     = sizeof(uint32_t) + sizeof(uint32_t),
-			.size       = sizeof(uint32_t)
-		},
-	}};
-	
 	for (uint32_t layerCount = 0; layerCount < k_nMaxLayers; layerCount++) {
 		for (uint32_t ycbcrMask = 0; ycbcrMask < k_nMaxYcbcrMask; ycbcrMask++) {
 			if (ycbcrMask >= (1u << (layerCount + 1)))
 				continue;
 
-			struct {
-				uint32_t layerCount;
-				uint32_t ycbcrMask;
-				uint32_t debug;
-			} specializationData = {
-				.layerCount   = layerCount + 1,
-				.ycbcrMask    = ycbcrMask,
-				.debug        = g_bIsCompositeDebug,
-			};
-
-			VkSpecializationInfo specializationInfo = {
-				.mapEntryCount = uint32_t(specializationEntries.size()),
-				.pMapEntries   = specializationEntries.data(),
-				.dataSize      = sizeof(specializationData),
-				.pData		   = &specializationData,
-			};
-
-			VkComputePipelineCreateInfo computePipelineCreateInfo = {
-				VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
-				0,
-				0,
-				{
-					VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-					0,
-					0,
-					VK_SHADER_STAGE_COMPUTE_BIT,
-					shaderModule,
-					"main",
-					&specializationInfo
-				},
-				pipelineLayout,
-				0,
-				0
-			};
-
-			res = vkCreateComputePipelines(device, 0, 1, &computePipelineCreateInfo, 0, &pipelines[layerCount][ycbcrMask]);
-			if (res != VK_SUCCESS) {
-				vk_errorf( res, "vkCreateComputePipelines failed" );
-				return false;
-			}
+			pipelines[layerCount][ycbcrMask] = compile_vk_pipeline(layerCount, ycbcrMask);
 		}
 	}
 	
