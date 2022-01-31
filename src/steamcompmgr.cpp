@@ -2394,9 +2394,15 @@ determine_and_apply_focus()
 		get_window_last_done_commit( global_focus.focusWindow, g_HeldCommits[ HELD_COMMIT_BASE ] );
 	}
 
+	hasFocusWindow = global_focus.focusWindow != nullptr;
+
 	// Set SDL window title
 	if ( global_focus.focusWindow )
 		sdlwindow_title( global_focus.focusWindow->title );
+
+	sdlwindow_pushupdate();
+	
+	focusDirty = false;
 }
 
 static void
@@ -4441,7 +4447,6 @@ steamcompmgr_main(int argc, char **argv)
 
 	for (;;)
 	{
-		focusDirty = false;
 		bool vblank = false;
 
 		{
@@ -4502,14 +4507,8 @@ steamcompmgr_main(int argc, char **argv)
 			lastPublishedInputCounter = inputCounter;
 		}
 
-		if (focusDirty == true)
-		{
+		if (focusDirty)
 			determine_and_apply_focus();
-
-			hasFocusWindow = global_focus.focusWindow != nullptr;
-
-			sdlwindow_pushupdate();
-		}
 
 		// If our DRM state is out-of-date, refresh it. This might update
 		// the output size.
@@ -4556,6 +4555,12 @@ steamcompmgr_main(int argc, char **argv)
 			for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
 				check_new_wayland_res(server->ctx.get());
 		}
+
+		// Handles if we got a commit for the window we want to focus
+		// to switch to it for painting (outdatedInteractiveFocus)
+		// Doesn't realllly matter but avoids an extra frame of being on the wrong window.
+		if (focusDirty)
+			determine_and_apply_focus();
 
 		if ( ( g_bTakeScreenshot == true || hasRepaint == true || is_fading_out() ) && vblank == true )
 		{
