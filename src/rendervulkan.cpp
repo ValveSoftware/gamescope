@@ -5,15 +5,15 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <algorithm>
 #include <array>
+#include <thread>
 
 #include "rendervulkan.hpp"
 #include "main.hpp"
 #include "steamcompmgr.hpp"
 #include "sdlwindow.hpp"
 #include "log.hpp"
-
-#include <algorithm>
 
 #include "cs_composite_blit.h"
 
@@ -81,7 +81,8 @@ VkDescriptorSetLayout descriptorSetLayout;
 VkPipelineLayout pipelineLayout;
 VkDescriptorSet descriptorSet;
 
-std::array<std::array<VkPipeline, k_nMaxYcbcrMask>, k_nMaxLayers> pipelines;
+std::array<std::array<VkPipeline, k_nMaxYcbcrMask>, k_nMaxLayers> pipelines = {};
+std::mutex pipelineMutex;
 
 VkBuffer uploadBuffer;
 VkDeviceMemory uploadBufferMemory;
@@ -926,6 +927,35 @@ static VkPipeline compile_vk_pipeline(uint32_t layerCount, uint32_t ycbcrMask)
 	return result;
 }
 
+static void compile_all_pipelines(void)
+{
+	for (uint32_t layerCount = 0; layerCount < k_nMaxLayers; layerCount++) {
+		for (uint32_t ycbcrMask = 0; ycbcrMask < k_nMaxYcbcrMask; ycbcrMask++) {
+			if (ycbcrMask >= (1u << (layerCount + 1)))
+				continue;
+
+			VkPipeline newPipeline = compile_vk_pipeline(layerCount, ycbcrMask);
+			{
+				std::lock_guard<std::mutex> lock(pipelineMutex);
+				if (pipelines[layerCount][ycbcrMask])
+					vkDestroyPipeline(device, newPipeline, nullptr);
+				else
+					pipelines[layerCount][ycbcrMask] = newPipeline;
+			}
+		}
+	}
+}
+
+static VkPipeline get_vk_pipeline(uint32_t layerCount, uint32_t ycbcrMask)
+{
+
+	std::lock_guard<std::mutex> lock(pipelineMutex);
+	if (!pipelines[layerCount][ycbcrMask])
+		pipelines[layerCount][ycbcrMask] = compile_vk_pipeline(layerCount, ycbcrMask);
+
+	return pipelines[layerCount][ycbcrMask];
+}
+
 static bool init_device()
 {
 	uint32_t physicalDeviceCount = 0;
@@ -1360,15 +1390,9 @@ retry:
 		vk_errorf( res, "vkCreatePipelineLayout failed" );
 		return false;
 	}
-
-	for (uint32_t layerCount = 0; layerCount < k_nMaxLayers; layerCount++) {
-		for (uint32_t ycbcrMask = 0; ycbcrMask < k_nMaxYcbcrMask; ycbcrMask++) {
-			if (ycbcrMask >= (1u << (layerCount + 1)))
-				continue;
-
-			pipelines[layerCount][ycbcrMask] = compile_vk_pipeline(layerCount, ycbcrMask);
-		}
-	}
+	
+	std::thread piplelineThread(compile_all_pipelines);
+	piplelineThread.detach();
 	
 	VkDescriptorSetAllocateInfo descriptorSetAllocateInfo = {
 		VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
@@ -2218,7 +2242,7 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 			      		0, 0, nullptr, 0, nullptr, textureBarriers.size(), textureBarriers.data() );
 
 	assert(pComposite->nYCBCRMask < (1 << (pComposite->nLayerCount + 1)));
-	vkCmdBindPipeline(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelines[pComposite->nLayerCount - 1][pComposite->nYCBCRMask]);
+	vkCmdBindPipeline(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, get_vk_pipeline(pComposite->nLayerCount - 1, pComposite->nYCBCRMask));
 	
 	vkCmdBindDescriptorSets(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE,
 							pipelineLayout, 0, 1, &descriptorSet, 0, 0);
