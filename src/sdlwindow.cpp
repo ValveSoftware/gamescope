@@ -260,6 +260,9 @@ void sdlwindow_update( void )
 
 void sdlwindow_title( const char* title )
 {
+	if ( !BIsNested() )
+		return;
+
 	title = title ? title : DEFAULT_TITLE;
 	g_SDLWindowTitleLock.lock();
 	if ( g_SDLWindowTitle != title )
@@ -273,5 +276,8 @@ void sdlwindow_title( const char* title )
 
 void sdlwindow_pushupdate( void )
 {
+	if ( !BIsNested() )
+		return;
+
 	SDL_PushEvent( &g_SDLUserEvent );
 }
