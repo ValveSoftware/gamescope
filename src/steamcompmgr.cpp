@@ -84,6 +84,12 @@
 #define GPUVIS_TRACE_IMPLEMENTATION
 #include "gpuvis_trace_utils.h"
 
+template< typename T >
+constexpr const T& clamp( const T& x, const T& min, const T& max )
+{
+    return x < min ? min : max < x ? max : x;
+}
+
 struct ignore {
 	struct ignore	*next;
 	unsigned long	sequence;
@@ -1097,7 +1103,7 @@ bool MouseCursor::getTexture()
 	return true;
 }
 
-void MouseCursor::paint(win *window, struct Composite_t *pComposite,
+void MouseCursor::paint(win *window, win *fit, struct Composite_t *pComposite,
 						struct VulkanPipeline_t *pPipeline)
 {
 	if (m_hideForMovement || m_imageEmpty) {
@@ -1113,10 +1119,20 @@ void MouseCursor::paint(win *window, struct Composite_t *pComposite,
 		return;
 	}
 
+	uint32_t sourceWidth = window->a.width;
+	uint32_t sourceHeight = window->a.height;
+
+	if ( fit )
+	{
+		// If we have an override window, try to fit it in as long as it won't make our scale go below 1.0.
+		sourceWidth = std::max<uint32_t>( sourceWidth, clamp<int>( fit->a.x + fit->a.width, 0, currentOutputWidth ) );
+		sourceHeight = std::max<uint32_t>( sourceHeight, clamp<int>( fit->a.y + fit->a.height, 0, currentOutputHeight ) );
+	}
+
 	float scaledX, scaledY;
 	float currentScaleRatio = 1.0;
-	float XRatio = (float)currentOutputWidth / window->a.width;
-	float YRatio = (float)currentOutputHeight / window->a.height;
+	float XRatio = (float)currentOutputWidth / sourceWidth;
+	float YRatio = (float)currentOutputHeight / sourceHeight;
 	int cursorOffsetX, cursorOffsetY;
 
 	currentScaleRatio = (XRatio < YRatio) ? XRatio : YRatio;
@@ -1124,8 +1140,8 @@ void MouseCursor::paint(win *window, struct Composite_t *pComposite,
 	if (g_bIntegerScale)
 		currentScaleRatio = floor(currentScaleRatio);
 
-	cursorOffsetX = (currentOutputWidth - window->a.width * currentScaleRatio * globalScaleRatio) / 2.0f;
-	cursorOffsetY = (currentOutputHeight - window->a.height * currentScaleRatio * globalScaleRatio) / 2.0f;
+	cursorOffsetX = (currentOutputWidth - sourceWidth * currentScaleRatio * globalScaleRatio) / 2.0f;
+	cursorOffsetY = (currentOutputHeight - sourceHeight * currentScaleRatio * globalScaleRatio) / 2.0f;
 
 	// Actual point on scaled screen where the cursor hotspot should be
 	scaledX = (winX - window->a.x) * currentScaleRatio * globalScaleRatio + cursorOffsetX;
@@ -1133,8 +1149,8 @@ void MouseCursor::paint(win *window, struct Composite_t *pComposite,
 
 	if ( zoomScaleRatio != 1.0 )
 	{
-		scaledX += ((window->a.width / 2) - winX) * currentScaleRatio * globalScaleRatio;
-		scaledY += ((window->a.height / 2) - winY) * currentScaleRatio * globalScaleRatio;
+		scaledX += ((sourceWidth / 2) - winX) * currentScaleRatio * globalScaleRatio;
+		scaledY += ((sourceHeight / 2) - winY) * currentScaleRatio * globalScaleRatio;
 	}
 
 	// Apply the cursor offset inside the texture using the display scale
@@ -1206,7 +1222,7 @@ using PaintWindowFlags = uint32_t;
 
 static void
 paint_window(win *w, win *scaleW, struct Composite_t *pComposite,
-			  struct VulkanPipeline_t *pPipeline, MouseCursor *cursor, PaintWindowFlags flags = 0, float flOpacityScale = 1.0f)
+			  struct VulkanPipeline_t *pPipeline, MouseCursor *cursor, PaintWindowFlags flags = 0, float flOpacityScale = 1.0f, win *fit = nullptr )
 {
 	uint32_t sourceWidth, sourceHeight;
 	int drawXOffset = 0, drawYOffset = 0;
@@ -1272,6 +1288,13 @@ paint_window(win *w, win *scaleW, struct Composite_t *pComposite,
 	{
 		sourceWidth = scaleW->a.width;
 		sourceHeight = scaleW->a.height;
+
+		if ( fit )
+		{
+			// If we have an override window, try to fit it in as long as it won't make our scale go below 1.0.
+			sourceWidth = std::max<uint32_t>( sourceWidth, clamp<int>( fit->a.x + fit->a.width, 0, currentOutputWidth ) );
+			sourceHeight = std::max<uint32_t>( sourceHeight, clamp<int>( fit->a.y + fit->a.height, 0, currentOutputHeight ) );
+		}
 	}
 
 	if (sourceWidth != currentOutputWidth || sourceHeight != currentOutputHeight || globalScaleRatio != 1.0f)
@@ -1491,7 +1514,7 @@ paint_all()
 					: ((currentTime - fadeOutStartTime) / (float)g_FadeOutDuration);
 		
 				paint_cached_base_layer(g_HeldCommits[HELD_COMMIT_FADE], g_CachedPlanes[HELD_COMMIT_FADE], &composite, &pipeline, 1.0f - opacityScale);
-				paint_window(w, w, &composite, &pipeline, global_focus.cursor, PaintWindowFlag::BasePlane | PaintWindowFlag::FadeTarget | PaintWindowFlag::DrawBorders, opacityScale);
+				paint_window(w, w, &composite, &pipeline, global_focus.cursor, PaintWindowFlag::BasePlane | PaintWindowFlag::FadeTarget | PaintWindowFlag::DrawBorders, opacityScale, override);
 			}
 			else
 			{
@@ -1505,7 +1528,7 @@ paint_all()
 					}
 				}
 				// Just draw focused window as normal, be it Steam or the game
-				paint_window(w, w, &composite, &pipeline, global_focus.cursor, PaintWindowFlag::BasePlane | PaintWindowFlag::DrawBorders, 1.0f);
+				paint_window(w, w, &composite, &pipeline, global_focus.cursor, PaintWindowFlag::BasePlane | PaintWindowFlag::DrawBorders, 1.0f, override);
 
 				composite.useFSRLayer0 = g_fsrUpscale && composite.data.vScale[0].x < 1.0f && composite.data.vScale[0].y < 1.0f;
 			}
@@ -1524,7 +1547,7 @@ paint_all()
 	// as we will have too many layers. Better to be safe than sorry.
 	if ( override && w && !w->isSteamStreamingClient )
 	{
-		paint_window(override, w, &composite, &pipeline, global_focus.cursor);
+		paint_window(override, w, &composite, &pipeline, global_focus.cursor, 0, 1.0f, override);
 		// Don't update touch scaling for composite. We don't ever make it our
 		// wlserver_mousefocus window.
 		//update_touch_scaling( &composite );
@@ -1565,7 +1588,9 @@ paint_all()
 
 	// Draw cursor if we need to
 	if (input) {
-		global_focus.cursor->paint(override == input ? w : input, &composite, &pipeline);
+		global_focus.cursor->paint(
+			input, w == input ? override : nullptr,
+			&composite, &pipeline);
 	}
 
 	if ( !bValidContents || ( BIsNested() == false && g_DRM.paused == true ) )
