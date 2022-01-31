@@ -2208,7 +2208,7 @@ bool float_is_integer(float x)
 
 static uint32_t s_frameId = 0;
 
-VkDescriptorSet vulkan_update_descriptor( struct Composite_t *pComposite, struct VulkanPipeline_t *pPipeline, int nYCBCRMask, bool fsr, VkImageView targetImageView)
+VkDescriptorSet vulkan_update_descriptor( struct VulkanPipeline_t *pPipeline, int nYCBCRMask, bool fsr, VkImageView targetImageView)
 {
     VkDescriptorSet descriptorSet = descriptorSets[nCurrentDescriptorSet];
     nCurrentDescriptorSet = (nCurrentDescriptorSet + 1) % descriptorSets.size();
@@ -2240,17 +2240,12 @@ VkDescriptorSet vulkan_update_descriptor( struct Composite_t *pComposite, struct
 	{
 		bool compositeLayer = !fsr || i > 0;
 
-		bool bForceNearest = pComposite->data.vScale[i].x == 1.0f &&
-							 pComposite->data.vScale[i].y == 1.0f &&
-							 float_is_integer(pComposite->data.vOffset[i].x);
-							 float_is_integer(pComposite->data.vOffset[i].y);
-
 		VkImageView imageView = pPipeline->layerBindings[ i ].tex
 			? pPipeline->layerBindings[ i ].tex->getView(compositeLayer)
 			: VK_NULL_HANDLE;
 
 		VulkanSamplerCacheKey_t samplerKey;
-		samplerKey.bNearest = (bForceNearest || !pPipeline->layerBindings[i].bFilter) && compositeLayer;
+		samplerKey.bNearest = !pPipeline->layerBindings[i].bFilter && compositeLayer;
 		samplerKey.bUnnormalized = compositeLayer;
 
 		VkSampler sampler = vulkan_make_sampler(samplerKey);
@@ -2418,6 +2413,13 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 
 	for ( int i = pComposite->useFSRLayer0 ? 1 : 0; i < pComposite->nLayerCount; i++ )
 	{
+		bool bForceNearest = pComposite->data.vScale[i].x == 1.0f &&
+							 pComposite->data.vScale[i].y == 1.0f &&
+							 float_is_integer(pComposite->data.vOffset[i].x);
+							 float_is_integer(pComposite->data.vOffset[i].y);
+
+		pPipeline->layerBindings[i].bFilter &= !bForceNearest;
+
 		pComposite->data.vOffset[ i ].x += pComposite->data.vScale[ i ].x / 2.0f;
 		pComposite->data.vOffset[ i ].y += pComposite->data.vScale[ i ].y / 2.0f;
 	}
@@ -2474,7 +2476,7 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 
 		vkCmdBindPipeline(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, easuPipeline);
 
-		VkDescriptorSet descriptorSet = vulkan_update_descriptor( &fsrpComposite, &fsrLayers, 0, true, g_output.easuOutput->m_srgbView );
+		VkDescriptorSet descriptorSet = vulkan_update_descriptor( &fsrLayers, 0, true, g_output.easuOutput->m_srgbView );
 
 		vkCmdBindDescriptorSets(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &descriptorSet, 0, 0);
 
@@ -2508,7 +2510,7 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 
 		vkCmdBindPipeline(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, get_vk_pipeline(pComposite->nLayerCount - 1, pComposite->nYCBCRMask, true));
 		fsrLayers.layerBindings[0].tex = g_output.easuOutput;
-		descriptorSet = vulkan_update_descriptor( &fsrpComposite, &fsrLayers, 0, true, targetImageView );
+		descriptorSet = vulkan_update_descriptor( &fsrLayers, 0, true, targetImageView );
 
 		vkCmdBindDescriptorSets(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &descriptorSet, 0, 0);
 
@@ -2540,7 +2542,7 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 
 		vkCmdBindPipeline(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, get_vk_pipeline(pComposite->nLayerCount - 1, pComposite->nYCBCRMask, false));
 
-		VkDescriptorSet descriptorSet = vulkan_update_descriptor( pComposite, pPipeline, pComposite->nYCBCRMask, false, targetImageView );
+		VkDescriptorSet descriptorSet = vulkan_update_descriptor( pPipeline, pComposite->nYCBCRMask, false, targetImageView );
 
 		vkCmdBindDescriptorSets(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE,
 								pipelineLayout, 0, 1, &descriptorSet, 0, 0);
