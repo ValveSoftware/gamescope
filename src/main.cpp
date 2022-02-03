@@ -87,7 +87,7 @@ const char usage[] =
 	"  -W, --output-width             output width\n"
 	"  -H, --output-height            output height\n"
 	"  -n, --nearest-neighbor-filter  use nearest neighbor filtering\n"
-	"  -U  --fsr-upscaling            use AMD FidelityFX™ Super Resolution 1.0 for upscaling"
+	"  -U  --fsr-upscaling            use AMD FidelityFX™ Super Resolution 1.0 for upscaling\n"
 	"  --fsr-sharpness                FSR sharpness from 0 (max) to 20 (min)\n"
 	"  --cursor                       path to default cursor image\n"
 	"  -R, --ready-fd                 notify FD when ready\n"
