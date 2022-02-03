@@ -50,7 +50,6 @@ static void request_buffer(struct pipewire_state *state)
 	struct pw_buffer *pw_buffer = pw_stream_dequeue_buffer(state->stream);
 	if (!pw_buffer) {
 		pwr_log.errorf("warning: out of buffers");
-		state->needs_buffer = true;
 		return;
 	}
 
@@ -136,10 +135,6 @@ static void dispatch_nudge(struct pipewire_state *state, int fd)
 		} else {
 			destroy_buffer(buffer);
 		}
-
-		if (state->streaming) {
-			request_buffer(state);
-		}
 	}
 }
 
@@ -159,7 +154,6 @@ static void stream_handle_state_changed(void *data, enum pw_stream_state old_str
 		break;
 	case PW_STREAM_STATE_STREAMING:
 		state->streaming = true;
-		request_buffer(state);
 		break;
 	case PW_STREAM_STATE_ERROR:
 	case PW_STREAM_STATE_UNCONNECTED:
@@ -212,16 +206,6 @@ static void stream_handle_param_changed(void *data, uint32_t id, const struct sp
 	ret = pw_stream_update_params(state->stream, params, sizeof(params) / sizeof(params[0]));
 	if (ret != 0) {
 		pwr_log.errorf("pw_stream_update_params failed");
-	}
-}
-
-static void stream_handle_process(void *data)
-{
-	struct pipewire_state *state = (struct pipewire_state *) data;
-
-	if (state->needs_buffer) {
-		state->needs_buffer = false;
-		request_buffer(state);
 	}
 }
 
@@ -322,7 +306,7 @@ static const struct pw_stream_events stream_events = {
 	.param_changed = stream_handle_param_changed,
 	.add_buffer = stream_handle_add_buffer,
 	.remove_buffer = stream_handle_remove_buffer,
-	.process = stream_handle_process,
+	.process = nullptr,
 };
 
 enum event_type {
@@ -456,6 +440,10 @@ uint32_t get_pipewire_stream_node_id(void)
 
 struct pipewire_buffer *dequeue_pipewire_buffer(void)
 {
+	struct pipewire_state *state = &pipewire_state;
+	if (state->streaming) {
+		request_buffer(state);
+	}
 	return out_buffer.exchange(nullptr);
 }
 
