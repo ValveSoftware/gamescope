@@ -117,6 +117,8 @@ struct xwayland_ctx_t
 		Atom gamescopeFSRSharpness;
 
 		Atom gamescopeColorLinearGain;
+		Atom gamescopeColorGain;
+		Atom gamescopeColorLinearGainBlend;
 
 		Atom gamescopeXWaylandModeControl;
 	} atoms;

@@ -3608,7 +3608,28 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 				gains[i] = bit_cast<float>( user_gains[i] );
 		}
 
+		if ( drm_set_color_linear_gains( &g_DRM, gains ) )
+			hasRepaint = true;
+	}
+	if ( ev->atom == ctx->atoms.gamescopeColorGain )
+	{
+		std::vector< uint32_t > user_gains;
+		bool bHasColor = get_prop( ctx, ctx->root, ctx->atoms.gamescopeColorGain, user_gains );
+		
+		float gains[3] = { 1.0f, 1.0f, 1.0f };
+		if ( bHasColor && user_gains.size() == 3 )
+		{
+			for (int i = 0; i < 3; i++)
+				gains[i] = bit_cast<float>( user_gains[i] );
+		}
+
 		if ( drm_set_color_gains( &g_DRM, gains ) )
+			hasRepaint = true;
+	}
+	if ( ev->atom == ctx->atoms.gamescopeColorLinearGainBlend )
+	{
+		float flBlend = bit_cast<float>(get_prop(ctx, ctx->root, ctx->atoms.gamescopeColorLinearGainBlend, 0));
+		if ( drm_set_color_gain_blend( &g_DRM, flBlend ) )
 			hasRepaint = true;
 	}
 	if ( ev->atom == ctx->atoms.gamescopeXWaylandModeControl )
@@ -4494,6 +4515,8 @@ void init_xwayland_ctx(gamescope_xwayland_server_t *xwayland_server)
 	ctx->atoms.gamescopeFSRSharpness = XInternAtom( ctx->dpy, "GAMESCOPE_FSR_SHARPNESS", false );
 
 	ctx->atoms.gamescopeColorLinearGain = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_LINEARGAIN", false );
+	ctx->atoms.gamescopeColorGain = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_GAIN", false );
+	ctx->atoms.gamescopeColorLinearGainBlend = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_LINEARGAIN_BLEND", false );
 	ctx->atoms.gamescopeXWaylandModeControl = XInternAtom( ctx->dpy, "GAMESCOPE_XWAYLAND_MODE_CONTROL", false );
 
 	ctx->root_width = DisplayWidth(ctx->dpy, ctx->scr);

@@ -1373,18 +1373,62 @@ bool drm_set_color_gains(struct drm_t *drm, float *gains)
 	return false;
 }
 
+bool drm_set_color_linear_gains(struct drm_t *drm, float *gains)
+{
+	for (int i = 0; i < 3; i++)
+		drm->pending.color_linear_gain[i] = gains[i];
+
+	for (int i = 0; i < 3; i++)
+	{
+		if ( drm->current.color_linear_gain[i] != drm->pending.color_linear_gain[i] )
+			return true;
+	}
+	return false;
+}
+
+bool drm_set_color_gain_blend(struct drm_t *drm, float blend)
+{
+	drm->pending.gain_blend = blend;
+	if ( drm->current.gain_blend != drm->pending.gain_blend )
+		return true;
+	return false;
+}
+
+inline float lerp( float a, float b, float t )
+{
+    return a + t * (b - a);
+}
+
+inline uint16_t drm_calc_lut_value( float input, float flLinearGain, float flGain, float flBlend )
+{
+    float flValue = lerp( flGain * input, linear_to_srgb( flLinearGain * srgb_to_linear( input ) ), flBlend );
+	return (uint16_t)quantize( flValue, (float)UINT16_MAX );
+}
+
 bool drm_update_gamma_lut(struct drm_t *drm)
 {
 	if (drm->pending.color_gain[0] == drm->current.color_gain[0] &&
 		drm->pending.color_gain[1] == drm->current.color_gain[1] &&
-		drm->pending.color_gain[2] == drm->current.color_gain[2])
+		drm->pending.color_gain[2] == drm->current.color_gain[2] &&
+		drm->pending.color_linear_gain[0] == drm->current.color_linear_gain[0] &&
+		drm->pending.color_linear_gain[1] == drm->current.color_linear_gain[1] &&
+		drm->pending.color_linear_gain[2] == drm->current.color_linear_gain[2] &&
+		drm->pending.gain_blend == drm->current.gain_blend )
 	{
 		return true;
 	}
 
-	if (drm->pending.color_gain[0] == 1.0f &&
-		drm->pending.color_gain[1] == 1.0f &&
-		drm->pending.color_gain[2] == 1.0f)
+	bool color_gain_identity = drm->pending.gain_blend == 1.0f ||
+		( drm->pending.color_gain[0] == 1.0f &&
+		  drm->pending.color_gain[1] == 1.0f &&
+		  drm->pending.color_gain[2] == 1.0f );
+
+	bool linear_gain_identity = drm->pending.gain_blend == 0.0f ||
+		( drm->pending.color_linear_gain[0] == 1.0f &&
+		  drm->pending.color_linear_gain[1] == 1.0f &&
+		  drm->pending.color_linear_gain[2] == 1.0f );
+
+	if ( color_gain_identity && linear_gain_identity )
 	{
 		drm->pending.gamma_lut_id = 0;
 		return true;
@@ -1395,9 +1439,9 @@ bool drm_update_gamma_lut(struct drm_t *drm)
 	for ( int i = 0; i < lut_entries; i++ )
 	{
         float input = float(i) / float(lut_entries - 1);
-        gamma_lut[i].red   = quantize( linear_to_srgb( drm->pending.color_gain[0] * srgb_to_linear( input ) ), (float)UINT16_MAX );
-        gamma_lut[i].green = quantize( linear_to_srgb( drm->pending.color_gain[1] * srgb_to_linear( input ) ), (float)UINT16_MAX );
-        gamma_lut[i].blue  = quantize( linear_to_srgb( drm->pending.color_gain[2] * srgb_to_linear( input ) ), (float)UINT16_MAX );
+		gamma_lut[i].red   = drm_calc_lut_value( input, drm->pending.color_linear_gain[0], drm->pending.color_gain[0], drm->pending.gain_blend );
+		gamma_lut[i].green = drm_calc_lut_value( input, drm->pending.color_linear_gain[1], drm->pending.color_gain[1], drm->pending.gain_blend );
+		gamma_lut[i].blue  = drm_calc_lut_value( input, drm->pending.color_linear_gain[2], drm->pending.color_gain[2], drm->pending.gain_blend );
 	}
 
 	uint32_t blob_id = 0;	
