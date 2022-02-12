@@ -35,10 +35,10 @@ void main() {
         return;
 
     vec2 uv = vec2(coord);
-    vec4 outputValue = vec4(0.0f);
+    vec3 outputValue = vec3(0.0f);
 
     if (c_layerCount > 0)
-        outputValue = sampleLayer(0, uv) * u_opacity[0];
+        outputValue = sampleLayer(0, uv).rgb * u_opacity[0];
 
     for (int i = 1; i < c_layerCount; i++) {
         vec4 layerColor = sampleLayer(i, uv);
@@ -49,10 +49,11 @@ void main() {
         // For the other side of things, we need to multiply by (1.0f - (layerColor.a * opacity))
         float opacity = u_opacity[i];
         float layerAlpha = opacity * layerColor.a;
-        outputValue = layerColor * opacity + outputValue * (1.0f - layerAlpha);
+        outputValue = layerColor.rgb * opacity + outputValue * (1.0f - layerAlpha);
     }
 
-    imageStore(dst, ivec2(coord), linearToSrgb(outputValue));
+    outputValue = linearToSrgb(outputValue);
+    imageStore(dst, ivec2(coord), vec4(outputValue, 0));
 
     // Indicator to quickly tell if we're in the compositing path or not.
     if (c_compositing_debug)

@@ -71,9 +71,7 @@ void rcasComposite(uvec2 pos)
         outputValue = linearToSrgb(outputValue);
     }
 
-
-    float undef;
-    imageStore(dst, ivec2(pos), vec4(outputValue, undef));
+    imageStore(dst, ivec2(pos), vec4(outputValue, 0));
 
     if (c_compositing_debug)
         compositing_debug(pos);
