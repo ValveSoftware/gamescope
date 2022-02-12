@@ -22,15 +22,23 @@ vec4 linearToSrgb(vec4 color) {
   return vec4(linearToSrgb(color.rgb), color.a);
 }
 
-void compositing_debug(uvec2 size, uvec2 coord) {
+uint pseudo_random(uint seed) {
+    seed ^= (seed << 13);
+    seed ^= (seed >> 17);
+    seed ^= (seed << 5);
+    return seed * 1664525u + 1013904223u;
+}
+
+void compositing_debug(uvec2 coord) {
     uvec2 pos = coord;
-    pos.x -= (u_frameId & 2) != 0 ? /* size.x - 160 */ 128 : 0;
-    pos.y -= (u_frameId & 1) != 0 ? /* size.y - 160 */ 128 : 0;
+    pos.x -= (u_frameId & 2) != 0 ?  128 : 0;
+    pos.y -= (u_frameId & 1) != 0 ?  128 : 0;
 
     if (pos.x >= 40 && pos.x < 120 && pos.y >= 40 && pos.y < 120) {
         vec4 value = vec4(1.0f, 1.0f, 1.0f, 1.0f);
         if (pos.x >= 48 && pos.x < 112 && pos.y >= 48 && pos.y < 112) {
-            vec4 time = round(unpackUnorm4x8(clock2x32ARB().x * 1664525u + 1013904223u)).xyzw;
+            uint random = pseudo_random(u_frameId.x + (pos.x & ~0x7) + (pos.y & ~0x7) * 50);
+            vec4 time = round(unpackUnorm4x8(random)).xyzw;
             if (time.x + time.y + time.z + time.w < 2.0f)
                 value = vec4(0.0f, 0.0f, 0.0f, 1.0f);
         }

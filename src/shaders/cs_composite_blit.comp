@@ -1,8 +1,7 @@
 #version 450
 
-#extension GL_GOOGLE_include_directive : require
 #extension GL_EXT_scalar_block_layout : require
-#extension GL_ARB_shader_clock : require
+#extension GL_GOOGLE_include_directive : require
 
 #include "descriptor_set.h"
 
@@ -57,5 +56,5 @@ void main() {
 
     // Indicator to quickly tell if we're in the compositing path or not.
     if (c_compositing_debug)
-        compositing_debug(outSize, coord);
+        compositing_debug(coord);
 }

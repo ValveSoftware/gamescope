@@ -1,6 +1,5 @@
 #version 460
 
-#extension GL_ARB_shader_clock : require
 #extension GL_EXT_scalar_block_layout : require
 #extension GL_GOOGLE_include_directive : require
 
@@ -77,7 +76,7 @@ void rcasComposite(uvec2 pos)
     imageStore(dst, ivec2(pos), vec4(outputValue, undef));
 
     if (c_compositing_debug)
-        compositing_debug(uvec2(0), ivec2(pos));
+        compositing_debug(pos);
 }
 
 void main()

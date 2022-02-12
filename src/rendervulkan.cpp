@@ -1279,8 +1279,6 @@ retry:
 	vecEnabledDeviceExtensions.push_back( VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME );
 	vecEnabledDeviceExtensions.push_back( VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME );
 
-	vecEnabledDeviceExtensions.push_back( VK_KHR_SHADER_CLOCK_EXTENSION_NAME );
-
 	vecEnabledDeviceExtensions.push_back( VK_EXT_ROBUSTNESS_2_EXTENSION_NAME );
 
 	if ( supportsFp16 )
@@ -1301,11 +1299,6 @@ retry:
 		.ppEnabledExtensionNames = vecEnabledDeviceExtensions.data(),
 		.pEnabledFeatures = 0,
 	};
-
-	VkPhysicalDeviceShaderClockFeaturesKHR clockFeatures = {};
-	clockFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_CLOCK_FEATURES_KHR;
-	clockFeatures.pNext = std::exchange(features2.pNext, &clockFeatures);
-	clockFeatures.shaderSubgroupClock = VK_TRUE;
 
 	VkPhysicalDeviceSamplerYcbcrConversionFeatures ycbcrFeatures = {};
 	ycbcrFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SAMPLER_YCBCR_CONVERSION_FEATURES;
