@@ -51,14 +51,18 @@ void rcasComposite(uvec2 pos)
         if (all(lessThan(rcasPos, layer0Extent))) {
             FsrRcasF(outputValue.r, outputValue.g, outputValue.b, rcasPos, u_c1.xxxx);
 
-            // Technically the wrong color space but doing srgb -> linear -> srgb just for
-            // scaling is silly. This is good enough.
-            outputValue *= u_opacity[0];
+            if (c_layerCount == 1) {
+                // Technically the wrong color space if you just have one layer.
+                // but doing srgb -> linear -> srgb just for scaling is silly. This is good enough.
+                outputValue *= u_opacity[0];
+            }
         }
     }
 
+
     if (c_layerCount > 1) {
         outputValue = srgbToLinear(outputValue);
+        outputValue *= u_opacity[0];
         vec2 uv = vec2(pos);
 
         for (int i = 1; i < c_layerCount; i++) {
