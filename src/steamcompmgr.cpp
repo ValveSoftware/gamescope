@@ -3935,10 +3935,20 @@ error(Display *dpy, XErrorEvent *ev)
 	return 0;
 }
 
-static int
-handle_io_error(Display *dpy)
+[[noreturn]] static void
+steamcompmgr_exit(void)
 {
-	xwm_log.errorf("X11 I/O error");
+	// Clean up any commits.
+	{
+		gamescope_xwayland_server_t *server = NULL;
+		for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
+		{
+			for ( win *w = server->ctx->list; w; w = w->next )
+				w->commit_queue.clear();
+		}
+	}
+	g_HeldCommits[ HELD_COMMIT_BASE ] = nullptr;
+	g_HeldCommits[ HELD_COMMIT_FADE ] = nullptr;
 
 	imageWaitThreadRun = false;
 	waitListSem.signal();
@@ -3953,7 +3963,16 @@ handle_io_error(Display *dpy)
 
 	steamcompmgr_fpslimit_release_all();
 
+	finish_drm( &g_DRM );
+
 	pthread_exit(NULL);
+}
+
+static int
+handle_io_error(Display *dpy)
+{
+	xwm_log.errorf("X11 I/O error");
+	steamcompmgr_exit();
 }
 
 static bool
@@ -5126,33 +5145,7 @@ steamcompmgr_main(int argc, char **argv)
 		vblank = false;
 	}
 
-	// Clean up any commits.
-
-	{
-		gamescope_xwayland_server_t *server = NULL;
-		for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
-		{
-			for ( win *w = server->ctx->list; w; w = w->next )
-				w->commit_queue.clear();
-		}
-	}
-	g_HeldCommits[ HELD_COMMIT_BASE ] = nullptr;
-	g_HeldCommits[ HELD_COMMIT_FADE ] = nullptr;
-
-	imageWaitThreadRun = false;
-	waitListSem.signal();
-
-	if ( statsThreadRun == true )
-	{
-		statsThreadRun = false;
-		statsThreadSem.signal();
-	}
-
-	fpslimit_shutdown();
-
-	steamcompmgr_fpslimit_release_all();
-
-	finish_drm( &g_DRM );
+	steamcompmgr_exit();
 }
 
 void steamcompmgr_send_frame_done_to_focus_window()
