@@ -326,8 +326,52 @@ static bool compare_modes( drmModeModeInfo mode1, drmModeModeInfo mode2 )
 
 static bool refresh_state( drm_t *drm )
 {
-	// TODO: refresh list of connectors for DP-MST
+	drmModeRes *resources = drmModeGetResources(drm->fd);
+	if (resources == nullptr) {
+		drm_log.errorf_errno("drmModeGetResources failed");
+		return false;
+	}
 
+	// Add connectors which appeared
+	for (int i = 0; i < resources->count_connectors; i++) {
+		uint32_t conn_id = resources->connectors[i];
+
+		if (drm->connectors.count(conn_id) == 0) {
+			struct connector conn = { .id = conn_id };
+			drm->connectors[conn_id] = conn;
+		}
+	}
+
+	// Remove connectors which disappeared
+	auto it = drm->connectors.begin();
+	while (it != drm->connectors.end()) {
+		struct connector *conn = &it->second;
+
+		bool found = false;
+		for (int j = 0; j < resources->count_connectors; j++) {
+			if (resources->connectors[j] == conn->id) {
+				found = true;
+				break;
+			}
+		}
+
+		if (!found) {
+			if (drm->connector == conn) {
+				drm_log.infof("current connector '%s' disconnected", conn->name);
+				drm->connector = nullptr;
+			}
+
+			free(conn->name);
+			drmModeFreeConnector(conn->connector);
+			it = drm->connectors.erase(it);
+		} else {
+			it++;
+		}
+	}
+
+	drmModeFreeResources(resources);
+
+	// Re-probe connectors props and status
 	for (auto &kv : drm->connectors) {
 		struct connector *conn = &kv.second;
 		if (!get_object_properties(drm, conn->id, DRM_MODE_OBJECT_CONNECTOR, conn->props, conn->initial_prop_values)) {
@@ -346,6 +390,20 @@ static bool refresh_state( drm_t *drm )
 		/* sort modes by preference: preferred flag, then highest area, then
 		 * highest refresh rate */
 		std::stable_sort(conn->connector->modes, conn->connector->modes + conn->connector->count_modes, compare_modes);
+
+		if ( conn->name != nullptr )
+			continue;
+
+		const char *type_str = "Unknown";
+		if ( connector_types.count( conn->connector->connector_type ) > 0 )
+			type_str = connector_types[ conn->connector->connector_type ];
+
+		char name[128] = {};
+		snprintf(name, sizeof(name), "%s-%d", type_str, conn->connector->connector_type_id);
+
+		conn->name = strdup(name);
+
+		conn->possible_crtcs = get_connector_possible_crtcs(drm, conn->connector);
 	}
 
 	for (size_t i = 0; i < drm->crtcs.size(); i++) {
@@ -373,11 +431,6 @@ static bool get_resources(struct drm_t *drm)
 	if (resources == nullptr) {
 		drm_log.errorf_errno("drmModeGetResources failed");
 		return false;
-	}
-
-	for (int i = 0; i < resources->count_connectors; i++) {
-		struct connector conn = { .id = resources->connectors[i] };
-		drm->connectors[conn.id] = conn;
 	}
 
 	for (int i = 0; i < resources->count_crtcs; i++) {
@@ -416,21 +469,6 @@ static bool get_resources(struct drm_t *drm)
 
 	if (!refresh_state(drm))
 		return false;
-
-	for (auto &kv : drm->connectors) {
-		struct connector *conn = &kv.second;
-
-		const char *type_str = "Unknown";
-		if ( connector_types.count( conn->connector->connector_type ) > 0 )
-			type_str = connector_types[ conn->connector->connector_type ];
-
-		char name[128] = {};
-		snprintf(name, sizeof(name), "%s-%d", type_str, conn->connector->connector_type_id);
-
-		conn->name = strdup(name);
-
-		conn->possible_crtcs = get_connector_possible_crtcs(drm, conn->connector);
-	}
 
 	for (size_t i = 0; i < drm->crtcs.size(); i++) {
 		struct crtc *crtc = &drm->crtcs[i];
