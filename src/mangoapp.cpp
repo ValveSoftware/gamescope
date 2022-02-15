@@ -45,5 +45,5 @@ void mangoapp_update( uint64_t visible_frametime, uint64_t app_frametime_ns, uin
     mangoapp_msg_v1.fsrSharpness = g_fsrSharpness;
     mangoapp_msg_v1.app_frametime_ns = app_frametime_ns;
     mangoapp_msg_v1.latency_ns = latency_ns;
-    msgsnd(msgid, &mangoapp_msg_v1, sizeof(mangoapp_msg_v1), IPC_NOWAIT);
+    msgsnd(msgid, &mangoapp_msg_v1, sizeof(mangoapp_msg_v1) - sizeof(mangoapp_msg_v1.hdr.msg_type), IPC_NOWAIT);
 }
