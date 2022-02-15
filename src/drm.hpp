@@ -73,7 +73,7 @@ struct drm_t {
 
 	std::vector< struct plane > planes;
 	std::vector< struct crtc > crtcs;
-	std::vector< struct connector > connectors;
+	std::map< uint32_t, struct connector > connectors;
 
 	std::map< uint32_t, drmModePropertyRes * > props;
 	

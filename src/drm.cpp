@@ -328,8 +328,8 @@ static bool refresh_state( drm_t *drm )
 {
 	// TODO: refresh list of connectors for DP-MST
 
-	for (size_t i = 0; i < drm->connectors.size(); i++) {
-		struct connector *conn = &drm->connectors[i];
+	for (auto &kv : drm->connectors) {
+		struct connector *conn = &kv.second;
 		if (!get_object_properties(drm, conn->id, DRM_MODE_OBJECT_CONNECTOR, conn->props, conn->initial_prop_values)) {
 			return false;
 		}
@@ -377,7 +377,7 @@ static bool get_resources(struct drm_t *drm)
 
 	for (int i = 0; i < resources->count_connectors; i++) {
 		struct connector conn = { .id = resources->connectors[i] };
-		drm->connectors.push_back(conn);
+		drm->connectors[conn.id] = conn;
 	}
 
 	for (int i = 0; i < resources->count_crtcs; i++) {
@@ -417,8 +417,8 @@ static bool get_resources(struct drm_t *drm)
 	if (!refresh_state(drm))
 		return false;
 
-	for (size_t i = 0; i < drm->connectors.size(); i++) {
-		struct connector *conn = &drm->connectors[i];
+	for (auto &kv : drm->connectors) {
+		struct connector *conn = &kv.second;
 
 		const char *type_str = "Unknown";
 		if ( connector_types.count( conn->connector->connector_type ) > 0 )
@@ -496,8 +496,8 @@ static bool setup_best_connector(struct drm_t *drm)
 
 	struct connector *best = nullptr;
 	int best_priority = INT_MAX;
-	for (size_t i = 0; i < drm->connectors.size(); i++) {
-		struct connector *conn = &drm->connectors[i];
+	for (auto &kv : drm->connectors) {
+		struct connector *conn = &kv.second;
 
 		if (conn->connector->connection != DRM_MODE_CONNECTED)
 			continue;
@@ -645,8 +645,8 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 		return false;
 
 	drm_log.infof("Connectors:");
-	for (size_t i = 0; i < drm->connectors.size(); i++) {
-		struct connector *conn = &drm->connectors[i];
+	for (const auto &kv : drm->connectors) {
+		const struct connector *conn = &kv.second;
 
 		const char *status_str = "disconnected";
 		if ( conn->connector->connection == DRM_MODE_CONNECTED )
@@ -734,8 +734,9 @@ void finish_drm(struct drm_t *drm)
 	// together.
 
 	drmModeAtomicReq *req = drmModeAtomicAlloc();
-	for ( size_t i = 0; i < drm->connectors.size(); i++ ) {
-		add_connector_property(req, &drm->connectors[i], "CRTC_ID", 0);
+	for ( auto &kv : drm->connectors ) {
+		struct connector *conn = &kv.second;
+		add_connector_property(req, conn, "CRTC_ID", 0);
 	}
 	for ( size_t i = 0; i < drm->crtcs.size(); i++ ) {
 		add_crtc_property(req, &drm->crtcs[i], "MODE_ID", 0);
@@ -1206,8 +1207,9 @@ int drm_prepare( struct drm_t *drm, const struct Composite_t *pComposite, const 
 
 		// Disable all connectors and CRTCs
 
-		for ( size_t i = 0; i < drm->connectors.size(); i++ ) {
-			if ( add_connector_property( drm->req, &drm->connectors[i], "CRTC_ID", 0 ) < 0 )
+		for ( auto &kv : drm->connectors ) {
+			struct connector *conn = &kv.second;
+			if ( add_connector_property( drm->req, conn, "CRTC_ID", 0 ) < 0 )
 				return false;
 		}
 		for ( size_t i = 0; i < drm->crtcs.size(); i++ ) {
