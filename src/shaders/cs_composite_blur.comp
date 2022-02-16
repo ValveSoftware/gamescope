@@ -1,0 +1,70 @@
+#version 450
+
+#extension GL_EXT_scalar_block_layout : require
+#extension GL_GOOGLE_include_directive : require
+
+#include "descriptor_set.h"
+
+layout(
+  local_size_x = 8,
+  local_size_y = 8,
+  local_size_z = 1) in;
+
+layout(std430, push_constant)
+uniform layers_t {
+    vec2 u_scale[MaxLayers];
+    vec2 u_offset[MaxLayers];
+    float u_opacity[MaxLayers];
+    uint u_borderMask;
+    uint u_frameId;
+};
+
+#define BLUR_DONT_SCALE 1
+#include "composite.h"
+#include "blur.h"
+
+vec4 sampleLayer(uint layerIdx, vec2 uv) {
+    if ((c_ycbcrMask & (1 << layerIdx)) != 0)
+        return srgbToLinear(sampleLayer(s_ycbcr_samplers[layerIdx], layerIdx, uv, false));
+    return sampleLayer(s_samplers[layerIdx], layerIdx, uv, true);
+}
+
+void main() {
+    uvec2 coord = uvec2(gl_GlobalInvocationID.x, gl_GlobalInvocationID.y);
+    uvec2 outSize = imageSize(dst);
+
+    if (coord.x >= outSize.x || coord.y >= outSize.y)
+        return;
+
+    vec2 uv = vec2(coord);
+    vec3 outputValue = vec3(0.0f);
+
+    if (c_layerCount > 0) {
+        vec2 texSize = textureSize(s_sampler_extra, 0);
+
+        vec2 layer0coord = coord + u_offset[0];
+
+        if (layer0coord.x < 0.0f       || layer0coord.y < 0.0f ||
+            layer0coord.x >= texSize.x || layer0coord.y >= texSize.y) {
+            outputValue = vec3(0);
+        } else {
+            vec2 pos = coord + u_offset[0];
+            outputValue = gaussian_blur(s_sampler_extra, pos, c_blur_radius, true, true).rgb;
+        }
+        //outputValue = sampleLayer(s_samplers[0], 0, coord, true).rgb;
+    }
+
+
+    for (int i = 1; i < c_layerCount; i++) {
+        vec4 layerColor = sampleLayer(i, uv);
+        float opacity = u_opacity[i];
+        float layerAlpha = opacity * layerColor.a;
+        outputValue = layerColor.rgb * opacity + outputValue * (1.0f - layerAlpha);
+    }
+
+    outputValue = linearToSrgb(outputValue);
+    imageStore(dst, ivec2(coord), vec4(outputValue, 0));
+
+    if (c_compositing_debug)
+        compositing_debug(coord);
+}

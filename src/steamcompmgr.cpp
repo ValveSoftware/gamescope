@@ -237,6 +237,13 @@ static const uint64_t g_uDynamicRefreshDelay = 600'000'000; // 600ms
 
 bool g_bFSRActive = false;
 
+BlurMode g_BlurMode = BLUR_MODE_OFF;
+BlurMode g_BlurModeOld = BLUR_MODE_OFF;
+unsigned int g_BlurFadeDuration = 0;
+int g_BlurRadius = 5;
+unsigned int g_BlurFadeStartTime = 0;
+
+
 std::atomic<int> g_nMaxAppBufferCount = { 0 };
 
 bool steamcompmgr_window_should_limit_fps( win *w )
@@ -1691,8 +1698,6 @@ paint_all()
 			paint_cached_base_layer(g_HeldCommits[HELD_COMMIT_BASE], g_CachedPlanes[HELD_COMMIT_BASE], &composite, &pipeline, 1.0f);
 	}
 
-	g_bFSRActive = composite.useFSRLayer0;
-
 	// TODO: We want to paint this at the same scale as the normal window and probably
 	// with an offset.
 	// Josh: No override if we're streaming video
@@ -1755,6 +1760,31 @@ paint_all()
 		return;
 	}
 
+	unsigned int blurFadeTime = get_time_in_milliseconds() - g_BlurFadeStartTime;
+	bool blurFading = blurFadeTime < g_BlurFadeDuration;
+	BlurMode currentBlurMode = blurFading ? std::max(g_BlurMode, g_BlurModeOld) : g_BlurMode;
+
+	if (currentBlurMode && !(composite.nLayerCount <= 1 && currentBlurMode == BLUR_MODE_COND))
+	{
+		composite.blurLayer0 = currentBlurMode;
+		composite.blurRadius = g_BlurRadius;
+
+		if (blurFading)
+		{
+			float ratio = blurFadeTime / (float) g_BlurFadeDuration;
+			bool fadingIn = g_BlurMode > g_BlurModeOld;
+
+			if (!fadingIn)
+				ratio = 1.0 - ratio;
+
+			composite.blurRadius = ratio * g_BlurRadius;
+		}
+
+		composite.useFSRLayer0 = false;
+	}
+
+	g_bFSRActive = composite.useFSRLayer0;
+
 	bool bWasFirstFrame = g_bFirstFrame;
 	g_bFirstFrame = false;
 
@@ -1804,6 +1834,7 @@ paint_all()
 	bNeedsComposite |= bOverrideCompositeHack;
 	bNeedsComposite |= bWasFirstFrame;
 	bNeedsComposite |= composite.useFSRLayer0;
+	bNeedsComposite |= composite.blurLayer0;
 	bNeedsComposite |= bNeedsNearest;
 	bNeedsComposite |= bDrewCursor;
 
@@ -3875,6 +3906,29 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 	{
 		g_bLowLatency = !!get_prop( ctx, ctx->root, ctx->atoms.gamescopeLowLatency, 0 );
 	}
+	if ( ev->atom == ctx->atoms.gamescopeBlurMode )
+	{
+		BlurMode newBlur = (BlurMode)get_prop( ctx, ctx->root, ctx->atoms.gamescopeBlurMode, 0 );
+		if (newBlur < BLUR_MODE_OFF || newBlur > BLUR_MODE_ALWAYS)
+			newBlur = BLUR_MODE_OFF;
+
+		if (newBlur != g_BlurMode) {
+			g_BlurFadeStartTime = get_time_in_milliseconds();
+			g_BlurModeOld = g_BlurMode;
+			g_BlurMode = newBlur;
+			hasRepaint = true;
+		}
+	}
+	if ( ev->atom == ctx->atoms.gamescopeBlurRadius )
+	{
+		g_BlurRadius = (int)clamp(get_prop( ctx, ctx->root, ctx->atoms.gamescopeBlurRadius, 0 ), 1u, kMaxBlurRadius - 1);
+		if ( g_BlurMode )
+			hasRepaint = true;
+	}
+	if ( ev->atom == ctx->atoms.gamescopeBlurFadeDuration )
+	{
+		g_BlurFadeDuration = get_prop( ctx, ctx->root, ctx->atoms.gamescopeBlurFadeDuration, 0 );
+	}
 }
 
 static int
@@ -4766,6 +4820,10 @@ void init_xwayland_ctx(gamescope_xwayland_server_t *xwayland_server)
 	ctx->atoms.gamescopeLowLatency = XInternAtom( ctx->dpy, "GAMESCOPE_LOW_LATENCY", false );
 
 	ctx->atoms.gamescopeFSRFeedback = XInternAtom( ctx->dpy, "GAMESCOPE_FSR_FEEDBACK", false );
+
+	ctx->atoms.gamescopeBlurMode = XInternAtom( ctx->dpy, "GAMESCOPE_BLUR_MODE", false );
+	ctx->atoms.gamescopeBlurRadius = XInternAtom( ctx->dpy, "GAMESCOPE_BLUR_RADIUS", false );
+	ctx->atoms.gamescopeBlurFadeDuration = XInternAtom( ctx->dpy, "GAMESCOPE_BLUR_FADE_DURATION", false );
 
 	ctx->root_width = DisplayWidth(ctx->dpy, ctx->scr);
 	ctx->root_height = DisplayHeight(ctx->dpy, ctx->scr);

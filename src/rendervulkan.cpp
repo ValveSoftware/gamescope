@@ -16,9 +16,12 @@
 #include "log.hpp"
 
 #include "cs_composite_blit.h"
+#include "cs_composite_blur.h"
+#include "cs_composite_blur_cond.h"
 #include "cs_composite_rcas.h"
 #include "cs_easu.h"
 #include "cs_easu_fp16.h"
+#include "cs_gaussian_blur_horizontal.h"
 
 
 #define A_CPU
@@ -67,15 +70,23 @@ struct VulkanOutput_t
 	std::array<std::shared_ptr<CVulkanTexture>, 8> pScreenshotImages;
 
 	// FSR
-	std::shared_ptr<CVulkanTexture> easuOutput;
+	std::shared_ptr<CVulkanTexture> tmpOutput;
 };
 
+
+enum ShaderType {
+    SHADER_TYPE_BLIT = 0,
+    SHADER_TYPE_BLUR,
+    SHADER_TYPE_BLUR_COND,
+    SHADER_TYPE_RCAS,
+    SHADER_TYPE_BLUR_FIRST_PASS,
+
+    SHADER_TYPE_COUNT
+};
 
 VkPhysicalDevice physicalDevice;
 uint32_t queueFamilyIndex;
 VkQueue queue;
-VkShaderModule shaderModule;
-VkShaderModule rcasModule;
 VkDevice device;
 VkCommandPool commandPool;
 VkDescriptorPool descriptorPool;
@@ -97,7 +108,8 @@ std::array<VkDescriptorSet, 3> descriptorSets;
 size_t nCurrentDescriptorSet = 0;
 
 VkPipeline easuPipeline;
-std::array<std::array<std::array<VkPipeline,  2>, k_nMaxYcbcrMask>, k_nMaxLayers> pipelines = {};
+std::array<VkShaderModule, SHADER_TYPE_COUNT> shaderModules;
+std::array<std::array<std::array<std::array<VkPipeline,  SHADER_TYPE_COUNT>, kMaxBlurRadius>, k_nMaxYcbcrMask>, k_nMaxLayers> pipelines = {};
 std::mutex pipelineMutex;
 
 VkBuffer uploadBuffer;
@@ -936,9 +948,9 @@ static bool is_vulkan_1_1_device(VkPhysicalDevice device)
 	return properties.apiVersion >= VK_API_VERSION_1_1;
 }
 
-static VkPipeline compile_vk_pipeline(uint32_t layerCount, uint32_t ycbcrMask, bool rcas)
+static VkPipeline compile_vk_pipeline(uint32_t layerCount, uint32_t ycbcrMask, uint32_t radius, ShaderType type)
 {
-	const std::array<VkSpecializationMapEntry, 3> specializationEntries = {{
+	const std::array<VkSpecializationMapEntry, 4> specializationEntries = {{
 		{
 			.constantID = 0,
 			.offset     = 0,
@@ -954,16 +966,23 @@ static VkPipeline compile_vk_pipeline(uint32_t layerCount, uint32_t ycbcrMask, b
 			.offset     = sizeof(uint32_t) + sizeof(uint32_t),
 			.size       = sizeof(uint32_t)
 		},
+		{
+			.constantID = 3,
+			.offset     = sizeof(uint32_t) * 3,
+			.size       = sizeof(uint32_t)
+		},
 	}};
 
 	struct {
 		uint32_t layerCount;
 		uint32_t ycbcrMask;
 		uint32_t debug;
+		uint32_t radius;
 	} specializationData = {
 		.layerCount   = layerCount + 1,
 		.ycbcrMask    = ycbcrMask,
 		.debug        = g_bIsCompositeDebug,
+		.radius       = radius,
 	};
 
 	VkSpecializationInfo specializationInfo = {
@@ -982,7 +1001,7 @@ static VkPipeline compile_vk_pipeline(uint32_t layerCount, uint32_t ycbcrMask, b
 			nullptr,
 			0,
 			VK_SHADER_STAGE_COMPUTE_BIT,
-			rcas ? rcasModule : shaderModule,
+			shaderModules[type],
 			"main",
 			&specializationInfo
 		},
@@ -1004,33 +1023,39 @@ static VkPipeline compile_vk_pipeline(uint32_t layerCount, uint32_t ycbcrMask, b
 
 static void compile_all_pipelines(void)
 {
-	for (uint32_t rcas = 0; rcas < 2; rcas++) {
+	for (ShaderType type = ShaderType(0); type < SHADER_TYPE_COUNT; type = ShaderType(type + 1)) {
 		for (uint32_t layerCount = 0; layerCount < k_nMaxLayers; layerCount++) {
 			for (uint32_t ycbcrMask = 0; ycbcrMask < k_nMaxYcbcrMask; ycbcrMask++) {
-				if (ycbcrMask >= (1u << (layerCount + 1)))
-					continue;
+				for (uint32_t radius = 0; radius < kMaxBlurRadius; radius++) {
+					if (ycbcrMask >= (1u << (layerCount + 1)))
+						continue;
+					if (radius && type != SHADER_TYPE_BLUR && type != SHADER_TYPE_BLUR_COND && type != SHADER_TYPE_BLUR_FIRST_PASS)
+						continue;
+					if ((ycbcrMask > 1 || layerCount > 0) && type == SHADER_TYPE_BLUR_FIRST_PASS)
+						continue;
 
-				VkPipeline newPipeline = compile_vk_pipeline(layerCount, ycbcrMask, rcas);
-				{
-					std::lock_guard<std::mutex> lock(pipelineMutex);
-					if (pipelines[layerCount][ycbcrMask][rcas])
-						vkDestroyPipeline(device, newPipeline, nullptr);
-					else
-						pipelines[layerCount][ycbcrMask][rcas] = newPipeline;
+					VkPipeline newPipeline = compile_vk_pipeline(layerCount, ycbcrMask, radius, type);
+					{
+						std::lock_guard<std::mutex> lock(pipelineMutex);
+						if (pipelines[layerCount][ycbcrMask][radius][type])
+							vkDestroyPipeline(device, newPipeline, nullptr);
+						else
+							pipelines[layerCount][ycbcrMask][radius][type] = newPipeline;
+					}
 				}
 			}
 		}
 	}
 }
 
-static VkPipeline get_vk_pipeline(uint32_t layerCount, uint32_t ycbcrMask, bool rcas)
+static VkPipeline get_vk_pipeline(uint32_t layerCount, uint32_t ycbcrMask, uint32_t radius, ShaderType type)
 {
 
 	std::lock_guard<std::mutex> lock(pipelineMutex);
-	if (!pipelines[layerCount][ycbcrMask][rcas])
-		pipelines[layerCount][ycbcrMask][rcas] = compile_vk_pipeline(layerCount, ycbcrMask, rcas);
+	if (!pipelines[layerCount][ycbcrMask][radius][type])
+		pipelines[layerCount][ycbcrMask][radius][type] = compile_vk_pipeline(layerCount, ycbcrMask, radius, type);
 
-	return pipelines[layerCount][ycbcrMask][rcas];
+	return pipelines[layerCount][ycbcrMask][radius][type];
 }
 
 static bool init_device()
@@ -1336,7 +1361,7 @@ retry:
 	shaderModuleCreateInfo.codeSize = sizeof(cs_composite_blit);
 	shaderModuleCreateInfo.pCode = cs_composite_blit;
 	
-	res = vkCreateShaderModule( device, &shaderModuleCreateInfo, nullptr, &shaderModule );
+	res = vkCreateShaderModule( device, &shaderModuleCreateInfo, nullptr, &shaderModules[SHADER_TYPE_BLIT] );
 	if ( res != VK_SUCCESS )
 	{
 		vk_errorf( res, "vkCreateShaderModule failed" );
@@ -1345,7 +1370,35 @@ retry:
 
 	shaderModuleCreateInfo.codeSize = sizeof(cs_composite_rcas);
 	shaderModuleCreateInfo.pCode = cs_composite_rcas;
-	res = vkCreateShaderModule( device, &shaderModuleCreateInfo, nullptr, &rcasModule );
+	res = vkCreateShaderModule( device, &shaderModuleCreateInfo, nullptr, &shaderModules[SHADER_TYPE_RCAS] );
+	if ( res != VK_SUCCESS )
+	{
+		vk_errorf( res, "vkCreateShaderModule failed" );
+		return false;
+	}
+
+    shaderModuleCreateInfo.codeSize = sizeof(cs_composite_blur);
+	shaderModuleCreateInfo.pCode = cs_composite_blur;
+	res = vkCreateShaderModule( device, &shaderModuleCreateInfo, nullptr, &shaderModules[SHADER_TYPE_BLUR] );
+	if ( res != VK_SUCCESS )
+	{
+		vk_errorf( res, "vkCreateShaderModule failed" );
+		return false;
+	}
+
+	shaderModuleCreateInfo.codeSize = sizeof(cs_composite_blur_cond);
+	shaderModuleCreateInfo.pCode = cs_composite_blur_cond;
+	res = vkCreateShaderModule( device, &shaderModuleCreateInfo, nullptr, &shaderModules[SHADER_TYPE_BLUR_COND] );
+	if ( res != VK_SUCCESS )
+	{
+		vk_errorf( res, "vkCreateShaderModule failed" );
+		return false;
+	}
+
+	shaderModuleCreateInfo.codeSize = sizeof(cs_gaussian_blur_horizontal);
+	shaderModuleCreateInfo.pCode = cs_gaussian_blur_horizontal;
+
+	res = vkCreateShaderModule( device, &shaderModuleCreateInfo, nullptr, &shaderModules[SHADER_TYPE_BLUR_FIRST_PASS] );
 	if ( res != VK_SUCCESS )
 	{
 		vk_errorf( res, "vkCreateShaderModule failed" );
@@ -1373,7 +1426,7 @@ retry:
 		},
 		{
 			VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-			2 * descriptorSets.size() * k_nMaxLayers,
+			descriptorSets.size() * (2 * k_nMaxLayers + 1),
 		},
 	};
 	
@@ -1462,7 +1515,15 @@ retry:
 	descriptorSetLayoutBindings.pImmutableSamplers = ycbcrSamplers.data();
 
 	vecLayoutBindings.push_back( descriptorSetLayoutBindings );
-	
+
+	descriptorSetLayoutBindings.binding = 3;
+	descriptorSetLayoutBindings.descriptorCount = 1;
+	descriptorSetLayoutBindings.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+	descriptorSetLayoutBindings.pImmutableSamplers = nullptr;
+
+	vecLayoutBindings.push_back( descriptorSetLayoutBindings );
+
+
 	VkDescriptorSetLayoutCreateInfo descriptorSetLayoutCreateInfo =
 	{
 		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
@@ -1505,14 +1566,14 @@ retry:
 	std::thread piplelineThread(compile_all_pipelines);
 	piplelineThread.detach();
 
-	VkShaderModule easuModule;
+	VkShaderModule shaderModule;
 
 	VkShaderModuleCreateInfo shaderCreateInfo = {};
 	shaderCreateInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
 	shaderCreateInfo.codeSize = supportsFp16 ? sizeof(cs_easu_fp16) : sizeof(cs_easu);
 	shaderCreateInfo.pCode = supportsFp16 ? cs_easu_fp16 : cs_easu;
 
-	res = vkCreateShaderModule( device, &shaderCreateInfo, nullptr, &easuModule );
+	res = vkCreateShaderModule( device, &shaderCreateInfo, nullptr, &shaderModule );
 	if ( res != VK_SUCCESS )
 	{
 		vk_errorf( res, "vkCreateShaderModule failed" );
@@ -1528,7 +1589,7 @@ retry:
 			nullptr,
 			0,
 			VK_SHADER_STAGE_COMPUTE_BIT,
-			easuModule,
+			shaderModule,
 			"main",
 			nullptr
 		},
@@ -1543,8 +1604,8 @@ retry:
 		return false;
 	}
 
-	vkDestroyShaderModule(device, easuModule, nullptr);
-	
+	vkDestroyShaderModule(device, shaderModule, nullptr);
+
 	std::vector<VkDescriptorSetLayout> descriptorSetLayouts(descriptorSets.size(), descriptorSetLayout);
 	
 	VkDescriptorSetAllocateInfo descriptorSetAllocateInfo = {
@@ -1974,11 +2035,11 @@ bool vulkan_init( void )
 	return true;
 }
 
-static void update_fsr_images( uint32_t width, uint32_t height )
+static void update_tmp_images( uint32_t width, uint32_t height )
 {
-	if ( g_output.easuOutput != nullptr
-			&& width == g_output.easuOutput->m_width
-			&& height == g_output.easuOutput->m_height )
+	if ( g_output.tmpOutput != nullptr
+			&& width == g_output.tmpOutput->m_width
+			&& height == g_output.tmpOutput->m_height )
 	{
 		return;
 	}
@@ -1987,8 +2048,8 @@ static void update_fsr_images( uint32_t width, uint32_t height )
 	createFlags.bSampled = true;
 	createFlags.bStorage = true;
 
-	g_output.easuOutput = std::make_shared<CVulkanTexture>();
-	bool bSuccess = g_output.easuOutput->BInit( width, height, DRM_FORMAT_ARGB8888, createFlags, nullptr );
+	g_output.tmpOutput = std::make_shared<CVulkanTexture>();
+	bool bSuccess = g_output.tmpOutput->BInit( width, height, DRM_FORMAT_ARGB8888, createFlags, nullptr );
 
 	if ( !bSuccess )
 	{
@@ -2201,7 +2262,7 @@ bool float_is_integer(float x)
 
 static uint32_t s_frameId = 0;
 
-VkDescriptorSet vulkan_update_descriptor( struct VulkanPipeline_t *pPipeline, int nYCBCRMask, bool fsr, VkImageView targetImageView)
+VkDescriptorSet vulkan_update_descriptor( struct VulkanPipeline_t *pPipeline, int nYCBCRMask, bool firstNrm, bool firstSrgb, VkImageView targetImageView, VkImageView extraImageView = VK_NULL_HANDLE)
 {
     VkDescriptorSet descriptorSet = descriptorSets[nCurrentDescriptorSet];
     nCurrentDescriptorSet = (nCurrentDescriptorSet + 1) % descriptorSets.size();
@@ -2231,15 +2292,15 @@ VkDescriptorSet vulkan_update_descriptor( struct VulkanPipeline_t *pPipeline, in
 	std::array< VkDescriptorImageInfo, k_nMaxLayers > imageDescriptors = {};
 	for ( uint32_t i = 0; i < k_nMaxLayers; i++ )
 	{
-		bool compositeLayer = !fsr || i > 0;
+		bool compositeLayer = i > 0;
 
 		VkImageView imageView = pPipeline->layerBindings[ i ].tex
-			? pPipeline->layerBindings[ i ].tex->getView(compositeLayer)
+			? pPipeline->layerBindings[ i ].tex->getView(compositeLayer || !firstSrgb)
 			: VK_NULL_HANDLE;
 
 		VulkanSamplerCacheKey_t samplerKey;
-		samplerKey.bNearest = !pPipeline->layerBindings[i].bFilter && compositeLayer;
-		samplerKey.bUnnormalized = compositeLayer;
+		samplerKey.bNearest = !pPipeline->layerBindings[i].bFilter;
+		samplerKey.bUnnormalized = compositeLayer || !firstNrm;
 
 		VkSampler sampler = vulkan_make_sampler(samplerKey);
 		assert ( sampler != VK_NULL_HANDLE );
@@ -2271,7 +2332,7 @@ VkDescriptorSet vulkan_update_descriptor( struct VulkanPipeline_t *pPipeline, in
 		}
 	}
 
-	std::array< VkWriteDescriptorSet, 2 > writeDescriptorSets;
+	std::array< VkWriteDescriptorSet, 3 > writeDescriptorSets;
 
 	writeDescriptorSets[0] = {
 		.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
@@ -2295,6 +2356,25 @@ VkDescriptorSet vulkan_update_descriptor( struct VulkanPipeline_t *pPipeline, in
 		.descriptorCount = ycbcrImageDescriptors.size(),
 		.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 		.pImageInfo = ycbcrImageDescriptors.data(),
+		.pBufferInfo = nullptr,
+		.pTexelBufferView = nullptr,
+	};
+
+	VkDescriptorImageInfo extraInfo = {
+		.sampler = imageDescriptors[0].sampler,
+		.imageView = extraImageView,
+		.imageLayout = VK_IMAGE_LAYOUT_GENERAL,
+	};
+
+	writeDescriptorSets[2] = {
+		.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+		.pNext = nullptr,
+		.dstSet = descriptorSet,
+		.dstBinding = 3,
+		.dstArrayElement = 0,
+		.descriptorCount = 1,
+		.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+		.pImageInfo = &extraInfo,
 		.pBufferInfo = nullptr,
 		.pTexelBufferView = nullptr,
 	};
@@ -2404,7 +2484,7 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 	vkCmdPipelineBarrier( curCommandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 			      		0, 0, nullptr, 0, nullptr, textureBarriers.size(), textureBarriers.data() );
 
-	for ( int i = pComposite->useFSRLayer0 ? 1 : 0; i < pComposite->nLayerCount; i++ )
+	for ( int i = pComposite->useFSRLayer0 ? 1 : 1; i < pComposite->nLayerCount; i++ )
 	{
 		bool bForceNearest = pComposite->data.vScale[i].x == 1.0f &&
 							 pComposite->data.vScale[i].y == 1.0f &&
@@ -2454,6 +2534,7 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 
 		struct Composite_t fsrpComposite = *pComposite;
 		struct VulkanPipeline_t fsrLayers = *pPipeline;
+		fsrLayers.layerBindings[0].bFilter = true;
 
 		uint32_t inputX = fsrLayers.layerBindings[0].tex->m_width;
 		uint32_t inputY = fsrLayers.layerBindings[0].tex->m_height;
@@ -2461,15 +2542,15 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 		uint32_t tempX = float(inputX) / fsrpComposite.data.vScale[0].x;
 		uint32_t tempY = float(inputY) / fsrpComposite.data.vScale[0].y;
 
-		update_fsr_images(tempX, tempY);
+		update_tmp_images(tempX, tempY);
 
-		memoryBarrier.image = g_output.easuOutput->m_vkImage;
+		memoryBarrier.image = g_output.tmpOutput->m_vkImage;
 		vkCmdPipelineBarrier( curCommandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 			      		0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
 
 		vkCmdBindPipeline(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, easuPipeline);
 
-		VkDescriptorSet descriptorSet = vulkan_update_descriptor( &fsrLayers, 0, true, g_output.easuOutput->m_srgbView );
+		VkDescriptorSet descriptorSet = vulkan_update_descriptor( &fsrLayers, 0, true, true, g_output.tmpOutput->m_srgbView );
 
 		vkCmdBindDescriptorSets(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &descriptorSet, 0, 0);
 
@@ -2493,7 +2574,7 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 			.newLayout = VK_IMAGE_LAYOUT_GENERAL,
 			.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 			.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-			.image = g_output.easuOutput->m_vkImage,
+			.image = g_output.tmpOutput->m_vkImage,
 			.subresourceRange = subResRange
 		};
 
@@ -2501,9 +2582,9 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 			      		0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
 
 
-		vkCmdBindPipeline(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, get_vk_pipeline(pComposite->nLayerCount - 1, pComposite->nYCBCRMask, true));
-		fsrLayers.layerBindings[0].tex = g_output.easuOutput;
-		descriptorSet = vulkan_update_descriptor( &fsrLayers, 0, true, targetImageView );
+		vkCmdBindPipeline(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, get_vk_pipeline(pComposite->nLayerCount - 1, pComposite->nYCBCRMask, 0, SHADER_TYPE_RCAS));
+		fsrLayers.layerBindings[0].tex = g_output.tmpOutput;
+		descriptorSet = vulkan_update_descriptor( &fsrLayers, 0, true, true, targetImageView );
 
 		vkCmdBindDescriptorSets(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &descriptorSet, 0, 0);
 
@@ -2530,12 +2611,80 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 
 		vkCmdDispatch( curCommandBuffer, dispatchX, dispatchY, 1 );
 	}
+	else if ( pComposite->blurLayer0 )
+	{
+		struct Composite_t blurComposite = *pComposite;
+		struct VulkanPipeline_t blurLayers = *pPipeline;
+
+		uint32_t inputX = blurLayers.layerBindings[0].tex->m_width;
+		uint32_t inputY = blurLayers.layerBindings[0].tex->m_height;
+
+		uint32_t tempX = float(inputX) / blurComposite.data.vScale[0].x;
+		uint32_t tempY = float(inputY) / blurComposite.data.vScale[0].y;
+
+		update_tmp_images(tempX, tempY);
+
+		memoryBarrier.image = g_output.tmpOutput->m_vkImage;
+		vkCmdPipelineBarrier( curCommandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+			      		0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
+
+		ShaderType type = SHADER_TYPE_BLUR_FIRST_PASS;
+
+		vkCmdBindPipeline(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, get_vk_pipeline(0, blurComposite.nYCBCRMask & 0x1u, blurComposite.blurRadius, type));
+
+		VkDescriptorSet descriptorSet = vulkan_update_descriptor( &blurLayers, pComposite->nYCBCRMask, false, true, g_output.tmpOutput->m_srgbView );
+
+		vkCmdBindDescriptorSets(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE,
+								pipelineLayout, 0, 1, &descriptorSet, 0, 0);
+
+		vkCmdPushConstants(curCommandBuffer, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(blurComposite.data), &blurComposite.data);
+
+		uint32_t nGroupCountX = tempX % 8 ? tempX / 8 + 1: tempX / 8;
+		uint32_t nGroupCountY = tempY % 8 ? tempY / 8 + 1: tempY / 8;
+
+		vkCmdDispatch( curCommandBuffer, nGroupCountX, nGroupCountY, 1 );
+
+		memoryBarrier =
+		{
+			.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+			.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+			.dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
+			.oldLayout = VK_IMAGE_LAYOUT_GENERAL,
+			.newLayout = VK_IMAGE_LAYOUT_GENERAL,
+			.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+			.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+			.image = g_output.tmpOutput->m_vkImage,
+			.subresourceRange = subResRange
+		};
+
+		vkCmdPipelineBarrier( curCommandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+			      		0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
+
+		descriptorSet = vulkan_update_descriptor( &blurLayers, blurComposite.nYCBCRMask, false, false, targetImageView, g_output.tmpOutput->m_linearView );
+
+		vkCmdBindDescriptorSets(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &descriptorSet, 0, 0);
+
+		type = pComposite->blurLayer0 == BLUR_MODE_COND ? SHADER_TYPE_BLUR_COND : SHADER_TYPE_BLUR;
+
+		vkCmdBindPipeline(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, get_vk_pipeline(blurComposite.nLayerCount - 1, blurComposite.nYCBCRMask, blurComposite.blurRadius, type));
+
+		vkCmdPushConstants(curCommandBuffer, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(blurComposite.data), &blurComposite.data);
+		if (g_bIsCompositeDebug) {
+			vkCmdPushConstants(curCommandBuffer, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, sizeof(blurComposite.data), sizeof(uint32_t), &s_frameId);
+			s_frameId++;
+		}
+
+		nGroupCountX = currentOutputWidth % 8 ? currentOutputWidth / 8 + 1: currentOutputWidth / 8;
+		nGroupCountY = currentOutputHeight % 8 ? currentOutputHeight / 8 + 1: currentOutputHeight / 8;
+
+		vkCmdDispatch( curCommandBuffer, nGroupCountX, nGroupCountY, 1 );
+	}
 	else
 	{
 
-		vkCmdBindPipeline(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, get_vk_pipeline(pComposite->nLayerCount - 1, pComposite->nYCBCRMask, false));
+		vkCmdBindPipeline(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, get_vk_pipeline(pComposite->nLayerCount - 1, pComposite->nYCBCRMask, 0, SHADER_TYPE_BLIT));
 
-		VkDescriptorSet descriptorSet = vulkan_update_descriptor( pPipeline, pComposite->nYCBCRMask, false, targetImageView );
+		VkDescriptorSet descriptorSet = vulkan_update_descriptor( pPipeline, pComposite->nYCBCRMask, false, false, targetImageView );
 
 		vkCmdBindDescriptorSets(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE,
 								pipelineLayout, 0, 1, &descriptorSet, 0, 0);

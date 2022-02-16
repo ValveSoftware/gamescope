@@ -24,6 +24,14 @@
 #define k_nMaxLayers 6
 #define k_nMaxYcbcrMask 16
 
+#define kMaxBlurRadius 37u
+
+enum BlurMode {
+    BLUR_MODE_OFF = 0,
+    BLUR_MODE_COND = 1,
+    BLUR_MODE_ALWAYS = 2,
+};
+
 class CVulkanTexture;
 
 // These two structs are horrible
@@ -56,6 +64,8 @@ struct Composite_t
 	int nLayerCount;
 	int nYCBCRMask;
 	bool useFSRLayer0;
+	BlurMode blurLayer0;
+	int blurRadius;
 
 	struct CompositeData_t
 	{

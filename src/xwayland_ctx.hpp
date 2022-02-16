@@ -127,5 +127,9 @@ struct xwayland_ctx_t
 		Atom gamescopeLowLatency;
 
 		Atom gamescopeFSRFeedback;
+
+		Atom gamescopeBlurMode;
+		Atom gamescopeBlurRadius;
+		Atom gamescopeBlurFadeDuration;
 	} atoms;
 };
