@@ -3921,7 +3921,8 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 	}
 	if ( ev->atom == ctx->atoms.gamescopeBlurRadius )
 	{
-		g_BlurRadius = (int)clamp(get_prop( ctx, ctx->root, ctx->atoms.gamescopeBlurRadius, 0 ), 1u, kMaxBlurRadius - 1);
+		unsigned int pixel = get_prop( ctx, ctx->root, ctx->atoms.gamescopeBlurRadius, 0 );
+		g_BlurRadius = (int)clamp((pixel / 2) + 1, 1u, kMaxBlurRadius - 1);
 		if ( g_BlurMode )
 			hasRepaint = true;
 	}

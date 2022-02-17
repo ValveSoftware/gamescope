@@ -982,7 +982,7 @@ static VkPipeline compile_vk_pipeline(uint32_t layerCount, uint32_t ycbcrMask, u
 		.layerCount   = layerCount + 1,
 		.ycbcrMask    = ycbcrMask,
 		.debug        = g_bIsCompositeDebug,
-		.radius       = radius,
+		.radius       = radius ? (radius * 2) - 1 : 0,
 	};
 
 	VkSpecializationInfo specializationInfo = {
