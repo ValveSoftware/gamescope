@@ -2484,11 +2484,11 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 	vkCmdPipelineBarrier( curCommandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 			      		0, 0, nullptr, 0, nullptr, textureBarriers.size(), textureBarriers.data() );
 
-	for ( int i = pComposite->useFSRLayer0 ? 1 : 1; i < pComposite->nLayerCount; i++ )
+	for ( int i = pComposite->useFSRLayer0 ? 1 : 0; i < pComposite->nLayerCount; i++ )
 	{
 		bool bForceNearest = pComposite->data.vScale[i].x == 1.0f &&
 							 pComposite->data.vScale[i].y == 1.0f &&
-							 float_is_integer(pComposite->data.vOffset[i].x);
+							 float_is_integer(pComposite->data.vOffset[i].x) &&
 							 float_is_integer(pComposite->data.vOffset[i].y);
 
 		pPipeline->layerBindings[i].bFilter &= !bForceNearest;
@@ -2615,6 +2615,7 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 	{
 		struct Composite_t blurComposite = *pComposite;
 		struct VulkanPipeline_t blurLayers = *pPipeline;
+		blurLayers.layerBindings[0].bFilter = true;
 
 		uint32_t inputX = blurLayers.layerBindings[0].tex->m_width;
 		uint32_t inputY = blurLayers.layerBindings[0].tex->m_height;
