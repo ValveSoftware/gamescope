@@ -137,6 +137,204 @@ static uint32_t keycode_from_ch(struct wlserver_input_method *ime, uint32_t ch)
 	return keycode;
 }
 
+static uint32_t keycode_from_single_ch(struct wlserver_input_method *ime, uint32_t ch)
+{
+	uint32_t keycode = 0;
+
+	switch (ch) {
+	case '0':
+		keycode = KEY_0;
+		break;
+	case '1':
+		keycode = KEY_1;
+		break;
+	case '2':
+		keycode = KEY_2;
+		break;
+	case '3':
+		keycode = KEY_3;
+		break;
+	case '4':
+		keycode = KEY_4;
+		break;
+	case '5':
+		keycode = KEY_5;
+		break;
+	case '6':
+		keycode = KEY_6;
+		break;
+	case '7':
+		keycode = KEY_7;
+		break;
+	case '8':
+		keycode = KEY_8;
+		break;
+	case '9':
+		keycode = KEY_9;
+		break;
+	case 'a':
+	case 'A':
+		keycode = KEY_A;
+		break;
+	case 'b':
+	case 'B':
+		keycode = KEY_B;
+		break;
+	case 'c':
+	case 'C':
+		keycode = KEY_C;
+		break;
+	case 'd':
+	case 'D':
+		keycode = KEY_D;
+		break;
+	case 'e':
+	case 'E':
+		keycode = KEY_E;
+		break;
+	case 'f':
+	case 'F':
+		keycode = KEY_F;
+		break;
+	case 'g':
+	case 'G':
+		keycode = KEY_G;
+		break;
+	case 'h':
+	case 'H':
+		keycode = KEY_H;
+		break;
+	case 'i':
+	case 'I':
+		keycode = KEY_I;
+		break;
+	case 'j':
+	case 'J':
+		keycode = KEY_J;
+		break;
+	case 'k':
+	case 'K':
+		keycode = KEY_K;
+		break;
+	case 'l':
+	case 'L':
+		keycode = KEY_L;
+		break;
+	case 'm':
+	case 'M':
+		keycode = KEY_M;
+		break;
+	case 'n':
+	case 'N':
+		keycode = KEY_N;
+		break;
+	case 'o':
+	case 'O':
+		keycode = KEY_O;
+		break;
+	case 'p':
+	case 'P':
+		keycode = KEY_P;
+		break;
+	case 'q':
+	case 'Q':
+		keycode = KEY_Q;
+		break;
+	case 'r':
+	case 'R':
+		keycode = KEY_R;
+		break;
+	case 's':
+	case 'S':
+		keycode = KEY_S;
+		break;
+	case 't':
+	case 'T':
+		keycode = KEY_T;
+		break;
+	case 'u':
+	case 'U':
+		keycode = KEY_U;
+		break;
+	case 'v':
+	case 'V':
+		keycode = KEY_V;
+		break;
+	case 'w':
+	case 'W':
+		keycode = KEY_W;
+		break;
+	case 'x':
+	case 'X':
+		keycode = KEY_X;
+		break;
+	case 'y':
+	case 'Y':
+		keycode = KEY_Y;
+		break;
+	case 'z':
+	case 'Z':
+		keycode = KEY_Z;
+		break;
+	case '-':
+	case '_':
+		keycode = KEY_MINUS;
+		break;
+	case '=':
+	case '+':
+		keycode = KEY_EQUAL;
+		break;
+	case '\t':
+		keycode = KEY_TAB;
+		break;
+	case '[':
+	case '{':
+		keycode = KEY_LEFTBRACE;
+		break;
+	case ']':
+	case '}':
+		keycode = KEY_RIGHTBRACE;
+		break;
+	case '\\':
+	case '|':
+		keycode = KEY_BACKSLASH;
+		break;
+	case ';':
+	case ':':
+		keycode = KEY_SEMICOLON;
+		break;
+	case '\'':
+	case '"':
+		keycode = KEY_APOSTROPHE;
+		break;
+	case ',':
+	case '<':
+		keycode = KEY_COMMA;
+		break;
+	case '.':
+	case '>':
+		keycode = KEY_DOT;
+		break;
+	case '/':
+	case '?':
+		keycode = KEY_SLASH;
+		break;
+	case ' ':
+		keycode = KEY_SPACE;
+		break;
+	default:
+		return keycode_from_ch(ime, ch);
+	}
+
+	xkb_keysym_t keysym = xkb_utf32_to_keysym(ch);
+	if (keysym == XKB_KEY_NoSymbol) {
+		return XKB_KEYCODE_INVALID;
+	}
+
+	ime->keys[ch] = (struct wlserver_input_method_key){ keycode, keysym };
+	return keycode;
+}
+
 static struct xkb_keymap *generate_keymap(struct wlserver_input_method *ime)
 {
 	uint32_t keycode_offset = 8;
@@ -145,16 +343,12 @@ static struct xkb_keymap *generate_keymap(struct wlserver_input_method *ime)
 	size_t str_size = 0;
 	FILE *f = open_memstream(&str, &str_size);
 
-	uint32_t min_keycode = allow_keycodes[0];
-	uint32_t max_keycode = allow_keycodes[ime->keys.size()];
 	fprintf(f,
 		"xkb_keymap {\n"
 		"\n"
 		"xkb_keycodes \"(unnamed)\" {\n"
-		"	minimum = %u;\n"
-		"	maximum = %u;\n",
-		keycode_offset + min_keycode,
-		keycode_offset + max_keycode
+		"	minimum = 8;\n"
+		"	maximum = 255;\n"
 	);
 
 	for (const auto kv : ime->keys) {
@@ -211,16 +405,24 @@ static void type_text(struct wlserver_input_method *ime, const char *text)
 	ime->keys.clear();
 
 	std::vector<xkb_keycode_t> keycodes;
-	while (text[0] != '\0') {
+	if (text[0] != '\0' && text[1] == '\0') {
 		uint32_t ch = utf8_decode(&text);
-
-		xkb_keycode_t keycode = keycode_from_ch(ime, ch);
+		xkb_keycode_t keycode = keycode_from_single_ch(ime, ch);
 		if (keycode == XKB_KEYCODE_INVALID) {
 			ime_log.errorf("warning: cannot type character U+%X", ch);
-			continue;
+		} else {
+			keycodes.push_back(keycode);
 		}
-
-		keycodes.push_back(keycode);
+	} else {
+		while (text[0] != '\0') {
+			uint32_t ch = utf8_decode(&text);
+			xkb_keycode_t keycode = keycode_from_ch(ime, ch);
+			if (keycode == XKB_KEYCODE_INVALID) {
+				ime_log.errorf("warning: cannot type character U+%X", ch);
+			} else {
+				keycodes.push_back(keycode);
+			}
+		}
 	}
 
 	struct xkb_keymap *keymap = generate_keymap(ime);
