@@ -322,6 +322,9 @@ static uint32_t keycode_from_single_ch(struct wlserver_input_method *ime, uint32
 	case ' ':
 		keycode = KEY_SPACE;
 		break;
+	case '`':
+		keycode = KEY_GRAVE;
+		break;
 	default:
 		return keycode_from_ch(ime, ch);
 	}
