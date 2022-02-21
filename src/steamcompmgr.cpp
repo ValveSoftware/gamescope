@@ -232,6 +232,8 @@ static int g_nDynamicRefreshRate = 0;
 // Delay to stop modes flickering back and forth.
 static const uint64_t g_uDynamicRefreshDelay = 600'000'000; // 600ms
 
+static int g_nRuntimeInfoFd = -1;
+
 bool g_bFSRActive = false;
 
 BlurMode g_BlurMode = BLUR_MODE_OFF;
@@ -244,6 +246,7 @@ bool steamcompmgr_window_should_limit_fps( win *w )
 {
 	return g_nSteamCompMgrTargetFPS != 0 && w && !w->isSteam && w->appID != 769 && !w->isOverlay && !w->isExternalOverlay;
 }
+
 
 enum HeldCommitTypes_t
 {
@@ -3474,6 +3477,27 @@ T bit_cast(const J& src) {
 }
 
 static void
+update_runtime_info()
+{
+	if ( g_nRuntimeInfoFd < 0 )
+		return;
+
+	uint32_t limiter_enabled = g_nSteamCompMgrTargetFPS != 0 ? 1 : 0;
+	pwrite( g_nRuntimeInfoFd, &limiter_enabled, sizeof( limiter_enabled ), 0 );
+}
+
+static void
+init_runtime_info()
+{
+	const char *path = getenv( "GAMESCOPE_LIMITER_FILE" );
+	if ( !path )
+		return;
+
+	g_nRuntimeInfoFd = open( path, O_CREAT | O_RDWR , 0644 );
+	update_runtime_info();
+}
+
+static void
 handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 {
 	/* check if Trans property was changed */
@@ -3813,6 +3837,7 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 	if ( ev->atom == ctx->atoms.gamescopeFPSLimit )
 	{
 		g_nSteamCompMgrTargetFPS = get_prop( ctx, ctx->root, ctx->atoms.gamescopeFPSLimit, 0 );
+		update_runtime_info();
 	}
 	if ( ev->atom == ctx->atoms.gamescopeDynamicRefresh )
 	{
@@ -4858,6 +4883,8 @@ steamcompmgr_main(int argc, char **argv)
 
 	currentOutputWidth = g_nPreferredOutputWidth;
 	currentOutputHeight = g_nPreferredOutputHeight;
+
+	init_runtime_info();
 
 	int vblankFD = vblank_init();
 	assert( vblankFD >= 0 );
