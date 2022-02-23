@@ -2,6 +2,7 @@
 #include "wlserver.hpp"
 #include "log.hpp"
 
+#include <assert.h>
 #include <unistd.h>
 #include <string.h>
 
@@ -208,8 +209,89 @@ static struct xkb_keymap *generate_keymap(struct wlserver_input_method *ime)
 	return keymap;
 }
 
+static bool try_type_keysym(struct wlserver_input_method *ime, xkb_keysym_t keysym)
+{
+	struct wlr_seat *seat = ime->manager->server->wlr.seat;
+	struct wlr_input_device *device = ime->manager->server->wlr.virtual_keyboard_device;
+
+	struct xkb_keymap *keymap = device->keyboard->keymap;
+	xkb_keycode_t min_keycode = xkb_keymap_min_keycode(keymap);
+	xkb_keycode_t max_keycode = xkb_keymap_max_keycode(keymap);
+	for (xkb_keycode_t keycode = min_keycode; keycode <= max_keycode; keycode++) {
+		xkb_layout_index_t num_layouts = xkb_keymap_num_layouts_for_key(keymap, keycode);
+		for (xkb_layout_index_t layout = 0; layout < num_layouts; layout++) {
+			xkb_level_index_t num_levels = xkb_keymap_num_levels_for_key(keymap, keycode, layout);
+			for (xkb_level_index_t level = 0; level < num_levels; level++) {
+				const xkb_keysym_t *syms = nullptr;
+				int num_syms = xkb_keymap_key_get_syms_by_level(keymap, keycode, layout, level, &syms);
+				if (num_syms != 1) {
+					continue;
+				}
+				if (syms[0] != keysym) {
+					continue;
+				}
+
+				xkb_mod_mask_t mask;
+				size_t num_masks = xkb_keymap_key_get_mods_for_level(keymap, keycode, layout, level, &mask, 1);
+				if (num_masks != 1) {
+					continue;
+				}
+
+				xkb_mod_mask_t allowed = WLR_MODIFIER_SHIFT | WLR_MODIFIER_CTRL | WLR_MODIFIER_ALT;
+				if ((mask & allowed) != mask) {
+					continue;
+				}
+
+				assert(keycode >= 8);
+
+				uint32_t keycodes[8] = {0};
+				size_t n = 0;
+				if (mask & WLR_MODIFIER_SHIFT) {
+					keycodes[n++] = KEY_LEFTSHIFT;
+				}
+				if (mask & WLR_MODIFIER_CTRL) {
+					keycodes[n++] = KEY_LEFTCTRL;
+				}
+				if (mask & WLR_MODIFIER_ALT) {
+					keycodes[n++] = KEY_LEFTALT;
+				}
+				keycodes[n++] = keycode - 8;
+
+				struct wlr_keyboard_modifiers prev_mods = {0};
+				if (seat->keyboard_state.keyboard != nullptr) {
+					prev_mods = seat->keyboard_state.keyboard->modifiers;
+				}
+				struct wlr_keyboard_modifiers mods = {
+					.depressed = mask,
+				};
+				wlr_seat_set_keyboard(seat, device);
+				wlr_seat_keyboard_notify_modifiers(seat, &mods);
+				for (size_t i = 0; i < n; i++) {
+					wlr_seat_keyboard_notify_key(seat, 0, keycodes[i], WL_KEYBOARD_KEY_STATE_PRESSED);
+				}
+				for (ssize_t i = n - 1; i >= 0; i--) {
+					wlr_seat_keyboard_notify_key(seat, 0, keycodes[i], WL_KEYBOARD_KEY_STATE_RELEASED);
+				}
+				wlr_seat_keyboard_notify_modifiers(seat, &prev_mods);
+
+				return true;
+			}
+		}
+	}
+
+	return false;
+}
+
 static void type_text(struct wlserver_input_method *ime, const char *text)
 {
+	// If possible, try to type the character without switching the keymap
+	if (utf8_size(text) == 1 && text[1] == '\0') {
+		xkb_keysym_t keysym = xkb_utf32_to_keysym(text[0]);
+		if (keysym != XKB_KEY_NoSymbol && try_type_keysym(ime, keysym)) {
+			return;
+		}
+	}
+
 	ime->keys.clear();
 
 	std::vector<xkb_keycode_t> keycodes;
@@ -245,14 +327,17 @@ static void type_text(struct wlserver_input_method *ime, const char *text)
 
 static void perform_action(struct wlserver_input_method *ime, enum gamescope_input_method_action action)
 {
-	ime->keys.clear();
-
 	if (actions.count(action) == 0) {
 		ime_log.errorf("unsupported action %d", action);
 		return;
 	}
 
-	struct wlserver_input_method_key key = actions[action];
+	const struct wlserver_input_method_key key = actions[action];
+	if (try_type_keysym(ime, key.keysym)) {
+		return;
+	}
+
+	ime->keys.clear();
 	ime->keys[0] = key;
 
 	struct xkb_keymap *keymap = generate_keymap(ime);
