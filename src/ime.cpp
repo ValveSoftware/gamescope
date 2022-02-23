@@ -29,7 +29,9 @@ static const uint32_t UTF8_INVALID = 0xFFFD;
 static size_t utf8_size(const char *str)
 {
 	uint8_t u8 = (uint8_t)str[0];
-	if ((u8 & 0x80) == 0) {
+	if (u8 == 0) {
+		return 0;
+	} else if ((u8 & 0x80) == 0) {
 		return 1;
 	} else if ((u8 & 0xE0) == 0xC0) {
 		return 2;
