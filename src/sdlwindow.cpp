@@ -50,8 +50,8 @@ static inline int SDLButtonToLinuxButton( int SDLButton )
 		case SDL_BUTTON_LEFT: return BTN_LEFT;
 		case SDL_BUTTON_MIDDLE: return BTN_MIDDLE;
 		case SDL_BUTTON_RIGHT: return BTN_RIGHT;
-		case SDL_BUTTON_X1: return BTN_FORWARD;
-		case SDL_BUTTON_X2: return BTN_BACK;
+		case SDL_BUTTON_X1: return BTN_SIDE;
+		case SDL_BUTTON_X2: return BTN_EXTRA;
 		default: return 0;
 	}
 }
