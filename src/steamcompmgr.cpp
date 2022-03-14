@@ -243,6 +243,8 @@ unsigned int g_BlurFadeDuration = 0;
 int g_BlurRadius = 5;
 unsigned int g_BlurFadeStartTime = 0;
 
+pid_t focusWindow_pid;
+
 bool steamcompmgr_window_should_limit_fps( win *w )
 {
 	return g_nSteamCompMgrTargetFPS != 0 && w && !w->isSteam && w->appID != 769 && !w->isOverlay && !w->isExternalOverlay;
@@ -2571,6 +2573,7 @@ determine_and_apply_focus()
 		focusedBaseAppId = global_focus.focusWindow->appID;
 		focusedAppId = global_focus.inputFocusWindow->appID;
 		focused_display = global_focus.focusWindow->ctx->xwayland_server->get_nested_display_name();
+		focusWindow_pid = global_focus.focusWindow->pid;
 	}
 
 	if ( global_focus.inputFocusWindow )
