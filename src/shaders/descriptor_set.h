@@ -11,3 +11,8 @@ layout(binding = 0, rgba8) writeonly uniform image2D dst;
 layout(binding = 1) uniform sampler2D s_samplers[MaxLayers];
 layout(binding = 2) uniform sampler2D s_ycbcr_samplers[MaxLayers];
 layout(binding = 3) uniform sampler2D s_sampler_extra;
+
+#if defined(NIS_SCALER)
+layout(binding = 4) uniform sampler2D coef_scaler;
+layout(binding = 5) uniform sampler2D coef_usm;
+#endif

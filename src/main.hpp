@@ -22,8 +22,15 @@ extern bool g_bFullscreen;
 
 extern bool g_bFilterGameWindow;
 
-extern bool g_fsrUpscale;
-extern int g_fsrSharpness;
+enum class GamescopeUpscaler : uint32_t
+{
+    BLIT = 0,
+    FSR,
+    NIS
+};
+
+extern GamescopeUpscaler g_upscaler;
+extern int g_upscalerSharpness;
 
 extern bool g_bBorderlessOutputWindow;
 

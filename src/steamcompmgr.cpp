@@ -1616,7 +1616,9 @@ paint_all()
 				// Just draw focused window as normal, be it Steam or the game
 				paint_window(w, w, &frameInfo, global_focus.cursor, PaintWindowFlag::BasePlane | PaintWindowFlag::DrawBorders, 1.0f, override);
 
-				frameInfo.useFSRLayer0 = g_fsrUpscale && frameInfo.layers[0].scale.x < 1.0f && frameInfo.layers[0].scale.y < 1.0f;
+				bool needsScaling = frameInfo.layers[0].scale.x < 1.0f && frameInfo.layers[0].scale.y < 1.0f;
+				frameInfo.useFSRLayer0 = g_upscaler == GamescopeUpscaler::FSR && needsScaling;
+				frameInfo.useNISLayer0 = g_upscaler == GamescopeUpscaler::NIS && needsScaling;
 			}
 			update_touch_scaling( &frameInfo );
 		}
@@ -1710,6 +1712,7 @@ paint_all()
 		}
 
 		frameInfo.useFSRLayer0 = false;
+		frameInfo.useNISLayer0 = false;
 	}
 
 	g_bFSRActive = frameInfo.useFSRLayer0;
@@ -1750,6 +1753,7 @@ paint_all()
 	bNeedsComposite |= bCapture;
 	bNeedsComposite |= bWasFirstFrame;
 	bNeedsComposite |= frameInfo.useFSRLayer0;
+	bNeedsComposite |= frameInfo.useNISLayer0;
 	bNeedsComposite |= frameInfo.blurLayer0;
 	bNeedsComposite |= bNeedsNearest;
 	bNeedsComposite |= bDrewCursor;
@@ -3875,30 +3879,35 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 		case 0:
 			g_bFilterGameWindow = true;
 			g_bIntegerScale = false;
-			g_fsrUpscale = false;
+			g_upscaler = GamescopeUpscaler::BLIT;
 			break;
 		case 1:
 			g_bFilterGameWindow = false;
 			g_bIntegerScale = false;
-			g_fsrUpscale = false;
+			g_upscaler = GamescopeUpscaler::BLIT;
 			break;
 		case 2:
 			g_bFilterGameWindow = false;
 			g_bIntegerScale = true;
-			g_fsrUpscale = false;
+			g_upscaler = GamescopeUpscaler::BLIT;
 			break;
 		case 3:
 			g_bFilterGameWindow = true;
 			g_bIntegerScale = false;
-			g_fsrUpscale = true;
+			g_upscaler = GamescopeUpscaler::FSR;
+			break;
+		case 4:
+			g_bFilterGameWindow = true;
+			g_bIntegerScale = false;
+			g_upscaler = GamescopeUpscaler::NIS;
 			break;
 		}
 		hasRepaint = true;
 	}
-	if ( ev->atom == ctx->atoms.gamescopeFSRSharpness )
+	if ( ev->atom == ctx->atoms.gamescopeFSRSharpness || ev->atom == ctx->atoms.gamescopeSharpness )
 	{
-		g_fsrSharpness = (int)clamp( get_prop( ctx, ctx->root, ctx->atoms.gamescopeFSRSharpness, 2 ), 0u, 20u );
-		if ( g_fsrUpscale )
+		g_upscalerSharpness = (int)clamp( get_prop( ctx, ctx->root, ev->atom, 2 ), 0u, 20u );
+		if ( g_upscaler != GamescopeUpscaler::BLIT )
 			hasRepaint = true;
 	}
 	if ( ev->atom == ctx->atoms.gamescopeColorLinearGain )
@@ -4874,6 +4883,7 @@ void init_xwayland_ctx(gamescope_xwayland_server_t *xwayland_server)
 
 	ctx->atoms.gamescopeScalingFilter = XInternAtom( ctx->dpy, "GAMESCOPE_SCALING_FILTER", false );
 	ctx->atoms.gamescopeFSRSharpness = XInternAtom( ctx->dpy, "GAMESCOPE_FSR_SHARPNESS", false );
+	ctx->atoms.gamescopeSharpness = XInternAtom( ctx->dpy, "GAMESCOPE_SHARPNESS", false );
 
 	ctx->atoms.gamescopeColorLinearGain = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_LINEARGAIN", false );
 	ctx->atoms.gamescopeColorGain = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_GAIN", false );

@@ -117,6 +117,7 @@ struct xwayland_ctx_t
 
 		Atom gamescopeScalingFilter;
 		Atom gamescopeFSRSharpness;
+		Atom gamescopeSharpness;
 
 		Atom gamescopeColorLinearGain;
 		Atom gamescopeColorGain;

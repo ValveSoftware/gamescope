@@ -152,14 +152,22 @@ void inputSDLThreadRun( void )
 						case KEY_N:
 							g_bFilterGameWindow = !g_bFilterGameWindow;
 							break;
+						case KEY_B:
+							g_upscaler = GamescopeUpscaler::BLIT;
+							break;
 						case KEY_U:
-							g_fsrUpscale = !g_fsrUpscale;
+							g_upscaler = (g_upscaler == GamescopeUpscaler::FSR) ?
+								GamescopeUpscaler::BLIT : GamescopeUpscaler::FSR;
+							break;
+						case KEY_Y:
+							g_upscaler = (g_upscaler == GamescopeUpscaler::NIS) ? 
+								GamescopeUpscaler::BLIT : GamescopeUpscaler::NIS;
 							break;
 						case KEY_I:
-							g_fsrSharpness = std::min(20, g_fsrSharpness + 1);
+							g_upscalerSharpness = std::min(20, g_upscalerSharpness + 1);
 							break;
 						case KEY_O:
-							g_fsrSharpness = std::max(0, g_fsrSharpness - 1);
+							g_upscalerSharpness = std::max(0, g_upscalerSharpness - 1);
 							break;
 						case KEY_S:
 							take_screenshot();

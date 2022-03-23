@@ -35,6 +35,7 @@ meson install -C build/ --skip-subprojects
 * **Super + F** : Toggle fullscreen
 * **Super + N** : Toggle integer scaling
 * **Super + U** : Toggle FSR upscaling
+* **Super + Y** : Toggle NIS upscaling
 * **Super + I** : Increase FSR sharpness by 1
 * **Super + O** : Decrease FSR sharpness by 1
 * **Super + S** : Take screenshot (currently goes to `/tmp/gamescope_$DATE.png`)
@@ -62,7 +63,8 @@ See `gamescope --help` for a full list of options.
 * `-w`, `-h`: set the resolution used by the game. If `-h` is specified but `-w` isn't, a 16:9 aspect ratio is assumed. Defaults to the values specified in `-W` and `-H`.
 * `-r`: set a frame-rate limit for the game. Specified in frames per second. Defaults to unlimited.
 * `-o`: set a frame-rate limit for the game when unfocused. Specified in frames per second. Defaults to unlimited.
-* `-U`: use AMD FidelityFX™ Super Resolution 1.0 for upscaling 
+* `-U`: use AMD FidelityFX™ Super Resolution 1.0 for upscaling
+* `-Y`: use NVIDIA Image Scaling v1.0.2 for upscaling
 * `-n`: use integer scaling.
 * `-b`: create a border-less window.
 * `-f`: create a full-screen window.

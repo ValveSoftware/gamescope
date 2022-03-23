@@ -9,6 +9,11 @@
 #include <array>
 #include <thread>
 
+// Used to remove the config struct alignment specified by the NIS header
+#define NIS_ALIGNED(x)
+// NIS_Config needs to be included before the X11 headers because of conflicting defines introduced by X11
+#include "shaders/NVIDIAImageScaling/NIS/NIS_Config.h"
+
 #include "rendervulkan.hpp"
 #include "main.hpp"
 #include "steamcompmgr.hpp"
@@ -22,6 +27,8 @@
 #include "cs_easu.h"
 #include "cs_easu_fp16.h"
 #include "cs_gaussian_blur_horizontal.h"
+#include "cs_nis.h"
+#include "cs_nis_fp16.h"
 
 
 #define A_CPU
@@ -69,8 +76,16 @@ struct VulkanOutput_t
 
 	std::array<std::shared_ptr<CVulkanTexture>, 8> pScreenshotImages;
 
-	// FSR
+	// NIS and FSR
 	std::shared_ptr<CVulkanTexture> tmpOutput;
+
+	// NIS
+	VkSampler nisSampler;
+	VkImage nisScalerImage;
+	VkImageView nisScalerView;
+	VkImage nisUsmImage;
+	VkImageView nisUsmView;
+	VkDeviceMemory nisMemory;
 };
 
 
@@ -91,6 +106,8 @@ VkDevice device;
 VkCommandPool commandPool;
 VkDescriptorPool descriptorPool;
 
+bool g_nisUseFp16Coefficients;
+
 bool g_vulkanSupportsModifiers;
 
 bool g_vulkanHasDrmPrimaryDevId = false;
@@ -108,6 +125,7 @@ std::array<VkDescriptorSet, 3> descriptorSets;
 size_t nCurrentDescriptorSet = 0;
 
 VkPipeline easuPipeline;
+VkPipeline nisPipeline;
 std::array<VkShaderModule, SHADER_TYPE_COUNT> shaderModules;
 std::array<std::array<std::array<std::array<std::array<VkPipeline, k_nMaxBlurLayers>, SHADER_TYPE_COUNT>, kMaxBlurRadius>, k_nMaxYcbcrMask>, k_nMaxLayers> pipelines = {};
 std::mutex pipelineMutex;
@@ -136,6 +154,9 @@ struct VkPhysicalDeviceMemoryProperties memoryProperties;
 
 VulkanOutput_t g_output;
 
+// Prototype to use init_nis_data in vulkan_init
+static bool init_nis_data();
+
 struct VulkanSamplerCacheKey_t
 {
 	bool bNearest : 1;
@@ -153,6 +174,9 @@ struct VulkanSamplerCacheKey_t
 			&& this->bUnnormalized == other.bUnnormalized;
 	}
 };
+
+// Needed for use in init_nis_data
+VkSampler vulkan_make_sampler( VulkanSamplerCacheKey_t key );
 
 namespace std
 {
@@ -1299,6 +1323,8 @@ retry:
 			supportsFp16 = false;
 	}
 
+	g_nisUseFp16Coefficients = supportsFp16;
+
 	float queuePriorities = 1.0f;
 
 	VkDeviceQueueGlobalPriorityCreateInfoEXT queueCreateInfoEXT = {
@@ -1457,8 +1483,8 @@ retry:
 		},
 		{
 			VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-			descriptorSets.size() * (2 * k_nMaxLayers + 1),
-		},
+			descriptorSets.size() * (2 * k_nMaxLayers + 1) + 2 * descriptorSets.size(),
+		}
 	};
 	
 	VkDescriptorPoolCreateInfo descriptorPoolCreateInfo = {
@@ -1554,6 +1580,19 @@ retry:
 
 	vecLayoutBindings.push_back( descriptorSetLayoutBindings );
 
+	descriptorSetLayoutBindings.binding = 4;
+	descriptorSetLayoutBindings.descriptorCount = 1;
+	descriptorSetLayoutBindings.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+	descriptorSetLayoutBindings.pImmutableSamplers = nullptr;
+
+	vecLayoutBindings.push_back( descriptorSetLayoutBindings );
+
+	descriptorSetLayoutBindings.binding = 5;
+	descriptorSetLayoutBindings.descriptorCount = 1;
+	descriptorSetLayoutBindings.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+	descriptorSetLayoutBindings.pImmutableSamplers = nullptr;
+
+	vecLayoutBindings.push_back( descriptorSetLayoutBindings );
 
 	VkDescriptorSetLayoutCreateInfo descriptorSetLayoutCreateInfo =
 	{
@@ -1571,6 +1610,7 @@ retry:
 		return false;
 	}
 
+	static_assert(sizeof(NISConfig) <= 128, "NISConfig size must not be larger than the push constant range size");
 	VkPushConstantRange pushConstantRange = {
 		.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
 		.offset = 0,
@@ -1636,6 +1676,28 @@ retry:
 	}
 
 	vkDestroyShaderModule(device, shaderModule, nullptr);
+
+	VkShaderModule nisModule;
+
+	shaderCreateInfo.codeSize = supportsFp16 ? sizeof(cs_nis_fp16) : sizeof(cs_nis);
+	shaderCreateInfo.pCode = supportsFp16 ? cs_nis_fp16 : cs_nis;
+
+	res = vkCreateShaderModule( device, &shaderCreateInfo, nullptr, &nisModule );
+	if ( res != VK_SUCCESS )
+	{
+		vk_errorf( res, "NIS vkCreateShaderModule failed" );
+		return false;
+	}
+
+	computePipelineCreateInfo.stage.module = nisModule;
+
+	res = vkCreateComputePipelines(device, 0, 1, &computePipelineCreateInfo, 0, &nisPipeline);
+	if (res != VK_SUCCESS) {
+		vk_errorf( res, "vkCreateComputePipelines failed" );
+		return false;
+	}
+
+	vkDestroyShaderModule(device, nisModule, nullptr);
 
 	std::vector<VkDescriptorSetLayout> descriptorSetLayouts(descriptorSets.size(), descriptorSetLayout);
 	
@@ -2058,6 +2120,9 @@ bool vulkan_init( void )
 	if ( !init_device() )
 		return false;
 	
+	if ( !init_nis_data() )
+		return false;
+
 	dyn_vkGetMemoryFdKHR = (PFN_vkGetMemoryFdKHR)vkGetDeviceProcAddr( device, "vkGetMemoryFdKHR" );
 	if ( dyn_vkGetMemoryFdKHR == nullptr )
 		return false;
@@ -2178,6 +2243,296 @@ static inline void submit_command_buffer( uint32_t handle, std::vector<std::shar
 		g_scratchCommandBuffers[ handle ].refs.push_back( std::move(vecRefs[ i ]) );
 }
 
+static bool allocate_nis_memory()
+{
+	VkMemoryRequirements memRequirements = {};
+
+	vkGetImageMemoryRequirements(device, g_output.nisScalerImage, &memRequirements);
+	uint32_t supportedMemoryTypes = memRequirements.memoryTypeBits;
+	VkDeviceSize memorySize = memRequirements.size;
+
+	vkGetImageMemoryRequirements(device, g_output.nisUsmImage, &memRequirements);
+	supportedMemoryTypes &= memRequirements.memoryTypeBits;
+
+	VkDeviceSize usmOffset = memorySize + (memRequirements.alignment - (memorySize % memRequirements.alignment));
+	memorySize += memRequirements.size + usmOffset;
+
+	int32_t memTypeIndex = findMemoryType(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, supportedMemoryTypes);
+	if ( memTypeIndex == -1 )
+	{
+		vk_log.errorf( "findMemoryType failed" );
+		return false;
+	}
+
+	VkMemoryAllocateInfo allocInfo = {};
+	allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+	allocInfo.allocationSize = memorySize;
+	allocInfo.memoryTypeIndex = memTypeIndex;
+
+	vkAllocateMemory( device, &allocInfo, nullptr, &g_output.nisMemory );
+
+	vkBindImageMemory(device, g_output.nisScalerImage, g_output.nisMemory, 0);
+	vkBindImageMemory(device, g_output.nisUsmImage, g_output.nisMemory, usmOffset);
+
+	return true;
+}
+
+static bool init_nis_data()
+{
+	// Create NIS Sampler
+
+	VulkanSamplerCacheKey_t samplerKey;
+	samplerKey.bNearest = false;
+	samplerKey.bUnnormalized = false;
+
+	g_output.nisSampler = vulkan_make_sampler(samplerKey);
+	assert ( g_output.nisSampler != VK_NULL_HANDLE );
+
+	// Create the NIS images
+
+	VkImageCreateInfo imageInfo = {};
+	imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+	imageInfo.imageType = VK_IMAGE_TYPE_2D;
+	imageInfo.format = g_nisUseFp16Coefficients ? VK_FORMAT_R16G16B16A16_SFLOAT : VK_FORMAT_R32G32B32A32_SFLOAT;
+	imageInfo.extent.width = kFilterSize / 4;
+	imageInfo.extent.height = kPhaseCount;
+	imageInfo.extent.depth = 1;
+	imageInfo.mipLevels = 1;
+	imageInfo.arrayLayers = 1;
+	imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+	imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+	imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+	imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+	imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+	VkResult result = vkCreateImage(device, &imageInfo, NULL, &g_output.nisScalerImage);
+	if(result != VK_SUCCESS)
+	{
+		vk_log.errorf( "vkCreateImage for scaler coef image failed" );
+		return false;
+	}
+
+	result = vkCreateImage(device, &imageInfo, NULL, &g_output.nisUsmImage);
+	if(result != VK_SUCCESS)
+	{
+		vk_log.errorf( "vkCreateImage for usm coef image failed" );
+		return false;
+	}
+
+	if (!allocate_nis_memory())
+		return false;
+
+	VkImageViewCreateInfo viewInfo = {};
+	viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+	viewInfo.image = g_output.nisScalerImage;
+	viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+	viewInfo.format = g_nisUseFp16Coefficients ? VK_FORMAT_R16G16B16A16_SFLOAT : VK_FORMAT_R32G32B32A32_SFLOAT;;
+	viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	viewInfo.subresourceRange.baseMipLevel = 0;
+	viewInfo.subresourceRange.levelCount = 1;
+	viewInfo.subresourceRange.baseArrayLayer = 0;
+	viewInfo.subresourceRange.layerCount = 1;
+
+	result = vkCreateImageView(device, &viewInfo, NULL, &g_output.nisScalerView);
+	if(result != VK_SUCCESS)
+	{
+		vk_log.errorf( "vkCreateImageView for scaler coef view failed" );
+		return false;
+	}
+
+	viewInfo.image = g_output.nisUsmImage;
+
+	result = vkCreateImageView(device, &viewInfo, NULL, &g_output.nisUsmView);
+	if(result != VK_SUCCESS)
+	{
+		vk_log.errorf( "vkCreateImageView for scaler coef view failed" );
+		return false;
+	}
+
+	// Select between the FP16 or FP32 coefficients
+
+	const void* coefScaleData = g_nisUseFp16Coefficients ?
+		static_cast<const void*>(coef_scale_fp16) : static_cast<const void*>(coef_scale);
+	uint32_t coefScaleSize = g_nisUseFp16Coefficients ? sizeof(coef_scale_fp16) : sizeof(coef_scale);
+
+	const void* coefUsmData = g_nisUseFp16Coefficients ?
+		static_cast<const void*>(coef_usm_fp16) : static_cast<const void*>(coef_usm);
+	uint32_t coefUsmSize = g_nisUseFp16Coefficients ? sizeof(coef_usm_fp16) : sizeof(coef_usm);
+
+	// Create a staging buffer for uploading the data to the GPU
+
+	VkBufferCreateInfo bufferInfo = {};
+	bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+	bufferInfo.size = coefScaleSize + coefUsmSize;
+	bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+	bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+	VkBuffer stagingBuffer = VK_NULL_HANDLE;
+	result = vkCreateBuffer( device, &bufferInfo, NULL, &stagingBuffer );
+	if(result != VK_SUCCESS)
+	{
+		vk_log.errorf( "Failed to create nis staging buffer" );
+		return false;
+	}
+
+	VkMemoryRequirements memRequirements = {};
+	vkGetBufferMemoryRequirements(device, stagingBuffer, &memRequirements);
+
+	int32_t memTypeIndex = findMemoryType(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, memRequirements.memoryTypeBits);
+	if ( memTypeIndex == -1 )
+	{
+		vk_log.errorf( "findMemoryType failed for nis staging buffer" );
+		return false;
+	}
+
+	VkMemoryAllocateInfo allocInfo = {};
+	allocInfo.allocationSize = memRequirements.size;
+	allocInfo.memoryTypeIndex = memTypeIndex;
+	
+	VkDeviceMemory stagingMem = VK_NULL_HANDLE;
+	vkAllocateMemory( device, &allocInfo, nullptr, &stagingMem );
+	vkBindBufferMemory( device, stagingBuffer, stagingMem, 0 );
+
+	void* stagingData = nullptr;
+	vkMapMemory(device, stagingMem, 0, VK_WHOLE_SIZE, 0, &stagingData);
+
+	// Copy the data into the staging buffer and upload it to GPU memory
+
+	memcpy(stagingData, coefScaleData, coefScaleSize);
+	memcpy(static_cast<char*>(stagingData) + coefScaleSize, coefUsmData, coefUsmSize);
+
+	VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
+	uint32_t handle = get_command_buffer( commandBuffer );
+
+	std::array<VkImageMemoryBarrier, 2> barriers = {};
+
+	barriers[0].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+	barriers[0].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+	barriers[0].newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+	barriers[0].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	barriers[0].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	barriers[0].image = g_output.nisScalerImage;
+	barriers[0].subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	barriers[0].subresourceRange.baseMipLevel = 0;
+	barriers[0].subresourceRange.levelCount = 1;
+	barriers[0].subresourceRange.baseArrayLayer = 0;
+	barriers[0].subresourceRange.layerCount = 1;
+	barriers[0].srcAccessMask = 0;
+	barriers[0].dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+
+	barriers[1] = barriers[0];
+	barriers[1].image = g_output.nisUsmImage;
+
+	vkCmdPipelineBarrier(
+		commandBuffer,
+		VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+		VK_PIPELINE_STAGE_TRANSFER_BIT,
+		0,
+		0, NULL,
+		0, NULL,
+		barriers.size(), barriers.data());
+
+	VkBufferImageCopy imageCopy = {};
+
+	imageCopy.bufferOffset = 0;
+	imageCopy.imageExtent.width = kFilterSize / 4;
+	imageCopy.imageExtent.height = kPhaseCount;
+	imageCopy.imageExtent.depth = 1;
+	imageCopy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	imageCopy.imageSubresource.mipLevel = 0;
+	imageCopy.imageSubresource.baseArrayLayer = 0;
+	imageCopy.imageSubresource.layerCount = 1;
+
+	vkCmdCopyBufferToImage(commandBuffer, stagingBuffer, g_output.nisScalerImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &imageCopy);
+
+	imageCopy.bufferOffset = coefScaleSize;
+
+	vkCmdCopyBufferToImage(commandBuffer, stagingBuffer, g_output.nisUsmImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &imageCopy);
+
+	barriers[0].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+	barriers[0].newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+	barriers[0].srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+	barriers[0].dstAccessMask = 0;
+
+	barriers[1].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+	barriers[1].newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+	barriers[1].srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+	barriers[1].dstAccessMask = 0;
+
+	vkCmdPipelineBarrier(
+		commandBuffer,
+		VK_PIPELINE_STAGE_TRANSFER_BIT,
+		VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+		0,
+		0, NULL,
+		0, NULL,
+		barriers.size(), barriers.data());
+
+	std::vector<std::shared_ptr<CVulkanTexture>> refs;
+	submit_command_buffer( handle, refs );
+
+	// Write all the static NIS descriptor set bindings
+
+	std::array< VkDescriptorImageInfo, 2 > nisImageDescriptors = {{
+		{
+			.sampler = g_output.nisSampler,
+			.imageView = g_output.nisScalerView,
+			.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+		},
+		{
+			.sampler = g_output.nisSampler,
+			.imageView = g_output.nisUsmView,
+			.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+		}
+	}};
+
+	std::array< VkWriteDescriptorSet, 2 > nisWriteDescriptorSets = {{
+		{
+			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+			.pNext = nullptr,
+			.dstSet = VK_NULL_HANDLE,
+			.dstBinding = 4,
+			.dstArrayElement = 0,
+			.descriptorCount = 1,
+			.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+			.pImageInfo = &nisImageDescriptors[0],
+			.pBufferInfo = nullptr,
+			.pTexelBufferView = nullptr
+		},
+		{
+			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+			.pNext = nullptr,
+			.dstSet = VK_NULL_HANDLE,
+			.dstBinding = 5,
+			.dstArrayElement = 0,
+			.descriptorCount = 1,
+			.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+			.pImageInfo = &nisImageDescriptors[1],
+			.pBufferInfo = nullptr,
+			.pTexelBufferView = nullptr
+		}
+	}};
+
+	for ( const VkDescriptorSet descriptorSet : descriptorSets )
+	{
+		for ( VkWriteDescriptorSet& descriptorSetWrite : nisWriteDescriptorSets )
+		{
+			descriptorSetWrite.dstSet = descriptorSet;
+		}
+
+		vkUpdateDescriptorSets(device, nisWriteDescriptorSets.size(), nisWriteDescriptorSets.data(), 0, nullptr);
+	}
+
+	// Wait for the upload to finish and then cleanup
+
+	vkQueueWaitIdle(queue);
+
+	vkDestroyBuffer(device, stagingBuffer, nullptr);
+	vkFreeMemory(device, stagingMem, nullptr);
+
+	return true;
+}
+
 void vulkan_garbage_collect( void )
 {
 	uint64_t currentSeqNo;
@@ -2260,7 +2615,7 @@ std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_bits( uint32_t width,
 	};
 
 	vkCmdPipelineBarrier( commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-			      		0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
+				  	    0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
 
 	vkCmdCopyBufferToImage( commandBuffer, uploadBuffer, pTex->vkImage(), VK_IMAGE_LAYOUT_GENERAL, 1, &region );
 
@@ -2269,7 +2624,7 @@ std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_bits( uint32_t width,
 	memoryBarrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
 
 	vkCmdPipelineBarrier( commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-			      		0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
+				  	    0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
 	
 	std::vector<std::shared_ptr<CVulkanTexture>> refs;
 	refs.push_back( pTex );
@@ -2554,7 +2909,7 @@ bool vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTex
 	};
 	
 	vkCmdPipelineBarrier( curCommandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-			      		0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
+				  		0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
 
 	std::vector<VkImageMemoryBarrier> textureBarriers(frameInfo->layerCount);
 	for (int32_t i = 0; i < frameInfo->layerCount; i++)
@@ -2574,9 +2929,10 @@ bool vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTex
 	}
 
 	vkCmdPipelineBarrier( curCommandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-			      		0, 0, nullptr, 0, nullptr, textureBarriers.size(), textureBarriers.data() );
+				  		0, 0, nullptr, 0, nullptr, textureBarriers.size(), textureBarriers.data() );
 
-	for ( int i = frameInfo->useFSRLayer0 ? 1 : 0; i < frameInfo->layerCount; i++ )
+	bool isUpscaling = frameInfo->useFSRLayer0 || frameInfo->useNISLayer0;
+	for ( int i = isUpscaling ? 1 : 0; i < frameInfo->layerCount; i++ )
 	{
 		FrameInfo_t::Layer_t *layer = &frameInfo->layers[i];
 
@@ -2639,7 +2995,7 @@ bool vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTex
 
 		memoryBarrier.image = g_output.tmpOutput->vkImage();
 		vkCmdPipelineBarrier( curCommandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-			      		0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
+				  		0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
 
 		vkCmdBindPipeline(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, easuPipeline);
 
@@ -2672,7 +3028,7 @@ bool vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTex
 		};
 
 		vkCmdPipelineBarrier( curCommandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-			      		0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
+				  		0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
 
 
 		vkCmdBindPipeline(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, get_vk_pipeline(frameInfo->layerCount - 1, frameInfo->ycbcrMask(), 0, SHADER_TYPE_RCAS));
@@ -2682,7 +3038,7 @@ bool vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTex
 		vkCmdBindDescriptorSets(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &descriptorSet, 0, 0);
 
 		uvec4_t tmp;
-		FsrRcasCon(&tmp.x, g_fsrSharpness / 10.0f);
+		FsrRcasCon(&tmp.x, g_upscalerSharpness / 10.0f);
 		rcasConstants.u_layer0Offset.x = uint32_t(int32_t(fsrFrameInfo.layers[0].offset.x));
 		rcasConstants.u_layer0Offset.y = uint32_t(int32_t(fsrFrameInfo.layers[0].offset.y));
 		rcasConstants.u_opacity[0] = fsrFrameInfo.layers[0].opacity;
@@ -2704,6 +3060,79 @@ bool vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTex
 
 		vkCmdDispatch( curCommandBuffer, dispatchX, dispatchY, 1 );
 	}
+	else if ( frameInfo->useNISLayer0 )
+	{
+		struct FrameInfo_t nisFrameInfo = *frameInfo;
+
+		uint32_t inputX = nisFrameInfo.layers[0].tex->width();
+		uint32_t inputY = nisFrameInfo.layers[0].tex->height();
+
+		uint32_t tempX = nisFrameInfo.layers[0].integerWidth();
+		uint32_t tempY = nisFrameInfo.layers[0].integerHeight();
+
+		update_tmp_images(tempX, tempY);
+
+		memoryBarrier.image = g_output.tmpOutput->vkImage();
+		vkCmdPipelineBarrier( curCommandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+				  		0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
+
+		vkCmdBindPipeline(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, nisPipeline);
+
+		VkDescriptorSet descriptorSet = vulkan_update_descriptor( &nisFrameInfo, true, true, g_output.tmpOutput->srgbView() );
+
+		vkCmdBindDescriptorSets(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &descriptorSet, 0, 0);
+
+		NISConfig nisConfig = {};
+		float nisSharpness = (20 - g_upscalerSharpness) / 20.0f;
+		NVScalerUpdateConfig(
+			nisConfig, nisSharpness,
+			0, 0,
+			inputX, inputY,
+			inputX, inputY,
+			0, 0,
+			tempX, tempY,
+			tempX, tempY);
+
+		vkCmdPushConstants(curCommandBuffer, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(nisConfig), &nisConfig);
+
+		vkCmdDispatch(curCommandBuffer, uint32_t(std::ceil(tempX / 32.0f)),
+			uint32_t(std::ceil(tempY / 24.0f)), 1);
+
+		memoryBarrier =
+		{
+			.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+			.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+			.dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
+			.oldLayout = VK_IMAGE_LAYOUT_GENERAL,
+			.newLayout = VK_IMAGE_LAYOUT_GENERAL,
+			.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+			.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+			.image = g_output.tmpOutput->vkImage(),
+			.subresourceRange = subResRange
+		};
+
+		vkCmdPipelineBarrier( curCommandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+				  		0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
+
+		vkCmdBindPipeline(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, get_vk_pipeline(nisFrameInfo.layerCount - 1, nisFrameInfo.ycbcrMask(), 0, SHADER_TYPE_BLIT));
+
+		nisFrameInfo.layers[0].tex = g_output.tmpOutput;
+		descriptorSet = vulkan_update_descriptor( &nisFrameInfo, false, false, targetImageView );
+
+		vkCmdBindDescriptorSets(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &descriptorSet, 0, 0);
+
+		nisFrameInfo.layers[0].scale.x = 1.0f;
+		nisFrameInfo.layers[0].scale.y = 1.0f;
+
+		CompositeData_t data = pack_composite_data(&nisFrameInfo);
+
+		vkCmdPushConstants(curCommandBuffer, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(data), &data);
+
+		uint32_t nGroupCountX = currentOutputWidth % 8 ? currentOutputWidth / 8 + 1: currentOutputWidth / 8;
+		uint32_t nGroupCountY = currentOutputHeight % 8 ? currentOutputHeight / 8 + 1: currentOutputHeight / 8;
+
+		vkCmdDispatch( curCommandBuffer, nGroupCountX, nGroupCountY, 1 );
+	}
 	else if ( frameInfo->blurLayer0 )
 	{
 		struct FrameInfo_t blurFrameInfo = *frameInfo;
@@ -2713,7 +3142,7 @@ bool vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTex
 
 		memoryBarrier.image = g_output.tmpOutput->vkImage();
 		vkCmdPipelineBarrier( curCommandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-			      		0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
+				  		0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
 
 		ShaderType type = SHADER_TYPE_BLUR_FIRST_PASS;
 
@@ -2752,7 +3181,7 @@ bool vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTex
 		};
 
 		vkCmdPipelineBarrier( curCommandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-			      		0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
+				  		0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
 
 		descriptorSet = vulkan_update_descriptor( &blurFrameInfo, false, false, targetImageView, g_output.tmpOutput->linearView() );
 
@@ -2829,7 +3258,7 @@ bool vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTex
 		};
 
 		vkCmdPipelineBarrier( curCommandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-				      0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
+					  0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
 
 		VkImageCopy region = {};
 
@@ -2864,14 +3293,14 @@ bool vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTex
 		.srcQueueFamilyIndex = queueFamilyIndex,
 		.dstQueueFamilyIndex = useForeignQueue
 								? VK_QUEUE_FAMILY_FOREIGN_EXT
-						    	: queueFamilyIndex,
+								: queueFamilyIndex,
 		.image = compositeImage,
 		.subresourceRange = subResRange
 	};
 	
 	vkCmdPipelineBarrier( curCommandBuffer, pScreenshotTexture ? VK_PIPELINE_STAGE_TRANSFER_BIT : VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-			      useForeignQueue ? 0 : VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-			      0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
+				  useForeignQueue ? 0 : VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+				  0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
 
 	for (int32_t i = 0; i < frameInfo->layerCount; i++)
 	{
@@ -2884,7 +3313,7 @@ bool vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTex
 	}
 
 	vkCmdPipelineBarrier( curCommandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-			      		0, 0, nullptr, 0, nullptr, textureBarriers.size(), textureBarriers.data() );
+				  		0, 0, nullptr, 0, nullptr, textureBarriers.size(), textureBarriers.data() );
 
 	res = vkEndCommandBuffer( curCommandBuffer );
 	

@@ -40,6 +40,8 @@ const struct option *gamescope_options = (struct option[]){
 	{ "output-height", required_argument, nullptr, 'H' },
 	{ "nearest-neighbor-filter", no_argument, nullptr, 'n' },
 	{ "fsr-upscaling", no_argument, nullptr, 'U' },
+	{ "nis-upscaling", no_argument, nullptr, 'Y' },
+	{ "sharpness", required_argument, nullptr, 0 },
 	{ "fsr-sharpness", required_argument, nullptr, 0 },
 
 	// nested mode options
@@ -90,7 +92,8 @@ const char usage[] =
 	"  -H, --output-height            output height\n"
 	"  -n, --nearest-neighbor-filter  use nearest neighbor filtering\n"
 	"  -U  --fsr-upscaling            use AMD FidelityFX™ Super Resolution 1.0 for upscaling\n"
-	"  --fsr-sharpness                FSR sharpness from 0 (max) to 20 (min)\n"
+	"  -Y  --nis-upscaling            use NVIDIA Image Scaling v1.0.2 for upscaling\n"
+	"  --sharpness --fsr-sharpness    upscaler sharpness from 0 (max) to 20 (min)\n"
 	"  --cursor                       path to default cursor image\n"
 	"  -R, --ready-fd                 notify FD when ready\n"
 	"  -T, --stats-path               write statistics to path\n"
@@ -123,6 +126,7 @@ const char usage[] =
 	"  Super + F                      toggle fullscreen\n"
 	"  Super + N                      toggle nearest neighbour filtering\n"
 	"  Super + U                      toggle FSR upscaling\n"
+	"  Super + Y                      toggle NIS upscaling\n"
 	"  Super + I                      increase FSR sharpness by 1\n"
 	"  Super + O                      decrease FSR sharpness by 1\n"
 	"  Super + S                      take a screenshot\n"
@@ -144,8 +148,8 @@ bool g_bFullscreen = false;
 bool g_bIsNested = false;
 
 bool g_bFilterGameWindow = true;
-bool g_fsrUpscale = false;
-int g_fsrSharpness = 2;
+GamescopeUpscaler g_upscaler = GamescopeUpscaler::BLIT;
+int g_upscalerSharpness = 2;
 
 bool g_bBorderlessOutputWindow = false;
 
@@ -312,7 +316,10 @@ int main(int argc, char **argv)
 				g_sOutputName = optarg;
 				break;
 			case 'U':
-				g_fsrUpscale = true;
+				g_upscaler = GamescopeUpscaler::FSR;
+				break;
+			case 'Y':
+				g_upscaler = GamescopeUpscaler::NIS;
 				break;
 			case 0: // long options without a short option
 				opt_name = gamescope_options[opt_index].name;
@@ -332,8 +339,9 @@ int main(int argc, char **argv)
 					g_nTouchClickMode = g_nDefaultTouchClickMode;
 				} else if (strcmp(opt_name, "generate-drm-mode") == 0) {
 					g_drmModeGeneration = parse_drm_mode_generation( optarg );
-				} else if (strcmp(opt_name, "fsr-sharpness") == 0) {
-					g_fsrSharpness = atoi( optarg );
+				} else if (strcmp(opt_name, "sharpness") == 0 ||
+						   strcmp(opt_name, "fsr-sharpness") == 0) {
+					g_upscalerSharpness = atoi( optarg );
 				}
 				break;
 			case '?':
