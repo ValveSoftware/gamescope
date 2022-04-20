@@ -3,7 +3,6 @@
 #include <getopt.h>
 
 #include <atomic>
-#include <thread>
 
 extern const char *gamescope_optstring;
 extern const struct option *gamescope_options;
@@ -33,7 +32,5 @@ extern int g_nOldNice;
 extern int g_nNewNice;
 
 extern int g_nXWaylandCount;
-
-extern pthread_t g_mainThread;
 
 bool BIsNested( void );

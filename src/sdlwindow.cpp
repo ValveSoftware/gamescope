@@ -186,7 +186,8 @@ void inputSDLThreadRun( void )
 				switch( event.window.event )
 				{
 					case SDL_WINDOWEVENT_CLOSE:
-						pthread_kill( g_mainThread, SIGINT );
+						g_bRun = false;
+						nudge_steamcompmgr();
 						break;
 					default:
 						break;
