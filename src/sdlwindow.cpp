@@ -2,6 +2,7 @@
 
 #include <thread>
 #include <mutex>
+#include <signal.h>
 
 #include <linux/input-event-codes.h>
 
@@ -184,6 +185,9 @@ void inputSDLThreadRun( void )
 			case SDL_WINDOWEVENT:
 				switch( event.window.event )
 				{
+					case SDL_WINDOWEVENT_CLOSE:
+						pthread_kill( g_mainThread, SIGINT );
+						break;
 					default:
 						break;
 					case SDL_WINDOWEVENT_MOVED:
