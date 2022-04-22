@@ -16,7 +16,12 @@ It runs on Mesa + AMD or Intel, and could be made to run on other Mesa/DRM drive
 If running RadeonSI clients with older cards (GFX8 and below), currently have to set `R600_DEBUG=nodcc`, or corruption will be observed until the stack picks up DRM modifiers support.
 
 ## Building
+### Dependencies
+| Distribution | Command |
+| ------------ | ------- |
+| Fedora       | ```sudo dnf install libXcomposite-devel libXxf86vm-devel libXtst-devel libXres-devel libdrm-devel vulkan-devel wayland-protocols-devel libcap-devel SDL2-devel libgbm-devel libudev-devel libinput-devel libseat-devel xcb-util-wm-devel libxcb-devel glslang-devel xorg-x11-server-Xwayland-devel pipewire-devel cmake``` |
 
+### Build
 ```
 git submodule update --init
 meson build/
@@ -24,7 +29,7 @@ ninja -C build/
 build/gamescope -- <game>
 ```
 
-Install with:
+### Install
 
 ```
 meson install -C build/ --skip-subprojects
