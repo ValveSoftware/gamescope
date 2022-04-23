@@ -107,7 +107,7 @@ static void dispatch_nudge(struct pipewire_state *state, int fd)
 	}
 
 	if (g_nOutputWidth != state->video_info.size.width || g_nOutputHeight != state->video_info.size.height) {
-		pwr_log.debugf("renegociating stream params (size: %dx%d)", g_nOutputWidth, g_nOutputHeight);
+		pwr_log.debugf("renegotiating stream params (size: %dx%d)", g_nOutputWidth, g_nOutputHeight);
 
 		uint8_t buf[1024];
 		struct spa_pod_builder builder = SPA_POD_BUILDER_INIT(buf, sizeof(buf));
