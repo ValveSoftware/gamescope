@@ -122,7 +122,7 @@ static xkb_keysym_t keysym_from_ch(uint32_t ch)
 {
 	// There's a bug in libxkbcommon where the EURO symbol doesn't map to the correct keysym
 	if (ch == 0x20ac) {
-		return 0x20ac;
+		return XKB_KEY_EuroSign;
 	}
 	return xkb_utf32_to_keysym(ch);
 }
