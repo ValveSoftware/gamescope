@@ -118,13 +118,22 @@ static LogScope ime_log("ime");
 
 static struct wlserver_input_method *active_input_method = nullptr;
 
+static xkb_keysym_t keysym_from_ch(uint32_t ch)
+{
+	// There's a bug in libxkbcommon where the EURO symbol doesn't map to the correct keysym
+	if (ch == 0x20ac) {
+		return 0x20ac;
+	}
+	return xkb_utf32_to_keysym(ch);
+}
+
 static uint32_t keycode_from_ch(struct wlserver_input_method *ime, uint32_t ch)
 {
 	if (ime->keys.count(ch) > 0) {
 		return ime->keys[ch].keycode;
 	}
 
-	xkb_keysym_t keysym = xkb_utf32_to_keysym(ch);
+	xkb_keysym_t keysym = keysym_from_ch(ch);
 	if (keysym == XKB_KEY_NoSymbol) {
 		return XKB_KEYCODE_INVALID;
 	}
@@ -286,7 +295,7 @@ static void type_text(struct wlserver_input_method *ime, const char *text)
 {
 	// If possible, try to type the character without switching the keymap
 	if (utf8_size(text) == 1 && text[1] == '\0') {
-		xkb_keysym_t keysym = xkb_utf32_to_keysym(text[0]);
+		xkb_keysym_t keysym = keysym_from_ch(text[0]);
 		if (keysym != XKB_KEY_NoSymbol && try_type_keysym(ime, keysym)) {
 			return;
 		}
