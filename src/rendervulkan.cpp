@@ -2427,7 +2427,7 @@ VkDescriptorSet vulkan_update_descriptor( struct VulkanPipeline_t *pPipeline, in
     return descriptorSet;
 }
 
-std::shared_ptr<CVulkanTexture> vulkan_acquire_screenshot_texture(void)
+std::shared_ptr<CVulkanTexture> vulkan_acquire_screenshot_texture(bool exportable)
 {
 	for (auto& pScreenshotImage : g_output.pScreenshotImages)
 	{
@@ -2438,6 +2438,10 @@ std::shared_ptr<CVulkanTexture> vulkan_acquire_screenshot_texture(void)
 			CVulkanTexture::createFlags screenshotImageFlags;
 			screenshotImageFlags.bMappable = true;
 			screenshotImageFlags.bTransferDst = true;
+			if (exportable) {
+				screenshotImageFlags.bExportable = true;
+				screenshotImageFlags.bLinear = true; // TODO: support multi-planar DMA-BUF export via PipeWire
+			}
 
 			bool bSuccess = pScreenshotImage->BInit( currentOutputWidth, currentOutputHeight, VulkanFormatToDRM(g_output.outputFormat), screenshotImageFlags );
 

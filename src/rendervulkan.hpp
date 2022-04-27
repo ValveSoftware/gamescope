@@ -189,7 +189,7 @@ int vulkan_texture_get_fence( const std::shared_ptr<CVulkanTexture>& vulkanTex )
 
 bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *pPipeline, std::shared_ptr<CVulkanTexture> pScreenshotTexture );
 uint32_t vulkan_get_last_composite_fbid( void );
-std::shared_ptr<CVulkanTexture> vulkan_acquire_screenshot_texture(void);
+std::shared_ptr<CVulkanTexture> vulkan_acquire_screenshot_texture(bool exportable);
 
 void vulkan_present_to_window( void );
 
