@@ -64,7 +64,7 @@ static void request_buffer(struct pipewire_state *state)
 
 static void copy_buffer(struct pipewire_state *state, struct pipewire_buffer *buffer)
 {
-	std::shared_ptr<CVulkanTexture> tex = std::move(buffer->texture);
+	std::shared_ptr<CVulkanTexture> &tex = buffer->texture;
 	assert(tex != nullptr);
 	assert(tex->m_format == VK_FORMAT_B8G8R8A8_UNORM);
 
@@ -280,6 +280,9 @@ static void stream_handle_add_buffer(void *user_data, struct pw_buffer *pw_buffe
 	buffer->shm.fd = fd;
 
 	pw_buffer->user_data = buffer;
+
+	buffer->texture = vulkan_acquire_screenshot_texture(false);
+	assert(buffer->texture != nullptr);
 
 	spa_data->type = SPA_DATA_MemFd;
 	spa_data->flags = SPA_DATA_FLAG_READABLE;

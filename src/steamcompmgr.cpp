@@ -1742,7 +1742,13 @@ paint_all()
 	if ( bDoComposite == true )
 	{
 		std::shared_ptr<CVulkanTexture> pCaptureTexture = nullptr;
-		if ( bCapture )
+#if HAVE_PIPEWIRE
+		if ( pw_buffer != nullptr )
+		{
+			pCaptureTexture = pw_buffer->texture;
+		}
+#endif
+		if ( bCapture && pCaptureTexture == nullptr )
 		{
 			pCaptureTexture = vulkan_acquire_screenshot_texture(false);
 		}
@@ -1871,13 +1877,8 @@ paint_all()
 #if HAVE_PIPEWIRE
 		if ( pw_buffer != nullptr )
 		{
-			assert( pCaptureTexture != nullptr );
-			assert( pw_buffer->texture == nullptr );
-
-			pw_buffer->texture = pCaptureTexture;
-
 			push_pipewire_buffer(pw_buffer);
-			// TODO: make sure the buffer isn't lost in one of the failure
+			// TODO: make sure the pw_buffer isn't lost in one of the failure
 			// code-paths above
 		}
 #endif

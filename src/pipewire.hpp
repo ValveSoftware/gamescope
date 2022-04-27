@@ -27,6 +27,7 @@ struct pipewire_state {
  */
 struct pipewire_buffer {
 	struct spa_video_info_raw video_info;
+	std::shared_ptr<CVulkanTexture> texture;
 
 	struct {
 		int stride;
@@ -41,10 +42,6 @@ struct pipewire_buffer {
 	// We pass the buffer to the steamcompmgr thread for copying. This is set
 	// to true if the buffer is currently owned by the steamcompmgr thread.
 	bool copying;
-	// Once steamcompmgr has copied the buffer, it'll set this field to the
-	// copy. The PipeWire thread is responsible for downloading the buffer,
-	// then release it.
-	std::shared_ptr<CVulkanTexture> texture;
 };
 
 bool init_pipewire(void);
