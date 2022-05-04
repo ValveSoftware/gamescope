@@ -48,8 +48,7 @@ public:
 	void constrainPosition();
 	void resetPosition();
 
-	void paint(struct win *window, struct win *fit, struct Composite_t *pComposite,
-			   struct VulkanPipeline_t *pPipeline);
+	void paint(struct win *window, struct win *fit, struct FrameInfo_t *frameInfo);
 	void setDirty();
 
 	// Will take ownership of data.

@@ -34,50 +34,6 @@ enum BlurMode {
     BLUR_MODE_ALWAYS = 2,
 };
 
-class CVulkanTexture;
-
-// These two structs are horrible
-struct VulkanPipeline_t
-{
-	struct LayerBinding_t
-	{
-		int surfaceWidth;
-		int surfaceHeight;
-
-		int imageWidth;
-		int imageHeight;
-		
-		std::shared_ptr<CVulkanTexture> tex;
-		uint32_t fbid;
-		
-		int zpos;
-
-		bool bFilter;
-	} layerBindings[ k_nMaxLayers ];
-};
-
-struct vec2_t
-{
-	float x, y;
-};
-
-struct Composite_t
-{
-	int nLayerCount;
-	int nYCBCRMask;
-	bool useFSRLayer0;
-	BlurMode blurLayer0;
-	int blurRadius;
-
-	struct CompositeData_t
-	{
-		vec2_t vScale[k_nMaxLayers];
-		vec2_t vOffset[k_nMaxLayers];
-		float flOpacity[k_nMaxLayers];
-		uint32_t nBorderMask;
-	} data;
-
-};
 
 #include "drm.hpp"
 
@@ -169,6 +125,66 @@ public:
 	bool m_bTransitioned = false;
 };
 
+struct vec2_t
+{
+	float x, y;
+};
+
+struct FrameInfo_t
+{
+	bool useFSRLayer0;
+	BlurMode blurLayer0;
+	int blurRadius;
+
+
+	int layerCount;
+	struct Layer_t
+	{
+		std::shared_ptr<CVulkanTexture> tex;
+		uint32_t fbid; // TODO pretty sure we can just move this into tex
+
+		// Cursor has a bigger surface than the actual image
+		// TODO maybe move into tex?
+		int imageWidth;
+		int imageHeight;
+
+		int zpos;
+
+		vec2_t offset;
+		vec2_t scale;
+
+		float opacity;
+
+		bool blackBorder;
+		bool linearFilter;
+
+		uint32_t integerWidth() const { return tex->m_width / scale.x; }
+		uint32_t integerHeight() const { return tex->m_height / scale.y; }
+	} layers[ k_nMaxLayers ];
+
+	uint32_t borderMask() const {
+		uint32_t result = 0;
+		for (int i = 0; i < layerCount; i++)
+		{
+			if (layers[ i ].blackBorder)
+				result |= 1 << i;
+		}
+		return result;
+	}
+	uint32_t ycbcrMask() const {
+		uint32_t result = 0;
+		for (int i = 0; i < layerCount; i++)
+		{
+			if ( layers[ i ].tex )
+			{
+				if (layers[ i ].tex->m_format == VK_FORMAT_G8_B8R8_2PLANE_420_UNORM)
+					result |= 1 << i;
+			}
+		}
+		return result;
+	}
+};
+
 extern bool g_vulkanSupportsModifiers;
 
 extern bool g_vulkanHasDrmPrimaryDevId;
@@ -187,8 +203,8 @@ std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struct wl
 uint32_t vulkan_texture_get_fbid( const std::shared_ptr<CVulkanTexture>& vulkanTex );
 int vulkan_texture_get_fence( const std::shared_ptr<CVulkanTexture>& vulkanTex );
 
-bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *pPipeline, std::shared_ptr<CVulkanTexture> pScreenshotTexture );
-uint32_t vulkan_get_last_composite_fbid( void );
+bool vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTexture> pScreenshotTexture );
+std::shared_ptr<CVulkanTexture> vulkan_get_last_output_image( void );
 std::shared_ptr<CVulkanTexture> vulkan_acquire_screenshot_texture(bool exportable);
 
 void vulkan_present_to_window( void );

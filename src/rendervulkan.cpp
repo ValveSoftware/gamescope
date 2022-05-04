@@ -1562,7 +1562,7 @@ retry:
 	VkPushConstantRange pushConstantRange = {
 		.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
 		.offset = 0,
-		.size = uint32_t(sizeof(Composite_t::CompositeData_t) + sizeof(uint32_t)),
+		.size = 128,
 	};
 	
 	VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo = {
@@ -2305,7 +2305,7 @@ bool float_is_integer(float x)
 
 static uint32_t s_frameId = 0;
 
-VkDescriptorSet vulkan_update_descriptor( struct VulkanPipeline_t *pPipeline, int nYCBCRMask, bool firstNrm, bool firstSrgb, VkImageView targetImageView, VkImageView extraImageView = VK_NULL_HANDLE)
+VkDescriptorSet vulkan_update_descriptor( const struct FrameInfo_t *frameInfo, bool firstNrm, bool firstSrgb, VkImageView targetImageView, VkImageView extraImageView = VK_NULL_HANDLE)
 {
     VkDescriptorSet descriptorSet = descriptorSets[nCurrentDescriptorSet];
     nCurrentDescriptorSet = (nCurrentDescriptorSet + 1) % descriptorSets.size();
@@ -2337,12 +2337,12 @@ VkDescriptorSet vulkan_update_descriptor( struct VulkanPipeline_t *pPipeline, in
 	{
 		bool compositeLayer = i > 0;
 
-		VkImageView imageView = pPipeline->layerBindings[ i ].tex
-			? pPipeline->layerBindings[ i ].tex->getView(compositeLayer || !firstSrgb)
+		VkImageView imageView = frameInfo->layers[i].tex
+			? frameInfo->layers[i].tex->getView(compositeLayer || !firstSrgb)
 			: VK_NULL_HANDLE;
 
 		VulkanSamplerCacheKey_t samplerKey;
-		samplerKey.bNearest = !pPipeline->layerBindings[i].bFilter;
+		samplerKey.bNearest = !frameInfo->layers[i].linearFilter;
 		samplerKey.bUnnormalized = compositeLayer || !firstNrm;
 
 		VkSampler sampler = vulkan_make_sampler(samplerKey);
@@ -2364,7 +2364,7 @@ VkDescriptorSet vulkan_update_descriptor( struct VulkanPipeline_t *pPipeline, in
 
 	for (uint32_t i = 0; i < k_nMaxLayers; i++)
 	{
-		if ( nYCBCRMask & ( 1u << i ) )
+		if ( frameInfo->ycbcrMask() & ( 1u << i ) )
 		{
 			ycbcrImageDescriptors[i] = imageDescriptors[i];
 			// We use immutable samplers.
@@ -2457,7 +2457,30 @@ std::shared_ptr<CVulkanTexture> vulkan_acquire_screenshot_texture(bool exportabl
 	return nullptr;
 }
 
-bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *pPipeline, std::shared_ptr<CVulkanTexture> pScreenshotTexture )
+struct CompositeData_t
+{
+	vec2_t scale[k_nMaxLayers];
+	vec2_t offset[k_nMaxLayers];
+	float opacity[k_nMaxLayers];
+	uint32_t borderMask;
+	uint32_t frameId;
+};
+
+static CompositeData_t pack_composite_data( const struct FrameInfo_t *frameInfo )
+{
+	CompositeData_t result = {};
+	for (int i = 0; i < frameInfo->layerCount; i++) {
+		const FrameInfo_t::Layer_t *layer = &frameInfo->layers[i];
+		result.scale[i] = layer->scale;
+		result.offset[i] = layer->offset;
+		result.opacity[i] = layer->opacity;
+	}
+	result.borderMask = frameInfo->borderMask();
+	result.frameId = s_frameId++;
+	return result;
+}
+
+bool vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTexture> pScreenshotTexture )
 {
 	VkImage compositeImage;
 	VkImageView targetImageView;
@@ -2471,17 +2494,6 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 	{
 		compositeImage = g_output.outputImage[ g_output.nOutImage ]->m_vkImage;
 		targetImageView = g_output.outputImage[ g_output.nOutImage ]->m_srgbView;
-	}
-	
-	pComposite->nYCBCRMask = 0;
-	for (uint32_t i = 0; i < k_nMaxLayers; i++)
-	{
-		if ( pPipeline->layerBindings[ i ].tex != 0 )
-		{
-			const auto& pTex = pPipeline->layerBindings[ i ].tex;
-			if (pTex->m_format == VK_FORMAT_G8_B8R8_2PLANE_420_UNORM)
-				pComposite->nYCBCRMask |= 1 << i;
-		}
 	}
 	
 	VkCommandBuffer curCommandBuffer = g_output.commandBuffers[ g_output.nCurCmdBuffer ];
@@ -2537,8 +2549,8 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 	vkCmdPipelineBarrier( curCommandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 			      		0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
 
-	std::vector<VkImageMemoryBarrier> textureBarriers(pComposite->nLayerCount);
-	for (int32_t i = 0; i < pComposite->nLayerCount; i++)
+	std::vector<VkImageMemoryBarrier> textureBarriers(frameInfo->layerCount);
+	for (int32_t i = 0; i < frameInfo->layerCount; i++)
 	{
 		textureBarriers[i].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
 		textureBarriers[i].pNext = nullptr;
@@ -2550,28 +2562,30 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 													? VK_QUEUE_FAMILY_FOREIGN_EXT
 													: VK_QUEUE_FAMILY_EXTERNAL_KHR;
 		textureBarriers[i].dstQueueFamilyIndex = queueFamilyIndex;
-		textureBarriers[i].image = pPipeline->layerBindings[i].tex->m_vkImage;
+		textureBarriers[i].image = frameInfo->layers[i].tex->m_vkImage;
 		textureBarriers[i].subresourceRange = subResRange;
 	}
 
 	vkCmdPipelineBarrier( curCommandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 			      		0, 0, nullptr, 0, nullptr, textureBarriers.size(), textureBarriers.data() );
 
-	for ( int i = pComposite->useFSRLayer0 ? 1 : 0; i < pComposite->nLayerCount; i++ )
+	for ( int i = frameInfo->useFSRLayer0 ? 1 : 0; i < frameInfo->layerCount; i++ )
 	{
-		bool bForceNearest = pComposite->data.vScale[i].x == 1.0f &&
-							 pComposite->data.vScale[i].y == 1.0f &&
-							 float_is_integer(pComposite->data.vOffset[i].x) &&
-							 float_is_integer(pComposite->data.vOffset[i].y);
+		FrameInfo_t::Layer_t *layer = &frameInfo->layers[i];
 
-		pPipeline->layerBindings[i].bFilter &= !bForceNearest;
+		bool bForceNearest = layer->scale.x == 1.0f &&
+							 layer->scale.y == 1.0f &&
+							 float_is_integer(layer->offset.x) &&
+							 float_is_integer(layer->offset.y);
 
-		pComposite->data.vOffset[ i ].x += 0.5f / pComposite->data.vScale[ i ].x;
-		pComposite->data.vOffset[ i ].y += 0.5f / pComposite->data.vScale[ i ].y;
+		layer->linearFilter &= !bForceNearest;
+
+		layer->offset.x += 0.5f / layer->scale.x;
+		layer->offset.y += 0.5f / layer->scale.y;
 	}
 
 
-	if ( pComposite->useFSRLayer0 )
+	if ( frameInfo->useFSRLayer0 )
 	{
 		struct uvec4_t
 		{
@@ -2605,15 +2619,14 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 			uint32_t u_c1;
 		} rcasConstants;
 
-		struct Composite_t fsrpComposite = *pComposite;
-		struct VulkanPipeline_t fsrLayers = *pPipeline;
-		fsrLayers.layerBindings[0].bFilter = true;
+		struct FrameInfo_t fsrFrameInfo = *frameInfo;
+		fsrFrameInfo.layers[0].linearFilter = true;
 
-		uint32_t inputX = fsrLayers.layerBindings[0].tex->m_width;
-		uint32_t inputY = fsrLayers.layerBindings[0].tex->m_height;
+		uint32_t inputX = fsrFrameInfo.layers[0].tex->m_width;
+		uint32_t inputY = fsrFrameInfo.layers[0].tex->m_height;
 
-		uint32_t tempX = float(inputX) / fsrpComposite.data.vScale[0].x;
-		uint32_t tempY = float(inputY) / fsrpComposite.data.vScale[0].y;
+		uint32_t tempX = fsrFrameInfo.layers[0].integerWidth();
+		uint32_t tempY = fsrFrameInfo.layers[0].integerHeight();
 
 		update_tmp_images(tempX, tempY);
 
@@ -2623,7 +2636,7 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 
 		vkCmdBindPipeline(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, easuPipeline);
 
-		VkDescriptorSet descriptorSet = vulkan_update_descriptor( &fsrLayers, 0, true, true, g_output.tmpOutput->m_srgbView );
+		VkDescriptorSet descriptorSet = vulkan_update_descriptor( &fsrFrameInfo, true, true, g_output.tmpOutput->m_srgbView );
 
 		vkCmdBindDescriptorSets(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &descriptorSet, 0, 0);
 
@@ -2655,25 +2668,25 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 			      		0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
 
 
-		vkCmdBindPipeline(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, get_vk_pipeline(pComposite->nLayerCount - 1, pComposite->nYCBCRMask, 0, SHADER_TYPE_RCAS));
-		fsrLayers.layerBindings[0].tex = g_output.tmpOutput;
-		descriptorSet = vulkan_update_descriptor( &fsrLayers, 0, true, true, targetImageView );
+		vkCmdBindPipeline(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, get_vk_pipeline(frameInfo->layerCount - 1, frameInfo->ycbcrMask(), 0, SHADER_TYPE_RCAS));
+		fsrFrameInfo.layers[0].tex = g_output.tmpOutput;
+		descriptorSet = vulkan_update_descriptor( &fsrFrameInfo, true, true, targetImageView );
 
 		vkCmdBindDescriptorSets(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &descriptorSet, 0, 0);
 
 		uvec4_t tmp;
 		FsrRcasCon(&tmp.x, g_fsrSharpness / 10.0f);
-		rcasConstants.u_layer0Offset.x = uint32_t(int32_t(fsrpComposite.data.vOffset[0].x));
-		rcasConstants.u_layer0Offset.y = uint32_t(int32_t(fsrpComposite.data.vOffset[0].y));
-		rcasConstants.u_opacity[0] = fsrpComposite.data.flOpacity[0];
-		rcasConstants.u_borderMask = fsrpComposite.data.nBorderMask >> 1u;
+		rcasConstants.u_layer0Offset.x = uint32_t(int32_t(fsrFrameInfo.layers[0].offset.x));
+		rcasConstants.u_layer0Offset.y = uint32_t(int32_t(fsrFrameInfo.layers[0].offset.y));
+		rcasConstants.u_opacity[0] = fsrFrameInfo.layers[0].opacity;
+		rcasConstants.u_borderMask = fsrFrameInfo.borderMask() >> 1u;
 		rcasConstants.u_frameId = s_frameId++;
 		rcasConstants.u_c1 = tmp.x;
 		for (uint32_t i = 1; i < k_nMaxLayers; i++)
 		{
-			rcasConstants.u_scale[i - 1] = fsrpComposite.data.vScale[i];
-			rcasConstants.u_offset[i - 1] = fsrpComposite.data.vOffset[i];
-			rcasConstants.u_opacity[i] = fsrpComposite.data.flOpacity[i];
+			rcasConstants.u_scale[i - 1] = fsrFrameInfo.layers[i].scale;
+			rcasConstants.u_offset[i - 1] = fsrFrameInfo.layers[i].offset;
+			rcasConstants.u_opacity[i] = fsrFrameInfo.layers[i].opacity;
 		}
 
 
@@ -2684,11 +2697,10 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 
 		vkCmdDispatch( curCommandBuffer, dispatchX, dispatchY, 1 );
 	}
-	else if ( pComposite->blurLayer0 )
+	else if ( frameInfo->blurLayer0 )
 	{
-		struct Composite_t blurComposite = *pComposite;
-		struct VulkanPipeline_t blurLayers = *pPipeline;
-		blurLayers.layerBindings[0].bFilter = true;
+		struct FrameInfo_t blurFrameInfo = *frameInfo;
+		blurFrameInfo.layers[0].linearFilter = true;
 
 		update_tmp_images(currentOutputWidth, currentOutputHeight);
 
@@ -2700,17 +2712,19 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 
 		uint32_t blur_layer_count = 0;
 		// Also blur the override on top if we have one.
-		if (blurComposite.nLayerCount >= 2 && blurLayers.layerBindings[1].zpos == g_zposOverride)
+		if (blurFrameInfo.layerCount >= 2 && blurFrameInfo.layers[1].zpos == g_zposOverride)
 			blur_layer_count++;
 
-		vkCmdBindPipeline(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, get_vk_pipeline(blur_layer_count, blurComposite.nYCBCRMask & 0x1u, blurComposite.blurRadius, type));
+		vkCmdBindPipeline(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, get_vk_pipeline(blur_layer_count, blurFrameInfo.ycbcrMask() & 0x1u, blurFrameInfo.blurRadius, type));
 
-		VkDescriptorSet descriptorSet = vulkan_update_descriptor( &blurLayers, pComposite->nYCBCRMask, false, false, g_output.tmpOutput->m_srgbView );
+		VkDescriptorSet descriptorSet = vulkan_update_descriptor( &blurFrameInfo, false, false, g_output.tmpOutput->m_srgbView );
 
 		vkCmdBindDescriptorSets(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE,
 								pipelineLayout, 0, 1, &descriptorSet, 0, 0);
 
-		vkCmdPushConstants(curCommandBuffer, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(blurComposite.data), &blurComposite.data);
+		CompositeData_t data = pack_composite_data(frameInfo);
+
+		vkCmdPushConstants(curCommandBuffer, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(data), &data);
 
 		uint32_t nGroupCountX = currentOutputWidth % 8 ? currentOutputWidth / 8 + 1: currentOutputWidth / 8;
 		uint32_t nGroupCountY = currentOutputHeight % 8 ? currentOutputHeight / 8 + 1: currentOutputHeight / 8;
@@ -2733,19 +2747,15 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 		vkCmdPipelineBarrier( curCommandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 			      		0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
 
-		descriptorSet = vulkan_update_descriptor( &blurLayers, blurComposite.nYCBCRMask, false, false, targetImageView, g_output.tmpOutput->m_linearView );
+		descriptorSet = vulkan_update_descriptor( &blurFrameInfo, false, false, targetImageView, g_output.tmpOutput->m_linearView );
 
 		vkCmdBindDescriptorSets(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &descriptorSet, 0, 0);
 
-		type = pComposite->blurLayer0 == BLUR_MODE_COND ? SHADER_TYPE_BLUR_COND : SHADER_TYPE_BLUR;
+		type = blurFrameInfo.blurLayer0 == BLUR_MODE_COND ? SHADER_TYPE_BLUR_COND : SHADER_TYPE_BLUR;
 
-		vkCmdBindPipeline(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, get_vk_pipeline(blurComposite.nLayerCount - 1, blurComposite.nYCBCRMask, blurComposite.blurRadius, type, blur_layer_count));
+		vkCmdBindPipeline(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, get_vk_pipeline(blurFrameInfo.layerCount - 1, blurFrameInfo.ycbcrMask(), blurFrameInfo.blurRadius, type, blur_layer_count));
 
-		vkCmdPushConstants(curCommandBuffer, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(blurComposite.data), &blurComposite.data);
-		if (g_bIsCompositeDebug) {
-			vkCmdPushConstants(curCommandBuffer, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, sizeof(blurComposite.data), sizeof(uint32_t), &s_frameId);
-			s_frameId++;
-		}
+		vkCmdPushConstants(curCommandBuffer, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(data), &data);
 
 		nGroupCountX = currentOutputWidth % 8 ? currentOutputWidth / 8 + 1: currentOutputWidth / 8;
 		nGroupCountY = currentOutputHeight % 8 ? currentOutputHeight / 8 + 1: currentOutputHeight / 8;
@@ -2755,18 +2765,16 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 	else
 	{
 
-		vkCmdBindPipeline(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, get_vk_pipeline(pComposite->nLayerCount - 1, pComposite->nYCBCRMask, 0, SHADER_TYPE_BLIT));
+		vkCmdBindPipeline(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, get_vk_pipeline(frameInfo->layerCount - 1, frameInfo->ycbcrMask(), 0, SHADER_TYPE_BLIT));
 
-		VkDescriptorSet descriptorSet = vulkan_update_descriptor( pPipeline, pComposite->nYCBCRMask, false, false, targetImageView );
+		VkDescriptorSet descriptorSet = vulkan_update_descriptor( frameInfo, false, false, targetImageView );
 
 		vkCmdBindDescriptorSets(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE,
 								pipelineLayout, 0, 1, &descriptorSet, 0, 0);
 
-		vkCmdPushConstants(curCommandBuffer, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pComposite->data), &pComposite->data);
-		if (g_bIsCompositeDebug) {
-			vkCmdPushConstants(curCommandBuffer, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, sizeof(pComposite->data), sizeof(uint32_t), &s_frameId);
-			s_frameId++;
-		}
+		CompositeData_t data = pack_composite_data(frameInfo);
+
+		vkCmdPushConstants(curCommandBuffer, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(data), &data);
 
 		uint32_t nGroupCountX = currentOutputWidth % 8 ? currentOutputWidth / 8 + 1: currentOutputWidth / 8;
 		uint32_t nGroupCountY = currentOutputHeight % 8 ? currentOutputHeight / 8 + 1: currentOutputHeight / 8;
@@ -2862,7 +2870,7 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 			      useForeignQueue ? 0 : VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
 			      0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
 
-	for (int32_t i = 0; i < pComposite->nLayerCount; i++)
+	for (int32_t i = 0; i < frameInfo->layerCount; i++)
 	{
 		textureBarriers[i].dstAccessMask = 0;
 		textureBarriers[i].oldLayout = VK_IMAGE_LAYOUT_GENERAL;
@@ -2913,9 +2921,9 @@ bool vulkan_composite( struct Composite_t *pComposite, struct VulkanPipeline_t *
 	return true;
 }
 
-uint32_t vulkan_get_last_composite_fbid( void )
+std::shared_ptr<CVulkanTexture> vulkan_get_last_output_image( void )
 {
-	return g_output.outputImage[ !g_output.nOutImage ]->m_FBID;
+	return g_output.outputImage[ !g_output.nOutImage ];
 }
 
 uint32_t vulkan_texture_get_fbid( const std::shared_ptr<CVulkanTexture>& vulkanTex )

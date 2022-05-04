@@ -145,8 +145,8 @@ extern enum drm_mode_generation g_drmModeGeneration;
 
 bool init_drm(struct drm_t *drm, int width, int height, int refresh);
 void finish_drm(struct drm_t *drm);
-int drm_commit(struct drm_t *drm, struct Composite_t *pComposite, struct VulkanPipeline_t *pPipeline );
-int drm_prepare( struct drm_t *drm, const struct Composite_t *pComposite, const struct VulkanPipeline_t *pPipeline );
+int drm_commit(struct drm_t *drm, const struct FrameInfo_t *frameInfo );
+int drm_prepare( struct drm_t *drm, const struct FrameInfo_t *frameInfo );
 void drm_rollback( struct drm_t *drm );
 bool drm_poll_state(struct drm_t *drm);
 uint32_t drm_fbid_from_dmabuf( struct drm_t *drm, struct wlr_buffer *buf, struct wlr_dmabuf_attributes *dma_buf );

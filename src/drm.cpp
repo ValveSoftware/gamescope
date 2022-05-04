@@ -818,7 +818,7 @@ void finish_drm(struct drm_t *drm)
 	// page-flip handler thread.
 }
 
-int drm_commit(struct drm_t *drm, struct Composite_t *pComposite, struct VulkanPipeline_t *pPipeline )
+int drm_commit(struct drm_t *drm, const struct FrameInfo_t *frameInfo )
 {
 	int ret;
 
@@ -1080,25 +1080,25 @@ void drm_unlock_fbid( struct drm_t *drm, uint32_t fbid )
 
 /* Prepares an atomic commit without using libliftoff */
 static int
-drm_prepare_basic( struct drm_t *drm, const struct Composite_t *pComposite, const struct VulkanPipeline_t *pPipeline )
+drm_prepare_basic( struct drm_t *drm, const struct FrameInfo_t *frameInfo )
 {
 	// Discard cases where our non-liftoff path is known to fail
 
 	// It only supports one layer
-	if ( pComposite->nLayerCount > 1 )
+	if ( frameInfo->layerCount > 1 )
 	{
-		drm_verbose_log.errorf("drm_prepare_basic: cannot handle %d layers", pComposite->nLayerCount);
+		drm_verbose_log.errorf("drm_prepare_basic: cannot handle %d layers", frameInfo->layerCount);
 		return -EINVAL;
 	}
 
-	if ( pPipeline->layerBindings[ 0 ].fbid == 0 )
+	if ( frameInfo->layers[ 0 ].fbid == 0 )
 	{
 		drm_verbose_log.errorf("drm_prepare_basic: layer has no FB");
 		return -EINVAL;
 	}
 
 	drmModeAtomicReq *req = drm->req;
-	uint32_t fb_id = pPipeline->layerBindings[ 0 ].fbid;
+	uint32_t fb_id = frameInfo->layers[ 0 ].fbid;
 
 	drm->fbids_in_req.push_back( fb_id );
 
@@ -1109,8 +1109,8 @@ drm_prepare_basic( struct drm_t *drm, const struct Composite_t *pComposite, cons
 	add_plane_property(req, drm->primary, "SRC_X", 0);
 	add_plane_property(req, drm->primary, "SRC_Y", 0);
 
-	const uint16_t srcWidth = pPipeline->layerBindings[ 0 ].surfaceWidth;
-	const uint16_t srcHeight = pPipeline->layerBindings[ 0 ].surfaceHeight;
+	const uint16_t srcWidth = frameInfo->layers[ 0 ].tex->m_width;
+	const uint16_t srcHeight = frameInfo->layers[ 0 ].tex->m_height;
 
 	add_plane_property(req, drm->primary, "SRC_W", srcWidth << 16);
 	add_plane_property(req, drm->primary, "SRC_H", srcHeight << 16);
@@ -1118,14 +1118,14 @@ drm_prepare_basic( struct drm_t *drm, const struct Composite_t *pComposite, cons
 	gpuvis_trace_printf ( "legacy flip fb_id %u src %ix%i", fb_id,
 						 srcWidth, srcHeight );
 
-	int64_t crtcX = pComposite->data.vOffset[ 0 ].x * -1;
-	int64_t crtcY = pComposite->data.vOffset[ 0 ].y * -1;
-	int64_t crtcW = pPipeline->layerBindings[ 0 ].surfaceWidth / pComposite->data.vScale[ 0 ].x;
-	int64_t crtcH = pPipeline->layerBindings[ 0 ].surfaceHeight / pComposite->data.vScale[ 0 ].y;
+	int64_t crtcX = frameInfo->layers[ 0 ].offset.x * -1;
+	int64_t crtcY = frameInfo->layers[ 0 ].offset.y * -1;
+	int64_t crtcW = srcWidth / frameInfo->layers[ 0 ].scale.x;
+	int64_t crtcH = srcHeight / frameInfo->layers[ 0 ].scale.y;
 
 	if ( g_bRotated )
 	{
-		int64_t imageH = pPipeline->layerBindings[ 0 ].imageHeight / pComposite->data.vScale[ 0 ].y;
+		int64_t imageH = frameInfo->layers[ 0 ].imageHeight / frameInfo->layers[ 0 ].scale.y;
 
 		int64_t tmp = crtcX;
 		crtcX = g_nOutputHeight - imageH - crtcY;
@@ -1156,39 +1156,39 @@ drm_prepare_basic( struct drm_t *drm, const struct Composite_t *pComposite, cons
 }
 
 static int
-drm_prepare_liftoff( struct drm_t *drm, const struct Composite_t *pComposite, const struct VulkanPipeline_t *pPipeline )
+drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo )
 {
 	for ( int i = 0; i < k_nMaxLayers; i++ )
 	{
-		if ( i < pComposite->nLayerCount )
+		if ( i < frameInfo->layerCount )
 		{
-			if ( pPipeline->layerBindings[ i ].fbid == 0 )
+			if ( frameInfo->layers[ i ].fbid == 0 )
 			{
 				drm_verbose_log.errorf("drm_prepare_liftoff: layer %d has no FB", i );
 				return -EINVAL;
 			}
 
-			liftoff_layer_set_property( drm->lo_layers[ i ], "FB_ID", pPipeline->layerBindings[ i ].fbid);
-			drm->fbids_in_req.push_back( pPipeline->layerBindings[ i ].fbid );
+			liftoff_layer_set_property( drm->lo_layers[ i ], "FB_ID", frameInfo->layers[ i ].fbid);
+			drm->fbids_in_req.push_back( frameInfo->layers[ i ].fbid );
 
-			liftoff_layer_set_property( drm->lo_layers[ i ], "zpos", pPipeline->layerBindings[ i ].zpos );
-			liftoff_layer_set_property( drm->lo_layers[ i ], "alpha", pComposite->data.flOpacity[ i ] * 0xffff);
+			liftoff_layer_set_property( drm->lo_layers[ i ], "zpos", frameInfo->layers[ i ].zpos );
+			liftoff_layer_set_property( drm->lo_layers[ i ], "alpha", frameInfo->layers[ i ].opacity * 0xffff);
 
-			const uint16_t srcWidth = pPipeline->layerBindings[ i ].surfaceWidth;
-			const uint16_t srcHeight = pPipeline->layerBindings[ i ].surfaceHeight;
+			const uint16_t srcWidth = frameInfo->layers[ i ].tex->m_width;
+			const uint16_t srcHeight = frameInfo->layers[ i ].tex->m_height;
 
 			liftoff_layer_set_property( drm->lo_layers[ i ], "SRC_X", 0);
 			liftoff_layer_set_property( drm->lo_layers[ i ], "SRC_Y", 0);
 			liftoff_layer_set_property( drm->lo_layers[ i ], "SRC_W", srcWidth << 16);
 			liftoff_layer_set_property( drm->lo_layers[ i ], "SRC_H", srcHeight << 16);
 
-			int32_t crtcX = -pComposite->data.vOffset[ i ].x;
-			int32_t crtcY = -pComposite->data.vOffset[ i ].y;
-			uint64_t crtcW = srcWidth / pComposite->data.vScale[ i ].x;
-			uint64_t crtcH = srcHeight / pComposite->data.vScale[ i ].y;
+			int32_t crtcX = -frameInfo->layers[ i ].offset.x;
+			int32_t crtcY = -frameInfo->layers[ i ].offset.y;
+			uint64_t crtcW = srcWidth / frameInfo->layers[ i ].scale.x;
+			uint64_t crtcH = srcHeight / frameInfo->layers[ i ].scale.y;
 
 			if (g_bRotated) {
-				int64_t imageH = pPipeline->layerBindings[ i ].imageHeight / pComposite->data.vScale[ i ].y;
+				int64_t imageH = frameInfo->layers[ i ].imageHeight / frameInfo->layers[ i ].scale.y;
 
 				const int32_t x = crtcX;
 				const uint64_t w = crtcW;
@@ -1222,16 +1222,16 @@ drm_prepare_liftoff( struct drm_t *drm, const struct Composite_t *pComposite, co
 	}
 
 	if ( ret == 0 )
-		drm_verbose_log.debugf( "can drm present %i layers", pComposite->nLayerCount );
+		drm_verbose_log.debugf( "can drm present %i layers", frameInfo->layerCount );
 	else
-		drm_verbose_log.debugf( "can NOT drm present %i layers", pComposite->nLayerCount );
+		drm_verbose_log.debugf( "can NOT drm present %i layers", frameInfo->layerCount );
 
 	return ret;
 }
 
 /* Prepares an atomic commit for the provided scene-graph. Returns false on
  * error or if the scene-graph can't be presented directly. */
-int drm_prepare( struct drm_t *drm, const struct Composite_t *pComposite, const struct VulkanPipeline_t *pPipeline )
+int drm_prepare( struct drm_t *drm, const struct FrameInfo_t *frameInfo )
 {
 	drm_update_gamma_lut(drm);
 
@@ -1297,9 +1297,9 @@ int drm_prepare( struct drm_t *drm, const struct Composite_t *pComposite, const 
 
 	int ret;
 	if ( g_bUseLayers == true ) {
-		ret = drm_prepare_liftoff( drm, pComposite, pPipeline );
+		ret = drm_prepare_liftoff( drm, frameInfo );
 	} else {
-		ret = drm_prepare_basic( drm, pComposite, pPipeline );
+		ret = drm_prepare_basic( drm, frameInfo );
 	}
 
 	if ( ret != 0 ) {
