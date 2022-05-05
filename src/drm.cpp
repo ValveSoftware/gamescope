@@ -1109,8 +1109,8 @@ drm_prepare_basic( struct drm_t *drm, const struct FrameInfo_t *frameInfo )
 	add_plane_property(req, drm->primary, "SRC_X", 0);
 	add_plane_property(req, drm->primary, "SRC_Y", 0);
 
-	const uint16_t srcWidth = frameInfo->layers[ 0 ].tex->m_width;
-	const uint16_t srcHeight = frameInfo->layers[ 0 ].tex->m_height;
+	const uint16_t srcWidth = frameInfo->layers[ 0 ].tex->width();
+	const uint16_t srcHeight = frameInfo->layers[ 0 ].tex->height();
 
 	add_plane_property(req, drm->primary, "SRC_W", srcWidth << 16);
 	add_plane_property(req, drm->primary, "SRC_H", srcHeight << 16);
@@ -1174,8 +1174,8 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo )
 			liftoff_layer_set_property( drm->lo_layers[ i ], "zpos", frameInfo->layers[ i ].zpos );
 			liftoff_layer_set_property( drm->lo_layers[ i ], "alpha", frameInfo->layers[ i ].opacity * 0xffff);
 
-			const uint16_t srcWidth = frameInfo->layers[ i ].tex->m_width;
-			const uint16_t srcHeight = frameInfo->layers[ i ].tex->m_height;
+			const uint16_t srcWidth = frameInfo->layers[ i ].tex->width();
+			const uint16_t srcHeight = frameInfo->layers[ i ].tex->height();
 
 			liftoff_layer_set_property( drm->lo_layers[ i ], "SRC_X", 0);
 			liftoff_layer_set_property( drm->lo_layers[ i ], "SRC_Y", 0);

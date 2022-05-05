@@ -1225,7 +1225,7 @@ void MouseCursor::paint(win *window, win *fit, struct FrameInfo_t *frameInfo)
 	layer->zpos = g_zposCursor; // cursor, on top of both bottom layers
 
 	layer->tex = m_texture;
-	layer->fbid = BIsNested() ? 0 : vulkan_texture_get_fbid(m_texture);
+	layer->fbid = BIsNested() ? 0 : m_texture->fbid();
 
 	layer->linearFilter = false;
 	layer->blackBorder = false;
@@ -1773,7 +1773,7 @@ paint_all()
 			layer->imageHeight = g_nOutputHeight;
 
 			layer->tex = vulkan_get_last_output_image();
-			layer->fbid = layer->tex->m_FBID;
+			layer->fbid = layer->tex->fbid();
 
 			layer->linearFilter = false;
 
@@ -1816,12 +1816,12 @@ paint_all()
 		if ( takeScreenshot )
 		{
 			assert( pCaptureTexture != nullptr );
-			assert( pCaptureTexture->m_format == VK_FORMAT_B8G8R8A8_UNORM );
+			assert( pCaptureTexture->format() == VK_FORMAT_B8G8R8A8_UNORM );
 
 			std::thread screenshotThread = std::thread([=] {
 				pthread_setname_np( pthread_self(), "gamescope-scrsh" );
 
-				const uint8_t *mappedData = reinterpret_cast<const uint8_t *>(pCaptureTexture->m_pMappedData);
+				const uint8_t *mappedData = reinterpret_cast<const uint8_t *>(pCaptureTexture->mappedData());
 
 				// Make our own copy of the image to remove the alpha channel.
 				auto imageData = std::vector<uint8_t>(currentOutputWidth * currentOutputHeight * 4);
@@ -1832,9 +1832,9 @@ paint_all()
 					for (uint32_t x = 0; x < currentOutputWidth; x++)
 					{
 						// BGR...
-						imageData[y * pitch + x * comp + 0] = mappedData[y * pCaptureTexture->m_unRowPitch + x * comp + 2];
-						imageData[y * pitch + x * comp + 1] = mappedData[y * pCaptureTexture->m_unRowPitch + x * comp + 1];
-						imageData[y * pitch + x * comp + 2] = mappedData[y * pCaptureTexture->m_unRowPitch + x * comp + 0];
+						imageData[y * pitch + x * comp + 0] = mappedData[y * pCaptureTexture->rowPitch() + x * comp + 2];
+						imageData[y * pitch + x * comp + 1] = mappedData[y * pCaptureTexture->rowPitch() + x * comp + 1];
+						imageData[y * pitch + x * comp + 2] = mappedData[y * pCaptureTexture->rowPitch() + x * comp + 0];
 						imageData[y * pitch + x * comp + 3] = 255;
 					}
 				}
@@ -4261,7 +4261,7 @@ void check_new_wayland_res(xwayland_ctx_t *ctx)
 			}
 			else
 			{
-				fence = vulkan_texture_get_fence( newCommit->vulkanTex );
+				fence = newCommit->vulkanTex->memoryFence();
 			}
 
 			// Whether or not to nudge mango app when this commit is done.

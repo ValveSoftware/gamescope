@@ -96,12 +96,12 @@ static void copy_buffer(struct pipewire_state *state, struct pipewire_buffer *bu
 {
 	std::shared_ptr<CVulkanTexture> &tex = buffer->texture;
 	assert(tex != nullptr);
-	assert(tex->m_format == VK_FORMAT_B8G8R8A8_UNORM);
+	assert(tex->format() == VK_FORMAT_B8G8R8A8_UNORM);
 
 	struct pw_buffer *pw_buffer = buffer->buffer;
 	struct spa_buffer *spa_buffer = pw_buffer->buffer;
 
-	bool needs_reneg = buffer->video_info.size.width != tex->m_width || buffer->video_info.size.height != tex->m_height;
+	bool needs_reneg = buffer->video_info.size.width != tex->width() || buffer->video_info.size.height != tex->height();
 
 	struct spa_meta_header *header = (struct spa_meta_header *) spa_buffer_find_meta_data(spa_buffer, SPA_META_Header, sizeof(*header));
 	if (header != nullptr) {
@@ -123,13 +123,13 @@ static void copy_buffer(struct pipewire_state *state, struct pipewire_buffer *bu
 
 		if (!needs_reneg) {
 			int bpp = 4;
-			for (uint32_t i = 0; i < tex->m_height; i++) {
-				memcpy(buffer->shm.data + i * buffer->shm.stride, (uint8_t *) tex->m_pMappedData + i * tex->m_unRowPitch, bpp * tex->m_width);
+			for (uint32_t i = 0; i < tex->height(); i++) {
+				memcpy(buffer->shm.data + i * buffer->shm.stride, (uint8_t *) tex->mappedData() + i * tex->rowPitch(), bpp * tex->width());
 			}
 		}
 		break;
 	case SPA_DATA_DmaBuf:
-		dmabuf = tex->m_dmabuf;
+		dmabuf = tex->dmabuf();
 		assert(dmabuf.n_planes == 1);
 		chunk->offset = dmabuf.offset[0];
 		chunk->stride = dmabuf.stride[0];
@@ -306,7 +306,7 @@ static void stream_handle_add_buffer(void *user_data, struct pw_buffer *pw_buffe
 	assert(buffer->texture != nullptr);
 
 	if (is_dmabuf) {
-		const struct wlr_dmabuf_attributes dmabuf = buffer->texture->m_dmabuf;
+		const struct wlr_dmabuf_attributes dmabuf = buffer->texture->dmabuf();
 		assert(dmabuf.n_planes == 1);
 
 		off_t size = lseek(dmabuf.fd[0], 0, SEEK_END);

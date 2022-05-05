@@ -2063,8 +2063,8 @@ bool vulkan_init( void )
 static void update_tmp_images( uint32_t width, uint32_t height )
 {
 	if ( g_output.tmpOutput != nullptr
-			&& width == g_output.tmpOutput->m_width
-			&& height == g_output.tmpOutput->m_height )
+			&& width == g_output.tmpOutput->width()
+			&& height == g_output.tmpOutput->height() )
 	{
 		return;
 	}
@@ -2248,14 +2248,14 @@ std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_bits( uint32_t width,
 		.newLayout = VK_IMAGE_LAYOUT_GENERAL,
 		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-		.image = pTex->m_vkImage,
+		.image = pTex->vkImage(),
 		.subresourceRange = subResRange
 	};
 
 	vkCmdPipelineBarrier( commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
 			      		0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
 
-	vkCmdCopyBufferToImage( commandBuffer, uploadBuffer, pTex->m_vkImage, VK_IMAGE_LAYOUT_GENERAL, 1, &region );
+	vkCmdCopyBufferToImage( commandBuffer, uploadBuffer, pTex->vkImage(), VK_IMAGE_LAYOUT_GENERAL, 1, &region );
 
 	memoryBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
 	memoryBarrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
@@ -2338,7 +2338,7 @@ VkDescriptorSet vulkan_update_descriptor( const struct FrameInfo_t *frameInfo, b
 		bool compositeLayer = i > 0;
 
 		VkImageView imageView = frameInfo->layers[i].tex
-			? frameInfo->layers[i].tex->getView(compositeLayer || !firstSrgb)
+			? frameInfo->layers[i].tex->view(compositeLayer || !firstSrgb)
 			: VK_NULL_HANDLE;
 
 		VulkanSamplerCacheKey_t samplerKey;
@@ -2492,8 +2492,8 @@ bool vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTex
 	}
 	else
 	{
-		compositeImage = g_output.outputImage[ g_output.nOutImage ]->m_vkImage;
-		targetImageView = g_output.outputImage[ g_output.nOutImage ]->m_srgbView;
+		compositeImage = g_output.outputImage[ g_output.nOutImage ]->vkImage();
+		targetImageView = g_output.outputImage[ g_output.nOutImage ]->srgbView();
 	}
 	
 	VkCommandBuffer curCommandBuffer = g_output.commandBuffers[ g_output.nCurCmdBuffer ];
@@ -2562,7 +2562,7 @@ bool vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTex
 													? VK_QUEUE_FAMILY_FOREIGN_EXT
 													: VK_QUEUE_FAMILY_EXTERNAL_KHR;
 		textureBarriers[i].dstQueueFamilyIndex = queueFamilyIndex;
-		textureBarriers[i].image = frameInfo->layers[i].tex->m_vkImage;
+		textureBarriers[i].image = frameInfo->layers[i].tex->vkImage();
 		textureBarriers[i].subresourceRange = subResRange;
 	}
 
@@ -2622,21 +2622,21 @@ bool vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTex
 		struct FrameInfo_t fsrFrameInfo = *frameInfo;
 		fsrFrameInfo.layers[0].linearFilter = true;
 
-		uint32_t inputX = fsrFrameInfo.layers[0].tex->m_width;
-		uint32_t inputY = fsrFrameInfo.layers[0].tex->m_height;
+		uint32_t inputX = fsrFrameInfo.layers[0].tex->width();
+		uint32_t inputY = fsrFrameInfo.layers[0].tex->height();
 
 		uint32_t tempX = fsrFrameInfo.layers[0].integerWidth();
 		uint32_t tempY = fsrFrameInfo.layers[0].integerHeight();
 
 		update_tmp_images(tempX, tempY);
 
-		memoryBarrier.image = g_output.tmpOutput->m_vkImage;
+		memoryBarrier.image = g_output.tmpOutput->vkImage();
 		vkCmdPipelineBarrier( curCommandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 			      		0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
 
 		vkCmdBindPipeline(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, easuPipeline);
 
-		VkDescriptorSet descriptorSet = vulkan_update_descriptor( &fsrFrameInfo, true, true, g_output.tmpOutput->m_srgbView );
+		VkDescriptorSet descriptorSet = vulkan_update_descriptor( &fsrFrameInfo, true, true, g_output.tmpOutput->srgbView() );
 
 		vkCmdBindDescriptorSets(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &descriptorSet, 0, 0);
 
@@ -2660,7 +2660,7 @@ bool vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTex
 			.newLayout = VK_IMAGE_LAYOUT_GENERAL,
 			.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 			.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-			.image = g_output.tmpOutput->m_vkImage,
+			.image = g_output.tmpOutput->vkImage(),
 			.subresourceRange = subResRange
 		};
 
@@ -2704,7 +2704,7 @@ bool vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTex
 
 		update_tmp_images(currentOutputWidth, currentOutputHeight);
 
-		memoryBarrier.image = g_output.tmpOutput->m_vkImage;
+		memoryBarrier.image = g_output.tmpOutput->vkImage();
 		vkCmdPipelineBarrier( curCommandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 			      		0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
 
@@ -2717,7 +2717,7 @@ bool vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTex
 
 		vkCmdBindPipeline(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, get_vk_pipeline(blur_layer_count, blurFrameInfo.ycbcrMask() & 0x1u, blurFrameInfo.blurRadius, type));
 
-		VkDescriptorSet descriptorSet = vulkan_update_descriptor( &blurFrameInfo, false, false, g_output.tmpOutput->m_srgbView );
+		VkDescriptorSet descriptorSet = vulkan_update_descriptor( &blurFrameInfo, false, false, g_output.tmpOutput->srgbView() );
 
 		vkCmdBindDescriptorSets(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE,
 								pipelineLayout, 0, 1, &descriptorSet, 0, 0);
@@ -2740,14 +2740,14 @@ bool vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTex
 			.newLayout = VK_IMAGE_LAYOUT_GENERAL,
 			.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 			.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-			.image = g_output.tmpOutput->m_vkImage,
+			.image = g_output.tmpOutput->vkImage(),
 			.subresourceRange = subResRange
 		};
 
 		vkCmdPipelineBarrier( curCommandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 			      		0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
 
-		descriptorSet = vulkan_update_descriptor( &blurFrameInfo, false, false, targetImageView, g_output.tmpOutput->m_linearView );
+		descriptorSet = vulkan_update_descriptor( &blurFrameInfo, false, false, targetImageView, g_output.tmpOutput->linearView() );
 
 		vkCmdBindDescriptorSets(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &descriptorSet, 0, 0);
 
@@ -2803,7 +2803,7 @@ bool vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTex
 				.newLayout = VK_IMAGE_LAYOUT_GENERAL,
 				.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 				.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-				.image = pScreenshotTexture->m_vkImage,
+				.image = pScreenshotTexture->vkImage(),
 				.subresourceRange = subResRange
 			};
 
@@ -2846,7 +2846,7 @@ bool vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTex
 			.depth = 1
 		};
 
-		vkCmdCopyImage( curCommandBuffer, compositeImage, VK_IMAGE_LAYOUT_GENERAL, pScreenshotTexture->m_vkImage, VK_IMAGE_LAYOUT_GENERAL, 1, &region );
+		vkCmdCopyImage( curCommandBuffer, compositeImage, VK_IMAGE_LAYOUT_GENERAL, pScreenshotTexture->vkImage(), VK_IMAGE_LAYOUT_GENERAL, 1, &region );
 	}
 
 	bool useForeignQueue = !BIsNested() && g_vulkanSupportsModifiers;
@@ -2926,23 +2926,12 @@ std::shared_ptr<CVulkanTexture> vulkan_get_last_output_image( void )
 	return g_output.outputImage[ !g_output.nOutImage ];
 }
 
-uint32_t vulkan_texture_get_fbid( const std::shared_ptr<CVulkanTexture>& vulkanTex )
+int CVulkanTexture::memoryFence()
 {
-	if ( !vulkanTex )
-		return 0;
-
-	return vulkanTex->m_FBID;
-}
-
-int vulkan_texture_get_fence( const std::shared_ptr<CVulkanTexture>& vulkanTex )
-{
-	if ( !vulkanTex )
-		return -1;
-
 	const VkMemoryGetFdInfoKHR memory_get_fd_info = {
 		.sType = VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR,
 		.pNext = NULL,
-		.memory = vulkanTex->m_vkImageMemory,
+		.memory = m_vkImageMemory,
 		.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT,
 	};
 	int fence = -1;
@@ -3146,7 +3135,7 @@ std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struct wl
 		.height = height,
 		.depth = 1
 	};
-	vkCmdCopyBufferToImage( commandBuffer, buffer, pTex->m_vkImage, VK_IMAGE_LAYOUT_GENERAL, 1, &region );
+	vkCmdCopyBufferToImage( commandBuffer, buffer, pTex->vkImage(), VK_IMAGE_LAYOUT_GENERAL, 1, &region );
 
 	std::vector<std::shared_ptr<CVulkanTexture>> refs;
 	refs.push_back( pTex );
