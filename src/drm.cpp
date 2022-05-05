@@ -582,6 +582,14 @@ static bool setup_best_connector(struct drm_t *drm)
 		return false;
 	}
 
+	const struct wlserver_output_info wlserver_output_info = {
+		.name = best->name,
+		.description = best->name,
+		.phys_width = (int) best->connector->mmWidth,
+		.phys_height = (int) best->connector->mmHeight,
+	};
+	wlserver_set_output_info(&wlserver_output_info);
+
 	return true;
 }
 

@@ -639,6 +639,18 @@ static void handle_wlr_log(enum wlr_log_importance importance, const char *fmt, 
 	wl_log.vlogf(prio, fmt, args);
 }
 
+void wlserver_set_output_info( const wlserver_output_info *info )
+{
+	wlr_output_destroy_global(wlserver.wlr.output);
+
+	wlr_output_set_name(wlserver.wlr.output, info->name);
+	wlr_output_set_description(wlserver.wlr.output, info->description);
+	wlserver.wlr.output->phys_width = info->phys_width;
+	wlserver.wlr.output->phys_height = info->phys_height;
+
+	wlr_output_create_global(wlserver.wlr.output);
+}
+
 bool wlsession_init( void ) {
 	wlr_log_init(WLR_DEBUG, handle_wlr_log);
 
@@ -656,6 +668,18 @@ bool wlsession_init( void ) {
 
 	wlserver.session_active.notify = handle_session_active;
 	wl_signal_add( &wlserver.wlr.session->events.active, &wlserver.session_active );
+
+	wlserver.wlr.headless_backend = wlr_headless_backend_create( wlserver.display );
+
+	wlserver.wlr.output = wlr_headless_add_output( wlserver.wlr.headless_backend, 1280, 720 );
+	strncpy(wlserver.wlr.output->make, "gamescope", sizeof(wlserver.wlr.output->make));
+	strncpy(wlserver.wlr.output->model, "gamescope", sizeof(wlserver.wlr.output->model));
+
+	const struct wlserver_output_info output_info = {
+		.name = "Virtual-1",
+		.description = "Virtual gamescope output",
+	};
+	wlserver_set_output_info( &output_info );
 
 	return true;
 }
@@ -730,15 +754,11 @@ bool wlserver_init( void ) {
 	wlserver.event_loop = wl_display_get_event_loop(wlserver.display);
 
 	wlserver.wlr.multi_backend = wlr_multi_backend_create(wlserver.display);
+	wlr_multi_backend_add( wlserver.wlr.multi_backend, wlserver.wlr.headless_backend );
 
 	assert( wlserver.event_loop && wlserver.wlr.multi_backend );
 
 	wl_signal_add( &wlserver.wlr.multi_backend->events.new_input, &new_input_listener );
-
-	wlserver.wlr.headless_backend = wlr_headless_backend_create( wlserver.display );
-	wlr_multi_backend_add( wlserver.wlr.multi_backend, wlserver.wlr.headless_backend );
-
-	wlserver.wlr.output = wlr_headless_add_output( wlserver.wlr.headless_backend, 1280, 720 );
 
 	if ( bIsDRM == True )
 	{
@@ -821,8 +841,6 @@ bool wlserver_init( void ) {
 		wl_log.errorf("Failed to commit noop output");
 		return false;
 	}
-
-	wlr_output_create_global( wlserver.wlr.output );
 
 	for (int i = 0; i < g_nXWaylandCount; i++)
 	{

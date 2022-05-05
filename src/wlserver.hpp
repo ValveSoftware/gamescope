@@ -154,6 +154,14 @@ void wlserver_mousewheel( int x, int y, uint32_t time );
 
 void wlserver_send_frame_done( struct wlr_surface *surf, const struct timespec *when );
 
+struct wlserver_output_info {
+	const char *name;
+	const char *description;
+	int phys_width, phys_height; // millimeters
+};
+
+void wlserver_set_output_info( const wlserver_output_info *info );
+
 gamescope_xwayland_server_t *wlserver_get_xwayland_server( size_t index );
 const char *wlserver_get_wl_display_name( void );
 
