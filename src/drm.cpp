@@ -1125,7 +1125,7 @@ drm_prepare_basic( struct drm_t *drm, const struct FrameInfo_t *frameInfo )
 
 	if ( g_bRotated )
 	{
-		int64_t imageH = frameInfo->layers[ 0 ].imageHeight / frameInfo->layers[ 0 ].scale.y;
+		int64_t imageH = frameInfo->layers[ 0 ].tex->contentHeight() / frameInfo->layers[ 0 ].scale.y;
 
 		int64_t tmp = crtcX;
 		crtcX = g_nOutputHeight - imageH - crtcY;
@@ -1188,7 +1188,7 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo )
 			uint64_t crtcH = srcHeight / frameInfo->layers[ i ].scale.y;
 
 			if (g_bRotated) {
-				int64_t imageH = frameInfo->layers[ i ].imageHeight / frameInfo->layers[ i ].scale.y;
+				int64_t imageH = frameInfo->layers[ i ].tex->contentHeight() / frameInfo->layers[ i ].scale.y;
 
 				const int32_t x = crtcX;
 				const uint64_t w = crtcW;

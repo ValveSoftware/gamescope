@@ -1092,17 +1092,17 @@ bool MouseCursor::getTexture()
 	m_hotspotX = image->xhot;
 	m_hotspotY = image->yhot;
 
-	m_imageWidth = image->width;
-	m_imageHeight = image->height;
+	uint32_t surfaceWidth;
+	uint32_t surfaceHeight;
 	if ( BIsNested() == false && alwaysComposite == false )
 	{
-		m_surfaceWidth = g_DRM.cursor_width;
-		m_surfaceHeight = g_DRM.cursor_height;
+		surfaceWidth = g_DRM.cursor_width;
+		surfaceHeight = g_DRM.cursor_height;
 	}
 	else
 	{
-		m_surfaceWidth = m_imageWidth;
-		m_surfaceHeight = m_imageHeight;
+		surfaceWidth = image->width;
+		surfaceHeight = image->height;
 	}
 
 	m_texture = nullptr;
@@ -1110,12 +1110,12 @@ bool MouseCursor::getTexture()
 	// Assume the cursor is fully translucent unless proven otherwise.
 	bool bNoCursor = true;
 
-	auto cursorBuffer = std::vector<uint32_t>(m_surfaceWidth * m_surfaceHeight);
+	auto cursorBuffer = std::vector<uint32_t>(surfaceWidth * surfaceHeight);
 	for (int i = 0; i < image->height; i++) {
 		for (int j = 0; j < image->width; j++) {
-			cursorBuffer[i * m_surfaceWidth + j] = image->pixels[i * image->width + j];
+			cursorBuffer[i * surfaceWidth + j] = image->pixels[i * image->width + j];
 
-			if ( cursorBuffer[i * m_surfaceWidth + j] & 0xff000000 ) {
+			if ( cursorBuffer[i * surfaceWidth + j] & 0xff000000 ) {
 				bNoCursor = false;
 			}
 		}
@@ -1141,7 +1141,7 @@ bool MouseCursor::getTexture()
 		// TODO: choose format & modifiers from cursor plane
 	}
 
-	m_texture = vulkan_create_texture_from_bits(m_surfaceWidth, m_surfaceHeight, DRM_FORMAT_ARGB8888, texCreateFlags, cursorBuffer.data());
+	m_texture = vulkan_create_texture_from_bits(surfaceWidth, surfaceHeight, image->width, image->height, DRM_FORMAT_ARGB8888, texCreateFlags, cursorBuffer.data());
 	assert(m_texture);
 	XFree(image);
 	m_dirty = false;
@@ -1218,9 +1218,6 @@ void MouseCursor::paint(win *window, win *fit, struct FrameInfo_t *frameInfo)
 
 	layer->offset.x = -scaledX;
 	layer->offset.y = -scaledY;
-
-	layer->imageWidth = m_imageWidth;
-	layer->imageHeight = m_imageHeight;
 
 	layer->zpos = g_zposCursor; // cursor, on top of both bottom layers
 
@@ -1416,9 +1413,6 @@ paint_window(win *w, win *scaleW, struct FrameInfo_t *frameInfo,
 	}
 
 	layer->blackBorder = flags & PaintWindowFlag::DrawBorders;
-
-	layer->imageWidth = w->a.width;
-	layer->imageHeight = w->a.height;
 
 	layer->zpos = g_zposBase;
 
@@ -1768,9 +1762,6 @@ paint_all()
 			layer->scale.x = 1.0;
 			layer->scale.y = 1.0;
 			layer->opacity = 1.0;
-
-			layer->imageWidth = g_nOutputWidth;
-			layer->imageHeight = g_nOutputHeight;
 
 			layer->tex = vulkan_get_last_output_image();
 			layer->fbid = layer->tex->fbid();

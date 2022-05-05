@@ -347,7 +347,7 @@ static VkResult getModifierProps( const VkImageCreateInfo *imageInfo, uint64_t m
 	return vkGetPhysicalDeviceImageFormatProperties2(physicalDevice, &imageFormatInfo, &imageProps);
 }
 
-bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t drmFormat, createFlags flags, wlr_dmabuf_attributes *pDMA /* = nullptr */ )
+bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t drmFormat, createFlags flags, wlr_dmabuf_attributes *pDMA /* = nullptr */,  uint32_t contentWidth /* = 0 */, uint32_t contentHeight /* =  0 */)
 {
 	VkResult res = VK_ERROR_INITIALIZATION_FAILED;
 
@@ -530,6 +530,18 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t drmFormat,
 
 	m_width = width;
 	m_height = height;
+
+	if (contentWidth && contentHeight)
+	{
+		m_contentWidth = contentWidth;
+		m_contentHeight = contentHeight;
+	}
+	else
+	{
+		m_contentWidth = width;
+		m_contentHeight = height;
+	}
+
 	m_format = imageInfo.format;
 
 	res = vkCreateImage(device, &imageInfo, nullptr, &m_vkImage);
@@ -2204,14 +2216,14 @@ std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_dmabuf( struct wlr_dm
 	return pTex;
 }
 
-std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_bits( uint32_t width, uint32_t height, uint32_t drmFormat, CVulkanTexture::createFlags texCreateFlags, void *bits )
+std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_bits( uint32_t width, uint32_t height, uint32_t contentWidth, uint32_t contentHeight, uint32_t drmFormat, CVulkanTexture::createFlags texCreateFlags, void *bits )
 {
 	std::shared_ptr<CVulkanTexture> pTex = std::make_shared<CVulkanTexture>();
 
 	texCreateFlags.bSampled = true;
 	texCreateFlags.bTransferDst = true;
 
-	if ( pTex->BInit( width, height, drmFormat, texCreateFlags ) == false )
+	if ( pTex->BInit( width, height, drmFormat, texCreateFlags, nullptr,  contentWidth, contentHeight) == false )
 		return nullptr;
 	
 	memcpy( pUploadBuffer, bits, width * height * 4 );

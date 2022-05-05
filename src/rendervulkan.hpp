@@ -93,13 +93,15 @@ public:
 		bool bExportable : 1;
 	};
 
-	bool BInit( uint32_t width, uint32_t height, uint32_t drmFormat, createFlags flags, wlr_dmabuf_attributes *pDMA = nullptr );
+	bool BInit( uint32_t width, uint32_t height, uint32_t drmFormat, createFlags flags, wlr_dmabuf_attributes *pDMA = nullptr, uint32_t contentWidth = 0, uint32_t contentHeight = 0 );
 
 	inline VkImageView view( bool linear ) { return linear ? m_linearView : m_srgbView; }
 	inline VkImageView linearView() { return m_linearView; }
 	inline VkImageView srgbView() { return m_srgbView; }
 	inline uint32_t width() { return m_width; }
 	inline uint32_t height() { return m_height; }
+	inline uint32_t contentWidth() {return m_contentWidth; }
+	inline uint32_t contentHeight() {return m_contentHeight; }
 	inline uint32_t rowPitch() { return m_unRowPitch; }
 	inline uint32_t fbid() { return m_FBID; }
 	inline void *mappedData() { return m_pMappedData; }
@@ -121,7 +123,12 @@ private:
 	VkImageView m_srgbView = VK_NULL_HANDLE;
 	VkImageView m_linearView = VK_NULL_HANDLE;
 
-	uint32_t m_width = 0, m_height = 0;
+	uint32_t m_width = 0;
+	uint32_t m_height = 0;
+
+	uint32_t m_contentWidth = 0;
+	uint32_t m_contentHeight = 0;
+
 	uint32_t m_unRowPitch = 0;
 	
 	uint32_t m_FBID = 0;
@@ -150,12 +157,6 @@ struct FrameInfo_t
 	{
 		std::shared_ptr<CVulkanTexture> tex;
 		uint32_t fbid; // TODO pretty sure we can just move this into tex
-
-		// Cursor has a bigger surface than the actual image
-		// TODO maybe move into tex?
-		int imageWidth;
-		int imageHeight;
-
 		int zpos;
 
 		vec2_t offset;
@@ -205,7 +206,7 @@ bool vulkan_init_formats(void);
 bool vulkan_make_output(void);
 
 std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_dmabuf( struct wlr_dmabuf_attributes *pDMA );
-std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_bits( uint32_t width, uint32_t height, uint32_t drmFormat, CVulkanTexture::createFlags texCreateFlags, void *bits );
+std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_bits( uint32_t width, uint32_t height, uint32_t contentWidth, uint32_t contentHeight, uint32_t drmFormat, CVulkanTexture::createFlags texCreateFlags, void *bits );
 std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struct wlr_buffer *buf );
 
 bool vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTexture> pScreenshotTexture );
