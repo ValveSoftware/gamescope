@@ -1736,11 +1736,6 @@ retry:
 	return true;
 }
 
-void fini_device()
-{
-	vkDestroyDevice(device, 0);
-}
-
 bool acquire_next_image( void )
 {
 	VkResult res = vkAcquireNextImageKHR( device, g_output.swapChain, UINT64_MAX, VK_NULL_HANDLE, g_output.acquireFence, &g_output.nSwapChainImageIndex );
