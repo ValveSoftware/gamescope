@@ -112,8 +112,6 @@ public:
 	CVulkanTexture( void );
 	~CVulkanTexture( void );
 
-	bool m_bTransitioned = false;
-
 private:
 	bool m_bInitialized = false;
 
