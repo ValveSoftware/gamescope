@@ -193,11 +193,6 @@ struct FrameInfo_t
 	}
 };
 
-extern bool g_vulkanSupportsModifiers;
-
-extern bool g_vulkanHasDrmPrimaryDevId;
-extern dev_t g_vulkanDrmPrimaryDevId;
-
 extern bool g_bIsCompositeDebug;
 
 bool vulkan_init(void);
@@ -218,5 +213,8 @@ void vulkan_garbage_collect( void );
 bool vulkan_remake_swapchain( void );
 bool vulkan_remake_output_images( void );
 bool acquire_next_image( void );
+
+bool vulkan_primary_dev_id(dev_t *id);
+bool vulkan_supports_modifiers(void);
 
 struct wlr_renderer *vulkan_renderer_create( void );

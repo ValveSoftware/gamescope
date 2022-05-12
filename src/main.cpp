@@ -442,7 +442,7 @@ int main(int argc, char **argv)
 
 	// If DRM format modifiers aren't supported, prevent our clients from using
 	// DCC, as this can cause tiling artifacts.
-	if ( !g_vulkanSupportsModifiers )
+	if ( !vulkan_supports_modifiers() )
 	{
 		const char *pchR600Debug = getenv( "R600_DEBUG" );
 
