@@ -4451,6 +4451,9 @@ spawn_client( char **argv )
 		// Try to snap back to old priority
 		if ( g_bNiceCap == true )
 		{
+			if ( g_bRt ==  true ){
+				sched_setscheduler(0, g_nOldPolicy, &g_schedOldParam);
+			}
 			nice( g_nOldNice - g_nNewNice );
 		}
 

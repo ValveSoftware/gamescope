@@ -43,6 +43,7 @@ const struct option *gamescope_options = (struct option[]){
 	{ "nis-upscaling", no_argument, nullptr, 'Y' },
 	{ "sharpness", required_argument, nullptr, 0 },
 	{ "fsr-sharpness", required_argument, nullptr, 0 },
+	{ "rt", no_argument, nullptr, 0 },
 
 	// nested mode options
 	{ "nested-unfocused-refresh", required_argument, nullptr, 'o' },
@@ -96,6 +97,7 @@ const char usage[] =
 	"  --sharpness --fsr-sharpness    upscaler sharpness from 0 (max) to 20 (min)\n"
 	"  --cursor                       path to default cursor image\n"
 	"  -R, --ready-fd                 notify FD when ready\n"
+	"  --rt                           Use realtime scheduling\n"
 	"  -T, --stats-path               write statistics to path\n"
 	"  -C, --hide-cursor-delay        hide cursor image after delay\n"
 	"  -e, --steam                    enable Steam integration\n"
@@ -158,6 +160,10 @@ int g_nXWaylandCount = 1;
 bool g_bNiceCap = false;
 int g_nOldNice = 0;
 int g_nNewNice = 0;
+
+bool g_bRt = false;
+int g_nOldPolicy;
+struct sched_param g_schedOldParam;
 
 float g_flMaxWindowScale = FLT_MAX;
 bool g_bIntegerScale = false;
@@ -342,6 +348,8 @@ int main(int argc, char **argv)
 				} else if (strcmp(opt_name, "sharpness") == 0 ||
 						   strcmp(opt_name, "fsr-sharpness") == 0) {
 					g_upscalerSharpness = atoi( optarg );
+				} else if (strcmp(opt_name, "rt") == 0) {
+					g_bRt = true;
 				}
 				break;
 			case '?':
@@ -372,6 +380,19 @@ int main(int argc, char **argv)
 			if ( nNewNice != -1 && errno == 0 )
 			{
 				g_nNewNice = nNewNice;
+			}
+			if ( g_bRt )
+			{
+				struct sched_param sched;
+				sched_getparam(0, &sched);
+				sched.sched_priority = sched_get_priority_min(SCHED_RR);
+
+				if (pthread_getschedparam(pthread_self(), &g_nOldPolicy, &g_schedOldParam)) {
+					fprintf(stderr, "Failed to get old scheduling parameters: %s", strerror(errno));
+					exit(1);
+				}
+				if (sched_setscheduler(0, SCHED_RR, &sched))
+					fprintf(stderr, "Failed to set realtime: %s", strerror(errno));
 			}
 		}
 	}
