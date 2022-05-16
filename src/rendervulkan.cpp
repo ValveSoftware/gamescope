@@ -43,17 +43,13 @@ struct VulkanOutput_t
 	VkSurfaceCapabilitiesKHR surfaceCaps;
 	std::vector< VkSurfaceFormatKHR > surfaceFormats;
 	std::vector< VkPresentModeKHR > presentModes;
-	uint32_t nSwapChainImageIndex;
-	
+
+
 	VkSwapchainKHR swapChain;
-	std::vector< VkImage > swapChainImages;
-	std::vector< VkImageView > swapChainImageViews;
 	VkFence acquireFence;
-	
-	// If no swapchain, use our own images
-	
-	int nOutImage; // ping/pong between two RTs
-	std::shared_ptr<CVulkanTexture> outputImage[2];
+
+	uint32_t nOutImage; // swapchain index in nested mode, or ping/pong between two RTs
+	std::vector<std::shared_ptr<CVulkanTexture>> outputImages;
 
 	VkFormat outputFormat;
 
@@ -1830,6 +1826,43 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t drmFormat,
 	return true;
 }
 
+bool CVulkanTexture::BInitFromSwapchain( VkImage image, uint32_t width, uint32_t height, VkFormat format )
+{
+	m_vkImage = image;
+	m_vkImageMemory = VK_NULL_HANDLE;
+	m_width = width;
+	m_height = height;
+	m_format = format;
+	m_contentWidth = width;
+	m_contentHeight = height;
+
+	VkImageViewCreateInfo createInfo = {};
+	createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+	createInfo.image = image;
+	createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+	createInfo.format = format;
+	createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+	createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+	createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+	createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+	createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	createInfo.subresourceRange.baseMipLevel = 0;
+	createInfo.subresourceRange.levelCount = 1;
+	createInfo.subresourceRange.baseArrayLayer = 0;
+	createInfo.subresourceRange.layerCount = 1;
+
+	VkResult res = vkCreateImageView(g_device.device(), &createInfo, nullptr, &m_srgbView);
+	if ( res != VK_SUCCESS ) {
+		vk_errorf( res, "vkCreateImageView failed" );
+		return false;
+	}
+
+
+	m_bInitialized = true;
+
+	return true;
+}
+
 CVulkanTexture::CVulkanTexture( void )
 {
 }
@@ -1863,15 +1896,14 @@ CVulkanTexture::~CVulkanTexture( void )
 	}
 
 
-	if ( m_vkImage != VK_NULL_HANDLE )
-	{
-		vkDestroyImage( g_device.device(), m_vkImage, nullptr );
-		m_vkImage = VK_NULL_HANDLE;
-	}
-
-
 	if ( m_vkImageMemory != VK_NULL_HANDLE )
 	{
+		if ( m_vkImage != VK_NULL_HANDLE )
+		{
+			vkDestroyImage( g_device.device(), m_vkImage, nullptr );
+			m_vkImage = VK_NULL_HANDLE;
+		}
+
 		vkFreeMemory( g_device.device(), m_vkImageMemory, nullptr );
 		m_vkImageMemory = VK_NULL_HANDLE;
 	}
@@ -1989,7 +2021,7 @@ bool vulkan_init_formats()
 
 bool acquire_next_image( void )
 {
-	VkResult res = vkAcquireNextImageKHR( g_device.device(), g_output.swapChain, UINT64_MAX, VK_NULL_HANDLE, g_output.acquireFence, &g_output.nSwapChainImageIndex );
+	VkResult res = vkAcquireNextImageKHR( g_device.device(), g_output.swapChain, UINT64_MAX, VK_NULL_HANDLE, g_output.acquireFence, &g_output.nOutImage );
 	if ( res != VK_SUCCESS && res != VK_SUBOPTIMAL_KHR )
 		return false;
 	if ( vkWaitForFences( g_device.device(), 1, &g_output.acquireFence, false, UINT64_MAX ) != VK_SUCCESS )
@@ -2008,7 +2040,7 @@ void vulkan_present_to_window( void )
 	presentInfo.swapchainCount = 1;
 	presentInfo.pSwapchains = &g_output.swapChain;
 	
-	presentInfo.pImageIndices = &g_output.nSwapChainImageIndex;
+	presentInfo.pImageIndices = &g_output.nOutImage;
 	
 	if ( vkQueuePresentKHR( g_device.queue(), &presentInfo ) != VK_SUCCESS )
 		vulkan_remake_swapchain();
@@ -2022,7 +2054,6 @@ bool vulkan_make_swapchain( VulkanOutput_t *pOutput )
 	uint32_t imageCount = pOutput->surfaceCaps.minImageCount + 1;
 	uint32_t surfaceFormat = 0;
 	uint32_t formatCount = pOutput->surfaceFormats.size();
-	VkResult result = VK_SUCCESS;
 
 	for ( surfaceFormat = 0; surfaceFormat < formatCount; surfaceFormat++ )
 	{
@@ -2055,37 +2086,23 @@ bool vulkan_make_swapchain( VulkanOutput_t *pOutput )
 	createInfo.oldSwapchain = VK_NULL_HANDLE;
 	
 	if (vkCreateSwapchainKHR( g_device.device(), &createInfo, nullptr, &pOutput->swapChain) != VK_SUCCESS ) {
-		return 0;
+		return false;
 	}
-	
+
 	vkGetSwapchainImagesKHR( g_device.device(), pOutput->swapChain, &imageCount, nullptr );
-	pOutput->swapChainImages.resize( imageCount );
-	pOutput->swapChainImageViews.resize( imageCount );
-	vkGetSwapchainImagesKHR( g_device.device(), pOutput->swapChain, &imageCount, pOutput->swapChainImages.data() );
-	
-	for ( uint32_t i = 0; i < pOutput->swapChainImages.size(); i++ )
+	std::vector<VkImage> swapchainImages( imageCount );
+	vkGetSwapchainImagesKHR( g_device.device(), pOutput->swapChain, &imageCount, swapchainImages.data() );
+
+	pOutput->outputImages.resize(imageCount);
+
+	for ( uint32_t i = 0; i < pOutput->outputImages.size(); i++ )
 	{
-		VkImageViewCreateInfo createInfo = {};
-		createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-		createInfo.image = pOutput->swapChainImages[ i ];
-		createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-		createInfo.format = pOutput->outputFormat;
-		createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
-		createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-		createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
-		createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
-		createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		createInfo.subresourceRange.baseMipLevel = 0;
-		createInfo.subresourceRange.levelCount = 1;
-		createInfo.subresourceRange.baseArrayLayer = 0;
-		createInfo.subresourceRange.layerCount = 1;
-		
-		result = vkCreateImageView(g_device.device(), &createInfo, nullptr, &pOutput->swapChainImageViews[ i ]);
-		
-		if ( result != VK_SUCCESS )
+		pOutput->outputImages[i] = std::make_shared<CVulkanTexture>();
+
+		if ( !pOutput->outputImages[i]->BInitFromSwapchain(swapchainImages[i], g_nOutputWidth, g_nOutputHeight, pOutput->outputFormat))
 			return false;
 	}
-	
+
 	VkFenceCreateInfo fenceInfo = {};
 	fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
 
@@ -2099,22 +2116,14 @@ bool vulkan_remake_swapchain( void )
 	VulkanOutput_t *pOutput = &g_output;
 	vkQueueWaitIdle( g_device.queue() );
 
-	for ( uint32_t i = 0; i < pOutput->swapChainImages.size(); i++ )
-	{
-		vkDestroyImageView( g_device.device(), pOutput->swapChainImageViews[ i ], nullptr );
-		
-		pOutput->swapChainImageViews[ i ] = VK_NULL_HANDLE;
-		pOutput->swapChainImages[ i ] = VK_NULL_HANDLE;
-	}
-	
+	pOutput->outputImages.clear();
+
 	vkDestroySwapchainKHR( g_device.device(), pOutput->swapChain, nullptr );
-	
-	pOutput->nSwapChainImageIndex = 0;
 
 	// Delete screenshot image to be remade if needed
 	for (auto& pScreenshotImage : pOutput->pScreenshotImages)
 		pScreenshotImage = nullptr;
-	
+
 	bool bRet = vulkan_make_swapchain( pOutput );
 	assert( bRet ); // Something has gone horribly wrong!
 	return bRet;
@@ -2127,19 +2136,21 @@ static bool vulkan_make_output_images( VulkanOutput_t *pOutput )
 	outputImageflags.bStorage = true;
 	outputImageflags.bTransferSrc = true; // for screenshots
 
-	pOutput->outputImage[0] = nullptr;
-	pOutput->outputImage[1] = nullptr;
+	pOutput->outputImages.resize(2);
 
-	pOutput->outputImage[0] = std::make_shared<CVulkanTexture>();
-	bool bSuccess = pOutput->outputImage[0]->BInit( g_nOutputWidth, g_nOutputHeight, VulkanFormatToDRM(pOutput->outputFormat), outputImageflags );
+	pOutput->outputImages[0] = nullptr;
+	pOutput->outputImages[1] = nullptr;
+
+	pOutput->outputImages[0] = std::make_shared<CVulkanTexture>();
+	bool bSuccess = pOutput->outputImages[0]->BInit( g_nOutputWidth, g_nOutputHeight, VulkanFormatToDRM(pOutput->outputFormat), outputImageflags );
 	if ( bSuccess != true )
 	{
 		vk_log.errorf( "failed to allocate buffer for KMS" );
 		return false;
 	}
 
-	pOutput->outputImage[1] = std::make_shared<CVulkanTexture>();
-	bSuccess = pOutput->outputImage[1]->BInit( g_nOutputWidth, g_nOutputHeight, VulkanFormatToDRM(pOutput->outputFormat), outputImageflags );
+	pOutput->outputImages[1] = std::make_shared<CVulkanTexture>();
+	bSuccess = pOutput->outputImages[1]->BInit( g_nOutputWidth, g_nOutputHeight, VulkanFormatToDRM(pOutput->outputFormat), outputImageflags );
 	if ( bSuccess != true )
 	{
 		vk_log.errorf( "failed to allocate buffer for KMS" );
@@ -2874,16 +2885,8 @@ bool vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTex
 	VkImage compositeImage;
 	VkImageView targetImageView;
 
-	if ( BIsNested() == true )
-	{
-		compositeImage = g_output.swapChainImages[ g_output.nSwapChainImageIndex ];
-		targetImageView = g_output.swapChainImageViews[ g_output.nSwapChainImageIndex ];
-	}
-	else
-	{
-		compositeImage = g_output.outputImage[ g_output.nOutImage ]->vkImage();
-		targetImageView = g_output.outputImage[ g_output.nOutImage ]->srgbView();
-	}
+	compositeImage = g_output.outputImages[ g_output.nOutImage ]->vkImage();
+	targetImageView = g_output.outputImages[ g_output.nOutImage ]->srgbView();
 	
 	VkCommandBuffer curCommandBuffer = g_output.commandBuffers[ g_output.nCurCmdBuffer ];
 	
@@ -3382,7 +3385,7 @@ bool vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTex
 
 std::shared_ptr<CVulkanTexture> vulkan_get_last_output_image( void )
 {
-	return g_output.outputImage[ !g_output.nOutImage ];
+	return g_output.outputImages[ !g_output.nOutImage ];
 }
 
 int CVulkanTexture::memoryFence()
