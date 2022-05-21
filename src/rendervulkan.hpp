@@ -107,6 +107,8 @@ public:
 	inline VkFormat format() { return m_format; }
 	inline const struct wlr_dmabuf_attributes& dmabuf() { return m_dmabuf; }
 	inline VkImage vkImage() { return m_vkImage; }
+	inline bool swapchainImage() { return m_vkImageMemory == VK_NULL_HANDLE; }
+	inline bool externalImage() { return m_bExternal; }
 
 	int memoryFence();
 
@@ -115,6 +117,7 @@ public:
 
 private:
 	bool m_bInitialized = false;
+	bool m_bExternal = false;
 
 	VkImage m_vkImage = VK_NULL_HANDLE;
 	VkDeviceMemory m_vkImageMemory = VK_NULL_HANDLE;

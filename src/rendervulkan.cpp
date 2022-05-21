@@ -7,6 +7,7 @@
 #include <sys/stat.h>
 #include <algorithm>
 #include <array>
+#include <bitset>
 #include <thread>
 
 // Used to remove the config struct alignment specified by the NIS header
@@ -87,18 +88,18 @@ VulkanOutput_t g_output;
 // Prototype to use init_nis_data in vulkan_init
 static bool init_nis_data();
 
-struct VulkanSamplerCacheKey_t
+struct SamplerState
 {
 	bool bNearest : 1;
 	bool bUnnormalized : 1;
 
-	VulkanSamplerCacheKey_t( void )
+	SamplerState( void )
 	{
 		bNearest = false;
 		bUnnormalized = false;
 	}
 
-	bool operator==( const VulkanSamplerCacheKey_t& other ) const
+	bool operator==( const SamplerState& other ) const
 	{
 		return this->bNearest == other.bNearest
 			&& this->bUnnormalized == other.bUnnormalized;
@@ -108,9 +109,9 @@ struct VulkanSamplerCacheKey_t
 namespace std
 {
 	template <>
-	struct hash<VulkanSamplerCacheKey_t>
+	struct hash<SamplerState>
 	{
-		size_t operator()( const VulkanSamplerCacheKey_t& k ) const
+		size_t operator()( const SamplerState& k ) const
 		{
 			return k.bNearest | (k.bUnnormalized << 1);
 		}
@@ -269,13 +270,72 @@ static inline uint32_t DRMFormatGetBPP( uint32_t nDRMFormat )
 	return false;
 }
 
-struct scratchCmdBuffer_t
+class CVulkanDevice;
+
+struct TextureState
 {
-	VkCommandBuffer cmdBuf;
-	
-	std::vector<std::shared_ptr<CVulkanTexture>> refs;
-	
-	std::atomic<uint64_t> seqNo = { 0 };
+	bool discared : 1;
+	bool dirty : 1;
+	bool needsPresentLayout : 1;
+	bool needsExport : 1;
+	bool needsImport : 1;
+
+	TextureState()
+	{
+		discared = false;
+		dirty = false;
+		needsPresentLayout = false;
+		needsExport = false;
+		needsImport = false;
+	}
+};
+
+class CVulkanCmdBuffer
+{
+public:
+	CVulkanCmdBuffer(CVulkanDevice *parent, VkCommandBuffer cmdBuffer);
+	~CVulkanCmdBuffer();
+	CVulkanCmdBuffer(const CVulkanCmdBuffer& other) = delete;
+	CVulkanCmdBuffer(CVulkanCmdBuffer&& other) = delete;
+	CVulkanCmdBuffer& operator=(const CVulkanCmdBuffer& other) = delete;
+	CVulkanCmdBuffer& operator=(CVulkanCmdBuffer&& other) = delete;
+
+	inline VkCommandBuffer rawBuffer() {return m_cmdBuffer;}
+	void reset();
+	void begin();
+	void end();
+	void bindTexture(uint32_t slot, std::shared_ptr<CVulkanTexture> texture);
+	void setTextureSrgb(uint32_t slot, bool srgb);
+	void setSamplerNearest(uint32_t slot, bool nearest);
+	void setSamplerUnnormalized(uint32_t slot, bool unnormalized);
+	void bindTarget(std::shared_ptr<CVulkanTexture> target);
+	void clearState();
+	template<class PushData, class... Args>
+	void pushConstants(Args&&... args);
+	void bindPipeline(VkPipeline pipeline);
+	void dispatch(uint32_t x, uint32_t y = 1, uint32_t z = 1);
+	void copyImage(std::shared_ptr<CVulkanTexture> src, std::shared_ptr<CVulkanTexture> dst);
+	void copyBufferToImage(VkBuffer buffer, VkDeviceSize offset, uint32_t stride, std::shared_ptr<CVulkanTexture> dst);
+
+
+private:
+	void prepareSrcImage(CVulkanTexture *image);
+	void prepareDestImage(CVulkanTexture *image);
+	void markDirty(CVulkanTexture *image);
+	void insertBarrier(bool flush = false);
+
+	VkCommandBuffer m_cmdBuffer;
+	CVulkanDevice *m_device;
+
+	// Per Use State
+	std::unordered_map<CVulkanTexture *, std::shared_ptr<CVulkanTexture>> m_textureRefs;
+	std::unordered_map<CVulkanTexture *, TextureState> m_textureState;
+
+	// Draw State
+	std::array<CVulkanTexture *, VKR_SAMPLER_SLOTS> m_boundTextures;
+	std::bitset<VKR_SAMPLER_SLOTS> m_useSrgb;
+	std::array<SamplerState, VKR_SAMPLER_SLOTS> m_samplerState;
+	CVulkanTexture *m_target;
 };
 
 #define VULKAN_INSTANCE_FUNCTIONS \
@@ -305,9 +365,16 @@ struct scratchCmdBuffer_t
 	VK_FUNC(CreateSamplerYcbcrConversion) \
 	VK_FUNC(CreateSemaphore) \
 	VK_FUNC(CreateShaderModule) \
+	VK_FUNC(CmdBindDescriptorSets) \
+	VK_FUNC(CmdBindPipeline) \
+	VK_FUNC(CmdCopyBufferToImage) \
+	VK_FUNC(CmdCopyImage) \
 	VK_FUNC(CmdDispatch) \
+	VK_FUNC(CmdPipelineBarrier) \
+	VK_FUNC(CmdPushConstants) \
 	VK_FUNC(DestroyPipeline) \
 	VK_FUNC(EndCommandBuffer) \
+	VK_FUNC(FreeCommandBuffers) \
 	VK_FUNC(GetBufferMemoryRequirements) \
 	VK_FUNC(GetDeviceQueue) \
 	VK_FUNC(GetImageDrmFormatModifierPropertiesEXT) \
@@ -316,18 +383,21 @@ struct scratchCmdBuffer_t
 	VK_FUNC(MapMemory) \
 	VK_FUNC(QueueSubmit) \
 	VK_FUNC(ResetCommandBuffer) \
-	VK_FUNC(UpdateDescriptorSets)
+	VK_FUNC(UpdateDescriptorSets) \
+	VK_FUNC(WaitSemaphores)
 
 class CVulkanDevice
 {
 public:
 	bool BInit();
 
-	VkSampler sampler(VulkanSamplerCacheKey_t key);
+	VkSampler sampler(SamplerState key);
 	VkPipeline pipeline(ShaderType type, uint32_t layerCount = 1, uint32_t ycbcrMask = 0, uint32_t radius = 0, uint32_t blur_layers = 0);
 	int32_t findMemoryType( VkMemoryPropertyFlags properties, uint32_t requiredTypeBits );
-	uint32_t commandBuffer( VkCommandBuffer &cmdBuf );
-	void submitCommandBuffer( uint32_t handle, std::vector<std::shared_ptr<CVulkanTexture>> &vecRefs );
+	std::unique_ptr<CVulkanCmdBuffer> commandBuffer();
+	uint64_t submit( std::unique_ptr<CVulkanCmdBuffer> cmdBuf);
+	void wait(uint64_t sequence);
+	void waitIdle();
 	void garbageCollect();
 	inline VkDescriptorSet descriptorSet()
 	{
@@ -370,6 +440,7 @@ private:
 	bool createScratchResources();
 	VkPipeline compilePipeline(uint32_t layerCount, uint32_t ycbcrMask, uint32_t radius, ShaderType type, uint32_t blur_layer_count);
 	void compileAllPipelines();
+	void resetCmdBuffers(uint64_t sequence);
 
 	VkDevice m_device = nullptr;
 	VkPhysicalDevice m_physDev = nullptr;
@@ -395,7 +466,7 @@ private:
 
 	VkPhysicalDeviceMemoryProperties m_memoryProperties;
 
-	std::unordered_map< VulkanSamplerCacheKey_t, VkSampler > m_samplerCache;
+	std::unordered_map< SamplerState, VkSampler > m_samplerCache;
 	std::array<VkShaderModule, SHADER_TYPE_COUNT> m_shaderModules;
 	std::unordered_map<PipelineInfo_t, VkPipeline> m_pipelineMap;
 	std::mutex m_pipelineMutex;
@@ -413,7 +484,8 @@ private:
 
 	VkSemaphore m_scratchTimelineSemaphore;
 	std::atomic<uint64_t> m_submissionSeqNo = { 0 };
-	scratchCmdBuffer_t m_scratchCommandBuffers[ k_nScratchCmdBufferCount ];
+	std::vector<std::unique_ptr<CVulkanCmdBuffer>> m_unusedCmdBufs;
+	std::map<uint64_t, std::unique_ptr<CVulkanCmdBuffer>> m_pendingCmdBufs;
 };
 
 bool CVulkanDevice::BInit()
@@ -1018,25 +1090,7 @@ bool CVulkanDevice::createScratchResources()
 		vk_errorf( res, "vkMapMemory failed" );
 		return false;
 	}
-	
-	VkCommandBufferAllocateInfo commandBufferAllocateInfo = {
-		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-		.pNext = nullptr,
-		.commandPool = m_commandPool,
-		.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-		.commandBufferCount = 1
-	};
-	
-	for ( uint32_t i = 0; i < k_nScratchCmdBufferCount; i++ )
-	{
-		res = vk.AllocateCommandBuffers( device(), &commandBufferAllocateInfo, &m_scratchCommandBuffers[ i ].cmdBuf );
-		if ( res != VK_SUCCESS )
-		{
-			vk_errorf( res, "vkAllocateCommandBuffers failed" );
-			return false;
-		}
-	}
-	
+
 	VkSemaphoreTypeCreateInfo timelineCreateInfo = {
 		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
 		.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE,
@@ -1057,7 +1111,7 @@ bool CVulkanDevice::createScratchResources()
 	return true;
 }
 
-VkSampler CVulkanDevice::sampler( VulkanSamplerCacheKey_t key )
+VkSampler CVulkanDevice::sampler( SamplerState key )
 {
 	if ( m_samplerCache.count(key) != 0 )
 		return m_samplerCache[key];
@@ -1230,51 +1284,42 @@ int32_t CVulkanDevice::findMemoryType( VkMemoryPropertyFlags properties, uint32_
 	return -1;
 }
 
-uint32_t CVulkanDevice::commandBuffer( VkCommandBuffer &cmdBuf )
+std::unique_ptr<CVulkanCmdBuffer> CVulkanDevice::commandBuffer()
 {
-	uint64_t currentSeqNo;
-	VkResult res = vk.GetSemaphoreCounterValue(device(), m_scratchTimelineSemaphore, &currentSeqNo);
-	assert( res == VK_SUCCESS );
-
-	for ( uint32_t i = 0; i < k_nScratchCmdBufferCount; i++ )
+	std::unique_ptr<CVulkanCmdBuffer> cmdBuffer;
+	if (m_unusedCmdBufs.empty())
 	{
-		if ( m_scratchCommandBuffers[ i ].seqNo <= currentSeqNo )
+		VkCommandBuffer rawCmdBuffer;
+		VkCommandBufferAllocateInfo commandBufferAllocateInfo = {
+			.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+			.commandPool = m_commandPool,
+			.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+			.commandBufferCount = 1
+		};
+
+		VkResult res = vk.AllocateCommandBuffers( device(), &commandBufferAllocateInfo, &rawCmdBuffer );
+		if ( res != VK_SUCCESS )
 		{
-			cmdBuf = m_scratchCommandBuffers[ i ].cmdBuf;
-			
-			VkCommandBufferBeginInfo commandBufferBeginInfo = {
-				.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-				.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
-			};
-			
-			VkResult res = vk.BeginCommandBuffer( cmdBuf, &commandBufferBeginInfo);
-			
-			if ( res != VK_SUCCESS )
-			{
-				break;
-			}
-			
-			m_scratchCommandBuffers[ i ].refs.clear();
-			
-			return i;
+			vk_errorf( res, "vkAllocateCommandBuffers failed" );
+			return nullptr;
 		}
+
+		cmdBuffer = std::make_unique<CVulkanCmdBuffer>(this, rawCmdBuffer);
 	}
-	
-	assert( 0 );
-	return 0;
+	else
+	{
+		cmdBuffer = std::move(m_unusedCmdBufs.back());
+		m_unusedCmdBufs.pop_back();
+	}
+
+	cmdBuffer->begin();
+	return cmdBuffer;
 }
 
-void CVulkanDevice::submitCommandBuffer( uint32_t handle, std::vector<std::shared_ptr<CVulkanTexture>> &vecRefs )
+uint64_t CVulkanDevice::submit( std::unique_ptr<CVulkanCmdBuffer> cmdBuffer)
 {
-	auto &buf = m_scratchCommandBuffers[ handle ];
+	cmdBuffer->end();
 
-	VkResult res = vk.EndCommandBuffer( buf.cmdBuf );
-	
-	if ( res != VK_SUCCESS )
-	{
-		assert( 0 );
-	}
-	
 	// The seq no of the last submission.
 	const uint64_t lastSubmissionSeqNo = m_submissionSeqNo++;
 
@@ -1283,39 +1328,34 @@ void CVulkanDevice::submitCommandBuffer( uint32_t handle, std::vector<std::share
 
 	VkTimelineSemaphoreSubmitInfo timelineInfo = {
 		.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
-		.pNext = NULL,
-		// Ensure order of scratch cmd buffer submission
-		.waitSemaphoreValueCount = 1,
-		.pWaitSemaphoreValues = &lastSubmissionSeqNo,
+		// no need to ensure order of cmd buffer submission, we only have one queue
+		.waitSemaphoreValueCount = 0,
+		.pWaitSemaphoreValues = nullptr,
 		.signalSemaphoreValueCount = 1,
 		.pSignalSemaphoreValues = &nextSeqNo,
 	};
 
-	const VkPipelineStageFlags wait_mask = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+	VkCommandBuffer rawCmdBuffer = cmdBuffer->rawBuffer();
 
 	VkSubmitInfo submitInfo = {
 		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
 		.pNext = &timelineInfo,
-		.waitSemaphoreCount = 1,
-		.pWaitSemaphores = &m_scratchTimelineSemaphore,
-		.pWaitDstStageMask = &wait_mask,
 		.commandBufferCount = 1,
-		.pCommandBuffers = &buf.cmdBuf,
+		.pCommandBuffers = &rawCmdBuffer,
 		.signalSemaphoreCount = 1,
 		.pSignalSemaphores = &m_scratchTimelineSemaphore,
 	};
-	
-	res = vk.QueueSubmit( queue(), 1, &submitInfo, VK_NULL_HANDLE );
-	
+
+	VkResult res = vk.QueueSubmit( queue(), 1, &submitInfo, VK_NULL_HANDLE );
+
 	if ( res != VK_SUCCESS )
 	{
 		assert( 0 );
 	}
-	
-	buf.seqNo = nextSeqNo;
-	
-	for( uint32_t i = 0; i < vecRefs.size(); i++ )
-		m_scratchCommandBuffers[ handle ].refs.push_back( std::move(vecRefs[ i ]) );
+
+	m_pendingCmdBufs.emplace(nextSeqNo, std::move(cmdBuffer));
+
+	return nextSeqNo;
 }
 
 void CVulkanDevice::garbageCollect( void )
@@ -1324,18 +1364,356 @@ void CVulkanDevice::garbageCollect( void )
 	VkResult res = vk.GetSemaphoreCounterValue(device(), m_scratchTimelineSemaphore, &currentSeqNo);
 	assert( res == VK_SUCCESS );
 
-	for ( uint32_t i = 0; i < k_nScratchCmdBufferCount; i++ )
+	resetCmdBuffers(currentSeqNo);
+}
+
+void CVulkanDevice::wait(uint64_t sequence)
+{
+	VkSemaphoreWaitInfo waitInfo = {
+		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
+		.semaphoreCount = 1,
+		.pSemaphores = &m_scratchTimelineSemaphore,
+		.pValues = &sequence,
+	} ;
+
+	VkResult res = vk.WaitSemaphores(device(), &waitInfo, ~0ull);
+	if (res != VK_SUCCESS)
+		assert( 0 );
+	resetCmdBuffers(sequence);
+}
+
+void CVulkanDevice::waitIdle()
+{
+	wait(m_submissionSeqNo);
+}
+
+void CVulkanDevice::resetCmdBuffers(uint64_t sequence)
+{
+	auto last = m_pendingCmdBufs.find(sequence);
+	if (last == m_pendingCmdBufs.end())
+		return;
+
+	for (auto it = m_pendingCmdBufs.begin(); ; it++)
 	{
-		// We reset seqNo to 0 when we know it's not busy.
-		const uint64_t buffer_seq_no = m_scratchCommandBuffers[ i ].seqNo;
-		if ( buffer_seq_no && buffer_seq_no <= currentSeqNo )
-		{
-			vk.ResetCommandBuffer( m_scratchCommandBuffers[ i ].cmdBuf, 0 );
-			
-			m_scratchCommandBuffers[ i ].refs.clear();
-			m_scratchCommandBuffers[ i ].seqNo = 0;
-		}
+		it->second->reset();
+		m_unusedCmdBufs.push_back(std::move(it->second));
+		if (it == last)
+			break;
 	}
+
+	m_pendingCmdBufs.erase(m_pendingCmdBufs.begin(), ++last);
+}
+
+CVulkanCmdBuffer::CVulkanCmdBuffer(CVulkanDevice *parent, VkCommandBuffer cmdBuffer)
+	: m_cmdBuffer(cmdBuffer), m_device(parent)
+{
+}
+
+CVulkanCmdBuffer::~CVulkanCmdBuffer()
+{
+	m_device->vk.FreeCommandBuffers(m_device->device(), m_device->commandPool(), 1, &m_cmdBuffer);
+}
+
+void CVulkanCmdBuffer::reset()
+{
+	VkResult res = m_device->vk.ResetCommandBuffer(m_cmdBuffer, 0);
+	assert(res == VK_SUCCESS);
+	m_textureRefs.clear();
+	m_textureState.clear();
+}
+
+void CVulkanCmdBuffer::begin()
+{
+	VkCommandBufferBeginInfo commandBufferBeginInfo = {
+		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
+	};
+
+	VkResult res = m_device->vk.BeginCommandBuffer(m_cmdBuffer, &commandBufferBeginInfo);
+	assert(res == VK_SUCCESS);
+
+	clearState();
+}
+
+void CVulkanCmdBuffer::end()
+{
+	insertBarrier(true);
+	VkResult res = m_device->vk.EndCommandBuffer(m_cmdBuffer);
+	assert(res == VK_SUCCESS);
+}
+
+void CVulkanCmdBuffer::bindTexture(uint32_t slot, std::shared_ptr<CVulkanTexture> texture)
+{
+	m_boundTextures[slot] = texture.get();
+	if (texture)
+		m_textureRefs.emplace(texture.get(), texture);
+}
+
+void CVulkanCmdBuffer::setTextureSrgb(uint32_t slot, bool srgb)
+{
+	m_useSrgb[slot] = srgb;
+}
+
+void CVulkanCmdBuffer::setSamplerNearest(uint32_t slot, bool nearest)
+{
+	m_samplerState[slot].bNearest = nearest;
+}
+
+void CVulkanCmdBuffer::setSamplerUnnormalized(uint32_t slot, bool unnormalized)
+{
+	m_samplerState[slot].bUnnormalized = unnormalized;
+}
+
+void CVulkanCmdBuffer::bindTarget(std::shared_ptr<CVulkanTexture> target)
+{
+	m_target = target.get();
+	if (target)
+		m_textureRefs.emplace(target.get(), target);
+}
+
+void CVulkanCmdBuffer::clearState()
+{
+	for (auto& texture : m_boundTextures)
+		texture = nullptr;
+
+	for (auto& sampler : m_samplerState)
+		sampler = {};
+
+	m_target = nullptr;
+	m_useSrgb.reset();
+}
+
+template<class PushData, class... Args>
+void CVulkanCmdBuffer::pushConstants(Args&&... args)
+{
+	static_assert(sizeof(PushData) <= 128, "Only 128 bytes push constants.");
+	PushData data(std::forward(args)...);
+	m_device->vk.CmdPushConstants(m_cmdBuffer, m_device->pipelineLayout(), VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(data), &data);
+}
+
+void CVulkanCmdBuffer::bindPipeline(VkPipeline pipeline)
+{
+	m_device->vk.CmdBindPipeline(m_cmdBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
+}
+
+void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z)
+{
+	for (auto src : m_boundTextures)
+	{
+		if (src)
+			prepareSrcImage(src);
+	}
+	assert(m_target != nullptr);
+	prepareDestImage(m_target);
+	insertBarrier();
+
+	VkDescriptorSet descriptorSet = m_device->descriptorSet();
+
+	std::array<VkWriteDescriptorSet, 3> writeDescriptorSets;
+	std::array<VkDescriptorImageInfo, VKR_SAMPLER_SLOTS> imageDescriptors = {};
+	std::array<VkDescriptorImageInfo, VKR_SAMPLER_SLOTS> ycbcrImageDescriptors = {};
+	VkDescriptorImageInfo targetDescriptor = {
+		.imageView = m_target->srgbView(),
+		.imageLayout = VK_IMAGE_LAYOUT_GENERAL,
+	};
+
+	writeDescriptorSets[0] = {
+		.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+		.dstSet = descriptorSet,
+		.dstBinding = 1,
+		.dstArrayElement = 0,
+		.descriptorCount = 1,
+		.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+		.pImageInfo = &targetDescriptor,
+	};
+
+	writeDescriptorSets[1] = {
+		.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+		.dstSet = descriptorSet,
+		.dstBinding = 1,
+		.dstArrayElement = 0,
+		.descriptorCount = imageDescriptors.size(),
+		.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+		.pImageInfo = imageDescriptors.data(),
+	};
+
+	writeDescriptorSets[2] = {
+		.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+		.dstSet = descriptorSet,
+		.dstBinding = 2,
+		.dstArrayElement = 0,
+		.descriptorCount = ycbcrImageDescriptors.size(),
+		.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+		.pImageInfo = ycbcrImageDescriptors.data(),
+	};
+
+	for (uint32_t i = 0; i < VKR_SAMPLER_SLOTS; i++)
+	{
+		imageDescriptors[i].sampler = m_device->sampler(m_samplerState[i]);
+		imageDescriptors[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+		ycbcrImageDescriptors[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+		if (m_boundTextures[i] == nullptr)
+			continue;
+
+		VkImageView view = m_useSrgb[i] ? m_boundTextures[i]->srgbView() : m_boundTextures[i]->linearView();
+
+		if (m_boundTextures[i]->format() == VK_FORMAT_G8_B8R8_2PLANE_420_UNORM)
+			ycbcrImageDescriptors[i].imageView = view;
+		else
+			imageDescriptors[i].imageView = view;
+	}
+
+	m_device->vk.UpdateDescriptorSets(m_device->device(), writeDescriptorSets.size(), writeDescriptorSets.data(), 0, nullptr);
+
+	m_device->vk.CmdBindDescriptorSets(m_cmdBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_device->pipelineLayout(), 0, 1, &descriptorSet, 0, nullptr);
+
+	m_device->vk.CmdDispatch(m_cmdBuffer, x, y, z);
+
+	markDirty(m_target);
+}
+
+void CVulkanCmdBuffer::copyImage(std::shared_ptr<CVulkanTexture> src, std::shared_ptr<CVulkanTexture> dst)
+{
+	assert(src->width() == dst->width());
+	assert(src->height() == dst->height());
+	m_textureRefs.emplace(src.get(), src);
+	m_textureRefs.emplace(dst.get(), dst);
+	prepareSrcImage(src.get());
+	prepareDestImage(dst.get());
+	insertBarrier();
+
+	VkImageCopy region = {};
+
+	region.srcSubresource = {
+		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+		.layerCount = 1
+	};
+
+	region.dstSubresource = {
+		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+		.layerCount = 1
+	};
+
+	region.extent = {
+		.width = src->width(),
+		.height = src->height(),
+		.depth = 1
+	};
+
+	m_device->vk.CmdCopyImage(m_cmdBuffer, src->vkImage(), VK_IMAGE_LAYOUT_GENERAL, dst->vkImage(), VK_IMAGE_LAYOUT_GENERAL, 1, &region);
+
+	markDirty(dst.get());
+}
+
+void CVulkanCmdBuffer::copyBufferToImage(VkBuffer buffer, VkDeviceSize offset, uint32_t stride, std::shared_ptr<CVulkanTexture> dst)
+{
+	m_textureRefs.emplace(dst.get(), dst);
+	prepareDestImage(dst.get());
+	insertBarrier();
+	VkBufferImageCopy region = {
+		.bufferRowLength = stride,
+	};
+
+	region.imageSubresource = {
+		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+		.layerCount = 1,
+	};
+
+	region.imageExtent = {
+		.width = dst->width(),
+		.height = dst->height(),
+		.depth = 1,
+	};
+
+	region.bufferOffset = offset;
+
+	m_device->vk.CmdCopyBufferToImage(m_cmdBuffer, buffer, dst->vkImage(), VK_IMAGE_LAYOUT_GENERAL, 1, &region);
+
+	markDirty(dst.get());
+}
+
+void CVulkanCmdBuffer::prepareSrcImage(CVulkanTexture *image)
+{
+	auto result = m_textureState.emplace(image, TextureState());
+	// no need to reimport if the image didn't change
+	if (!result.second)
+		return;
+	// using the swapchain image as a source without writing to it doesn't make any sense
+	assert(image->swapchainImage() == false);
+	result.first->second.needsImport = image->externalImage();
+	result.first->second.needsExport = image->externalImage();
+}
+
+void CVulkanCmdBuffer::prepareDestImage(CVulkanTexture *image)
+{
+	auto result = m_textureState.emplace(image, TextureState());
+	// no need to discard if the image is already image/in the correct layout
+	if (!result.second)
+		return;
+	result.first->second.discared = true;
+	result.first->second.needsExport = image->externalImage();
+	result.first->second.needsPresentLayout = image->swapchainImage();
+}
+
+void CVulkanCmdBuffer::markDirty(CVulkanTexture *image)
+{
+	auto result = m_textureState.find(image);
+	// image should have been prepared already
+	assert(result !=  m_textureState.end());
+	result->second.dirty = true;
+}
+
+void CVulkanCmdBuffer::insertBarrier(bool flush)
+{
+	std::vector<VkImageMemoryBarrier> barriers;
+
+	uint32_t externalQueue = m_device->supportsModifiers() ? VK_QUEUE_FAMILY_FOREIGN_EXT : VK_QUEUE_FAMILY_EXTERNAL_KHR;
+
+	VkImageSubresourceRange subResRange =
+	{
+		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+		.levelCount = 1,
+		.layerCount = 1
+	};
+
+	for (auto& pair : m_textureState)
+	{
+		CVulkanTexture *image = pair.first;
+		TextureState& state = pair.second;
+		assert(!flush || !state.needsImport);
+
+		bool isExport = flush && state.needsExport;
+		bool isPresent = flush && state.needsPresentLayout;
+
+		if (!state.discared && !state.dirty && !state.needsImport && !isExport && !isPresent)
+			continue;
+
+		const VkAccessFlags write_bits = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
+		const VkAccessFlags read_bits = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT;
+
+		VkImageMemoryBarrier memoryBarrier =
+		{
+			.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+			.srcAccessMask = state.dirty ? write_bits : 0u,
+			.dstAccessMask = flush ? 0u : read_bits | write_bits,
+			.oldLayout = (state.discared || state.needsImport) ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_GENERAL,
+			.newLayout = isPresent ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR : VK_IMAGE_LAYOUT_GENERAL,
+			.srcQueueFamilyIndex = isExport ? m_device->queueFamily() : state.needsImport ? externalQueue : VK_QUEUE_FAMILY_IGNORED,
+			.dstQueueFamilyIndex = isExport ? externalQueue : state.needsImport ? m_device->queueFamily() : VK_QUEUE_FAMILY_IGNORED,
+			.image = image->vkImage(),
+			.subresourceRange = subResRange
+		};
+
+		barriers.push_back(memoryBarrier);
+
+		state.discared = false;
+		state.dirty = false;
+		state.needsImport = false;
+	}
+
+	// TODO replace VK_PIPELINE_STAGE_ALL_COMMANDS_BIT
+	m_device->vk.CmdPipelineBarrier(m_cmdBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+									0, 0, nullptr, 0, nullptr, barriers.size(), barriers.data());
 }
 
 static CVulkanDevice g_device;
@@ -1445,7 +1823,9 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t drmFormat,
 	{
 		properties = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
 	}
-	
+
+	m_bExternal = pDMA || flags.bExportable == true;
+
 	// Possible extensions for below
 	wsi_image_create_info wsiImageCreateInfo = {};
 	VkExternalMemoryImageCreateInfo externalImageCreateInfo = {};
@@ -2382,7 +2762,7 @@ static bool init_nis_data()
 
 	// Write all the static NIS descriptor set bindings
 
-	VulkanSamplerCacheKey_t samplerKey;
+	SamplerState samplerKey;
 	samplerKey.bNearest = false;
 	samplerKey.bUnnormalized = false;
 
@@ -2464,62 +2844,15 @@ std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_bits( uint32_t width,
 
 	if ( pTex->BInit( width, height, drmFormat, texCreateFlags, nullptr,  contentWidth, contentHeight) == false )
 		return nullptr;
-	
+
 	memcpy( g_device.uploadBufferData(), bits, width * height * DRMFormatGetBPP(drmFormat) );
-	
-	VkCommandBuffer commandBuffer;
-	uint32_t handle = g_device.commandBuffer( commandBuffer );
-	
-	VkBufferImageCopy region = {};
-	
-	region.imageSubresource = {
-		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-		.layerCount = 1
-	};
-	
-	region.imageExtent = {
-		.width = width,
-		.height = height,
-		.depth = 1
-	};
 
-	VkImageSubresourceRange subResRange =
-	{
-		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-		.levelCount = 1,
-		.layerCount = 1
-	};
+	auto cmdBuffer = g_device.commandBuffer();
 
-	VkImageMemoryBarrier memoryBarrier =
-	{
-		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-		.srcAccessMask = 0,
-		.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
-		.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-		.newLayout = VK_IMAGE_LAYOUT_GENERAL,
-		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-		.image = pTex->vkImage(),
-		.subresourceRange = subResRange
-	};
+	cmdBuffer->copyBufferToImage(g_device.uploadBuffer(), 0, 0, pTex);
 
-	vkCmdPipelineBarrier( commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-				  	    0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
+	g_device.submit(std::move(cmdBuffer));
 
-	vkCmdCopyBufferToImage( commandBuffer, g_device.uploadBuffer(), pTex->vkImage(), VK_IMAGE_LAYOUT_GENERAL, 1, &region );
-
-	memoryBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-	memoryBarrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
-	memoryBarrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
-
-	vkCmdPipelineBarrier( commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-				  	    0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
-	
-	std::vector<std::shared_ptr<CVulkanTexture>> refs;
-	refs.push_back( pTex );
-	
-	g_device.submitCommandBuffer( handle, refs );
-	
 	return pTex;
 }
 
@@ -2565,7 +2898,7 @@ VkDescriptorSet vulkan_update_descriptor( const struct FrameInfo_t *frameInfo, b
 			? frameInfo->layers[i].tex->view(compositeLayer || !firstSrgb)
 			: VK_NULL_HANDLE;
 
-		VulkanSamplerCacheKey_t samplerKey;
+		SamplerState samplerKey;
 		samplerKey.bNearest = !frameInfo->layers[i].linearFilter;
 		samplerKey.bUnnormalized = compositeLayer || !firstNrm;
 
@@ -3424,25 +3757,16 @@ std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struct wl
 	if ( pTex->BInit( width, height, drmFormat, texCreateFlags ) == false )
 		return nullptr;
 
-	VkCommandBuffer commandBuffer;
-	uint32_t handle = g_device.commandBuffer( commandBuffer );
+	auto cmdBuffer = g_device.commandBuffer();
 
-	VkBufferImageCopy region = {};
-	region.imageSubresource = {
-		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-		.layerCount = 1
-	};
-	region.imageExtent = {
-		.width = width,
-		.height = height,
-		.depth = 1
-	};
-	vkCmdCopyBufferToImage( commandBuffer, buffer, pTex->vkImage(), VK_IMAGE_LAYOUT_GENERAL, 1, &region );
+	cmdBuffer->copyBufferToImage( buffer, 0, stride, pTex);
 
-	std::vector<std::shared_ptr<CVulkanTexture>> refs;
-	refs.push_back( pTex );
+	uint64_t sequence = g_device.submit(std::move(cmdBuffer));
 
-	g_device.submitCommandBuffer( handle, refs );
+	g_device.wait(sequence);
+
+	vkDestroyBuffer(g_device.device(), buffer, nullptr);
+	vkFreeMemory(g_device.device(), bufferMemory, nullptr);
 
 	return pTex;
 }
