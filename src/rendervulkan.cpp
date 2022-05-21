@@ -34,6 +34,7 @@
 #define A_CPU
 #include "shaders/ffx_a.h"
 #include "shaders/ffx_fsr1.h"
+#include "shaders/descriptor_set_constants.h"
 
 bool g_bIsCompositeDebug = false;
 
@@ -302,6 +303,7 @@ struct scratchCmdBuffer_t
 	VK_FUNC(MapMemory) \
 	VK_FUNC(QueueSubmit) \
 	VK_FUNC(ResetCommandBuffer) \
+	VK_FUNC(UpdateDescriptorSets)
 
 class CVulkanDevice
 {
@@ -747,7 +749,7 @@ bool CVulkanDevice::createLayouts()
 	vk.CreateSampler( device(), &ycbcrSamplerInfo, nullptr, &m_ycbcrSampler );
 
 	// Create an array of our ycbcrSampler to fill up
-	std::array<VkSampler, k_nMaxLayers> ycbcrSamplers;
+	std::array<VkSampler, VKR_SAMPLER_SLOTS> ycbcrSamplers;
 	for (auto& sampler : ycbcrSamplers)
 		sampler = m_ycbcrSampler;
 	
@@ -763,36 +765,15 @@ bool CVulkanDevice::createLayouts()
 	layoutBindings.push_back( descriptorBinding );
 	
 	descriptorBinding.binding = 1;
-	descriptorBinding.descriptorCount = k_nMaxLayers;
+	descriptorBinding.descriptorCount = VKR_SAMPLER_SLOTS;
 	descriptorBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 
 	layoutBindings.push_back( descriptorBinding );
 
 	descriptorBinding.binding = 2;
-	descriptorBinding.descriptorCount = k_nMaxLayers;
+	descriptorBinding.descriptorCount = VKR_SAMPLER_SLOTS;
 	descriptorBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 	descriptorBinding.pImmutableSamplers = ycbcrSamplers.data();
-
-	layoutBindings.push_back( descriptorBinding );
-
-	descriptorBinding.binding = 3;
-	descriptorBinding.descriptorCount = 1;
-	descriptorBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-	descriptorBinding.pImmutableSamplers = nullptr;
-
-	layoutBindings.push_back( descriptorBinding );
-
-	descriptorBinding.binding = 4;
-	descriptorBinding.descriptorCount = 1;
-	descriptorBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-	descriptorBinding.pImmutableSamplers = nullptr;
-
-	layoutBindings.push_back( descriptorBinding );
-
-	descriptorBinding.binding = 5;
-	descriptorBinding.descriptorCount = 1;
-	descriptorBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-	descriptorBinding.pImmutableSamplers = nullptr;
 
 	layoutBindings.push_back( descriptorBinding );
 
@@ -856,7 +837,7 @@ bool CVulkanDevice::createPools()
 		},
 		{
 			VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-			uint32_t(m_descriptorSets.size()) * (2 * k_nMaxLayers + 3),
+			uint32_t(m_descriptorSets.size()) * 2 * VKR_SAMPLER_SLOTS,
 		},
 	};
 	
@@ -940,7 +921,50 @@ bool CVulkanDevice::createScratchResources()
 		vk_log.errorf( "vkAllocateDescriptorSets failed" );
 		return false;
 	}
-	
+
+	for (VkDescriptorSet set : m_descriptorSets)
+	{
+		for (uint32_t i = 0; i < VKR_SAMPLER_SLOTS; i++)
+		{
+			std::array< VkDescriptorImageInfo, 2 > nullImageDescriptors = {{
+				{
+					.sampler = sampler({}),
+					.imageView = VK_NULL_HANDLE,
+					.imageLayout = VK_IMAGE_LAYOUT_GENERAL,
+				},
+				{
+					.sampler = VK_NULL_HANDLE,
+					.imageView = VK_NULL_HANDLE,
+					.imageLayout = VK_IMAGE_LAYOUT_GENERAL,
+				}
+			}};
+
+			std::array< VkWriteDescriptorSet, 2 > nullWrites = {{
+				{
+					.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+					.dstSet = set,
+					.dstBinding = 1,
+					.dstArrayElement = i,
+					.descriptorCount = 1,
+					.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+					.pImageInfo = &nullImageDescriptors[0],
+				},
+				{
+					.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+					.dstSet = set,
+					.dstBinding = 2,
+					.dstArrayElement = i,
+					.descriptorCount = 1,
+					.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+					.pImageInfo = &nullImageDescriptors[1],
+
+				}
+			}};
+
+			vk.UpdateDescriptorSets(device(), nullWrites.size(), nullWrites.data(), 0, nullptr);
+		}
+	}
+
 	// Make and map upload buffer
 	
 	VkBufferCreateInfo bufferCreateInfo = {};
@@ -2463,6 +2487,7 @@ static bool init_nis_data()
 	}
 
 	VkMemoryAllocateInfo allocInfo = {};
+	allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
 	allocInfo.allocationSize = memRequirements.size;
 	allocInfo.memoryTypeIndex = memTypeIndex;
 	
@@ -2527,12 +2552,12 @@ static bool init_nis_data()
 	vkCmdCopyBufferToImage(commandBuffer, stagingBuffer, g_output.nisUsmImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &imageCopy);
 
 	barriers[0].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-	barriers[0].newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+	barriers[0].newLayout = VK_IMAGE_LAYOUT_GENERAL;
 	barriers[0].srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
 	barriers[0].dstAccessMask = 0;
 
 	barriers[1].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-	barriers[1].newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+	barriers[1].newLayout = VK_IMAGE_LAYOUT_GENERAL;
 	barriers[1].srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
 	barriers[1].dstAccessMask = 0;
 
@@ -2554,12 +2579,12 @@ static bool init_nis_data()
 		{
 			.sampler = g_output.nisSampler,
 			.imageView = g_output.nisScalerView,
-			.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+			.imageLayout = VK_IMAGE_LAYOUT_GENERAL,
 		},
 		{
 			.sampler = g_output.nisSampler,
 			.imageView = g_output.nisUsmView,
-			.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+			.imageLayout = VK_IMAGE_LAYOUT_GENERAL,
 		}
 	}};
 
@@ -2568,8 +2593,8 @@ static bool init_nis_data()
 			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 			.pNext = nullptr,
 			.dstSet = VK_NULL_HANDLE,
-			.dstBinding = 4,
-			.dstArrayElement = 0,
+			.dstBinding = 1,
+			.dstArrayElement = VKR_NIS_COEF_SCALER_SLOT,
 			.descriptorCount = 1,
 			.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 			.pImageInfo = &nisImageDescriptors[0],
@@ -2580,8 +2605,8 @@ static bool init_nis_data()
 			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 			.pNext = nullptr,
 			.dstSet = VK_NULL_HANDLE,
-			.dstBinding = 5,
-			.dstArrayElement = 0,
+			.dstBinding = 1,
+			.dstArrayElement = VKR_NIS_COEF_USM_SLOT,
 			.descriptorCount = 1,
 			.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 			.pImageInfo = &nisImageDescriptors[1],
@@ -2808,8 +2833,8 @@ VkDescriptorSet vulkan_update_descriptor( const struct FrameInfo_t *frameInfo, b
 		.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 		.pNext = nullptr,
 		.dstSet = descriptorSet,
-		.dstBinding = 3,
-		.dstArrayElement = 0,
+		.dstBinding = 1,
+		.dstArrayElement = VKR_BLUR_EXTRA_SLOT,
 		.descriptorCount = 1,
 		.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 		.pImageInfo = &extraInfo,

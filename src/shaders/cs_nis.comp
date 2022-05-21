@@ -52,6 +52,8 @@ layout(std430, push_constant) uniform const_buffer
 // These are the names the NIS shader uses to access the data needed to do the upscaling
 #define in_texture s_samplers[0]
 #define out_texture dst
+#define coef_scaler s_samplers[VKR_NIS_COEF_SCALER_SLOT]
+#define coef_usm s_samplers[VKR_NIS_COEF_USM_SLOT]
 
 // Gamescope is using combined image samplers so no need to specify a sampler
 #define sampler2D(x, sampler) (x)

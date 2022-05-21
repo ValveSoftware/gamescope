@@ -12,9 +12,9 @@ layout(
 
 layout(std430, push_constant)
 uniform layers_t {
-    vec2 u_scale[MaxLayers];
-    vec2 u_offset[MaxLayers];
-    float u_opacity[MaxLayers];
+    vec2 u_scale[VKR_MAX_LAYERS];
+    vec2 u_offset[VKR_MAX_LAYERS];
+    float u_opacity[VKR_MAX_LAYERS];
     uint u_borderMask;
     uint u_frameId;
 };
@@ -40,7 +40,7 @@ void main() {
     vec3 outputValue = vec3(0.0f);
 
     if (c_layerCount > 0)
-        outputValue = gaussian_blur(s_sampler_extra, 0, vec2(coord), c_blur_radius, true, true).rgb;
+        outputValue = gaussian_blur(s_samplers[VKR_BLUR_EXTRA_SLOT], 0, vec2(coord), c_blur_radius, true, true).rgb;
 
     for (int i = c_blur_layer_count + 1; i < c_layerCount; i++) {
         vec4 layerColor = sampleLayer(i, uv);
