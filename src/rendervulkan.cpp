@@ -63,12 +63,8 @@ struct VulkanOutput_t
 	std::shared_ptr<CVulkanTexture> tmpOutput;
 
 	// NIS
-	VkSampler nisSampler;
-	VkImage nisScalerImage;
-	VkImageView nisScalerView;
-	VkImage nisUsmImage;
-	VkImageView nisUsmView;
-	VkDeviceMemory nisMemory;
+	std::shared_ptr<CVulkanTexture> nisScalerImage;
+	std::shared_ptr<CVulkanTexture> nisUsmImage;
 };
 
 
@@ -108,9 +104,6 @@ struct VulkanSamplerCacheKey_t
 			&& this->bUnnormalized == other.bUnnormalized;
 	}
 };
-
-// Needed for use in init_nis_data
-VkSampler vulkan_make_sampler( VulkanSamplerCacheKey_t key );
 
 namespace std
 {
@@ -205,16 +198,23 @@ struct wsi_memory_allocate_info {
 	bool implicit_sync;
 };
 
+// DRM doesn't have 32bit floating point formats, so add our own
+#define DRM_FORMAT_ABGR32323232F fourcc_code('A', 'B', '8', 'F')
+
 struct {
 	uint32_t DRMFormat;
 	VkFormat vkFormat;
 	VkFormat vkFormatSrgb;
+	uint32_t bpp;
 	bool bHasAlpha;
+	bool internal;
 } s_DRMVKFormatTable[] = {
-	{ DRM_FORMAT_ARGB8888, VK_FORMAT_B8G8R8A8_UNORM, VK_FORMAT_B8G8R8A8_SRGB, true },
-	{ DRM_FORMAT_XRGB8888, VK_FORMAT_B8G8R8A8_UNORM, VK_FORMAT_B8G8R8A8_SRGB, false },
-	{ DRM_FORMAT_NV12, VK_FORMAT_G8_B8R8_2PLANE_420_UNORM, VK_FORMAT_G8_B8R8_2PLANE_420_UNORM, false },
-	{ DRM_FORMAT_INVALID, VK_FORMAT_UNDEFINED, VK_FORMAT_UNDEFINED, false },
+	{ DRM_FORMAT_ARGB8888, VK_FORMAT_B8G8R8A8_UNORM, VK_FORMAT_B8G8R8A8_SRGB, 4, true, false },
+	{ DRM_FORMAT_XRGB8888, VK_FORMAT_B8G8R8A8_UNORM, VK_FORMAT_B8G8R8A8_SRGB, 4, false, false },
+	{ DRM_FORMAT_NV12, VK_FORMAT_G8_B8R8_2PLANE_420_UNORM, VK_FORMAT_G8_B8R8_2PLANE_420_UNORM, 0, false, false },
+	{ DRM_FORMAT_ABGR16161616F, VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_R16G16B16A16_SFLOAT, 8, true, true },
+	{ DRM_FORMAT_ABGR32323232F, VK_FORMAT_R32G32B32A32_SFLOAT, VK_FORMAT_R32G32B32A32_SFLOAT, 16,true, true },
+	{ DRM_FORMAT_INVALID, VK_FORMAT_UNDEFINED, VK_FORMAT_UNDEFINED, false, true },
 };
 
 static inline uint32_t VulkanFormatToDRM( VkFormat vkFormat )
@@ -253,6 +253,19 @@ static inline bool DRMFormatHasAlpha( uint32_t nDRMFormat )
 		}
 	}
 	
+	return false;
+}
+
+static inline uint32_t DRMFormatGetBPP( uint32_t nDRMFormat )
+{
+	for ( int i = 0; s_DRMVKFormatTable[i].vkFormat != VK_FORMAT_UNDEFINED; i++ )
+	{
+		if ( s_DRMVKFormatTable[i].DRMFormat == nDRMFormat )
+		{
+			return s_DRMVKFormatTable[i].bpp;
+		}
+	}
+
 	return false;
 }
 
@@ -2024,6 +2037,9 @@ bool vulkan_init_formats()
 {
 	for ( size_t i = 0; s_DRMVKFormatTable[i].DRMFormat != DRM_FORMAT_INVALID; i++ )
 	{
+		if (s_DRMVKFormatTable[i].internal)
+			continue;
+
 		VkFormat format = s_DRMVKFormatTable[i].vkFormat;
 		VkFormat srgbFormat = s_DRMVKFormatTable[i].vkFormatSrgb;
 		uint32_t drmFormat = s_DRMVKFormatTable[i].DRMFormat;
@@ -2344,246 +2360,41 @@ static void update_tmp_images( uint32_t width, uint32_t height )
 }
 
 
-static bool allocate_nis_memory()
-{
-	VkMemoryRequirements memRequirements = {};
-
-	vkGetImageMemoryRequirements(g_device.device(), g_output.nisScalerImage, &memRequirements);
-	uint32_t supportedMemoryTypes = memRequirements.memoryTypeBits;
-	VkDeviceSize memorySize = memRequirements.size;
-
-	vkGetImageMemoryRequirements(g_device.device(), g_output.nisUsmImage, &memRequirements);
-	supportedMemoryTypes &= memRequirements.memoryTypeBits;
-
-	VkDeviceSize usmOffset = memorySize + (memRequirements.alignment - (memorySize % memRequirements.alignment));
-	memorySize += memRequirements.size + usmOffset;
-
-	int32_t memTypeIndex = g_device.findMemoryType(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, supportedMemoryTypes);
-	if ( memTypeIndex == -1 )
-	{
-		vk_log.errorf( "findMemoryType failed" );
-		return false;
-	}
-
-	VkMemoryAllocateInfo allocInfo = {};
-	allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-	allocInfo.allocationSize = memorySize;
-	allocInfo.memoryTypeIndex = memTypeIndex;
-
-	vkAllocateMemory(g_device.device(), &allocInfo, nullptr, &g_output.nisMemory );
-
-	vkBindImageMemory(g_device.device(), g_output.nisScalerImage, g_output.nisMemory, 0);
-	vkBindImageMemory(g_device.device(), g_output.nisUsmImage, g_output.nisMemory, usmOffset);
-
-	return true;
-}
-
 static bool init_nis_data()
 {
-	// Create NIS Sampler
+	// Create the NIS images
+	// Select between the FP16 or FP32 coefficients
+
+	void* coefScaleData = g_device.supportsFp16() ? (void*) coef_scale_fp16 : (void*) coef_scale;
+
+	void* coefUsmData = g_device.supportsFp16() ? (void*) coef_usm_fp16 : (void*) coef_usm;
+
+	uint32_t nisFormat = g_device.supportsFp16() ? DRM_FORMAT_ABGR16161616F : DRM_FORMAT_ABGR32323232F;
+
+	uint32_t width = kFilterSize / 4;
+	uint32_t height = kPhaseCount;
+
+	g_output.nisScalerImage = vulkan_create_texture_from_bits( width, height, width, height, nisFormat, {}, coefScaleData );
+	vkDeviceWaitIdle(g_device.device());
+	g_output.nisUsmImage = vulkan_create_texture_from_bits( width, height, width, height, nisFormat, {}, coefUsmData );
+	vkDeviceWaitIdle(g_device.device());
+
+
+	// Write all the static NIS descriptor set bindings
 
 	VulkanSamplerCacheKey_t samplerKey;
 	samplerKey.bNearest = false;
 	samplerKey.bUnnormalized = false;
 
-	g_output.nisSampler = g_device.sampler(samplerKey);
-	assert ( g_output.nisSampler != VK_NULL_HANDLE );
-
-	// Create the NIS images
-
-	VkImageCreateInfo imageInfo = {};
-	imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-	imageInfo.imageType = VK_IMAGE_TYPE_2D;
-	imageInfo.format = g_device.supportsFp16() ? VK_FORMAT_R16G16B16A16_SFLOAT : VK_FORMAT_R32G32B32A32_SFLOAT;
-	imageInfo.extent.width = kFilterSize / 4;
-	imageInfo.extent.height = kPhaseCount;
-	imageInfo.extent.depth = 1;
-	imageInfo.mipLevels = 1;
-	imageInfo.arrayLayers = 1;
-	imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
-	imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-	imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-	imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-	imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-
-	VkResult result = vkCreateImage(g_device.device(), &imageInfo, NULL, &g_output.nisScalerImage);
-	if(result != VK_SUCCESS)
-	{
-		vk_log.errorf( "vkCreateImage for scaler coef image failed" );
-		return false;
-	}
-
-	result = vkCreateImage(g_device.device(), &imageInfo, NULL, &g_output.nisUsmImage);
-	if(result != VK_SUCCESS)
-	{
-		vk_log.errorf( "vkCreateImage for usm coef image failed" );
-		return false;
-	}
-
-	if (!allocate_nis_memory())
-		return false;
-
-	VkImageViewCreateInfo viewInfo = {};
-	viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-	viewInfo.image = g_output.nisScalerImage;
-	viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-	viewInfo.format = g_device.supportsFp16() ? VK_FORMAT_R16G16B16A16_SFLOAT : VK_FORMAT_R32G32B32A32_SFLOAT;;
-	viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-	viewInfo.subresourceRange.baseMipLevel = 0;
-	viewInfo.subresourceRange.levelCount = 1;
-	viewInfo.subresourceRange.baseArrayLayer = 0;
-	viewInfo.subresourceRange.layerCount = 1;
-
-	result = vkCreateImageView(g_device.device(), &viewInfo, NULL, &g_output.nisScalerView);
-	if(result != VK_SUCCESS)
-	{
-		vk_log.errorf( "vkCreateImageView for scaler coef view failed" );
-		return false;
-	}
-
-	viewInfo.image = g_output.nisUsmImage;
-
-	result = vkCreateImageView(g_device.device(), &viewInfo, NULL, &g_output.nisUsmView);
-	if(result != VK_SUCCESS)
-	{
-		vk_log.errorf( "vkCreateImageView for scaler coef view failed" );
-		return false;
-	}
-
-	// Select between the FP16 or FP32 coefficients
-
-	const void* coefScaleData = g_device.supportsFp16() ?
-		static_cast<const void*>(coef_scale_fp16) : static_cast<const void*>(coef_scale);
-	uint32_t coefScaleSize = g_device.supportsFp16() ? sizeof(coef_scale_fp16) : sizeof(coef_scale);
-
-	const void* coefUsmData = g_device.supportsFp16() ?
-		static_cast<const void*>(coef_usm_fp16) : static_cast<const void*>(coef_usm);
-	uint32_t coefUsmSize = g_device.supportsFp16() ? sizeof(coef_usm_fp16) : sizeof(coef_usm);
-
-	// Create a staging buffer for uploading the data to the GPU
-
-	VkBufferCreateInfo bufferInfo = {};
-	bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-	bufferInfo.size = coefScaleSize + coefUsmSize;
-	bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-	bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-	VkBuffer stagingBuffer = VK_NULL_HANDLE;
-	result = vkCreateBuffer( g_device.device(), &bufferInfo, NULL, &stagingBuffer );
-	if(result != VK_SUCCESS)
-	{
-		vk_log.errorf( "Failed to create nis staging buffer" );
-		return false;
-	}
-
-	VkMemoryRequirements memRequirements = {};
-	vkGetBufferMemoryRequirements(g_device.device(), stagingBuffer, &memRequirements);
-
-	int32_t memTypeIndex = g_device.findMemoryType(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, memRequirements.memoryTypeBits);
-	if ( memTypeIndex == -1 )
-	{
-		vk_log.errorf( "findMemoryType failed for nis staging buffer" );
-		return false;
-	}
-
-	VkMemoryAllocateInfo allocInfo = {};
-	allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-	allocInfo.allocationSize = memRequirements.size;
-	allocInfo.memoryTypeIndex = memTypeIndex;
-	
-	VkDeviceMemory stagingMem = VK_NULL_HANDLE;
-	vkAllocateMemory( g_device.device(), &allocInfo, nullptr, &stagingMem );
-	vkBindBufferMemory( g_device.device(), stagingBuffer, stagingMem, 0 );
-
-	void* stagingData = nullptr;
-	vkMapMemory(g_device.device(), stagingMem, 0, VK_WHOLE_SIZE, 0, &stagingData);
-
-	// Copy the data into the staging buffer and upload it to GPU memory
-
-	memcpy(stagingData, coefScaleData, coefScaleSize);
-	memcpy(static_cast<char*>(stagingData) + coefScaleSize, coefUsmData, coefUsmSize);
-
-	VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
-	uint32_t handle = g_device.commandBuffer( commandBuffer );
-
-	std::array<VkImageMemoryBarrier, 2> barriers = {};
-
-	barriers[0].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-	barriers[0].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-	barriers[0].newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-	barriers[0].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-	barriers[0].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-	barriers[0].image = g_output.nisScalerImage;
-	barriers[0].subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-	barriers[0].subresourceRange.baseMipLevel = 0;
-	barriers[0].subresourceRange.levelCount = 1;
-	barriers[0].subresourceRange.baseArrayLayer = 0;
-	barriers[0].subresourceRange.layerCount = 1;
-	barriers[0].srcAccessMask = 0;
-	barriers[0].dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-
-	barriers[1] = barriers[0];
-	barriers[1].image = g_output.nisUsmImage;
-
-	vkCmdPipelineBarrier(
-		commandBuffer,
-		VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-		VK_PIPELINE_STAGE_TRANSFER_BIT,
-		0,
-		0, NULL,
-		0, NULL,
-		barriers.size(), barriers.data());
-
-	VkBufferImageCopy imageCopy = {};
-
-	imageCopy.bufferOffset = 0;
-	imageCopy.imageExtent.width = kFilterSize / 4;
-	imageCopy.imageExtent.height = kPhaseCount;
-	imageCopy.imageExtent.depth = 1;
-	imageCopy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-	imageCopy.imageSubresource.mipLevel = 0;
-	imageCopy.imageSubresource.baseArrayLayer = 0;
-	imageCopy.imageSubresource.layerCount = 1;
-
-	vkCmdCopyBufferToImage(commandBuffer, stagingBuffer, g_output.nisScalerImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &imageCopy);
-
-	imageCopy.bufferOffset = coefScaleSize;
-
-	vkCmdCopyBufferToImage(commandBuffer, stagingBuffer, g_output.nisUsmImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &imageCopy);
-
-	barriers[0].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-	barriers[0].newLayout = VK_IMAGE_LAYOUT_GENERAL;
-	barriers[0].srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-	barriers[0].dstAccessMask = 0;
-
-	barriers[1].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-	barriers[1].newLayout = VK_IMAGE_LAYOUT_GENERAL;
-	barriers[1].srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-	barriers[1].dstAccessMask = 0;
-
-	vkCmdPipelineBarrier(
-		commandBuffer,
-		VK_PIPELINE_STAGE_TRANSFER_BIT,
-		VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
-		0,
-		0, NULL,
-		0, NULL,
-		barriers.size(), barriers.data());
-
-	std::vector<std::shared_ptr<CVulkanTexture>> refs;
-	g_device.submitCommandBuffer( handle, refs );
-
-	// Write all the static NIS descriptor set bindings
-
 	std::array< VkDescriptorImageInfo, 2 > nisImageDescriptors = {{
 		{
-			.sampler = g_output.nisSampler,
-			.imageView = g_output.nisScalerView,
+			.sampler = g_device.sampler(samplerKey),
+			.imageView = g_output.nisScalerImage->linearView(),
 			.imageLayout = VK_IMAGE_LAYOUT_GENERAL,
 		},
 		{
-			.sampler = g_output.nisSampler,
-			.imageView = g_output.nisUsmView,
+			.sampler = g_device.sampler(samplerKey),
+			.imageView = g_output.nisUsmImage->linearView(),
 			.imageLayout = VK_IMAGE_LAYOUT_GENERAL,
 		}
 	}};
@@ -2628,13 +2439,6 @@ static bool init_nis_data()
 		currentSet = g_device.descriptorSet();
 	} while (currentSet != firstSet);
 
-	// Wait for the upload to finish and then cleanup
-
-	vkQueueWaitIdle(g_device.queue());
-
-	vkDestroyBuffer(g_device.device(), stagingBuffer, nullptr);
-	vkFreeMemory(g_device.device(), stagingMem, nullptr);
-
 	return true;
 }
 
@@ -2661,7 +2465,7 @@ std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_bits( uint32_t width,
 	if ( pTex->BInit( width, height, drmFormat, texCreateFlags, nullptr,  contentWidth, contentHeight) == false )
 		return nullptr;
 	
-	memcpy( g_device.uploadBufferData(), bits, width * height * 4 );
+	memcpy( g_device.uploadBufferData(), bits, width * height * DRMFormatGetBPP(drmFormat) );
 	
 	VkCommandBuffer commandBuffer;
 	uint32_t handle = g_device.commandBuffer( commandBuffer );
