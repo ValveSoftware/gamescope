@@ -77,7 +77,7 @@ if run_command(glsl_compiler, ['--version', '--depfile', 'dummy.dep'], check: fa
     glsl_compiler,
     output    : ['@BASENAME@.h'],
     arguments : ['-V', '@INPUT@', '--vn', '@BASENAME@', '-o', '@OUTPUT@', '--depfile', '@DEPFILE@', '--quiet'],
-    depfile   : '@DEPFILE@',
+    depfile   : '@BASENAME@.h.d',
   )
 else
   glsl_generator = generator(
