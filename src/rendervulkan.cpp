@@ -55,9 +55,6 @@ struct VulkanOutput_t
 
 	VkFormat outputFormat;
 
-	int nCurCmdBuffer;
-	VkCommandBuffer commandBuffers[2]; // ping/pong command buffers as well
-
 	std::array<std::shared_ptr<CVulkanTexture>, 8> pScreenshotImages;
 
 	// NIS and FSR
@@ -80,8 +77,6 @@ enum ShaderType {
 
 	SHADER_TYPE_COUNT
 };
-
-const uint32_t k_nScratchCmdBufferCount = 1000;
 
 VulkanOutput_t g_output;
 
@@ -152,6 +147,11 @@ namespace std
 			return hash;
 		}
 	};
+}
+
+static uint32_t div_roundup(uint32_t x, uint32_t y)
+{
+	return (x + (y - 1)) / y;
 }
 
 static std::map< VkFormat, std::map< uint64_t, VkDrmFormatModifierPropertiesEXT > > DRMModifierProps = {};
@@ -1007,49 +1007,6 @@ bool CVulkanDevice::createScratchResources()
 		return false;
 	}
 
-	for (VkDescriptorSet set : m_descriptorSets)
-	{
-		for (uint32_t i = 0; i < VKR_SAMPLER_SLOTS; i++)
-		{
-			std::array< VkDescriptorImageInfo, 2 > nullImageDescriptors = {{
-				{
-					.sampler = sampler({}),
-					.imageView = VK_NULL_HANDLE,
-					.imageLayout = VK_IMAGE_LAYOUT_GENERAL,
-				},
-				{
-					.sampler = VK_NULL_HANDLE,
-					.imageView = VK_NULL_HANDLE,
-					.imageLayout = VK_IMAGE_LAYOUT_GENERAL,
-				}
-			}};
-
-			std::array< VkWriteDescriptorSet, 2 > nullWrites = {{
-				{
-					.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-					.dstSet = set,
-					.dstBinding = 1,
-					.dstArrayElement = i,
-					.descriptorCount = 1,
-					.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-					.pImageInfo = &nullImageDescriptors[0],
-				},
-				{
-					.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-					.dstSet = set,
-					.dstBinding = 2,
-					.dstArrayElement = i,
-					.descriptorCount = 1,
-					.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-					.pImageInfo = &nullImageDescriptors[1],
-
-				}
-			}};
-
-			vk.UpdateDescriptorSets(device(), nullWrites.size(), nullWrites.data(), 0, nullptr);
-		}
-	}
-
 	// Make and map upload buffer
 	
 	VkBufferCreateInfo bufferCreateInfo = {};
@@ -1229,7 +1186,7 @@ void CVulkanDevice::compileAllPipelines()
 		for (uint32_t layerCount = 1; layerCount <= info.layerCount; layerCount++) {
 			for (uint32_t ycbcrMask = 0; ycbcrMask < info.ycbcrMask; ycbcrMask++) {
 				for (uint32_t radius = 0; radius < info.blurRadius; radius++) {
-					for (uint32_t blur_layers = 0; blur_layers < info.blurLayerCount; blur_layers++) {
+					for (uint32_t blur_layers = 1; blur_layers <= info.blurLayerCount; blur_layers++) {
 						if (ycbcrMask >= (1u << (layerCount + 1)))
 							continue;
 						if (blur_layers > layerCount)
@@ -1487,7 +1444,7 @@ template<class PushData, class... Args>
 void CVulkanCmdBuffer::pushConstants(Args&&... args)
 {
 	static_assert(sizeof(PushData) <= 128, "Only 128 bytes push constants.");
-	PushData data(std::forward(args)...);
+	PushData data(std::forward<Args>(args)...);
 	m_device->vk.CmdPushConstants(m_cmdBuffer, m_device->pipelineLayout(), VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(data), &data);
 }
 
@@ -1520,7 +1477,7 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z)
 	writeDescriptorSets[0] = {
 		.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 		.dstSet = descriptorSet,
-		.dstBinding = 1,
+		.dstBinding = 0,
 		.dstArrayElement = 0,
 		.descriptorCount = 1,
 		.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
@@ -2682,25 +2639,6 @@ bool vulkan_make_output( void )
 			return false;
 	}
 
-	// Make command buffers
-	
-	VkCommandBufferAllocateInfo commandBufferAllocateInfo = {
-		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-		.pNext = nullptr,
-		.commandPool = g_device.commandPool(),
-		.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-		.commandBufferCount = 2
-	};
-	
-	result = vkAllocateCommandBuffers(g_device.device(), &commandBufferAllocateInfo, pOutput->commandBuffers);
-	if ( result != VK_SUCCESS )
-	{
-		vk_errorf( result, "vkAllocateCommandBuffers failed" );
-		return false;
-	}
-	
-	pOutput->nCurCmdBuffer = 0;
-	
 	return true;
 }
 
@@ -2759,66 +2697,6 @@ static bool init_nis_data()
 	g_output.nisUsmImage = vulkan_create_texture_from_bits( width, height, width, height, nisFormat, {}, coefUsmData );
 	vkDeviceWaitIdle(g_device.device());
 
-
-	// Write all the static NIS descriptor set bindings
-
-	SamplerState samplerKey;
-	samplerKey.bNearest = false;
-	samplerKey.bUnnormalized = false;
-
-	std::array< VkDescriptorImageInfo, 2 > nisImageDescriptors = {{
-		{
-			.sampler = g_device.sampler(samplerKey),
-			.imageView = g_output.nisScalerImage->linearView(),
-			.imageLayout = VK_IMAGE_LAYOUT_GENERAL,
-		},
-		{
-			.sampler = g_device.sampler(samplerKey),
-			.imageView = g_output.nisUsmImage->linearView(),
-			.imageLayout = VK_IMAGE_LAYOUT_GENERAL,
-		}
-	}};
-
-	std::array< VkWriteDescriptorSet, 2 > nisWriteDescriptorSets = {{
-		{
-			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-			.pNext = nullptr,
-			.dstSet = VK_NULL_HANDLE,
-			.dstBinding = 1,
-			.dstArrayElement = VKR_NIS_COEF_SCALER_SLOT,
-			.descriptorCount = 1,
-			.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-			.pImageInfo = &nisImageDescriptors[0],
-			.pBufferInfo = nullptr,
-			.pTexelBufferView = nullptr
-		},
-		{
-			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-			.pNext = nullptr,
-			.dstSet = VK_NULL_HANDLE,
-			.dstBinding = 1,
-			.dstArrayElement = VKR_NIS_COEF_USM_SLOT,
-			.descriptorCount = 1,
-			.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-			.pImageInfo = &nisImageDescriptors[1],
-			.pBufferInfo = nullptr,
-			.pTexelBufferView = nullptr
-		}
-	}};
-
-	VkDescriptorSet firstSet = g_device.descriptorSet();
-	VkDescriptorSet currentSet = firstSet;
-	do
-	{
-		for ( VkWriteDescriptorSet& descriptorSetWrite : nisWriteDescriptorSets )
-		{
-			descriptorSetWrite.dstSet = currentSet;
-		}
-
-		vkUpdateDescriptorSets(g_device.device(), nisWriteDescriptorSets.size(), nisWriteDescriptorSets.data(), 0, nullptr);
-		currentSet = g_device.descriptorSet();
-	} while (currentSet != firstSet);
-
 	return true;
 }
 
@@ -2863,127 +2741,6 @@ bool float_is_integer(float x)
 
 static uint32_t s_frameId = 0;
 
-VkDescriptorSet vulkan_update_descriptor( const struct FrameInfo_t *frameInfo, bool firstNrm, bool firstSrgb, VkImageView targetImageView, VkImageView extraImageView = VK_NULL_HANDLE)
-{
-	VkDescriptorSet descriptorSet = g_device.descriptorSet();
-
-	{
-		VkDescriptorImageInfo imageInfo = {
-			.imageView = targetImageView,
-			.imageLayout = VK_IMAGE_LAYOUT_GENERAL
-		};
-		
-		VkWriteDescriptorSet writeDescriptorSet = {
-			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-			.pNext = nullptr,
-			.dstSet = descriptorSet,
-			.dstBinding = 0,
-			.dstArrayElement = 0,
-			.descriptorCount = 1,
-			.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-			.pImageInfo = &imageInfo,
-			.pBufferInfo = nullptr,
-			.pTexelBufferView = nullptr,
-		};
-		
-		vkUpdateDescriptorSets(g_device.device(), 1, &writeDescriptorSet, 0, nullptr);
-	}
-	
-	std::array< VkDescriptorImageInfo, k_nMaxLayers > imageDescriptors = {};
-	for ( uint32_t i = 0; i < k_nMaxLayers; i++ )
-	{
-		bool compositeLayer = i > 0;
-
-		VkImageView imageView = frameInfo->layers[i].tex
-			? frameInfo->layers[i].tex->view(compositeLayer || !firstSrgb)
-			: VK_NULL_HANDLE;
-
-		SamplerState samplerKey;
-		samplerKey.bNearest = !frameInfo->layers[i].linearFilter;
-		samplerKey.bUnnormalized = compositeLayer || !firstNrm;
-
-		VkSampler sampler = g_device.sampler(samplerKey);
-		assert ( sampler != VK_NULL_HANDLE );
-
-		{
-			VkDescriptorImageInfo imageInfo = {
-				.sampler = sampler,
-				.imageView = imageView,
-				.imageLayout = VK_IMAGE_LAYOUT_GENERAL,
-			};
-
-			imageDescriptors[ i ] = imageInfo;
-		}
-	}
-
-	// Duplicate image descriptors for ycbcr.
-	std::array< VkDescriptorImageInfo, k_nMaxLayers > ycbcrImageDescriptors = {};
-
-	for (uint32_t i = 0; i < k_nMaxLayers; i++)
-	{
-		if ( frameInfo->ycbcrMask() & ( 1u << i ) )
-		{
-			ycbcrImageDescriptors[i] = imageDescriptors[i];
-			// We use immutable samplers.
-			ycbcrImageDescriptors[i].sampler = VK_NULL_HANDLE;
-			// The ycbcr image might not be usable as a rgb image
-			// and the shader doesn't use it anyway.
-			imageDescriptors[i].imageView =  VK_NULL_HANDLE;
-		}
-	}
-
-	std::array< VkWriteDescriptorSet, 3 > writeDescriptorSets;
-
-	writeDescriptorSets[0] = {
-		.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-		.pNext = nullptr,
-		.dstSet = descriptorSet,
-		.dstBinding = 1,
-		.dstArrayElement = 0,
-		.descriptorCount = imageDescriptors.size(),
-		.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-		.pImageInfo = imageDescriptors.data(),
-		.pBufferInfo = nullptr,
-		.pTexelBufferView = nullptr,
-	};
-
-	writeDescriptorSets[1] = {
-		.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-		.pNext = nullptr,
-		.dstSet = descriptorSet,
-		.dstBinding = 2,
-		.dstArrayElement = 0,
-		.descriptorCount = ycbcrImageDescriptors.size(),
-		.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-		.pImageInfo = ycbcrImageDescriptors.data(),
-		.pBufferInfo = nullptr,
-		.pTexelBufferView = nullptr,
-	};
-
-	VkDescriptorImageInfo extraInfo = {
-		.sampler = imageDescriptors[0].sampler,
-		.imageView = extraImageView,
-		.imageLayout = VK_IMAGE_LAYOUT_GENERAL,
-	};
-
-	writeDescriptorSets[2] = {
-		.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-		.pNext = nullptr,
-		.dstSet = descriptorSet,
-		.dstBinding = 1,
-		.dstArrayElement = VKR_BLUR_EXTRA_SLOT,
-		.descriptorCount = 1,
-		.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-		.pImageInfo = &extraInfo,
-		.pBufferInfo = nullptr,
-		.pTexelBufferView = nullptr,
-	};
-
-	vkUpdateDescriptorSets(g_device.device(), writeDescriptorSets.size(), writeDescriptorSets.data(), 0, nullptr);
-
-    return descriptorSet;
-}
-
 void vulkan_garbage_collect( void )
 {
 	g_device.garbageCollect();
@@ -3019,529 +2776,268 @@ std::shared_ptr<CVulkanTexture> vulkan_acquire_screenshot_texture(bool exportabl
 	return nullptr;
 }
 
-struct CompositeData_t
+struct BlitPushData_t
 {
 	vec2_t scale[k_nMaxLayers];
 	vec2_t offset[k_nMaxLayers];
 	float opacity[k_nMaxLayers];
 	uint32_t borderMask;
 	uint32_t frameId;
+
+	explicit BlitPushData_t(const struct FrameInfo_t *frameInfo)
+	{
+		for (int i = 0; i < frameInfo->layerCount; i++) {
+			const FrameInfo_t::Layer_t *layer = &frameInfo->layers[i];
+			scale[i] = layer->scale;
+			offset[i] = layer->offsetPixelCenter();
+			opacity[i] = layer->opacity;
+		}
+		borderMask = frameInfo->borderMask();
+		frameId = s_frameId++;
+	}
 };
 
-static CompositeData_t pack_composite_data( const struct FrameInfo_t *frameInfo )
+struct uvec4_t
 {
-	CompositeData_t result = {};
-	for (int i = 0; i < frameInfo->layerCount; i++) {
-		const FrameInfo_t::Layer_t *layer = &frameInfo->layers[i];
-		result.scale[i] = layer->scale;
-		result.offset[i] = layer->offset;
-		result.opacity[i] = layer->opacity;
-	}
-	result.borderMask = frameInfo->borderMask();
-	result.frameId = s_frameId++;
-	return result;
-}
-
-bool vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTexture> pScreenshotTexture )
+	uint32_t  x;
+	uint32_t  y;
+	uint32_t  z;
+	uint32_t  w;
+};
+struct uvec2_t
 {
-	VkImage compositeImage;
-	VkImageView targetImageView;
+	uint32_t x;
+	uint32_t y;
+};
 
-	compositeImage = g_output.outputImages[ g_output.nOutImage ]->vkImage();
-	targetImageView = g_output.outputImages[ g_output.nOutImage ]->srgbView();
-	
-	VkCommandBuffer curCommandBuffer = g_output.commandBuffers[ g_output.nCurCmdBuffer ];
-	
-	VkCommandBufferBeginInfo commandBufferBeginInfo = {
-		VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-		0,
-		VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
-		0
-	};
-	
-	VkResult res = vkResetCommandBuffer( curCommandBuffer, 0 );
-	
-	if ( res != VK_SUCCESS )
+struct EasuPushData_t
+{
+	uvec4_t Const0;
+	uvec4_t Const1;
+	uvec4_t Const2;
+	uvec4_t Const3;
+
+	EasuPushData_t(uint32_t inputX, uint32_t inputY, uint32_t tempX, uint32_t tempY)
 	{
-		return false;
+		FsrEasuCon(&Const0.x, &Const1.x, &Const2.x, &Const3.x, inputX, inputY, inputX, inputY, tempX, tempY);
 	}
-	
-	res = vkBeginCommandBuffer( curCommandBuffer, &commandBufferBeginInfo);
-	
-	if ( res != VK_SUCCESS )
+};
+
+struct RcasPushData_t
+{
+	uvec2_t u_layer0Offset;
+	vec2_t u_scale[k_nMaxLayers - 1];
+	vec2_t u_offset[k_nMaxLayers - 1];
+	float u_opacity[k_nMaxLayers];
+	uint32_t u_borderMask;
+	uint32_t u_frameId;
+	uint32_t u_c1;
+
+	RcasPushData_t(const struct FrameInfo_t *frameInfo, float sharpness)
 	{
-		return false;
-	}
-	
-	VkImageSubresourceRange subResRange =
-	{
-		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-		.levelCount = 1,
-		.layerCount = 1
-	};
-	
-	/* We don't need a queue ownership transfer even with the foreign path
-	   because we don't care about the content of the image.
-	   The spec says:
-	   "If memory dependencies are correctly expressed between uses of such
-	    a resource between two queues in different families, but no ownership
-	    transfer is defined, the contents of that resource are undefined for
-	    any read accesses performed by the second queue family." */
-	VkImageMemoryBarrier memoryBarrier =
-	{
-		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-		.srcAccessMask = 0,
-		.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
-		.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-		.newLayout = VK_IMAGE_LAYOUT_GENERAL,
-		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-		.image = compositeImage,
-		.subresourceRange = subResRange
-	};
-	
-	vkCmdPipelineBarrier( curCommandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-				  		0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
-
-	std::vector<VkImageMemoryBarrier> textureBarriers(frameInfo->layerCount);
-	for (int32_t i = 0; i < frameInfo->layerCount; i++)
-	{
-		textureBarriers[i].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-		textureBarriers[i].pNext = nullptr;
-		textureBarriers[i].srcAccessMask = 0;
-		textureBarriers[i].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-		textureBarriers[i].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-		textureBarriers[i].newLayout = VK_IMAGE_LAYOUT_GENERAL;
-		textureBarriers[i].srcQueueFamilyIndex = g_device.supportsModifiers()
-													? VK_QUEUE_FAMILY_FOREIGN_EXT
-													: VK_QUEUE_FAMILY_EXTERNAL_KHR;
-		textureBarriers[i].dstQueueFamilyIndex = g_device.queueFamily();
-		textureBarriers[i].image = frameInfo->layers[i].tex->vkImage();
-		textureBarriers[i].subresourceRange = subResRange;
-	}
-
-	vkCmdPipelineBarrier( curCommandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-				  		0, 0, nullptr, 0, nullptr, textureBarriers.size(), textureBarriers.data() );
-
-	bool isUpscaling = frameInfo->useFSRLayer0 || frameInfo->useNISLayer0;
-	for ( int i = isUpscaling ? 1 : 0; i < frameInfo->layerCount; i++ )
-	{
-		FrameInfo_t::Layer_t *layer = &frameInfo->layers[i];
-
-		bool bForceNearest = layer->scale.x == 1.0f &&
-							 layer->scale.y == 1.0f &&
-							 float_is_integer(layer->offset.x) &&
-							 float_is_integer(layer->offset.y);
-
-		layer->linearFilter &= !bForceNearest;
-
-		layer->offset.x += 0.5f / layer->scale.x;
-		layer->offset.y += 0.5f / layer->scale.y;
-	}
-
-
-	if ( frameInfo->useFSRLayer0 )
-	{
-		struct uvec4_t
-		{
-			uint32_t  x;
-			uint32_t  y;
-			uint32_t  z;
-			uint32_t  w;
-		};
-		struct uvec2_t
-		{
-			uint32_t x;
-			uint32_t y;
-		};
-
-		struct
-		{
-			uvec4_t Const0;
-			uvec4_t Const1;
-			uvec4_t Const2;
-			uvec4_t Const3;
-		} easuConstants;
-
-		struct
-		{
-			uvec2_t u_layer0Offset;
-			vec2_t u_scale[k_nMaxLayers - 1];
-			vec2_t u_offset[k_nMaxLayers - 1];
-			float u_opacity[k_nMaxLayers];
-			uint32_t u_borderMask;
-			uint32_t u_frameId;
-			uint32_t u_c1;
-		} rcasConstants;
-
-		struct FrameInfo_t fsrFrameInfo = *frameInfo;
-		fsrFrameInfo.layers[0].linearFilter = true;
-
-		uint32_t inputX = fsrFrameInfo.layers[0].tex->width();
-		uint32_t inputY = fsrFrameInfo.layers[0].tex->height();
-
-		uint32_t tempX = fsrFrameInfo.layers[0].integerWidth();
-		uint32_t tempY = fsrFrameInfo.layers[0].integerHeight();
-
-		update_tmp_images(tempX, tempY);
-
-		memoryBarrier.image = g_output.tmpOutput->vkImage();
-		vkCmdPipelineBarrier( curCommandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-				  		0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
-
-		vkCmdBindPipeline(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, g_device.pipeline(SHADER_TYPE_EASU));
-
-		VkDescriptorSet descriptorSet = vulkan_update_descriptor( &fsrFrameInfo, true, true, g_output.tmpOutput->srgbView() );
-
-		vkCmdBindDescriptorSets(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, g_device.pipelineLayout(), 0, 1, &descriptorSet, 0, 0);
-
-		FsrEasuCon(&easuConstants.Const0.x, &easuConstants.Const1.x, &easuConstants.Const2.x, &easuConstants.Const3.x,
-			inputX, inputY, inputX, inputY, tempX, tempY);
-
-		vkCmdPushConstants(curCommandBuffer, g_device.pipelineLayout(), VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(easuConstants), &easuConstants);
-
-		int threadGroupWorkRegionDim = 16;
-		int dispatchX = (tempX + (threadGroupWorkRegionDim - 1)) / threadGroupWorkRegionDim;
-		int dispatchY = (tempY + (threadGroupWorkRegionDim - 1)) / threadGroupWorkRegionDim;
-
-		vkCmdDispatch( curCommandBuffer, dispatchX, dispatchY, 1 );
-
-		memoryBarrier =
-		{
-			.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-			.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
-			.dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
-			.oldLayout = VK_IMAGE_LAYOUT_GENERAL,
-			.newLayout = VK_IMAGE_LAYOUT_GENERAL,
-			.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-			.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-			.image = g_output.tmpOutput->vkImage(),
-			.subresourceRange = subResRange
-		};
-
-		vkCmdPipelineBarrier( curCommandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-				  		0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
-
-
-		vkCmdBindPipeline(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, g_device.pipeline(SHADER_TYPE_RCAS, frameInfo->layerCount, frameInfo->ycbcrMask()));
-		fsrFrameInfo.layers[0].tex = g_output.tmpOutput;
-		descriptorSet = vulkan_update_descriptor( &fsrFrameInfo, true, true, targetImageView );
-
-		vkCmdBindDescriptorSets(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, g_device.pipelineLayout(), 0, 1, &descriptorSet, 0, 0);
-
 		uvec4_t tmp;
-		FsrRcasCon(&tmp.x, g_upscalerSharpness / 10.0f);
-		rcasConstants.u_layer0Offset.x = uint32_t(int32_t(fsrFrameInfo.layers[0].offset.x));
-		rcasConstants.u_layer0Offset.y = uint32_t(int32_t(fsrFrameInfo.layers[0].offset.y));
-		rcasConstants.u_opacity[0] = fsrFrameInfo.layers[0].opacity;
-		rcasConstants.u_borderMask = fsrFrameInfo.borderMask() >> 1u;
-		rcasConstants.u_frameId = s_frameId++;
-		rcasConstants.u_c1 = tmp.x;
+		FsrRcasCon(&tmp.x, sharpness);
+		u_layer0Offset.x = uint32_t(int32_t(frameInfo->layers[0].offset.x));
+		u_layer0Offset.y = uint32_t(int32_t(frameInfo->layers[0].offset.y));
+		u_opacity[0] = frameInfo->layers[0].opacity;
+		u_borderMask = frameInfo->borderMask() >> 1u;
+		u_frameId = s_frameId++;
+		u_c1 = tmp.x;
 		for (uint32_t i = 1; i < k_nMaxLayers; i++)
 		{
-			rcasConstants.u_scale[i - 1] = fsrFrameInfo.layers[i].scale;
-			rcasConstants.u_offset[i - 1] = fsrFrameInfo.layers[i].offset;
-			rcasConstants.u_opacity[i] = fsrFrameInfo.layers[i].opacity;
+			u_scale[i - 1] = frameInfo->layers[i].scale;
+			u_offset[i - 1] = frameInfo->layers[i].offsetPixelCenter();
+			u_opacity[i] = frameInfo->layers[i].opacity;
 		}
-
-
-		vkCmdPushConstants(curCommandBuffer, g_device.pipelineLayout(), VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(rcasConstants), &rcasConstants);
-
-		dispatchX = (currentOutputWidth + (threadGroupWorkRegionDim - 1)) / threadGroupWorkRegionDim;
-		dispatchY = (currentOutputHeight + (threadGroupWorkRegionDim - 1)) / threadGroupWorkRegionDim;
-
-		vkCmdDispatch( curCommandBuffer, dispatchX, dispatchY, 1 );
 	}
-	else if ( frameInfo->useNISLayer0 )
+};
+
+struct NisPushData_t
+{
+	NISConfig nisConfig;
+
+	NisPushData_t(uint32_t inputX, uint32_t inputY, uint32_t tempX, uint32_t tempY, float sharpness)
 	{
-		struct FrameInfo_t nisFrameInfo = *frameInfo;
-
-		uint32_t inputX = nisFrameInfo.layers[0].tex->width();
-		uint32_t inputY = nisFrameInfo.layers[0].tex->height();
-
-		uint32_t tempX = nisFrameInfo.layers[0].integerWidth();
-		uint32_t tempY = nisFrameInfo.layers[0].integerHeight();
-
-		update_tmp_images(tempX, tempY);
-
-		memoryBarrier.image = g_output.tmpOutput->vkImage();
-		vkCmdPipelineBarrier( curCommandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-				  		0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
-
-		vkCmdBindPipeline(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, g_device.pipeline(SHADER_TYPE_NIS));
-
-		VkDescriptorSet descriptorSet = vulkan_update_descriptor( &nisFrameInfo, true, true, g_output.tmpOutput->srgbView() );
-
-		vkCmdBindDescriptorSets(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, g_device.pipelineLayout(), 0, 1, &descriptorSet, 0, 0);
-
-		NISConfig nisConfig = {};
-		float nisSharpness = (20 - g_upscalerSharpness) / 20.0f;
 		NVScalerUpdateConfig(
-			nisConfig, nisSharpness,
+			nisConfig, sharpness,
 			0, 0,
 			inputX, inputY,
 			inputX, inputY,
 			0, 0,
 			tempX, tempY,
 			tempX, tempY);
+	}
+};
 
-		vkCmdPushConstants(curCommandBuffer, g_device.pipelineLayout(), VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(nisConfig), &nisConfig);
+void bind_all_layers(CVulkanCmdBuffer* cmdBuffer, const struct FrameInfo_t *frameInfo)
+{
+	for ( int i = 0; i < frameInfo->layerCount; i++ )
+	{
+		const FrameInfo_t::Layer_t *layer = &frameInfo->layers[i];
 
-		vkCmdDispatch(curCommandBuffer, uint32_t(std::ceil(tempX / 32.0f)),
-			uint32_t(std::ceil(tempY / 24.0f)), 1);
+		bool bForceNearest = layer->scale.x == 1.0f &&
+							 layer->scale.y == 1.0f &&
+							 float_is_integer(layer->offset.x) &&
+							 float_is_integer(layer->offset.y);
 
-		memoryBarrier =
-		{
-			.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-			.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
-			.dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
-			.oldLayout = VK_IMAGE_LAYOUT_GENERAL,
-			.newLayout = VK_IMAGE_LAYOUT_GENERAL,
-			.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-			.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-			.image = g_output.tmpOutput->vkImage(),
-			.subresourceRange = subResRange
-		};
+		bool nearest = bForceNearest | !layer->linearFilter;
+		cmdBuffer->bindTexture(i, layer->tex);
+		cmdBuffer->setTextureSrgb(i, false);
+		cmdBuffer->setSamplerNearest(i, nearest);
+		cmdBuffer->setSamplerUnnormalized(i, true);
+	}
+	for (uint32_t i = frameInfo->layerCount; i < VKR_SAMPLER_SLOTS; i++)
+	{
+		cmdBuffer->bindTexture(i, nullptr);
+	}
+}
 
-		vkCmdPipelineBarrier( curCommandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-				  		0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
+bool vulkan_composite( const struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTexture> pScreenshotTexture )
+{
+	auto compositeImage = g_output.outputImages[ g_output.nOutImage ];
 
-		vkCmdBindPipeline(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, g_device.pipeline(SHADER_TYPE_BLIT, nisFrameInfo.layerCount, nisFrameInfo.ycbcrMask()));
+	auto cmdBuffer = g_device.commandBuffer();
 
+	if ( frameInfo->useFSRLayer0 )
+	{
+		uint32_t inputX = frameInfo->layers[0].tex->width();
+		uint32_t inputY = frameInfo->layers[0].tex->height();
+
+		uint32_t tempX = frameInfo->layers[0].integerWidth();
+		uint32_t tempY = frameInfo->layers[0].integerHeight();
+
+		update_tmp_images(tempX, tempY);
+
+		cmdBuffer->bindPipeline(g_device.pipeline(SHADER_TYPE_EASU));
+		cmdBuffer->bindTarget(g_output.tmpOutput);
+		cmdBuffer->bindTexture(0, frameInfo->layers[0].tex);
+		cmdBuffer->setTextureSrgb(0, true);
+		cmdBuffer->setSamplerUnnormalized(0, false);
+		cmdBuffer->setSamplerNearest(0, false);
+		cmdBuffer->pushConstants<EasuPushData_t>(inputX, inputY, tempX, tempY);
+
+		int pixelsPerGroup = 16;
+
+		cmdBuffer->dispatch(div_roundup(tempX, pixelsPerGroup), div_roundup(tempY, pixelsPerGroup));
+
+		cmdBuffer->bindPipeline(g_device.pipeline(SHADER_TYPE_RCAS, frameInfo->layerCount, frameInfo->ycbcrMask() & ~1));
+		bind_all_layers(cmdBuffer.get(), frameInfo);
+		cmdBuffer->bindTexture(0, g_output.tmpOutput);
+		cmdBuffer->setTextureSrgb(0, true);
+		cmdBuffer->setSamplerUnnormalized(0, false);
+		cmdBuffer->setSamplerNearest(0, false);
+		cmdBuffer->bindTarget(compositeImage);
+		cmdBuffer->pushConstants<RcasPushData_t>(frameInfo, g_upscalerSharpness / 10.0f);
+
+		cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup));
+	}
+	else if ( frameInfo->useNISLayer0 )
+	{
+		uint32_t inputX = frameInfo->layers[0].tex->width();
+		uint32_t inputY = frameInfo->layers[0].tex->height();
+
+		uint32_t tempX = frameInfo->layers[0].integerWidth();
+		uint32_t tempY = frameInfo->layers[0].integerHeight();
+
+		update_tmp_images(tempX, tempY);
+
+		float nisSharpness = (20 - g_upscalerSharpness) / 20.0f;
+
+		cmdBuffer->bindPipeline(g_device.pipeline(SHADER_TYPE_NIS));
+		cmdBuffer->bindTarget(g_output.tmpOutput);
+		cmdBuffer->bindTexture(0, frameInfo->layers[0].tex);
+		cmdBuffer->setTextureSrgb(0, true);
+		cmdBuffer->setSamplerUnnormalized(0, false);
+		cmdBuffer->setSamplerNearest(0, false);
+		cmdBuffer->bindTexture(VKR_NIS_COEF_SCALER_SLOT, g_output.nisScalerImage);
+		cmdBuffer->setSamplerUnnormalized(VKR_NIS_COEF_SCALER_SLOT, false);
+		cmdBuffer->setSamplerNearest(VKR_NIS_COEF_SCALER_SLOT, false);
+		cmdBuffer->bindTexture(VKR_NIS_COEF_USM_SLOT, g_output.nisUsmImage);
+		cmdBuffer->setSamplerUnnormalized(VKR_NIS_COEF_USM_SLOT, false);
+		cmdBuffer->setSamplerNearest(VKR_NIS_COEF_USM_SLOT, false);
+		cmdBuffer->pushConstants<NisPushData_t>(inputX, inputY, tempX, tempY, nisSharpness);
+
+		int pixelsPerGroupX = 32;
+		int pixelsPerGroupY = 24;
+
+		cmdBuffer->dispatch(div_roundup(tempX, pixelsPerGroupX), div_roundup(tempY, pixelsPerGroupY));
+
+		struct FrameInfo_t nisFrameInfo = *frameInfo;
 		nisFrameInfo.layers[0].tex = g_output.tmpOutput;
-		descriptorSet = vulkan_update_descriptor( &nisFrameInfo, false, false, targetImageView );
-
-		vkCmdBindDescriptorSets(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, g_device.pipelineLayout(), 0, 1, &descriptorSet, 0, 0);
-
 		nisFrameInfo.layers[0].scale.x = 1.0f;
 		nisFrameInfo.layers[0].scale.y = 1.0f;
 
-		CompositeData_t data = pack_composite_data(&nisFrameInfo);
+		cmdBuffer->bindPipeline( g_device.pipeline(SHADER_TYPE_BLIT, nisFrameInfo.layerCount, nisFrameInfo.ycbcrMask()));
+		bind_all_layers(cmdBuffer.get(), &nisFrameInfo);
+		cmdBuffer->bindTarget(compositeImage);
+		cmdBuffer->pushConstants<BlitPushData_t>(&nisFrameInfo);
 
-		vkCmdPushConstants(curCommandBuffer, g_device.pipelineLayout(), VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(data), &data);
+		int pixelsPerGroup = 8;
 
-		uint32_t nGroupCountX = currentOutputWidth % 8 ? currentOutputWidth / 8 + 1: currentOutputWidth / 8;
-		uint32_t nGroupCountY = currentOutputHeight % 8 ? currentOutputHeight / 8 + 1: currentOutputHeight / 8;
-
-		vkCmdDispatch( curCommandBuffer, nGroupCountX, nGroupCountY, 1 );
+		cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup));
 	}
 	else if ( frameInfo->blurLayer0 )
 	{
-		struct FrameInfo_t blurFrameInfo = *frameInfo;
-		blurFrameInfo.layers[0].linearFilter = true;
-
 		update_tmp_images(currentOutputWidth, currentOutputHeight);
-
-		memoryBarrier.image = g_output.tmpOutput->vkImage();
-		vkCmdPipelineBarrier( curCommandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-				  		0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
 
 		ShaderType type = SHADER_TYPE_BLUR_FIRST_PASS;
 
-		uint32_t blur_layer_count = 0;
+		uint32_t blur_layer_count = 1;
 		// Also blur the override on top if we have one.
-		if (blurFrameInfo.layerCount >= 2 && blurFrameInfo.layers[1].zpos == g_zposOverride)
+		if (frameInfo->layerCount >= 2 && frameInfo->layers[1].zpos == g_zposOverride)
 			blur_layer_count++;
 
-		vkCmdBindPipeline(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, g_device.pipeline(type, blur_layer_count + 1, blurFrameInfo.ycbcrMask() & 0x1u, blurFrameInfo.blurRadius));
-
-		VkDescriptorSet descriptorSet = vulkan_update_descriptor( &blurFrameInfo, false, false, g_output.tmpOutput->srgbView() );
-
-		vkCmdBindDescriptorSets(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE,
-								g_device.pipelineLayout(), 0, 1, &descriptorSet, 0, 0);
-
-		CompositeData_t data = pack_composite_data(frameInfo);
-
-		vkCmdPushConstants(curCommandBuffer, g_device.pipelineLayout(), VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(data), &data);
-
-		uint32_t nGroupCountX = currentOutputWidth % 8 ? currentOutputWidth / 8 + 1: currentOutputWidth / 8;
-		uint32_t nGroupCountY = currentOutputHeight % 8 ? currentOutputHeight / 8 + 1: currentOutputHeight / 8;
-
-		vkCmdDispatch( curCommandBuffer, nGroupCountX, nGroupCountY, 1 );
-
-		memoryBarrier =
+		cmdBuffer->bindPipeline(g_device.pipeline(type, blur_layer_count, frameInfo->ycbcrMask() & 0x3u, frameInfo->blurRadius));
+		cmdBuffer->bindTarget(g_output.tmpOutput);
+		for (uint32_t i = 0; i < blur_layer_count; i++)
 		{
-			.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-			.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
-			.dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
-			.oldLayout = VK_IMAGE_LAYOUT_GENERAL,
-			.newLayout = VK_IMAGE_LAYOUT_GENERAL,
-			.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-			.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-			.image = g_output.tmpOutput->vkImage(),
-			.subresourceRange = subResRange
-		};
+			cmdBuffer->bindTexture(i, frameInfo->layers[i].tex);
+			cmdBuffer->setTextureSrgb(i, false);
+			cmdBuffer->setSamplerUnnormalized(i, true);
+			cmdBuffer->setSamplerNearest(i, false);
+		}
+		cmdBuffer->pushConstants<BlitPushData_t>(frameInfo);
 
-		vkCmdPipelineBarrier( curCommandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-				  		0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
+		int pixelsPerGroup = 8;
 
-		descriptorSet = vulkan_update_descriptor( &blurFrameInfo, false, false, targetImageView, g_output.tmpOutput->linearView() );
+		cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup));
 
-		vkCmdBindDescriptorSets(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, g_device.pipelineLayout(), 0, 1, &descriptorSet, 0, 0);
+		type = frameInfo->blurLayer0 == BLUR_MODE_COND ? SHADER_TYPE_BLUR_COND : SHADER_TYPE_BLUR;
+		cmdBuffer->bindPipeline(g_device.pipeline(type, frameInfo->layerCount, frameInfo->ycbcrMask(), frameInfo->blurRadius, blur_layer_count));
+		bind_all_layers(cmdBuffer.get(), frameInfo);
+		cmdBuffer->bindTarget(compositeImage);
+		cmdBuffer->bindTexture(VKR_BLUR_EXTRA_SLOT, g_output.tmpOutput);
+		cmdBuffer->setTextureSrgb(VKR_BLUR_EXTRA_SLOT, false);
+		cmdBuffer->setSamplerUnnormalized(VKR_BLUR_EXTRA_SLOT, true);
+		cmdBuffer->setSamplerNearest(VKR_BLUR_EXTRA_SLOT, false);
 
-		type = blurFrameInfo.blurLayer0 == BLUR_MODE_COND ? SHADER_TYPE_BLUR_COND : SHADER_TYPE_BLUR;
-
-		vkCmdBindPipeline(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, g_device.pipeline(type, blurFrameInfo.layerCount, blurFrameInfo.ycbcrMask(), blurFrameInfo.blurRadius, blur_layer_count));
-
-		vkCmdPushConstants(curCommandBuffer, g_device.pipelineLayout(), VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(data), &data);
-
-		nGroupCountX = currentOutputWidth % 8 ? currentOutputWidth / 8 + 1: currentOutputWidth / 8;
-		nGroupCountY = currentOutputHeight % 8 ? currentOutputHeight / 8 + 1: currentOutputHeight / 8;
-
-		vkCmdDispatch( curCommandBuffer, nGroupCountX, nGroupCountY, 1 );
+		cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup));
 	}
 	else
 	{
+		cmdBuffer->bindPipeline( g_device.pipeline(SHADER_TYPE_BLIT, frameInfo->layerCount, frameInfo->ycbcrMask()));
+		bind_all_layers(cmdBuffer.get(), frameInfo);
+		cmdBuffer->bindTarget(compositeImage);
+		cmdBuffer->pushConstants<BlitPushData_t>(frameInfo);
 
-		vkCmdBindPipeline(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, g_device.pipeline(SHADER_TYPE_BLIT, frameInfo->layerCount, frameInfo->ycbcrMask()));
+		int pixelsPerGroup = 8;
 
-		VkDescriptorSet descriptorSet = vulkan_update_descriptor( frameInfo, false, false, targetImageView );
-
-		vkCmdBindDescriptorSets(curCommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE,
-								g_device.pipelineLayout(), 0, 1, &descriptorSet, 0, 0);
-
-		CompositeData_t data = pack_composite_data(frameInfo);
-
-		vkCmdPushConstants(curCommandBuffer, g_device.pipelineLayout(), VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(data), &data);
-
-		uint32_t nGroupCountX = currentOutputWidth % 8 ? currentOutputWidth / 8 + 1: currentOutputWidth / 8;
-		uint32_t nGroupCountY = currentOutputHeight % 8 ? currentOutputHeight / 8 + 1: currentOutputHeight / 8;
-
-		vkCmdDispatch( curCommandBuffer, nGroupCountX, nGroupCountY, 1 );
+		cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup));
 	}
 
 	if ( pScreenshotTexture != nullptr )
 	{
-		// Transition it to GENERAL
-		VkImageSubresourceRange subResRange =
-		{
-			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-			.levelCount = 1,
-			.layerCount = 1
-		};
-
-		VkImageMemoryBarrier memoryBarrier =
-		{
-			.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-			.srcAccessMask = 0,
-			.dstAccessMask = 0,
-			.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-			.newLayout = VK_IMAGE_LAYOUT_GENERAL,
-			.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-			.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-			.image = pScreenshotTexture->vkImage(),
-			.subresourceRange = subResRange
-		};
-
-		vkCmdPipelineBarrier( curCommandBuffer, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
-
-
-		memoryBarrier =
-		{
-			.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-			.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
-			.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
-			.oldLayout = VK_IMAGE_LAYOUT_GENERAL,
-			.newLayout = VK_IMAGE_LAYOUT_GENERAL,
-			.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-			.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-			.image = compositeImage,
-			.subresourceRange = subResRange
-		};
-
-		vkCmdPipelineBarrier( curCommandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-					  0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
-
-		VkImageCopy region = {};
-
-		region.srcSubresource = {
-			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-			.layerCount = 1
-		};
-
-		region.dstSubresource = {
-			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-			.layerCount = 1
-		};
-
-		region.extent = {
-			.width = currentOutputWidth,
-			.height = currentOutputHeight,
-			.depth = 1
-		};
-
-		vkCmdCopyImage( curCommandBuffer, compositeImage, VK_IMAGE_LAYOUT_GENERAL, pScreenshotTexture->vkImage(), VK_IMAGE_LAYOUT_GENERAL, 1, &region );
+		cmdBuffer->copyImage(compositeImage, pScreenshotTexture);
 	}
 
-	bool useForeignQueue = !BIsNested() && g_device.supportsModifiers();
-
-	memoryBarrier =
-	{
-		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-		.srcAccessMask = pScreenshotTexture ? VK_ACCESS_TRANSFER_READ_BIT : VK_ACCESS_SHADER_WRITE_BIT,
-		.dstAccessMask = useForeignQueue ? (VkAccessFlagBits)0 : VK_ACCESS_MEMORY_READ_BIT,
-		.oldLayout = VK_IMAGE_LAYOUT_GENERAL,
-		.newLayout = BIsNested() ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR : VK_IMAGE_LAYOUT_GENERAL,
-		.srcQueueFamilyIndex = g_device.queueFamily(),
-		.dstQueueFamilyIndex = useForeignQueue
-								? VK_QUEUE_FAMILY_FOREIGN_EXT
-						    	: g_device.queueFamily(),
-		.image = compositeImage,
-		.subresourceRange = subResRange
-	};
-	
-	vkCmdPipelineBarrier( curCommandBuffer, pScreenshotTexture ? VK_PIPELINE_STAGE_TRANSFER_BIT : VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-				  useForeignQueue ? 0 : VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-				  0, 0, nullptr, 0, nullptr, 1, &memoryBarrier );
-
-	for (int32_t i = 0; i < frameInfo->layerCount; i++)
-	{
-		textureBarriers[i].dstAccessMask = 0;
-		textureBarriers[i].oldLayout = VK_IMAGE_LAYOUT_GENERAL;
-		textureBarriers[i].srcQueueFamilyIndex = g_device.queueFamily();
-		textureBarriers[i].dstQueueFamilyIndex = g_device.supportsModifiers()
-													? VK_QUEUE_FAMILY_FOREIGN_EXT
-													: VK_QUEUE_FAMILY_EXTERNAL_KHR;
-	}
-
-	vkCmdPipelineBarrier( curCommandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-				  		0, 0, nullptr, 0, nullptr, textureBarriers.size(), textureBarriers.data() );
-
-	res = vkEndCommandBuffer( curCommandBuffer );
-	
-	if ( res != VK_SUCCESS )
-	{
-		return false;
-	}
-	
-	VkSubmitInfo submitInfo = {
-		VK_STRUCTURE_TYPE_SUBMIT_INFO,
-		0,
-		0,
-		0,
-		0,
-		1,
-		&curCommandBuffer,
-		0,
-		0
-	};
-	
-	res = vkQueueSubmit( g_device.queue(), 1, &submitInfo, 0 );
-	
-	if ( res != VK_SUCCESS )
-	{
-		return false;
-	}
-	
-	vkQueueWaitIdle( g_device.queue() );
+	uint64_t sequence = g_device.submit(std::move(cmdBuffer));
+	g_device.wait(sequence);
 
 	if ( BIsNested() == false )
 	{
 		g_output.nOutImage = !g_output.nOutImage;
 	}
-	
-	g_output.nCurCmdBuffer = !g_output.nCurCmdBuffer;
-	
+
 	return true;
 }
 

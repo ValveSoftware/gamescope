@@ -172,6 +172,12 @@ struct FrameInfo_t
 
 		uint32_t integerWidth() const { return tex->width() / scale.x; }
 		uint32_t integerHeight() const { return tex->height() / scale.y; }
+		vec2_t offsetPixelCenter() const
+		{
+			float x = offset.x + 0.5f / scale.x;
+			float y = offset.y + 0.5f / scale.y;
+			return { x, y };
+		}
 	} layers[ k_nMaxLayers ];
 
 	uint32_t borderMask() const {
@@ -207,7 +213,7 @@ std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_dmabuf( struct wlr_dm
 std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_bits( uint32_t width, uint32_t height, uint32_t contentWidth, uint32_t contentHeight, uint32_t drmFormat, CVulkanTexture::createFlags texCreateFlags, void *bits );
 std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struct wlr_buffer *buf );
 
-bool vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTexture> pScreenshotTexture );
+bool vulkan_composite( const struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTexture> pScreenshotTexture );
 std::shared_ptr<CVulkanTexture> vulkan_get_last_output_image( void );
 std::shared_ptr<CVulkanTexture> vulkan_acquire_screenshot_texture(bool exportable);
 
