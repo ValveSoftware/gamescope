@@ -37,6 +37,19 @@
 #include "shaders/ffx_fsr1.h"
 #include "shaders/descriptor_set_constants.h"
 
+extern "C"
+{
+VKAPI_ATTR VkResult VKAPI_CALL vkCreateInstance(
+	const VkInstanceCreateInfo*                 pCreateInfo,
+	const VkAllocationCallbacks*                pAllocator,
+	VkInstance*                                 pInstance);
+
+VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(
+	VkInstance                                  instance,
+	const char*                                 pName);
+}
+
+
 bool g_bIsCompositeDebug = false;
 
 struct VulkanOutput_t
@@ -340,31 +353,44 @@ private:
 
 #define VULKAN_INSTANCE_FUNCTIONS \
 	VK_FUNC(CreateDevice) \
+	VK_FUNC(EnumerateDeviceExtensionProperties) \
 	VK_FUNC(EnumeratePhysicalDevices) \
 	VK_FUNC(GetDeviceProcAddr) \
 	VK_FUNC(GetPhysicalDeviceFeatures2) \
 	VK_FUNC(GetPhysicalDeviceFormatProperties) \
+	VK_FUNC(GetPhysicalDeviceFormatProperties2) \
+	VK_FUNC(GetPhysicalDeviceImageFormatProperties2) \
 	VK_FUNC(GetPhysicalDeviceMemoryProperties) \
 	VK_FUNC(GetPhysicalDeviceQueueFamilyProperties) \
 	VK_FUNC(GetPhysicalDeviceProperties) \
-	VK_FUNC(GetPhysicalDeviceProperties2)
+	VK_FUNC(GetPhysicalDeviceProperties2) \
+	VK_FUNC(GetPhysicalDeviceSurfaceCapabilitiesKHR) \
+	VK_FUNC(GetPhysicalDeviceSurfaceFormatsKHR) \
+	VK_FUNC(GetPhysicalDeviceSurfacePresentModesKHR) \
+	VK_FUNC(GetPhysicalDeviceSurfaceSupportKHR)
 
 #define VULKAN_DEVICE_FUNCTIONS \
 	VK_FUNC(AllocateCommandBuffers) \
 	VK_FUNC(AllocateDescriptorSets) \
 	VK_FUNC(AllocateMemory) \
+	VK_FUNC(AcquireNextImageKHR) \
 	VK_FUNC(BeginCommandBuffer) \
 	VK_FUNC(BindBufferMemory) \
+	VK_FUNC(BindImageMemory) \
 	VK_FUNC(CreateBuffer) \
 	VK_FUNC(CreateCommandPool) \
 	VK_FUNC(CreateComputePipelines) \
 	VK_FUNC(CreateDescriptorPool) \
 	VK_FUNC(CreateDescriptorSetLayout) \
+	VK_FUNC(CreateFence) \
+	VK_FUNC(CreateImage) \
+	VK_FUNC(CreateImageView) \
 	VK_FUNC(CreatePipelineLayout) \
 	VK_FUNC(CreateSampler) \
 	VK_FUNC(CreateSamplerYcbcrConversion) \
 	VK_FUNC(CreateSemaphore) \
 	VK_FUNC(CreateShaderModule) \
+	VK_FUNC(CreateSwapchainKHR) \
 	VK_FUNC(CmdBindDescriptorSets) \
 	VK_FUNC(CmdBindPipeline) \
 	VK_FUNC(CmdCopyBufferToImage) \
@@ -372,18 +398,30 @@ private:
 	VK_FUNC(CmdDispatch) \
 	VK_FUNC(CmdPipelineBarrier) \
 	VK_FUNC(CmdPushConstants) \
+	VK_FUNC(DestroyBuffer) \
+	VK_FUNC(DestroyImage) \
+	VK_FUNC(DestroyImageView) \
 	VK_FUNC(DestroyPipeline) \
+	VK_FUNC(DestroySwapchainKHR) \
 	VK_FUNC(EndCommandBuffer) \
 	VK_FUNC(FreeCommandBuffers) \
+	VK_FUNC(FreeMemory) \
 	VK_FUNC(GetBufferMemoryRequirements) \
 	VK_FUNC(GetDeviceQueue) \
 	VK_FUNC(GetImageDrmFormatModifierPropertiesEXT) \
+	VK_FUNC(GetImageMemoryRequirements) \
+	VK_FUNC(GetImageSubresourceLayout) \
 	VK_FUNC(GetMemoryFdKHR) \
 	VK_FUNC(GetSemaphoreCounterValue) \
+	VK_FUNC(GetSwapchainImagesKHR) \
 	VK_FUNC(MapMemory) \
+	VK_FUNC(QueuePresentKHR) \
 	VK_FUNC(QueueSubmit) \
 	VK_FUNC(ResetCommandBuffer) \
+	VK_FUNC(ResetFences) \
+	VK_FUNC(UnmapMemory) \
 	VK_FUNC(UpdateDescriptorSets) \
+	VK_FUNC(WaitForFences) \
 	VK_FUNC(WaitSemaphores)
 
 class CVulkanDevice
@@ -631,10 +669,10 @@ bool CVulkanDevice::createDevice()
 	vk.GetPhysicalDeviceMemoryProperties( physDev(), &m_memoryProperties );
 
 	uint32_t supportedExtensionCount;
-	vkEnumerateDeviceExtensionProperties( physDev(), NULL, &supportedExtensionCount, NULL );
+	vk.EnumerateDeviceExtensionProperties( physDev(), NULL, &supportedExtensionCount, NULL );
 
 	std::vector<VkExtensionProperties> supportedExts(supportedExtensionCount);
-	vkEnumerateDeviceExtensionProperties( physDev(), NULL, &supportedExtensionCount, supportedExts.data() );
+	vk.EnumerateDeviceExtensionProperties( physDev(), NULL, &supportedExtensionCount, supportedExts.data() );
 
 	bool hasDrmProps = false;
 	bool supportsForeignQueue = false;
@@ -1736,7 +1774,7 @@ static VkResult getModifierProps( const VkImageCreateInfo *imageInfo, uint64_t m
 	imageProps.sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2;
 	imageProps.pNext = externalFormatProps;
 
-	return vkGetPhysicalDeviceImageFormatProperties2(g_device.physDev(), &imageFormatInfo, &imageProps);
+	return g_device.vk.GetPhysicalDeviceImageFormatProperties2(g_device.physDev(), &imageFormatInfo, &imageProps);
 }
 
 bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t drmFormat, createFlags flags, wlr_dmabuf_attributes *pDMA /* = nullptr */,  uint32_t contentWidth /* = 0 */, uint32_t contentHeight /* =  0 */)
@@ -1938,14 +1976,14 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t drmFormat,
 
 	m_format = imageInfo.format;
 
-	res = vkCreateImage(g_device.device(), &imageInfo, nullptr, &m_vkImage);
+	res = g_device.vk.CreateImage(g_device.device(), &imageInfo, nullptr, &m_vkImage);
 	if (res != VK_SUCCESS) {
 		vk_errorf( res, "vkCreateImage failed" );
 		return false;
 	}
 	
 	VkMemoryRequirements memRequirements;
-	vkGetImageMemoryRequirements(g_device.device(), m_vkImage, &memRequirements);
+	g_device.vk.GetImageMemoryRequirements(g_device.device(), m_vkImage, &memRequirements);
 	
 	// Possible pNexts
 	wsi_memory_allocate_info wsiAllocInfo = {};
@@ -2008,14 +2046,14 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t drmFormat,
 		allocInfo.pNext = &importMemoryInfo;
 	}
 	
-	res = vkAllocateMemory( g_device.device(), &allocInfo, nullptr, &m_vkImageMemory );
+	res = g_device.vk.AllocateMemory( g_device.device(), &allocInfo, nullptr, &m_vkImageMemory );
 	if ( res != VK_SUCCESS )
 	{
 		vk_errorf( res, "vkAllocateMemory failed" );
 		return false;
 	}
 	
-	res = vkBindImageMemory( g_device.device(), m_vkImage, m_vkImageMemory, 0 );
+	res = g_device.vk.BindImageMemory( g_device.device(), m_vkImage, m_vkImageMemory, 0 );
 	if ( res != VK_SUCCESS )
 	{
 		vk_errorf( res, "vkBindImageMemory failed" );
@@ -2031,7 +2069,7 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t drmFormat,
 			.arrayLayer = 0,
 		};
 		VkSubresourceLayout image_layout;
-		vkGetImageSubresourceLayout(g_device.device(), m_vkImage, &image_subresource, &image_layout);
+		g_device.vk.GetImageSubresourceLayout(g_device.device(), m_vkImage, &image_subresource, &image_layout);
 
 		m_unRowPitch = image_layout.rowPitch;
 	}
@@ -2096,7 +2134,7 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t drmFormat,
 					.arrayLayer = 0,
 				};
 				VkSubresourceLayout subresourceLayout = {};
-				vkGetImageSubresourceLayout( g_device.device(), m_vkImage, &subresource, &subresourceLayout );
+				g_device.vk.GetImageSubresourceLayout( g_device.device(), m_vkImage, &subresource, &subresourceLayout );
 				dmabuf.offset[i] = subresourceLayout.offset;
 				dmabuf.stride[i] = subresourceLayout.rowPitch;
 			}
@@ -2119,7 +2157,7 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t drmFormat,
 				.arrayLayer = 0,
 			};
 			VkSubresourceLayout subresourceLayout = {};
-			vkGetImageSubresourceLayout( g_device.device(), m_vkImage, &subresource, &subresourceLayout );
+			g_device.vk.GetImageSubresourceLayout( g_device.device(), m_vkImage, &subresource, &subresourceLayout );
 
 			dmabuf.n_planes = 1;
 			dmabuf.modifier = DRM_FORMAT_MOD_INVALID;
@@ -2164,7 +2202,7 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t drmFormat,
 		createInfo.subresourceRange.baseArrayLayer = 0;
 		createInfo.subresourceRange.layerCount = 1;
 
-		res = vkCreateImageView(g_device.device(), &createInfo, nullptr, &m_srgbView);
+		res = g_device.vk.CreateImageView(g_device.device(), &createInfo, nullptr, &m_srgbView);
 		if ( res != VK_SUCCESS ) {
 			vk_errorf( res, "vkCreateImageView failed" );
 			return false;
@@ -2177,7 +2215,7 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t drmFormat,
 			viewUsageInfo.usage = usage & ~VK_IMAGE_USAGE_STORAGE_BIT;
 			createInfo.pNext = &viewUsageInfo;
 			createInfo.format = DRMFormatToVulkan(drmFormat, true);
-			res = vkCreateImageView(g_device.device(), &createInfo, nullptr, &m_linearView);
+			res = g_device.vk.CreateImageView(g_device.device(), &createInfo, nullptr, &m_linearView);
 			if ( res != VK_SUCCESS ) {
 				vk_errorf( res, "vkCreateImageView failed" );
 				return false;
@@ -2187,7 +2225,7 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t drmFormat,
 
 	if ( flags.bMappable )
 	{
-		res = vkMapMemory( g_device.device(), m_vkImageMemory, 0, VK_WHOLE_SIZE, 0, &m_pMappedData );
+		res = g_device.vk.MapMemory( g_device.device(), m_vkImageMemory, 0, VK_WHOLE_SIZE, 0, &m_pMappedData );
 		if ( res != VK_SUCCESS )
 		{
 			vk_errorf( res, "vkMapMemory failed" );
@@ -2225,7 +2263,7 @@ bool CVulkanTexture::BInitFromSwapchain( VkImage image, uint32_t width, uint32_t
 	createInfo.subresourceRange.baseArrayLayer = 0;
 	createInfo.subresourceRange.layerCount = 1;
 
-	VkResult res = vkCreateImageView(g_device.device(), &createInfo, nullptr, &m_srgbView);
+	VkResult res = g_device.vk.CreateImageView(g_device.device(), &createInfo, nullptr, &m_srgbView);
 	if ( res != VK_SUCCESS ) {
 		vk_errorf( res, "vkCreateImageView failed" );
 		return false;
@@ -2247,19 +2285,19 @@ CVulkanTexture::~CVulkanTexture( void )
 
 	if ( m_pMappedData != nullptr )
 	{
-		vkUnmapMemory( g_device.device(), m_vkImageMemory );
+		g_device.vk.UnmapMemory( g_device.device(), m_vkImageMemory );
 		m_pMappedData = nullptr;
 	}
 
 	if ( m_srgbView != VK_NULL_HANDLE )
 	{
-		vkDestroyImageView( g_device.device(), m_srgbView, nullptr );
+		g_device.vk.DestroyImageView( g_device.device(), m_srgbView, nullptr );
 		m_srgbView = VK_NULL_HANDLE;
 	}
 
 	if ( m_linearView != VK_NULL_HANDLE )
 	{
-		vkDestroyImageView( g_device.device(), m_linearView, nullptr );
+		g_device.vk.DestroyImageView( g_device.device(), m_linearView, nullptr );
 		m_linearView = VK_NULL_HANDLE;
 	}
 
@@ -2274,11 +2312,11 @@ CVulkanTexture::~CVulkanTexture( void )
 	{
 		if ( m_vkImage != VK_NULL_HANDLE )
 		{
-			vkDestroyImage( g_device.device(), m_vkImage, nullptr );
+			g_device.vk.DestroyImage( g_device.device(), m_vkImage, nullptr );
 			m_vkImage = VK_NULL_HANDLE;
 		}
 
-		vkFreeMemory( g_device.device(), m_vkImageMemory, nullptr );
+		g_device.vk.FreeMemory( g_device.device(), m_vkImageMemory, nullptr );
 		m_vkImageMemory = VK_NULL_HANDLE;
 	}
 
@@ -2297,7 +2335,7 @@ bool vulkan_init_format(VkFormat format, uint32_t drmFormat)
 	imageFormatInfo.flags = 0;
 	VkImageFormatProperties2 imageFormatProps = {};
 	imageFormatProps.sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2;
-	VkResult res = vkGetPhysicalDeviceImageFormatProperties2( g_device.physDev(), &imageFormatInfo, &imageFormatProps );
+	VkResult res = g_device.vk.GetPhysicalDeviceImageFormatProperties2( g_device.physDev(), &imageFormatInfo, &imageFormatProps );
 	if ( res == VK_ERROR_FORMAT_NOT_SUPPORTED )
 	{
 		return false;
@@ -2327,7 +2365,7 @@ bool vulkan_init_format(VkFormat format, uint32_t drmFormat)
 	VkFormatProperties2 formatProps = {};
 	formatProps.sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2;
 	formatProps.pNext = &modifierPropList;
-	vkGetPhysicalDeviceFormatProperties2( g_device.physDev(), format, &formatProps );
+	g_device.vk.GetPhysicalDeviceFormatProperties2( g_device.physDev(), format, &formatProps );
 
 	if ( modifierPropList.drmFormatModifierCount == 0 )
 	{
@@ -2337,7 +2375,7 @@ bool vulkan_init_format(VkFormat format, uint32_t drmFormat)
 
 	std::vector<VkDrmFormatModifierPropertiesEXT> modifierProps(modifierPropList.drmFormatModifierCount);
 	modifierPropList.pDrmFormatModifierProperties = modifierProps.data();
-	vkGetPhysicalDeviceFormatProperties2( g_device.physDev(), format, &formatProps );
+	g_device.vk.GetPhysicalDeviceFormatProperties2( g_device.physDev(), format, &formatProps );
 
 	std::map< uint64_t, VkDrmFormatModifierPropertiesEXT > map = {};
 
@@ -2398,12 +2436,12 @@ bool vulkan_init_formats()
 
 bool acquire_next_image( void )
 {
-	VkResult res = vkAcquireNextImageKHR( g_device.device(), g_output.swapChain, UINT64_MAX, VK_NULL_HANDLE, g_output.acquireFence, &g_output.nOutImage );
+	VkResult res = g_device.vk.AcquireNextImageKHR( g_device.device(), g_output.swapChain, UINT64_MAX, VK_NULL_HANDLE, g_output.acquireFence, &g_output.nOutImage );
 	if ( res != VK_SUCCESS && res != VK_SUBOPTIMAL_KHR )
 		return false;
-	if ( vkWaitForFences( g_device.device(), 1, &g_output.acquireFence, false, UINT64_MAX ) != VK_SUCCESS )
+	if ( g_device.vk.WaitForFences( g_device.device(), 1, &g_output.acquireFence, false, UINT64_MAX ) != VK_SUCCESS )
 		return false;
-	return vkResetFences( g_device.device(), 1, &g_output.acquireFence ) == VK_SUCCESS;
+	return g_device.vk.ResetFences( g_device.device(), 1, &g_output.acquireFence ) == VK_SUCCESS;
 }
 
 void vulkan_present_to_window( void )
@@ -2419,7 +2457,7 @@ void vulkan_present_to_window( void )
 	
 	presentInfo.pImageIndices = &g_output.nOutImage;
 	
-	if ( vkQueuePresentKHR( g_device.queue(), &presentInfo ) != VK_SUCCESS )
+	if ( g_device.vk.QueuePresentKHR( g_device.queue(), &presentInfo ) != VK_SUCCESS )
 		vulkan_remake_swapchain();
 	
 	while ( !acquire_next_image() )
@@ -2462,13 +2500,13 @@ bool vulkan_make_swapchain( VulkanOutput_t *pOutput )
 	
 	createInfo.oldSwapchain = VK_NULL_HANDLE;
 	
-	if (vkCreateSwapchainKHR( g_device.device(), &createInfo, nullptr, &pOutput->swapChain) != VK_SUCCESS ) {
+	if (g_device.vk.CreateSwapchainKHR( g_device.device(), &createInfo, nullptr, &pOutput->swapChain) != VK_SUCCESS ) {
 		return false;
 	}
 
-	vkGetSwapchainImagesKHR( g_device.device(), pOutput->swapChain, &imageCount, nullptr );
+	g_device.vk.GetSwapchainImagesKHR( g_device.device(), pOutput->swapChain, &imageCount, nullptr );
 	std::vector<VkImage> swapchainImages( imageCount );
-	vkGetSwapchainImagesKHR( g_device.device(), pOutput->swapChain, &imageCount, swapchainImages.data() );
+	g_device.vk.GetSwapchainImagesKHR( g_device.device(), pOutput->swapChain, &imageCount, swapchainImages.data() );
 
 	pOutput->outputImages.resize(imageCount);
 
@@ -2483,7 +2521,7 @@ bool vulkan_make_swapchain( VulkanOutput_t *pOutput )
 	VkFenceCreateInfo fenceInfo = {};
 	fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
 
-	vkCreateFence( g_device.device(), &fenceInfo, nullptr, &pOutput->acquireFence );
+	g_device.vk.CreateFence( g_device.device(), &fenceInfo, nullptr, &pOutput->acquireFence );
 
 	return true;
 }
@@ -2491,11 +2529,11 @@ bool vulkan_make_swapchain( VulkanOutput_t *pOutput )
 bool vulkan_remake_swapchain( void )
 {
 	VulkanOutput_t *pOutput = &g_output;
-	vkQueueWaitIdle( g_device.queue() );
+	g_device.waitIdle();
 
 	pOutput->outputImages.clear();
 
-	vkDestroySwapchainKHR( g_device.device(), pOutput->swapChain, nullptr );
+	g_device.vk.DestroySwapchainKHR( g_device.device(), pOutput->swapChain, nullptr );
 
 	// Delete screenshot image to be remade if needed
 	for (auto& pScreenshotImage : pOutput->pScreenshotImages)
@@ -2540,7 +2578,7 @@ static bool vulkan_make_output_images( VulkanOutput_t *pOutput )
 bool vulkan_remake_output_images( void )
 {
 	VulkanOutput_t *pOutput = &g_output;
-	vkQueueWaitIdle( g_device.queue() );
+	g_device.waitIdle();
 
 	pOutput->nOutImage = 0;
 
@@ -2569,14 +2607,14 @@ bool vulkan_make_output( void )
 
 		// TODO: check this when selecting the physical device and queue family
 		VkBool32 canPresent = false;
-		vkGetPhysicalDeviceSurfaceSupportKHR( g_device.physDev(), g_device.queueFamily(), pOutput->surface, &canPresent );
+		g_device.vk.GetPhysicalDeviceSurfaceSupportKHR( g_device.physDev(), g_device.queueFamily(), pOutput->surface, &canPresent );
 		if ( !canPresent )
 		{
 			vk_log.errorf( "physical device queue doesn't support presenting on our surface" );
 			return false;
 		}
 
-		result = vkGetPhysicalDeviceSurfaceCapabilitiesKHR( g_device.physDev(), pOutput->surface, &pOutput->surfaceCaps );
+		result = g_device.vk.GetPhysicalDeviceSurfaceCapabilitiesKHR( g_device.physDev(), pOutput->surface, &pOutput->surfaceCaps );
 		if ( result != VK_SUCCESS )
 		{
 			vk_errorf( result, "vkGetPhysicalDeviceSurfaceCapabilitiesKHR failed" );
@@ -2584,7 +2622,7 @@ bool vulkan_make_output( void )
 		}
 		
 		uint32_t formatCount = 0;
-		result = vkGetPhysicalDeviceSurfaceFormatsKHR( g_device.physDev(), pOutput->surface, &formatCount, nullptr );
+		result = g_device.vk.GetPhysicalDeviceSurfaceFormatsKHR( g_device.physDev(), pOutput->surface, &formatCount, nullptr );
 		if ( result != VK_SUCCESS )
 		{
 			vk_errorf( result, "vkGetPhysicalDeviceSurfaceFormatsKHR failed" );
@@ -2593,7 +2631,7 @@ bool vulkan_make_output( void )
 		
 		if ( formatCount != 0 ) {
 			pOutput->surfaceFormats.resize( formatCount );
-			vkGetPhysicalDeviceSurfaceFormatsKHR( g_device.physDev(), pOutput->surface, &formatCount, pOutput->surfaceFormats.data() );
+			g_device.vk.GetPhysicalDeviceSurfaceFormatsKHR( g_device.physDev(), pOutput->surface, &formatCount, pOutput->surfaceFormats.data() );
 			if ( result != VK_SUCCESS )
 			{
 				vk_errorf( result, "vkGetPhysicalDeviceSurfaceFormatsKHR failed" );
@@ -2602,7 +2640,7 @@ bool vulkan_make_output( void )
 		}
 		
 		uint32_t presentModeCount = false;
-		result = vkGetPhysicalDeviceSurfacePresentModesKHR(g_device.physDev(), pOutput->surface, &presentModeCount, nullptr );
+		result = g_device.vk.GetPhysicalDeviceSurfacePresentModesKHR(g_device.physDev(), pOutput->surface, &presentModeCount, nullptr );
 		if ( result != VK_SUCCESS )
 		{
 			vk_errorf( result, "vkGetPhysicalDeviceSurfacePresentModesKHR failed" );
@@ -2611,7 +2649,7 @@ bool vulkan_make_output( void )
 		
 		if ( presentModeCount != 0 ) {
 			pOutput->presentModes.resize(presentModeCount);
-			result = vkGetPhysicalDeviceSurfacePresentModesKHR( g_device.physDev(), pOutput->surface, &presentModeCount, pOutput->presentModes.data() );
+			result = g_device.vk.GetPhysicalDeviceSurfacePresentModesKHR( g_device.physDev(), pOutput->surface, &presentModeCount, pOutput->presentModes.data() );
 			if ( result != VK_SUCCESS )
 			{
 				vk_errorf( result, "vkGetPhysicalDeviceSurfacePresentModesKHR failed" );
@@ -2693,9 +2731,9 @@ static bool init_nis_data()
 	uint32_t height = kPhaseCount;
 
 	g_output.nisScalerImage = vulkan_create_texture_from_bits( width, height, width, height, nisFormat, {}, coefScaleData );
-	vkDeviceWaitIdle(g_device.device());
+	g_device.waitIdle();
 	g_output.nisUsmImage = vulkan_create_texture_from_bits( width, height, width, height, nisFormat, {}, coefUsmData );
-	vkDeviceWaitIdle(g_device.device());
+	g_device.waitIdle();
 
 	return true;
 }
@@ -3195,7 +3233,7 @@ std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struct wl
 	bufferCreateInfo.size = stride * height;
 	bufferCreateInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
 	VkBuffer buffer;
-	result = vkCreateBuffer( g_device.device(), &bufferCreateInfo, nullptr, &buffer );
+	result = g_device.vk.CreateBuffer( g_device.device(), &bufferCreateInfo, nullptr, &buffer );
 	if ( result != VK_SUCCESS )
 	{
 		wlr_buffer_end_data_ptr_access( buf );
@@ -3203,7 +3241,7 @@ std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struct wl
 	}
 
 	VkMemoryRequirements memRequirements;
-	vkGetBufferMemoryRequirements(g_device.device(), buffer, &memRequirements);
+	g_device.vk.GetBufferMemoryRequirements(g_device.device(), buffer, &memRequirements);
 
 	int memTypeIndex =  g_device.findMemoryType(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT|VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, memRequirements.memoryTypeBits );
 	if ( memTypeIndex == -1 )
@@ -3218,14 +3256,14 @@ std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struct wl
 	allocInfo.memoryTypeIndex = memTypeIndex;
 
 	VkDeviceMemory bufferMemory;
-	result = vkAllocateMemory( g_device.device(), &allocInfo, nullptr, &bufferMemory);
+	result = g_device.vk.AllocateMemory( g_device.device(), &allocInfo, nullptr, &bufferMemory);
 	if ( result != VK_SUCCESS )
 	{
 		wlr_buffer_end_data_ptr_access( buf );
 		return 0;
 	}
 
-	result = vkBindBufferMemory( g_device.device(), buffer, bufferMemory, 0 );
+	result = g_device.vk.BindBufferMemory( g_device.device(), buffer, bufferMemory, 0 );
 	if ( result != VK_SUCCESS )
 	{
 		wlr_buffer_end_data_ptr_access( buf );
@@ -3233,7 +3271,7 @@ std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struct wl
 	}
 
 	void *dst;
-	result = vkMapMemory( g_device.device(), bufferMemory, 0, VK_WHOLE_SIZE, 0, &dst );
+	result = g_device.vk.MapMemory( g_device.device(), bufferMemory, 0, VK_WHOLE_SIZE, 0, &dst );
 	if ( result != VK_SUCCESS )
 	{
 		wlr_buffer_end_data_ptr_access( buf );
@@ -3242,7 +3280,7 @@ std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struct wl
 
 	memcpy( dst, src, stride * height );
 
-	vkUnmapMemory( g_device.device(), bufferMemory );
+	g_device.vk.UnmapMemory( g_device.device(), bufferMemory );
 
 	wlr_buffer_end_data_ptr_access( buf );
 
@@ -3261,8 +3299,8 @@ std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struct wl
 
 	g_device.wait(sequence);
 
-	vkDestroyBuffer(g_device.device(), buffer, nullptr);
-	vkFreeMemory(g_device.device(), bufferMemory, nullptr);
+	g_device.vk.DestroyBuffer(g_device.device(), buffer, nullptr);
+	g_device.vk.FreeMemory(g_device.device(), bufferMemory, nullptr);
 
 	return pTex;
 }

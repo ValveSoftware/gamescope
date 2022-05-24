@@ -50,6 +50,7 @@ extern "C" {
 #undef static
 }
 
+#define VK_NO_PROTOTYPES
 #include <vulkan/vulkan.h>
 #include <drm_fourcc.h>
 
