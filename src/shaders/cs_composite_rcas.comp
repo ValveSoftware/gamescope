@@ -1,6 +1,5 @@
 #version 460
 
-#extension GL_EXT_scalar_block_layout : require
 #extension GL_GOOGLE_include_directive : require
 
 #include "descriptor_set.h"
@@ -10,7 +9,7 @@ layout(
   local_size_y = 1,
   local_size_z = 1) in;
 
-layout(std430, push_constant)
+layout(push_constant)
 uniform layers_t {
     uvec2 u_layer0Offset;
     vec2 u_scale[VKR_MAX_LAYERS - 1];
