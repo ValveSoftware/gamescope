@@ -877,30 +877,28 @@ bool CVulkanDevice::createLayouts()
 	std::array<VkSampler, VKR_SAMPLER_SLOTS> ycbcrSamplers;
 	for (auto& sampler : ycbcrSamplers)
 		sampler = m_ycbcrSampler;
-	
-	std::vector< VkDescriptorSetLayoutBinding > layoutBindings;
-	VkDescriptorSetLayoutBinding descriptorBinding =
-	{
-		.binding = 0,
-		.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-		.descriptorCount = 1,
-		.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+
+	std::array<VkDescriptorSetLayoutBinding, 3> layoutBindings = {
+		VkDescriptorSetLayoutBinding {
+			.binding = 0,
+			.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+			.descriptorCount = 1,
+			.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+		},
+		VkDescriptorSetLayoutBinding {
+			.binding = 1,
+			.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+			.descriptorCount = VKR_SAMPLER_SLOTS,
+			.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+		},
+		VkDescriptorSetLayoutBinding {
+			.binding = 2,
+			.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+			.descriptorCount = VKR_SAMPLER_SLOTS,
+			.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+			.pImmutableSamplers = ycbcrSamplers.data(),
+		},
 	};
-	
-	layoutBindings.push_back( descriptorBinding );
-	
-	descriptorBinding.binding = 1;
-	descriptorBinding.descriptorCount = VKR_SAMPLER_SLOTS;
-	descriptorBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-
-	layoutBindings.push_back( descriptorBinding );
-
-	descriptorBinding.binding = 2;
-	descriptorBinding.descriptorCount = VKR_SAMPLER_SLOTS;
-	descriptorBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-	descriptorBinding.pImmutableSamplers = ycbcrSamplers.data();
-
-	layoutBindings.push_back( descriptorBinding );
 
 	VkDescriptorSetLayoutCreateInfo descriptorSetLayoutCreateInfo =
 	{
