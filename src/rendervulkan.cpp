@@ -93,9 +93,6 @@ enum ShaderType {
 
 VulkanOutput_t g_output;
 
-// Prototype to use init_nis_data in vulkan_init
-static bool init_nis_data();
-
 struct SamplerState
 {
 	bool bNearest : 1;
@@ -2346,6 +2343,23 @@ CVulkanTexture::~CVulkanTexture( void )
 	m_bInitialized = false;
 }
 
+int CVulkanTexture::memoryFence()
+{
+	const VkMemoryGetFdInfoKHR memory_get_fd_info = {
+		.sType = VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR,
+		.memory = m_vkImageMemory,
+		.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT,
+	};
+	int fence = -1;
+	VkResult res = g_device.vk.GetMemoryFdKHR(g_device.device(), &memory_get_fd_info, &fence);
+	if ( res != VK_SUCCESS ) {
+		fprintf( stderr, "vkGetMemoryFdKHR failed\n" );
+	}
+
+	return fence;
+}
+
+
 bool vulkan_init_format(VkFormat format, uint32_t drmFormat)
 {
 	// First, check whether the Vulkan format is supported
@@ -2706,18 +2720,6 @@ bool vulkan_make_output( void )
 	return true;
 }
 
-bool vulkan_init( void )
-{
-
-	if (!g_device.BInit())
-		return false;
-
-	if (!init_nis_data())
-		return false;
-
-	return true;
-}
-
 static void update_tmp_images( uint32_t width, uint32_t height )
 {
 	if ( g_output.tmpOutput != nullptr
@@ -2760,6 +2762,17 @@ static bool init_nis_data()
 	g_device.waitIdle();
 	g_output.nisUsmImage = vulkan_create_texture_from_bits( width, height, width, height, nisFormat, {}, coefUsmData );
 	g_device.waitIdle();
+
+	return true;
+}
+
+bool vulkan_init( void )
+{
+	if (!g_device.BInit())
+		return false;
+
+	if (!init_nis_data())
+		return false;
 
 	return true;
 }
@@ -3108,23 +3121,6 @@ bool vulkan_composite( const struct FrameInfo_t *frameInfo, std::shared_ptr<CVul
 std::shared_ptr<CVulkanTexture> vulkan_get_last_output_image( void )
 {
 	return g_output.outputImages[ !g_output.nOutImage ];
-}
-
-int CVulkanTexture::memoryFence()
-{
-	const VkMemoryGetFdInfoKHR memory_get_fd_info = {
-		.sType = VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR,
-		.pNext = NULL,
-		.memory = m_vkImageMemory,
-		.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT,
-	};
-	int fence = -1;
-	VkResult res = g_device.vk.GetMemoryFdKHR(g_device.device(), &memory_get_fd_info, &fence);
-	if ( res != VK_SUCCESS ) {
-		fprintf( stderr, "vkGetMemoryFdKHR failed\n" );
-	}
-
-	return fence;
 }
 
 bool vulkan_primary_dev_id(dev_t *id)
