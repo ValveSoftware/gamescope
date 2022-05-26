@@ -787,9 +787,12 @@ bool CVulkanDevice::createDevice()
 
 	enabledExtensions.push_back( VK_EXT_ROBUSTNESS_2_EXTENSION_NAME );
 
-	VkPhysicalDeviceFeatures2 features2 = {};
-	features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-	features2.features.shaderInt16 = m_bSupportsFp16;
+	VkPhysicalDeviceFeatures2 features2 = {
+		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+		.features = {
+			.shaderInt16 = m_bSupportsFp16,
+		},
+	};
 
 	VkDeviceCreateInfo deviceCreateInfo = {
 		.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
@@ -807,15 +810,17 @@ bool CVulkanDevice::createDevice()
 		.timelineSemaphore = VK_TRUE,
 	};
 
-	VkPhysicalDeviceSamplerYcbcrConversionFeatures ycbcrFeatures = {};
-	ycbcrFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SAMPLER_YCBCR_CONVERSION_FEATURES;
-	ycbcrFeatures.pNext = std::exchange(features2.pNext, &ycbcrFeatures);
-	ycbcrFeatures.samplerYcbcrConversion = VK_TRUE;
+	VkPhysicalDeviceSamplerYcbcrConversionFeatures ycbcrFeatures = {
+		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SAMPLER_YCBCR_CONVERSION_FEATURES,
+		.pNext = std::exchange(features2.pNext, &ycbcrFeatures),
+		.samplerYcbcrConversion = VK_TRUE,
+	};
 
-	VkPhysicalDeviceRobustness2FeaturesEXT robustness2Features = {};
-	robustness2Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT;
-	robustness2Features.pNext = std::exchange(features2.pNext, &robustness2Features);
-	robustness2Features.nullDescriptor = VK_TRUE;
+	VkPhysicalDeviceRobustness2FeaturesEXT robustness2Features = {
+		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT,
+		.pNext = std::exchange(features2.pNext, &robustness2Features),
+		.nullDescriptor = VK_TRUE,
+	};
 
 	VkResult res = vk.CreateDevice(physDev(), &deviceCreateInfo, nullptr, &m_device);
 	if ( res != VK_SUCCESS )
@@ -1047,12 +1052,12 @@ bool CVulkanDevice::createScratchResources()
 
 	// Make and map upload buffer
 	
-	VkBufferCreateInfo bufferCreateInfo = {};
-	bufferCreateInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-	bufferCreateInfo.pNext = nullptr;
-	bufferCreateInfo.size = 512 * 512 * 4;
-	bufferCreateInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-	
+	VkBufferCreateInfo bufferCreateInfo = {
+		.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+		.size = 512 * 512 * 4,
+		.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+	};
+
 	res = vk.CreateBuffer( device(), &bufferCreateInfo, nullptr, &m_uploadBuffer );
 	if ( res != VK_SUCCESS )
 	{
@@ -1063,17 +1068,18 @@ bool CVulkanDevice::createScratchResources()
 	VkMemoryRequirements memRequirements;
 	vk.GetBufferMemoryRequirements(device(), m_uploadBuffer, &memRequirements);
 	
-	int memTypeIndex =  findMemoryType(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT|VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, memRequirements.memoryTypeBits );
-	if ( memTypeIndex == -1 )
+	uint32_t memTypeIndex =  findMemoryType(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT|VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, memRequirements.memoryTypeBits );
+	if ( memTypeIndex == ~0u )
 	{
 		vk_log.errorf( "findMemoryType failed" );
 		return false;
 	}
 	
-	VkMemoryAllocateInfo allocInfo = {};
-	allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-	allocInfo.allocationSize = memRequirements.size;
-	allocInfo.memoryTypeIndex = memTypeIndex;
+	VkMemoryAllocateInfo allocInfo = {
+		.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+		.allocationSize = memRequirements.size,
+		.memoryTypeIndex = memTypeIndex,
+	};
 	
 	vk.AllocateMemory( device(), &allocInfo, nullptr, &m_uploadBufferMemory);
 	
@@ -1577,22 +1583,20 @@ void CVulkanCmdBuffer::copyImage(std::shared_ptr<CVulkanTexture> src, std::share
 	prepareDestImage(dst.get());
 	insertBarrier();
 
-	VkImageCopy region = {};
-
-	region.srcSubresource = {
-		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-		.layerCount = 1
-	};
-
-	region.dstSubresource = {
-		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-		.layerCount = 1
-	};
-
-	region.extent = {
-		.width = src->width(),
-		.height = src->height(),
-		.depth = 1
+	VkImageCopy region = {
+		.srcSubresource = {
+			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+			.layerCount = 1
+		},
+		.dstSubresource = {
+			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+			.layerCount = 1
+		},
+		.extent = {
+			.width = src->width(),
+			.height = src->height(),
+			.depth = 1
+		},
 	};
 
 	m_device->vk.CmdCopyImage(m_cmdBuffer, src->vkImage(), VK_IMAGE_LAYOUT_GENERAL, dst->vkImage(), VK_IMAGE_LAYOUT_GENERAL, 1, &region);
@@ -1606,21 +1610,18 @@ void CVulkanCmdBuffer::copyBufferToImage(VkBuffer buffer, VkDeviceSize offset, u
 	prepareDestImage(dst.get());
 	insertBarrier();
 	VkBufferImageCopy region = {
+		.bufferOffset = offset,
 		.bufferRowLength = stride,
+		.imageSubresource = {
+			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+			.layerCount = 1,
+		},
+		.imageExtent = {
+			.width = dst->width(),
+			.height = dst->height(),
+			.depth = 1,
+		},
 	};
-
-	region.imageSubresource = {
-		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-		.layerCount = 1,
-	};
-
-	region.imageExtent = {
-		.width = dst->width(),
-		.height = dst->height(),
-		.depth = 1,
-	};
-
-	region.bufferOffset = offset;
 
 	m_device->vk.CmdCopyBufferToImage(m_cmdBuffer, buffer, dst->vkImage(), VK_IMAGE_LAYOUT_GENERAL, 1, &region);
 
@@ -1742,37 +1743,40 @@ static bool allDMABUFsEqual( wlr_dmabuf_attributes *pDMA )
 
 static VkResult getModifierProps( const VkImageCreateInfo *imageInfo, uint64_t modifier, VkExternalImageFormatProperties *externalFormatProps)
 {
-	VkPhysicalDeviceImageDrmFormatModifierInfoEXT modifierFormatInfo = {};
-	VkPhysicalDeviceExternalImageFormatInfo externalImageFormatInfo = {};
-	VkPhysicalDeviceImageFormatInfo2 imageFormatInfo = {};
-	VkImageFormatListCreateInfo formatList = {};
-	VkImageFormatProperties2 imageProps = {};
+	VkPhysicalDeviceImageDrmFormatModifierInfoEXT modifierFormatInfo = {
+		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_DRM_FORMAT_MODIFIER_INFO_EXT,
+		.drmFormatModifier = modifier,
+		.sharingMode = imageInfo->sharingMode,
+	};
 
-	modifierFormatInfo.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_DRM_FORMAT_MODIFIER_INFO_EXT;
-	modifierFormatInfo.drmFormatModifier = modifier;
-	modifierFormatInfo.sharingMode = imageInfo->sharingMode;
+	VkPhysicalDeviceExternalImageFormatInfo externalImageFormatInfo = {
+		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_IMAGE_FORMAT_INFO,
+		.pNext = &modifierFormatInfo,
+		.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT,
+	};
 
-	externalImageFormatInfo.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_IMAGE_FORMAT_INFO;
-	externalImageFormatInfo.pNext = &modifierFormatInfo;
-	externalImageFormatInfo.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
-
-	imageFormatInfo.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2;
-	imageFormatInfo.pNext = &externalImageFormatInfo;
-	imageFormatInfo.format = imageInfo->format;
-	imageFormatInfo.type = imageInfo->imageType;
-	imageFormatInfo.tiling = VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT;
-	imageFormatInfo.usage = imageInfo->usage;
-	imageFormatInfo.flags = imageInfo->flags;
+	VkPhysicalDeviceImageFormatInfo2 imageFormatInfo = {
+		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2,
+		.pNext = &externalImageFormatInfo,
+		.format = imageInfo->format,
+		.type = imageInfo->imageType,
+		.tiling = VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT,
+		.usage = imageInfo->usage,
+		.flags = imageInfo->flags,
+	};
 
 	const VkImageFormatListCreateInfo *readonlyList = pNextFind<VkImageFormatListCreateInfo>(imageInfo, VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO);
+	VkImageFormatListCreateInfo formatList = {};
 	if ( readonlyList != nullptr )
 	{
 		formatList = *readonlyList;
 		formatList.pNext = std::exchange(imageFormatInfo.pNext, &formatList);
 	}
 
-	imageProps.sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2;
-	imageProps.pNext = externalFormatProps;
+	VkImageFormatProperties2 imageProps = {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2,
+		.pNext = externalFormatProps,
+	};
 
 	return g_device.vk.GetPhysicalDeviceImageFormatProperties2(g_device.physDev(), &imageFormatInfo, &imageProps);
 }
@@ -1828,20 +1832,22 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t drmFormat,
 	VkSubresourceLayout modifierPlaneLayouts[4] = {};
 	VkImageDrmFormatModifierListCreateInfoEXT modifierListInfo = {};
 	
-	VkImageCreateInfo imageInfo = {};
-	imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-	imageInfo.imageType = VK_IMAGE_TYPE_2D;
-	imageInfo.extent.width = width;
-	imageInfo.extent.height = height;
-	imageInfo.extent.depth = 1;
-	imageInfo.mipLevels = 1;
-	imageInfo.arrayLayers = 1;
-	imageInfo.format = DRMFormatToVulkan(drmFormat, false);
-	imageInfo.tiling = tiling;
-	imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-	imageInfo.usage = usage;
-	imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
-	imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+	VkImageCreateInfo imageInfo = {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+		.imageType = VK_IMAGE_TYPE_2D,
+		.format = DRMFormatToVulkan(drmFormat, false),
+		.extent = {
+			.width = width,
+			.height = height,
+			.depth = 1,
+		},
+		.mipLevels = 1,
+		.arrayLayers = 1,
+		.samples = VK_SAMPLE_COUNT_1_BIT,
+		.tiling = tiling,
+		.usage = usage,
+		.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+	};
 
 	assert( imageInfo.format != VK_FORMAT_UNDEFINED );
 
@@ -1849,10 +1855,13 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t drmFormat,
 		DRMFormatToVulkan(drmFormat, false),
 		DRMFormatToVulkan(drmFormat, true),
 	};
-	VkImageFormatListCreateInfo formatList = {};
-	formatList.sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO;
-	formatList.viewFormatCount = (uint32_t)formats.size();
-	formatList.pViewFormats = formats.data();
+
+	VkImageFormatListCreateInfo formatList = {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO,
+		.viewFormatCount = (uint32_t)formats.size(),
+		.pViewFormats = formats.data(),
+	};
+
 	if ( formats[0] != formats[1] )
 	{
 		formatList.pNext = std::exchange(imageInfo.pNext, &formatList);
@@ -1866,8 +1875,10 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t drmFormat,
 
 	if ( g_device.supportsModifiers() && pDMA && pDMA->modifier != DRM_FORMAT_MOD_INVALID )
 	{
-		VkExternalImageFormatProperties externalImageProperties = {};
-		externalImageProperties.sType = VK_STRUCTURE_TYPE_EXTERNAL_IMAGE_FORMAT_PROPERTIES;
+		VkExternalImageFormatProperties externalImageProperties = {
+			.sType = VK_STRUCTURE_TYPE_EXTERNAL_IMAGE_FORMAT_PROPERTIES,
+		};
+
 		res = getModifierProps( &imageInfo, pDMA->modifier, &externalImageProperties );
 		if ( res != VK_SUCCESS && res != VK_ERROR_FORMAT_NOT_SUPPORTED ) {
 			vk_errorf( res, "getModifierProps failed" );
@@ -1877,11 +1888,13 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t drmFormat,
 		if ( res == VK_SUCCESS &&
 		     ( externalImageProperties.externalMemoryProperties.externalMemoryFeatures & VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT ) )
 		{
-			modifierInfo.sType = VK_STRUCTURE_TYPE_IMAGE_DRM_FORMAT_MODIFIER_EXPLICIT_CREATE_INFO_EXT;
-			modifierInfo.pNext = std::exchange(imageInfo.pNext, &modifierInfo);
-			modifierInfo.drmFormatModifier = pDMA->modifier;
-			modifierInfo.drmFormatModifierPlaneCount = pDMA->n_planes;
-			modifierInfo.pPlaneLayouts = modifierPlaneLayouts;
+			modifierInfo = {
+				.sType = VK_STRUCTURE_TYPE_IMAGE_DRM_FORMAT_MODIFIER_EXPLICIT_CREATE_INFO_EXT,
+				.pNext = std::exchange(imageInfo.pNext, &modifierInfo),
+				.drmFormatModifier = pDMA->modifier,
+				.drmFormatModifierPlaneCount = uint32_t(pDMA->n_planes),
+				.pPlaneLayouts = modifierPlaneLayouts,
+			};
 
 			for ( int i = 0; i < pDMA->n_planes; ++i )
 			{
@@ -1919,8 +1932,9 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t drmFormat,
 		{
 			uint64_t modifier = possibleModifiers[i];
 
-			VkExternalImageFormatProperties externalFormatProps = {};
-			externalFormatProps.sType = VK_STRUCTURE_TYPE_EXTERNAL_IMAGE_FORMAT_PROPERTIES;
+			VkExternalImageFormatProperties externalFormatProps = {
+				.sType = VK_STRUCTURE_TYPE_EXTERNAL_IMAGE_FORMAT_PROPERTIES,
+			};
 			res = getModifierProps( &imageInfo, modifier, &externalFormatProps );
 			if ( res == VK_ERROR_FORMAT_NOT_SUPPORTED )
 				continue;
@@ -1937,10 +1951,12 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t drmFormat,
 
 		assert( modifiers.size() > 0 );
 
-		modifierListInfo.sType = VK_STRUCTURE_TYPE_IMAGE_DRM_FORMAT_MODIFIER_LIST_CREATE_INFO_EXT;
-		modifierListInfo.pNext = std::exchange(imageInfo.pNext, &modifierListInfo);
-		modifierListInfo.pDrmFormatModifiers = modifiers.data();
-		modifierListInfo.drmFormatModifierCount = modifiers.size();
+		modifierListInfo = {
+			.sType = VK_STRUCTURE_TYPE_IMAGE_DRM_FORMAT_MODIFIER_LIST_CREATE_INFO_EXT,
+			.pNext = std::exchange(imageInfo.pNext, &modifierListInfo),
+			.drmFormatModifierCount = uint32_t(modifiers.size()),
+			.pDrmFormatModifiers = modifiers.data(),
+		};
 
 		imageInfo.tiling = tiling = VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT;
 	}
@@ -1948,16 +1964,20 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t drmFormat,
 	if ( flags.bFlippable == true && tiling != VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT )
 	{
 		// We want to scan-out the image
-		wsiImageCreateInfo.sType = VK_STRUCTURE_TYPE_WSI_IMAGE_CREATE_INFO_MESA;
-		wsiImageCreateInfo.scanout = VK_TRUE;
-		wsiImageCreateInfo.pNext = std::exchange(imageInfo.pNext, &wsiImageCreateInfo);
+		wsiImageCreateInfo = {
+			.sType = VK_STRUCTURE_TYPE_WSI_IMAGE_CREATE_INFO_MESA,
+			.pNext = std::exchange(imageInfo.pNext, &wsiImageCreateInfo),
+			.scanout = VK_TRUE,
+		};
 	}
 	
 	if ( pDMA != nullptr )
 	{
-		externalImageCreateInfo.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO;
-		externalImageCreateInfo.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
-		externalImageCreateInfo.pNext = std::exchange(imageInfo.pNext, &externalImageCreateInfo);
+		externalImageCreateInfo = {
+			.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO,
+			.pNext = std::exchange(imageInfo.pNext, &externalImageCreateInfo),
+			.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT,
+		};
 	}
 
 	m_width = width;
@@ -1990,30 +2010,30 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t drmFormat,
 	VkImportMemoryFdInfoKHR importMemoryInfo = {};
 	VkExportMemoryAllocateInfo memory_export_info = {};
 	VkMemoryDedicatedAllocateInfo memory_dedicated_info = {};
-	
-	VkMemoryAllocateInfo allocInfo = {};
-	allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-	allocInfo.allocationSize = memRequirements.size;
-	allocInfo.memoryTypeIndex = g_device.findMemoryType(properties, memRequirements.memoryTypeBits );
-	
+
+	VkMemoryAllocateInfo allocInfo = {
+		.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+		.allocationSize = memRequirements.size,
+		.memoryTypeIndex = uint32_t(g_device.findMemoryType(properties, memRequirements.memoryTypeBits)),
+	};
+
 	if ( flags.bExportable == true || pDMA != nullptr )
 	{
-		memory_dedicated_info.sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO;
-		memory_dedicated_info.image = m_vkImage;
-		memory_dedicated_info.buffer = VK_NULL_HANDLE;
-		memory_dedicated_info.pNext = allocInfo.pNext;
-		
-		allocInfo.pNext = &memory_dedicated_info;
+		memory_dedicated_info = {
+			.sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO,
+			.pNext = std::exchange(allocInfo.pNext, &memory_dedicated_info),
+			.image = m_vkImage,
+		};
 	}
 	
 	if ( flags.bExportable == true && pDMA == nullptr )
 	{
 		// We'll export it to DRM
-		memory_export_info.sType = VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO;
-		memory_export_info.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
-		memory_export_info.pNext = allocInfo.pNext;
-		
-		allocInfo.pNext = &memory_export_info;
+		memory_export_info = {
+			.sType = VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO,
+			.pNext = std::exchange(allocInfo.pNext, &memory_export_info),
+			.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT,
+		};
 	}
 	
 	if ( pDMA != nullptr )
@@ -2031,19 +2051,19 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t drmFormat,
 		}
 
 		// We're importing WSI buffers from GL or Vulkan, set implicit_sync
-		wsiAllocInfo.sType = VK_STRUCTURE_TYPE_WSI_MEMORY_ALLOCATE_INFO_MESA;
-		wsiAllocInfo.implicit_sync = true;
-		wsiAllocInfo.pNext = allocInfo.pNext;
-		
-		allocInfo.pNext = &wsiAllocInfo;
-		
+		wsiAllocInfo = {
+				.sType = VK_STRUCTURE_TYPE_WSI_MEMORY_ALLOCATE_INFO_MESA,
+				.pNext = std::exchange(allocInfo.pNext, &wsiAllocInfo),
+				.implicit_sync = true,
+		};
+
 		// Memory already provided by pDMA
-		importMemoryInfo.sType = VK_STRUCTURE_TYPE_IMPORT_MEMORY_FD_INFO_KHR;
-		importMemoryInfo.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
-		importMemoryInfo.fd = fd;
-		importMemoryInfo.pNext = allocInfo.pNext;
-		
-		allocInfo.pNext = &importMemoryInfo;
+		importMemoryInfo = {
+				.sType = VK_STRUCTURE_TYPE_IMPORT_MEMORY_FD_INFO_KHR,
+				.pNext = std::exchange(allocInfo.pNext, &importMemoryInfo),
+				.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT,
+				.fd = fd,
+		};
 	}
 	
 	res = g_device.vk.AllocateMemory( g_device.device(), &allocInfo, nullptr, &m_vkImageMemory );
@@ -2065,8 +2085,6 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t drmFormat,
 		assert( tiling != VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT );
 		const VkImageSubresource image_subresource = {
 			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-			.mipLevel = 0,
-			.arrayLayer = 0,
 		};
 		VkSubresourceLayout image_layout;
 		g_device.vk.GetImageSubresourceLayout(g_device.device(), m_vkImage, &image_subresource, &image_layout);
@@ -2079,19 +2097,18 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t drmFormat,
 		// We assume we own the memory when doing this right now.
 		// We could support the import scenario as well if needed (but we
 		// already have a DMA-BUF in that case).
-// 		assert( bTextureable == false );
 		assert( pDMA == nullptr );
 
-		struct wlr_dmabuf_attributes dmabuf = {};
-		dmabuf.width = width;
-		dmabuf.height = height;
-		dmabuf.format = drmFormat;
+		struct wlr_dmabuf_attributes dmabuf = {
+			.width = int(width),
+			.height = int(height),
+			.format = drmFormat,
+		};
 		assert( dmabuf.format != DRM_FORMAT_INVALID );
 
 		// TODO: disjoint planes support
 		const VkMemoryGetFdInfoKHR memory_get_fd_info = {
 			.sType = VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR,
-			.pNext = NULL,
 			.memory = m_vkImageMemory,
 			.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT,
 		};
@@ -2104,8 +2121,11 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t drmFormat,
 		if ( tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT )
 		{
 			assert( g_device.vk.GetImageDrmFormatModifierPropertiesEXT != nullptr );
-			VkImageDrmFormatModifierPropertiesEXT imgModifierProps = {};
-			imgModifierProps.sType = VK_STRUCTURE_TYPE_IMAGE_DRM_FORMAT_MODIFIER_PROPERTIES_EXT;
+
+			VkImageDrmFormatModifierPropertiesEXT imgModifierProps = {
+				.sType = VK_STRUCTURE_TYPE_IMAGE_DRM_FORMAT_MODIFIER_PROPERTIES_EXT,
+			};
+
 			res = g_device.vk.GetImageDrmFormatModifierPropertiesEXT( g_device.device(), m_vkImage, &imgModifierProps );
 			if ( res != VK_SUCCESS ) {
 				vk_errorf( res, "vkGetImageDrmFormatModifierPropertiesEXT failed" );
@@ -2130,8 +2150,6 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t drmFormat,
 			{
 				const VkImageSubresource subresource = {
 					.aspectMask = planeAspects[i],
-					.mipLevel = 0,
-					.arrayLayer = 0,
 				};
 				VkSubresourceLayout subresourceLayout = {};
 				g_device.vk.GetImageSubresourceLayout( g_device.device(), m_vkImage, &subresource, &subresourceLayout );
@@ -2153,8 +2171,6 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t drmFormat,
 		{
 			const VkImageSubresource subresource = {
 				.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-				.mipLevel = 0,
-				.arrayLayer = 0,
 			};
 			VkSubresourceLayout subresourceLayout = {};
 			g_device.vk.GetImageSubresourceLayout( g_device.device(), m_vkImage, &subresource, &subresourceLayout );
@@ -2187,20 +2203,23 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t drmFormat,
 
 	if ( flags.bStorage || flags.bSampled )
 	{
-		VkImageViewCreateInfo createInfo = {};
-		createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-		createInfo.image = m_vkImage;
-		createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-		createInfo.format = DRMFormatToVulkan(drmFormat, false);;
-		createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
-		createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-		createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
-		createInfo.components.a = bHasAlpha ? VK_COMPONENT_SWIZZLE_IDENTITY : VK_COMPONENT_SWIZZLE_ONE;
-		createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		createInfo.subresourceRange.baseMipLevel = 0;
-		createInfo.subresourceRange.levelCount = 1;
-		createInfo.subresourceRange.baseArrayLayer = 0;
-		createInfo.subresourceRange.layerCount = 1;
+		VkImageViewCreateInfo createInfo = {
+			.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+			.image = m_vkImage,
+			.viewType = VK_IMAGE_VIEW_TYPE_2D,
+			.format = DRMFormatToVulkan(drmFormat, false),
+			.components = {
+				.r = VK_COMPONENT_SWIZZLE_IDENTITY,
+				.g = VK_COMPONENT_SWIZZLE_IDENTITY,
+				.b = VK_COMPONENT_SWIZZLE_IDENTITY,
+				.a = bHasAlpha ? VK_COMPONENT_SWIZZLE_IDENTITY : VK_COMPONENT_SWIZZLE_ONE,
+			},
+			.subresourceRange = {
+				.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+				.levelCount = 1,
+				.layerCount = 1,
+			},
+		};
 
 		res = g_device.vk.CreateImageView(g_device.device(), &createInfo, nullptr, &m_srgbView);
 		if ( res != VK_SUCCESS ) {
@@ -2210,9 +2229,10 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t drmFormat,
 
 		if ( flags.bSampled )
 		{
-			VkImageViewUsageCreateInfo viewUsageInfo = {};
-			viewUsageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO;
-			viewUsageInfo.usage = usage & ~VK_IMAGE_USAGE_STORAGE_BIT;
+			VkImageViewUsageCreateInfo viewUsageInfo = {
+				.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO,
+				.usage = usage & ~VK_IMAGE_USAGE_STORAGE_BIT,
+			};
 			createInfo.pNext = &viewUsageInfo;
 			createInfo.format = DRMFormatToVulkan(drmFormat, true);
 			res = g_device.vk.CreateImageView(g_device.device(), &createInfo, nullptr, &m_linearView);
@@ -2248,20 +2268,23 @@ bool CVulkanTexture::BInitFromSwapchain( VkImage image, uint32_t width, uint32_t
 	m_contentWidth = width;
 	m_contentHeight = height;
 
-	VkImageViewCreateInfo createInfo = {};
-	createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-	createInfo.image = image;
-	createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-	createInfo.format = format;
-	createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
-	createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-	createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
-	createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
-	createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-	createInfo.subresourceRange.baseMipLevel = 0;
-	createInfo.subresourceRange.levelCount = 1;
-	createInfo.subresourceRange.baseArrayLayer = 0;
-	createInfo.subresourceRange.layerCount = 1;
+	VkImageViewCreateInfo createInfo = {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+		.image = image,
+		.viewType = VK_IMAGE_VIEW_TYPE_2D,
+		.format = format,
+		.components = {
+			.r = VK_COMPONENT_SWIZZLE_IDENTITY,
+			.g = VK_COMPONENT_SWIZZLE_IDENTITY,
+			.b = VK_COMPONENT_SWIZZLE_IDENTITY,
+			.a = VK_COMPONENT_SWIZZLE_IDENTITY,
+		},
+		.subresourceRange = {
+			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+			.levelCount = 1,
+			.layerCount = 1,
+		},
+	};
 
 	VkResult res = g_device.vk.CreateImageView(g_device.device(), &createInfo, nullptr, &m_srgbView);
 	if ( res != VK_SUCCESS ) {
@@ -2326,15 +2349,18 @@ CVulkanTexture::~CVulkanTexture( void )
 bool vulkan_init_format(VkFormat format, uint32_t drmFormat)
 {
 	// First, check whether the Vulkan format is supported
-	VkPhysicalDeviceImageFormatInfo2 imageFormatInfo = {};
-	imageFormatInfo.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2;
-	imageFormatInfo.format = format;
-	imageFormatInfo.type = VK_IMAGE_TYPE_2D;
-	imageFormatInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-	imageFormatInfo.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
-	imageFormatInfo.flags = 0;
-	VkImageFormatProperties2 imageFormatProps = {};
-	imageFormatProps.sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2;
+	VkPhysicalDeviceImageFormatInfo2 imageFormatInfo = {
+		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2,
+		.format = format,
+		.type = VK_IMAGE_TYPE_2D,
+		.tiling = VK_IMAGE_TILING_OPTIMAL,
+		.usage = VK_IMAGE_USAGE_SAMPLED_BIT,
+	};
+
+	VkImageFormatProperties2 imageFormatProps = {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2,
+	};
+
 	VkResult res = g_device.vk.GetPhysicalDeviceImageFormatProperties2( g_device.physDev(), &imageFormatInfo, &imageFormatProps );
 	if ( res == VK_ERROR_FORMAT_NOT_SUPPORTED )
 	{
@@ -2360,11 +2386,14 @@ bool vulkan_init_format(VkFormat format, uint32_t drmFormat)
 	}
 
 	// Then, collect the list of modifiers supported for sampled usage
-	VkDrmFormatModifierPropertiesListEXT modifierPropList = {};
-	modifierPropList.sType = VK_STRUCTURE_TYPE_DRM_FORMAT_MODIFIER_PROPERTIES_LIST_EXT;
-	VkFormatProperties2 formatProps = {};
-	formatProps.sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2;
-	formatProps.pNext = &modifierPropList;
+	VkDrmFormatModifierPropertiesListEXT modifierPropList = {
+		.sType = VK_STRUCTURE_TYPE_DRM_FORMAT_MODIFIER_PROPERTIES_LIST_EXT,
+	};
+	VkFormatProperties2 formatProps = {
+		.sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2,
+		.pNext = &modifierPropList,
+	};
+
 	g_device.vk.GetPhysicalDeviceFormatProperties2( g_device.physDev(), format, &formatProps );
 
 	if ( modifierPropList.drmFormatModifierCount == 0 )
@@ -2446,17 +2475,13 @@ bool acquire_next_image( void )
 
 void vulkan_present_to_window( void )
 {
-	VkPresentInfoKHR presentInfo = {};
-	presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
-	
-// 	presentInfo.waitSemaphoreCount = 1;
-// 	presentInfo.pWaitSemaphores = signalSemaphores;
-	
-	presentInfo.swapchainCount = 1;
-	presentInfo.pSwapchains = &g_output.swapChain;
-	
-	presentInfo.pImageIndices = &g_output.nOutImage;
-	
+	VkPresentInfoKHR presentInfo = {
+		.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+		.swapchainCount = 1,
+		.pSwapchains = &g_output.swapChain,
+		.pImageIndices = &g_output.nOutImage,
+	};
+
 	if ( g_device.vk.QueuePresentKHR( g_device.queue(), &presentInfo ) != VK_SUCCESS )
 		vulkan_remake_swapchain();
 	
@@ -2481,25 +2506,25 @@ bool vulkan_make_swapchain( VulkanOutput_t *pOutput )
 
 	pOutput->outputFormat = pOutput->surfaceFormats[ surfaceFormat ].format;
 	
-	VkSwapchainCreateInfoKHR createInfo = {};
-	createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
-	createInfo.surface = pOutput->surface;
-	
-	createInfo.minImageCount = imageCount;
-	createInfo.imageFormat = pOutput->outputFormat;
-	createInfo.imageColorSpace = pOutput->surfaceFormats[surfaceFormat ].colorSpace;
-	createInfo.imageExtent = { g_nOutputWidth, g_nOutputHeight };
-	createInfo.imageArrayLayers = 1;
-	createInfo.imageUsage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-	createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-	
-	createInfo.preTransform = pOutput->surfaceCaps.currentTransform;
-	createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-	createInfo.presentMode = VK_PRESENT_MODE_FIFO_KHR;
-	createInfo.clipped = VK_TRUE;
-	
-	createInfo.oldSwapchain = VK_NULL_HANDLE;
-	
+	VkSwapchainCreateInfoKHR createInfo = {
+		.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
+		.surface = pOutput->surface,
+		.minImageCount = imageCount,
+		.imageFormat = pOutput->outputFormat,
+		.imageColorSpace = pOutput->surfaceFormats[surfaceFormat].colorSpace,
+		.imageExtent = {
+			.width = g_nOutputWidth,
+			.height = g_nOutputHeight,
+		},
+		.imageArrayLayers = 1,
+		.imageUsage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+		.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
+		.preTransform = pOutput->surfaceCaps.currentTransform,
+		.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+		.presentMode = VK_PRESENT_MODE_FIFO_KHR,
+		.clipped = VK_TRUE,
+	};
+
 	if (g_device.vk.CreateSwapchainKHR( g_device.device(), &createInfo, nullptr, &pOutput->swapChain) != VK_SUCCESS ) {
 		return false;
 	}
@@ -2518,8 +2543,9 @@ bool vulkan_make_swapchain( VulkanOutput_t *pOutput )
 			return false;
 	}
 
-	VkFenceCreateInfo fenceInfo = {};
-	fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+	VkFenceCreateInfo fenceInfo = {
+		.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+	};
 
 	g_device.vk.CreateFence( g_device.device(), &fenceInfo, nullptr, &pOutput->acquireFence );
 
@@ -3228,10 +3254,11 @@ std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struct wl
 	uint32_t width = buf->width;
 	uint32_t height = buf->height;
 
-	VkBufferCreateInfo bufferCreateInfo = {};
-	bufferCreateInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-	bufferCreateInfo.size = stride * height;
-	bufferCreateInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+	VkBufferCreateInfo bufferCreateInfo = {
+		.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+		.size = stride * height,
+		.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+	};
 	VkBuffer buffer;
 	result = g_device.vk.CreateBuffer( g_device.device(), &bufferCreateInfo, nullptr, &buffer );
 	if ( result != VK_SUCCESS )
@@ -3243,17 +3270,18 @@ std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struct wl
 	VkMemoryRequirements memRequirements;
 	g_device.vk.GetBufferMemoryRequirements(g_device.device(), buffer, &memRequirements);
 
-	int memTypeIndex =  g_device.findMemoryType(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT|VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, memRequirements.memoryTypeBits );
-	if ( memTypeIndex == -1 )
+	uint32_t memTypeIndex =  g_device.findMemoryType(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT|VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, memRequirements.memoryTypeBits );
+	if ( memTypeIndex == ~0u )
 	{
 		wlr_buffer_end_data_ptr_access( buf );
 		return 0;
 	}
 
-	VkMemoryAllocateInfo allocInfo = {};
-	allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-	allocInfo.allocationSize = memRequirements.size;
-	allocInfo.memoryTypeIndex = memTypeIndex;
+	VkMemoryAllocateInfo allocInfo = {
+		.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+		.allocationSize = memRequirements.size,
+		.memoryTypeIndex = memTypeIndex,
+	};
 
 	VkDeviceMemory bufferMemory;
 	result = g_device.vk.AllocateMemory( g_device.device(), &allocInfo, nullptr, &bufferMemory);
@@ -3285,7 +3313,7 @@ std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struct wl
 	wlr_buffer_end_data_ptr_access( buf );
 
 	std::shared_ptr<CVulkanTexture> pTex = std::make_shared<CVulkanTexture>();
-	CVulkanTexture::createFlags texCreateFlags = {};
+	CVulkanTexture::createFlags texCreateFlags;
 	texCreateFlags.bSampled = true;
 	texCreateFlags.bTransferDst = true;
 	if ( pTex->BInit( width, height, drmFormat, texCreateFlags ) == false )
