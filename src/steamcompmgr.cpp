@@ -2290,6 +2290,7 @@ determine_and_apply_focus(xwayland_ctx_t *ctx, std::vector<win*>& vecGlobalPossi
 	ctx->focus.overlayWindow = nullptr;
 	ctx->focus.notificationWindow = nullptr;
 	ctx->focus.overrideWindow = nullptr;
+	ctx->focus.externalOverlayWindow = nullptr;
 
 	unsigned int maxOpacity = 0;
 	unsigned int maxOpacityExternal = 0;
