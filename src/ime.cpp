@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <string.h>
 
+#include <deque>
 #include <unordered_map>
 #include <vector>
 
@@ -104,7 +105,10 @@ struct wlserver_input_method {
 	// Used to send emulated input events
 	struct wlr_keyboard keyboard;
 	struct wlr_input_device keyboard_device;
-	std::unordered_map<uint32_t, struct wlserver_input_method_key> keys;
+	std::deque<struct wlserver_input_method_key> keys;
+	uint32_t next_keycode_index;
+
+	struct wl_event_source *ime_reset_ime_keyboard_event_source;
 };
 
 struct wlserver_input_method_manager {
@@ -129,24 +133,40 @@ static xkb_keysym_t keysym_from_ch(uint32_t ch)
 
 static uint32_t keycode_from_ch(struct wlserver_input_method *ime, uint32_t ch)
 {
-	if (ime->keys.count(ch) > 0) {
-		return ime->keys[ch].keycode;
-	}
-
 	xkb_keysym_t keysym = keysym_from_ch(ch);
 	if (keysym == XKB_KEY_NoSymbol) {
 		return XKB_KEYCODE_INVALID;
 	}
 
-	if (ime->keys.size() >= allow_keycodes_len) {
-		// TODO: maybe use keycodes above KEY_MAX?
-		ime_log.errorf("Key codes exhausted!");
-		return XKB_KEYCODE_INVALID;
+	// Repeated chars can re-use keycode
+	if (!ime->keys.empty() && ime->keys.back().keysym == keysym)
+	{
+		return ime->keys.back().keycode;
 	}
 
-	uint32_t keycode = allow_keycodes[ime->keys.size()];
-	ime->keys[ch] = (struct wlserver_input_method_key){ keycode, keysym };
+	if (ime->keys.size() >= allow_keycodes_len) {
+		// TODO: maybe use keycodes above KEY_MAX?
+		ime_log.errorf("Key codes wrapped within 100ms!");
+		ime->keys.pop_front();
+		// FALLTHROUGH and allow re-use (oldest key probably fine anyway)
+	}
+
+	uint32_t keycode = allow_keycodes[ime->next_keycode_index++ % allow_keycodes_len];
+	ime->keys.push_back((struct wlserver_input_method_key){ keycode, keysym });
 	return keycode;
+}
+
+static bool generate_keymap_key(FILE *f, uint32_t keycode, xkb_keysym_t keysym)
+{
+	char keysym_name[256];
+	int ret = xkb_keysym_get_name(keysym, keysym_name, sizeof(keysym_name));
+	if (ret <= 0) {
+		ime_log.errorf("xkb_keysym_get_name failed for keysym %u", keysym);
+		return false;
+	}
+
+	fprintf(f, "	key <K%u> {[ %s ]};\n", keycode, keysym_name);
+	return true;
 }
 
 static struct xkb_keymap *generate_keymap(struct wlserver_input_method *ime)
@@ -157,8 +177,9 @@ static struct xkb_keymap *generate_keymap(struct wlserver_input_method *ime)
 	size_t str_size = 0;
 	FILE *f = open_memstream(&str, &str_size);
 
-	uint32_t min_keycode = allow_keycodes[0];
-	uint32_t max_keycode = allow_keycodes[ime->keys.size()];
+	// min/max from the set of all allow_keycodes and actions
+	uint32_t min_keycode = KEY_1;
+	uint32_t max_keycode = KEY_DELETE;
 	fprintf(f,
 		"xkb_keymap {\n"
 		"\n"
@@ -169,7 +190,11 @@ static struct xkb_keymap *generate_keymap(struct wlserver_input_method *ime)
 		keycode_offset + max_keycode
 	);
 
-	for (const auto kv : ime->keys) {
+	for (const auto kk : ime->keys) {
+		uint32_t keycode = kk.keycode;
+		fprintf(f, "	<K%u> = %u;\n", keycode, keycode + keycode_offset);
+	}
+	for (const auto kv : actions) {
 		uint32_t keycode = kv.second.keycode;
 		fprintf(f, "	<K%u> = %u;\n", keycode, keycode + keycode_offset);
 	}
@@ -187,18 +212,22 @@ static struct xkb_keymap *generate_keymap(struct wlserver_input_method *ime)
 		"xkb_symbols \"(unnamed)\" {\n"
 	);
 
-	for (const auto kv : ime->keys) {
-		uint32_t keycode = kv.second.keycode;
-		xkb_keysym_t keysym = kv.second.keysym;
-
-		char keysym_name[256];
-		int ret = xkb_keysym_get_name(keysym, keysym_name, sizeof(keysym_name));
-		if (ret <= 0) {
-			ime_log.errorf("xkb_keysym_get_name failed for keysym %u", keysym);
+	for (const auto kk : ime->keys) {
+		if (!generate_keymap_key(f, kk.keycode, kk.keysym))
+		{
+			fclose(f);
+			free(str);
 			return nullptr;
 		}
-
-		fprintf(f, "	key <K%u> {[ %s ]};\n", keycode, keysym_name);
+	}
+	for (const auto kv : actions) {
+		const auto kk = kv.second;
+		if (!generate_keymap_key(f, kk.keycode, kk.keysym))
+		{
+			fclose(f);
+			free(str);
+			return nullptr;
+		}
 	}
 
 	fprintf(f,
@@ -294,14 +323,13 @@ static bool try_type_keysym(struct wlserver_input_method *ime, xkb_keysym_t keys
 static void type_text(struct wlserver_input_method *ime, const char *text)
 {
 	// If possible, try to type the character without switching the keymap
-	if (utf8_size(text) == 1 && text[1] == '\0') {
+	// ...unless we're already using a fancy keymap
+	if (utf8_size(text) == 1 && text[1] == '\0' && ime->keys.empty()) {
 		xkb_keysym_t keysym = keysym_from_ch(text[0]);
 		if (keysym != XKB_KEY_NoSymbol && try_type_keysym(ime, keysym)) {
 			return;
 		}
 	}
-
-	ime->keys.clear();
 
 	std::vector<xkb_keycode_t> keycodes;
 	while (text[0] != '\0') {
@@ -332,6 +360,9 @@ static void type_text(struct wlserver_input_method *ime, const char *text)
 		wlr_seat_keyboard_notify_key(seat, 0, keycodes[i], WL_KEYBOARD_KEY_STATE_PRESSED);
 		wlr_seat_keyboard_notify_key(seat, 0, keycodes[i], WL_KEYBOARD_KEY_STATE_RELEASED);
 	}
+
+	// Reset keymap when we're idle for a while
+	wl_event_source_timer_update(ime->ime_reset_ime_keyboard_event_source, 100 /* ms */);
 }
 
 static void perform_action(struct wlserver_input_method *ime, enum gamescope_input_method_action action)
@@ -346,8 +377,7 @@ static void perform_action(struct wlserver_input_method *ime, enum gamescope_inp
 		return;
 	}
 
-	ime->keys.clear();
-	ime->keys[0] = key;
+	// Keymap always contains all actions[]
 
 	struct xkb_keymap *keymap = generate_keymap(ime);
 	if (keymap == nullptr) {
@@ -441,6 +471,16 @@ static const struct wlr_input_device_impl keyboard_device_impl = {
 	.destroy = keyboard_device_destroy,
 };
 
+static int reset_ime_keyboard(void *data)
+{
+	struct wlserver_input_method *ime = (struct wlserver_input_method *)data;
+
+	ime->keys.clear();
+	ime->next_keycode_index = 0;  // preserve old behavior; could just let this keep going
+
+	return 0;
+}
+
 static void manager_handle_create_input_method(struct wl_client *client, struct wl_resource *manager_resource, struct wl_resource *seat_resource, uint32_t id)
 {
 	struct wlserver_input_method_manager *manager = (struct wlserver_input_method_manager *)wl_resource_get_user_data(manager_resource);
@@ -458,6 +498,7 @@ static void manager_handle_create_input_method(struct wl_client *client, struct 
 	ime->resource = ime_resource;
 	ime->manager = manager;
 	ime->serial = 1;
+	ime->next_keycode_index = 0;
 
 	wlr_keyboard_init(&ime->keyboard, &keyboard_impl);
 	wlr_input_device_init(&ime->keyboard_device, WLR_INPUT_DEVICE_KEYBOARD, &keyboard_device_impl, "ime", 0, 0);
@@ -467,6 +508,8 @@ static void manager_handle_create_input_method(struct wl_client *client, struct 
 
 	wl_resource_set_user_data(ime->resource, ime);
 	gamescope_input_method_send_done(ime->resource, ime->serial);
+
+	ime->ime_reset_ime_keyboard_event_source = wl_event_loop_add_timer(manager->server->event_loop, reset_ime_keyboard, ime);
 
 	active_input_method = ime;
 }
