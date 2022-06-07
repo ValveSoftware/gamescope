@@ -98,6 +98,13 @@ void gamescope_xwayland_server_t::wayland_commit(struct wlr_surface *surf, struc
 void xwayland_surface_role_commit(struct wlr_surface *wlr_surface) {
 	assert(wlr_surface->role == &xwayland_surface_role);
 
+	uint32_t committed = wlr_surface->current.committed;
+	wlr_surface->current.committed = 0;
+
+	if (!(committed & WLR_SURFACE_STATE_BUFFER)) {
+		return;
+	}
+
 	VulkanWlrTexture_t *tex = (VulkanWlrTexture_t *) wlr_surface_get_texture( wlr_surface );
 	if ( tex == NULL )
 	{
@@ -115,10 +122,6 @@ void xwayland_surface_role_commit(struct wlr_surface *wlr_surface) {
 
 static void xwayland_surface_role_precommit(struct wlr_surface *wlr_surface) {
 	assert(wlr_surface->role == &xwayland_surface_role);
-	struct wlr_xwayland_surface *surface = (struct wlr_xwayland_surface *) wlr_surface->role_data;
-	if (surface == NULL) {
-		return;
-	}
 }
 
 const struct wlr_surface_role xwayland_surface_role = {
