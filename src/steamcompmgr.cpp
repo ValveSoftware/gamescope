@@ -2324,7 +2324,7 @@ determine_and_apply_focus(xwayland_ctx_t *ctx, std::vector<win*>& vecGlobalPossi
 
 		if (w->isExternalOverlay)
 		{
-			if (w->opacity >= maxOpacityExternal)
+			if (w->opacity > maxOpacityExternal)
 			{
 				ctx->focus.externalOverlayWindow = w;
 				maxOpacityExternal = w->opacity;
