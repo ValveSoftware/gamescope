@@ -152,6 +152,10 @@ void wlserver_mousemotion( int x, int y, uint32_t time );
 void wlserver_mousebutton( int button, bool press, uint32_t time );
 void wlserver_mousewheel( int x, int y, uint32_t time );
 
+void wlserver_touchmotion( double x, double y, int touch_id, uint32_t time );
+void wlserver_touchdown( double x, double y, int touch_id, uint32_t time );
+void wlserver_touchup( int touch_id, uint32_t time );
+
 void wlserver_send_frame_done( struct wlr_surface *surf, const struct timespec *when );
 
 gamescope_xwayland_server_t *wlserver_get_xwayland_server( size_t index );

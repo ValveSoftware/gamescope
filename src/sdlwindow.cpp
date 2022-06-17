@@ -105,6 +105,7 @@ void inputSDLThreadRun( void )
 	}
 
 	SDL_SetRelativeMouseMode(SDL_TRUE);
+	SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
 
 	g_nOldNestedRefresh = g_nNestedRefresh;
 
@@ -134,6 +135,21 @@ void inputSDLThreadRun( void )
 			case SDL_MOUSEWHEEL:
 				wlserver_lock();
 				wlserver_mousewheel( -event.wheel.x, -event.wheel.y, event.wheel.timestamp );
+				wlserver_unlock();
+				break;
+			case SDL_FINGERMOTION:
+				wlserver_lock();
+				wlserver_touchmotion( event.tfinger.x, event.tfinger.y, event.tfinger.fingerId, event.tfinger.timestamp );
+				wlserver_unlock();
+				break;
+			case SDL_FINGERDOWN:
+				wlserver_lock();
+				wlserver_touchdown( event.tfinger.x, event.tfinger.y, event.tfinger.fingerId, event.tfinger.timestamp );
+				wlserver_unlock();
+				break;
+			case SDL_FINGERUP:
+				wlserver_lock();
+				wlserver_touchup( event.tfinger.fingerId, event.tfinger.timestamp );
 				wlserver_unlock();
 				break;
 			case SDL_KEYDOWN:
