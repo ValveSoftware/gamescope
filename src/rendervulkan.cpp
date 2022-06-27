@@ -643,9 +643,13 @@ bool CVulkanDevice::selectPhysDev()
 
 		if (generalIndex != ~0u || computeOnlyIndex != ~0u)
 		{
-			m_queueFamily = computeOnlyIndex == ~0u ? generalIndex : computeOnlyIndex;
-			m_physDev = cphysDev;
-			break;
+			// Select the device if it's the first one or the preferred one
+			if (!m_physDev ||
+			    (g_preferVendorID == deviceProperties.vendorID && g_preferDeviceID == deviceProperties.deviceID))
+			{
+				m_queueFamily = computeOnlyIndex == ~0u ? generalIndex : computeOnlyIndex;
+				m_physDev = cphysDev;
+			}
 		}
 	}
 

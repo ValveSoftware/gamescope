@@ -46,6 +46,7 @@ const struct option *gamescope_options = (struct option[]){
 	{ "sharpness", required_argument, nullptr, 0 },
 	{ "fsr-sharpness", required_argument, nullptr, 0 },
 	{ "rt", no_argument, nullptr, 0 },
+	{ "prefer-vk-device", required_argument, 0 },
 
 	// nested mode options
 	{ "nested-unfocused-refresh", required_argument, nullptr, 'o' },
@@ -104,6 +105,7 @@ const char usage[] =
 	"  -C, --hide-cursor-delay        hide cursor image after delay\n"
 	"  -e, --steam                    enable Steam integration\n"
 	" --xwayland-count                create N xwayland servers\n"
+	" --prefer-vk-device              prefer Vulkan device for compositing (ex: 1002:7300)\n"
 	"\n"
 	"Nested mode options:\n"
 	"  -o, --nested-unfocused-refresh game refresh rate when unfocused\n"
@@ -169,6 +171,9 @@ struct sched_param g_schedOldParam;
 
 float g_flMaxWindowScale = FLT_MAX;
 bool g_bIntegerScale = false;
+
+uint32_t g_preferVendorID = 0;
+uint32_t g_preferDeviceID = 0;
 
 pthread_t g_mainThread;
 
@@ -369,6 +374,12 @@ int main(int argc, char **argv)
 					g_upscalerSharpness = atoi( optarg );
 				} else if (strcmp(opt_name, "rt") == 0) {
 					g_bRt = true;
+				} else if (strcmp(opt_name, "prefer-vk-device") == 0) {
+					unsigned vendorID;
+					unsigned deviceID;
+					sscanf( optarg, "%X:%X", &vendorID, &deviceID );
+					g_preferVendorID = vendorID;
+					g_preferDeviceID = deviceID;
 				}
 				break;
 			case '?':

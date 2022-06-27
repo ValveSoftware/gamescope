@@ -44,5 +44,8 @@ extern struct sched_param g_schedOldParam;
 
 extern int g_nXWaylandCount;
 
+extern uint32_t g_preferVendorID;
+extern uint32_t g_preferDeviceID;
+
 void restore_fd_limit( void );
 bool BIsNested( void );
