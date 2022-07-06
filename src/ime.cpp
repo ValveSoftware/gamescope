@@ -128,6 +128,15 @@ static xkb_keysym_t keysym_from_ch(uint32_t ch)
 	if (ch == 0x20ac) {
 		return XKB_KEY_EuroSign;
 	}
+	if ((ch >= 0x3130 && ch <= 0x318f) // Hangul Compatibility Jamo that CEF does not like as keysyms
+	 || (ch >= 0x11A8 && ch <= 0x11C2) // subset of Hangul Jamo that CEF does not like as keysyms
+	 || (ch == 0x11EB)				   // continued
+	 || (ch == 0x11F0)				   // continued
+	 || (ch == 0x11F9)				   // continued
+	 || (ch == 0x2030))				   // PER MILLE SIGN
+	{
+		return ch | 0x1000000;
+	}
 	return xkb_utf32_to_keysym(ch);
 }
 
