@@ -170,9 +170,11 @@ struct wlserver_surface
 	bool overridden;
 	struct wl_list pending_link;
 	struct wl_listener destroy;
+
+	gamescope_xwayland_server_t *xwayland_server;
 };
 
-void wlserver_surface_init( struct wlserver_surface *surf, uint32_t x11_id );
+void wlserver_surface_init( struct wlserver_surface *surf, gamescope_xwayland_server_t *server, uint32_t x11_id );
 void wlserver_surface_finish( struct wlserver_surface *surf );
 
 void wlserver_set_xwayland_server_mode( size_t idx, int w, int h, int refresh );

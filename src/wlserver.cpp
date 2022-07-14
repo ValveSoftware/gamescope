@@ -1003,7 +1003,7 @@ static void handle_surface_destroy( struct wl_listener *l, void *data )
 {
 	struct wlserver_surface *surf = wl_container_of( l, surf, destroy );
 	wlserver_surface_finish( surf );
-	wlserver_surface_init( surf, surf->x11_id );
+	wlserver_surface_init( surf, surf->xwayland_server, surf->x11_id );
 }
 
 static void wlserver_surface_set_wlr( struct wlserver_surface *surf, struct wlr_surface *wlr_surf )
@@ -1017,6 +1017,7 @@ static void wlserver_surface_set_wlr( struct wlserver_surface *surf, struct wlr_
 	wl_signal_add( &wlr_surf->events.destroy, &surf->destroy );
 
 	surf->wlr = wlr_surf;
+	wlr_surf->data = surf->xwayland_server;
 
 	if ( !wlr_surface_set_role(wlr_surf, &xwayland_surface_role, NULL, NULL, 0 ) )
 	{
@@ -1024,11 +1025,12 @@ static void wlserver_surface_set_wlr( struct wlserver_surface *surf, struct wlr_
 	}
 }
 
-void wlserver_surface_init( struct wlserver_surface *surf, uint32_t x11_id )
+void wlserver_surface_init( struct wlserver_surface *surf, gamescope_xwayland_server_t *server, uint32_t x11_id )
 {
 	surf->wl_id = 0;
 	surf->x11_id = x11_id;
 	surf->wlr = nullptr;
+	surf->xwayland_server = server;
 	wl_list_init( &surf->pending_link );
 	wl_list_init( &surf->destroy.link );
 }
@@ -1043,6 +1045,7 @@ void gamescope_xwayland_server_t::set_wl_id( struct wlserver_surface *surf, uint
 
 	surf->wl_id = id;
 	surf->wlr = nullptr;
+	surf->xwayland_server = this;
 
 	wl_list_insert( &pending_surfaces, &surf->pending_link );
 	wl_list_init( &surf->destroy.link );

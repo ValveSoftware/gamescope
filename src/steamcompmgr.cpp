@@ -3221,7 +3221,7 @@ add_win(xwayland_ctx_t *ctx, Window id, Window prev, unsigned long sequence)
 
 	new_win->mouseMoved = 0;
 
-	wlserver_surface_init( &new_win->surface, id );
+	wlserver_surface_init( &new_win->surface, ctx->xwayland_server, id );
 
 	new_win->next = *p;
 	*p = new_win;
