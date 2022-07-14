@@ -34,7 +34,7 @@ public:
 	bool is_xwayland_ready() const;
 	const char *get_nested_display_name() const;
 
-	void set_wl_id( struct wlserver_surface *surf, long id );
+	void set_wl_id( struct wlserver_surface *surf, uint32_t id );
 
 	_XDisplay *get_xdisplay();
 
@@ -166,13 +166,13 @@ struct wlserver_surface
 	std::atomic<struct wlr_surface *> wlr;
 
 	// owned by wlserver
-	long wl_id, x11_id;
+	uint32_t wl_id, x11_id;
 	bool overridden;
 	struct wl_list pending_link;
 	struct wl_listener destroy;
 };
 
-void wlserver_surface_init( struct wlserver_surface *surf, long x11_id );
+void wlserver_surface_init( struct wlserver_surface *surf, uint32_t x11_id );
 void wlserver_surface_finish( struct wlserver_surface *surf );
 
 void wlserver_set_xwayland_server_mode( size_t idx, int w, int h, int refresh );

@@ -3449,7 +3449,7 @@ damage_win(xwayland_ctx_t *ctx, XDamageNotifyEvent *de)
 }
 
 static void
-handle_wl_surface_id(xwayland_ctx_t *ctx, win *w, long surfaceID)
+handle_wl_surface_id(xwayland_ctx_t *ctx, win *w, uint32_t surfaceID)
 {
 	struct wlr_surface *surface = NULL;
 
@@ -3583,7 +3583,7 @@ handle_client_message(xwayland_ctx_t *ctx, XClientMessageEvent *ev)
 	{
 		if (ev->message_type == ctx->atoms.WLSurfaceIDAtom)
 		{
-			handle_wl_surface_id( ctx, w, ev->data.l[0]);
+			handle_wl_surface_id( ctx, w, uint32_t(ev->data.l[0]));
 		}
 		else if ( ev->message_type == ctx->atoms.activeWindowAtom )
 		{

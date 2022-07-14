@@ -380,7 +380,7 @@ static void wlserver_new_surface(struct wl_listener *l, void *data)
 	struct wlserver_surface *s, *tmp;
 	wl_list_for_each_safe(s, tmp, &pending_surfaces, pending_link)
 	{
-		if (s->wl_id == (long)id && s->wlr == nullptr)
+		if (s->wl_id == id && s->wlr == nullptr)
 		{
 			wlserver_surface_set_wlr( s, wlr_surf );
 		}
@@ -1024,7 +1024,7 @@ static void wlserver_surface_set_wlr( struct wlserver_surface *surf, struct wlr_
 	}
 }
 
-void wlserver_surface_init( struct wlserver_surface *surf, long x11_id )
+void wlserver_surface_init( struct wlserver_surface *surf, uint32_t x11_id )
 {
 	surf->wl_id = 0;
 	surf->x11_id = x11_id;
@@ -1033,11 +1033,11 @@ void wlserver_surface_init( struct wlserver_surface *surf, long x11_id )
 	wl_list_init( &surf->destroy.link );
 }
 
-void gamescope_xwayland_server_t::set_wl_id( struct wlserver_surface *surf, long id )
+void gamescope_xwayland_server_t::set_wl_id( struct wlserver_surface *surf, uint32_t id )
 {
 	if ( surf->wl_id != 0 )
 	{
-		wl_log.errorf( "surf->wl_id already set, was %lu, set %lu", surf->wl_id, id );
+		wl_log.errorf( "surf->wl_id already set, was %u, set %u", surf->wl_id, id );
 		return;
 	}
 
