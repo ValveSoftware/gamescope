@@ -79,6 +79,7 @@ const struct option *gamescope_options = (struct option[]){
 	{ "composite-debug", no_argument, nullptr, 0 },
 	{ "disable-xres", no_argument, nullptr, 'x' },
 	{ "fade-out-duration", required_argument, nullptr, 0 },
+	{ "force-orientation", required_argument, nullptr, 0 },
 
 	{} // keep last
 };
@@ -107,6 +108,7 @@ const char usage[] =
 	"  -e, --steam                    enable Steam integration\n"
 	"  --xwayland-count               create N xwayland servers\n"
 	"  --prefer-vk-device             prefer Vulkan device for compositing (ex: 1002:7300)\n"
+	"  --force-orientation             rotate the display (left, right, normal, upsidedown)\n"
 	"\n"
 	"Nested mode options:\n"
 	"  -o, --nested-unfocused-refresh game refresh rate when unfocused\n"
@@ -213,6 +215,22 @@ static enum drm_mode_generation parse_drm_mode_generation(const char *str)
 		return DRM_MODE_GENERATE_FIXED;
 	} else {
 		fprintf( stderr, "gamescope: invalid value for --generate-drm-mode\n" );
+		exit(1);
+	}
+}
+
+static enum g_panel_orientation force_orientation (const char *str)
+{
+	if (strcmp(str, "normal") == 0) {
+		return PANEL_ORIENTATION_0;
+	} else if (strcmp(str, "right") == 0) {
+		return PANEL_ORIENTATION_270;
+	} else if (strcmp(str, "left") == 0) {
+		return PANEL_ORIENTATION_90;
+	} else if (strcmp(str, "upsidedown") == 0) {
+		return PANEL_ORIENTATION_180;
+	} else {
+		fprintf( stderr, "gamescope: invalid value for --force-orientation\n" );
 		exit(1);
 	}
 }
@@ -371,6 +389,8 @@ int main(int argc, char **argv)
 					g_nTouchClickMode = g_nDefaultTouchClickMode;
 				} else if (strcmp(opt_name, "generate-drm-mode") == 0) {
 					g_drmModeGeneration = parse_drm_mode_generation( optarg );
+				} else if (strcmp(opt_name, "force-orientation") == 0) {
+					g_drmModeOrientation = force_orientation( optarg );
 				} else if (strcmp(opt_name, "sharpness") == 0 ||
 						   strcmp(opt_name, "fsr-sharpness") == 0) {
 					g_upscalerSharpness = atoi( optarg );
@@ -533,7 +553,7 @@ int main(int argc, char **argv)
 		fprintf( stderr, "Failed to initialize wlserver\n" );
 		return 1;
 	}
-	
+
 	gamescope_xwayland_server_t *base_server = wlserver_get_xwayland_server(0);
 
 	setenv("DISPLAY", base_server->get_nested_display_name(), 1);

@@ -48,6 +48,8 @@ const char *g_sOutputName = nullptr;
 bool g_bSupportsAsyncFlips = false;
 
 enum drm_mode_generation g_drmModeGeneration = DRM_MODE_GENERATE_CVT;
+enum g_panel_orientation g_drmModeOrientation = PANEL_ORIENTATION_AUTO;
+
 
 static LogScope drm_log("drm");
 static LogScope drm_verbose_log("drm", LOG_SILENT);
@@ -1259,7 +1261,7 @@ void drm_lock_fbid( struct drm_t *drm, uint32_t fbid )
 void drm_unlock_fbid( struct drm_t *drm, uint32_t fbid )
 {
 	struct fb &fb = get_fb( *drm, fbid );
-	
+
 	assert( fb.held_refs > 0 );
 	if ( --fb.held_refs != 0 )
 		return;
@@ -1300,7 +1302,26 @@ drm_prepare_basic( struct drm_t *drm, const struct FrameInfo_t *frameInfo )
 
 	drm->fbids_in_req.push_back( fb_id );
 
-	add_plane_property(req, drm->primary, "rotation", g_bRotated ? DRM_MODE_ROTATE_270 : DRM_MODE_ROTATE_0);
+	switch ( g_drmModeOrientation )
+	{
+	case PANEL_ORIENTATION_0:
+		add_plane_property(req, drm->primary, "rotation", DRM_MODE_ROTATE_0);
+		break;
+	case PANEL_ORIENTATION_270:
+		add_plane_property(req, drm->primary, "rotation", DRM_MODE_ROTATE_270);
+		break;
+	case PANEL_ORIENTATION_90:
+		add_plane_property(req, drm->primary, "rotation", DRM_MODE_ROTATE_90);
+		break;
+	case PANEL_ORIENTATION_180:
+		add_plane_property(req, drm->primary, "rotation", DRM_MODE_ROTATE_180);
+		break;
+	/* we are keeping the original method used for by default to prevent a sudden break in compatibility for devices using this method.*/
+	case PANEL_ORIENTATION_AUTO:
+	default:
+		add_plane_property(req, drm->primary, "rotation", g_bRotated ? DRM_MODE_ROTATE_270 : DRM_MODE_ROTATE_0);
+		break;
+	}
 
 	add_plane_property(req, drm->primary, "FB_ID", fb_id);
 	add_plane_property(req, drm->primary, "CRTC_ID", drm->crtc->id);
@@ -1550,7 +1571,25 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 			liftoff_layer_set_property( drm->lo_layers[ i ], "SRC_W", entry.layerState[i].srcW );
 			liftoff_layer_set_property( drm->lo_layers[ i ], "SRC_H", entry.layerState[i].srcH );
 
-			liftoff_layer_set_property( drm->lo_layers[ i ], "rotation", g_bRotated ? DRM_MODE_ROTATE_270 : DRM_MODE_ROTATE_0);
+			switch ( g_drmModeOrientation )
+			{
+				case PANEL_ORIENTATION_0:
+					liftoff_layer_set_property( drm->lo_layers[ i ], "rotation", DRM_MODE_ROTATE_0);
+					break;
+				case PANEL_ORIENTATION_270:
+					liftoff_layer_set_property( drm->lo_layers[ i ], "rotation", DRM_MODE_ROTATE_270);
+					break;
+				case PANEL_ORIENTATION_90:
+					liftoff_layer_set_property( drm->lo_layers[ i ], "rotation", DRM_MODE_ROTATE_90);
+					break;
+				case PANEL_ORIENTATION_180:
+					liftoff_layer_set_property( drm->lo_layers[ i ], "rotation", DRM_MODE_ROTATE_180);
+					break;
+				case PANEL_ORIENTATION_AUTO:
+				default: /* We are using auto to ensure compatibility with devicess that used this method*/
+					liftoff_layer_set_property( drm->lo_layers[ i ], "rotation", g_bRotated ? DRM_MODE_ROTATE_270 : DRM_MODE_ROTATE_0);
+					break;
+			}
 
 			liftoff_layer_set_property( drm->lo_layers[ i ], "CRTC_X", entry.layerState[i].crtcX);
 			liftoff_layer_set_property( drm->lo_layers[ i ], "CRTC_Y", entry.layerState[i].crtcY);
@@ -2050,7 +2089,7 @@ bool drm_update_color_mtx(struct drm_t *drm)
 		drm_ctm.matrix[i] = color.s31_32;
 	}
 
-	uint32_t blob_id = 0;	
+	uint32_t blob_id = 0;
 	if (drmModeCreatePropertyBlob(drm->fd, &drm_ctm,
 			sizeof(struct drm_color_ctm), &blob_id) != 0) {
 		drm_log.errorf_errno("Unable to create CTM property blob");
@@ -2128,7 +2167,7 @@ bool drm_update_gamma_lut(struct drm_t *drm)
 		gamma_lut[i].blue  = drm_calc_lut_value( b_exp, drm->pending.color_linear_gain[2], drm->pending.color_gain[2], drm->pending.gain_blend );
 	}
 
-	uint32_t blob_id = 0;	
+	uint32_t blob_id = 0;
 	if (drmModeCreatePropertyBlob(drm->fd, gamma_lut,
 			lut_entries * sizeof(struct drm_color_lut), &blob_id) != 0) {
 		drm_log.errorf_errno("Unable to create gamma LUT property blob");
@@ -2179,7 +2218,7 @@ bool drm_update_degamma_lut(struct drm_t *drm)
 		degamma_lut[i].blue  = drm_quantize_lut_value( safe_pow( input, drm->pending.color_degamma_exponent[screen_type][2] ) );
 	}
 
-	uint32_t blob_id = 0;	
+	uint32_t blob_id = 0;
 	if (drmModeCreatePropertyBlob(drm->fd, degamma_lut,
 			lut_entries * sizeof(struct drm_color_lut), &blob_id) != 0) {
 		drm_log.errorf_errno("Unable to create degamma LUT property blob");

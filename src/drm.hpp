@@ -98,7 +98,7 @@ struct fb {
 	uint32_t id;
 	/* Client buffer, if any */
 	struct wlr_buffer *buf;
-	/* A FB is held if it's being used by steamcompmgr 
+	/* A FB is held if it's being used by steamcompmgr
 	 * doesn't need to be atomic as it's only ever
 	 * modified/read from the steamcompmgr thread */
 	int held_refs;
@@ -120,19 +120,19 @@ struct drm_t {
 	std::unordered_map< uint32_t, struct connector > connectors;
 
 	std::map< uint32_t, drmModePropertyRes * > props;
-	
+
 	struct plane *primary;
 	struct crtc *crtc;
 	struct connector *connector;
 	int crtc_index;
 	int kms_in_fence_fd;
 	int kms_out_fence_fd;
-	
+
 	struct wlr_drm_format_set primary_formats;
-	
+
 	drmModeAtomicReq *req;
 	uint32_t flags;
-	
+
 	struct liftoff_device *lo_device;
 	struct liftoff_output *lo_output;
 	struct liftoff_layer *lo_layers[ k_nMaxLayers ];
@@ -170,16 +170,16 @@ struct drm_t {
 	std::vector < uint32_t > fbids_queued;
 	/* FBs currently on screen */
 	std::vector < uint32_t > fbids_on_screen;
-	
+
 	std::unordered_map< uint32_t, struct fb > fb_map;
 	std::mutex fb_map_mutex;
-	
+
 	std::mutex free_queue_lock;
 	std::vector< uint32_t > fbid_unlock_queue;
 	std::vector< uint32_t > fbid_free_queue;
-	
+
 	std::mutex flip_lock;
-	
+
 	std::atomic < uint64_t > flipcount;
 
 	std::atomic < bool > paused;
@@ -206,7 +206,16 @@ enum drm_mode_generation {
 	DRM_MODE_GENERATE_FIXED,
 };
 
+enum g_panel_orientation {
+	PANEL_ORIENTATION_0,	/* NORMAL */
+	PANEL_ORIENTATION_270,	/* RIGHT */
+	PANEL_ORIENTATION_90,	/* LEFT */
+	PANEL_ORIENTATION_180,	/* UPSIDE DOWN */
+	PANEL_ORIENTATION_AUTO,
+};
+
 extern enum drm_mode_generation g_drmModeGeneration;
+extern enum g_panel_orientation g_drmModeOrientation;
 
 bool init_drm(struct drm_t *drm, int width, int height, int refresh);
 void finish_drm(struct drm_t *drm);

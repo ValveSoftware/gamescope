@@ -68,6 +68,7 @@ struct wlserver_content_override {
 enum wlserver_touch_click_mode g_nDefaultTouchClickMode = WLSERVER_TOUCH_CLICK_LEFT;
 enum wlserver_touch_click_mode g_nTouchClickMode = g_nDefaultTouchClickMode;
 
+
 static struct wl_list pending_surfaces = {0};
 
 static void wlserver_x11_surface_info_set_wlr( struct wlserver_x11_surface_info *surf, struct wlr_surface *wlr_surf );
@@ -1046,18 +1047,38 @@ void wlserver_touchmotion( double x, double y, int touch_id, uint32_t time )
 {
 	if ( wlserver.mouse_focus_surface != NULL )
 	{
-		double tx = g_bRotated ? y : x;
-		double ty = g_bRotated ? 1.0 - x : y;
-
+		double tx = 0;
+		double ty = 0;
+		switch ( g_drmModeOrientation )
+		{
+			case PANEL_ORIENTATION_0:
+				tx = x;
+				ty = y;
+				break;
+			case PANEL_ORIENTATION_90:
+				tx = 1.0 - y;
+				ty = x;
+				break;
+			case PANEL_ORIENTATION_180:
+				tx = 1.0 - x;
+				ty = 1.0 - y;
+				break;
+			case PANEL_ORIENTATION_270:
+				tx = y;
+				ty = 1.0 - x;
+				break;
+			case PANEL_ORIENTATION_AUTO:
+			default: /* we are using the "auto" enum case to ensure compatibility for devices that were already using this*/
+				tx = g_bRotated ? y : x;
+				ty = g_bRotated ? 1.0 - x : y;
+				break;
+		}
 		tx *= g_nOutputWidth;
 		ty *= g_nOutputHeight;
-
 		tx += focusedWindowOffsetX;
 		ty += focusedWindowOffsetY;
-
 		tx *= focusedWindowScaleX;
 		ty *= focusedWindowScaleY;
-
 		wlserver.mouse_surface_cursorx = tx;
 		wlserver.mouse_surface_cursory = ty;
 
@@ -1085,18 +1106,38 @@ void wlserver_touchdown( double x, double y, int touch_id, uint32_t time )
 {
 	if ( wlserver.mouse_focus_surface != NULL )
 	{
-		double tx = g_bRotated ? y : x;
-		double ty = g_bRotated ? 1.0 - x : y;
-
+		double tx = 0;
+		double ty = 0;
+		switch ( g_drmModeOrientation )
+		{
+			case PANEL_ORIENTATION_0:
+				tx = x;
+				ty = y;
+				break;
+			case PANEL_ORIENTATION_90:
+				tx = 1.0 - y;
+				ty = x;
+				break;
+			case PANEL_ORIENTATION_180:
+				tx =  1.0 - x;
+				ty =  1.0 - y;
+				break;
+			case PANEL_ORIENTATION_270:
+				tx = y;
+				ty = 1.0 - x;
+				break;
+			case PANEL_ORIENTATION_AUTO:
+			default: /* we are using the "auto" enum case to ensure compatibility for devices that were already using this*/
+				tx = g_bRotated ? y : x;
+				ty = g_bRotated ? 1.0 - x : y;
+				break;
+		}
 		tx *= g_nOutputWidth;
 		ty *= g_nOutputHeight;
-
 		tx += focusedWindowOffsetX;
 		ty += focusedWindowOffsetY;
-
 		tx *= focusedWindowScaleX;
 		ty *= focusedWindowScaleY;
-
 		wlserver.mouse_surface_cursorx = tx;
 		wlserver.mouse_surface_cursory = ty;
 
