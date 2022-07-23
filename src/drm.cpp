@@ -1405,11 +1405,10 @@ int drm_prepare( struct drm_t *drm, const struct FrameInfo_t *frameInfo )
 	drm->flags = flags;
 
 	int ret;
-	if ( g_bUseLayers == true ) {
-		ret = drm_prepare_liftoff( drm, frameInfo );
-	} else {
-		ret = drm_prepare_basic( drm, frameInfo );
-	}
+  if (!g_bUseLayers ||
+		(ret = drm_prepare_liftoff(drm, frameInfo), ret != 0)) {
+		ret = drm_prepare_basic(drm, frameInfo);
+  }
 
 	if ( ret != 0 ) {
 		drmModeAtomicFree( drm->req );
