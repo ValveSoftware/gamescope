@@ -34,7 +34,7 @@ dep_xxf86vm = dependency('xxf86vm')
 dep_xtst = dependency('xtst')
 dep_xres = dependency('xres')
 
-drm_dep = dependency('libdrm', version: '>= 2.4.109')
+drm_dep = dependency('libdrm', version: '>= 2.4.112')
 vulkan_dep = dependency('vulkan')
 
 wayland_server = dependency('wayland-server', version: '>=1.21')

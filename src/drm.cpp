@@ -56,32 +56,6 @@ static LogScope drm_verbose_log("drm", LOG_SILENT);
 
 static std::map< std::string, std::string > pnps = {};
 
-static std::map< uint32_t, const char * > connector_types = {
-	{ DRM_MODE_CONNECTOR_Unknown, "Unknown" },
-	{ DRM_MODE_CONNECTOR_VGA, "VGA" },
-	{ DRM_MODE_CONNECTOR_DVII, "DVI-I" },
-	{ DRM_MODE_CONNECTOR_DVID, "DVI-D" },
-	{ DRM_MODE_CONNECTOR_DVIA, "DVI-A" },
-	{ DRM_MODE_CONNECTOR_Composite, "Composite" },
-	{ DRM_MODE_CONNECTOR_SVIDEO, "SVIDEO" },
-	{ DRM_MODE_CONNECTOR_LVDS, "LVDS" },
-	{ DRM_MODE_CONNECTOR_Component, "Component" },
-	{ DRM_MODE_CONNECTOR_9PinDIN, "DIN" },
-	{ DRM_MODE_CONNECTOR_DisplayPort, "DP" },
-	{ DRM_MODE_CONNECTOR_HDMIA, "HDMI-A" },
-	{ DRM_MODE_CONNECTOR_HDMIB, "HDMI-B" },
-	{ DRM_MODE_CONNECTOR_TV, "TV" },
-	{ DRM_MODE_CONNECTOR_eDP, "eDP" },
-	{ DRM_MODE_CONNECTOR_VIRTUAL, "Virtual" },
-	{ DRM_MODE_CONNECTOR_DSI, "DSI" },
-	{ DRM_MODE_CONNECTOR_DPI, "DPI" },
-	{ DRM_MODE_CONNECTOR_WRITEBACK, "Writeback" },
-	{ DRM_MODE_CONNECTOR_SPI, "SPI" },
-#ifdef DRM_MODE_CONNECTOR_USB
-	{ DRM_MODE_CONNECTOR_USB, "USB" },
-#endif
-};
-
 drm_screen_type drm_get_connector_type(drmModeConnector *connector);
 
 static struct fb& get_fb( struct drm_t& drm, uint32_t id )
@@ -495,9 +469,9 @@ static bool refresh_state( drm_t *drm )
 		if ( conn->name != nullptr )
 			continue;
 
-		const char *type_str = "Unknown";
-		if ( connector_types.count( conn->connector->connector_type ) > 0 )
-			type_str = connector_types[ conn->connector->connector_type ];
+		const char *type_str = drmModeGetConnectorTypeName(conn->connector->connector_type);
+		if (!type_str)
+			type_str = "Unknown";
 
 		char name[128] = {};
 		snprintf(name, sizeof(name), "%s-%d", type_str, conn->connector->connector_type_id);
