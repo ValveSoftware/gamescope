@@ -64,26 +64,6 @@ static struct fb& get_fb( struct drm_t& drm, uint32_t id )
 	return drm.fb_map[ id ];
 }
 
-static uint32_t get_connector_possible_crtcs(struct drm_t *drm, const drmModeConnector *connector) {
-	uint32_t possible_crtcs = 0;
-
-	for (int i = 0; i < connector->count_encoders; i++) {
-		uint32_t encoder_id = connector->encoders[i];
-
-		drmModeEncoder *encoder = drmModeGetEncoder(drm->fd, encoder_id);
-		if (encoder == nullptr) {
-			drm_log.errorf_errno("drmModeGetEncoder failed");
-			continue;
-		}
-
-		possible_crtcs |= encoder->possible_crtcs;
-
-		drmModeFreeEncoder(encoder);
-	}
-
-	return possible_crtcs;
-}
-
 static struct crtc *find_crtc_for_connector(struct drm_t *drm, const struct connector *connector) {
 	for (size_t i = 0; i < drm->crtcs.size(); i++) {
 		uint32_t crtc_mask = 1 << i;
@@ -477,7 +457,9 @@ static bool refresh_state( drm_t *drm )
 		snprintf(name, sizeof(name), "%s-%d", type_str, conn->connector->connector_type_id);
 		conn->name = strdup(name);
 
-		conn->possible_crtcs = get_connector_possible_crtcs(drm, conn->connector);
+		conn->possible_crtcs = drmModeConnectorGetPossibleCrtcs(drm->fd, conn->connector);
+		if (!conn->possible_crtcs)
+			drm_log.errorf_errno("drmModeConnectorGetPossibleCrtcs failed");
 
 		conn->current.crtc_id = conn->initial_prop_values["CRTC_ID"];
 
