@@ -314,6 +314,11 @@ static bool get_object_properties(struct drm_t *drm, uint32_t obj_id, uint32_t o
 
 static bool compare_modes( drmModeModeInfo mode1, drmModeModeInfo mode2 )
 {
+	bool goodRefresh1 = mode1.vrefresh >= 60;
+	bool goodRefresh2 = mode2.vrefresh >= 60;
+	if (goodRefresh1 != goodRefresh2)
+		return goodRefresh1;
+
 	if (mode1.type & DRM_MODE_TYPE_PREFERRED)
 		return true;
 	if (mode2.type & DRM_MODE_TYPE_PREFERRED)
