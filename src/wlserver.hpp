@@ -48,10 +48,15 @@ public:
 	void destroy_content_override(struct wlserver_content_override *co);
 
 	struct wl_client *get_client();
+	struct wlr_output *get_output();
+
+	void update_output_info();
 
 private:
 	struct wlr_xwayland_server *xwayland_server = NULL;
 	struct wl_listener xwayland_ready_listener = { .notify = xwayland_ready_callback };
+
+	struct wlr_output *output;
 
 	std::map<uint32_t, wlserver_content_override *> content_overrides;
 
@@ -74,9 +79,8 @@ struct wlserver_t {
 
 		struct wlr_renderer *renderer;
 		struct wlr_compositor *compositor;
-		struct wlr_session *session;	
+		struct wlr_session *session;
 		struct wlr_seat *seat;
-		struct wlr_output *output;
 
 		// Used to simulate key events and set the keymap
 		struct wlr_input_device *virtual_keyboard_device;
@@ -91,6 +95,12 @@ struct wlserver_t {
 	
 	bool button_held[ WLSERVER_BUTTON_COUNT ];
 	bool touch_down[ WLSERVER_TOUCH_COUNT ];
+
+	struct {
+		char *name;
+		char *description;
+		int phys_width, phys_height; // millimeters
+	} output_info;
 
 	struct wl_listener session_active;
 	struct wl_listener new_input_method;
