@@ -413,6 +413,11 @@ struct wl_client *gamescope_xwayland_server_t::get_client()
 	return xwayland_server->client;
 }
 
+struct wlr_output *gamescope_xwayland_server_t::get_output()
+{
+	return output;
+}
+
 static void gamescope_xwayland_handle_override_window_content( struct wl_client *client, struct wl_resource *resource, struct wl_resource *surface_resource, uint32_t x11_window )
 {
 	// This should ideally use the surface's xwayland, but we don't know it.
@@ -509,14 +514,37 @@ static void handle_wlr_log(enum wlr_log_importance importance, const char *fmt, 
 
 void wlserver_set_output_info( const wlserver_output_info *info )
 {
-	wlr_output_destroy_global(wlserver.wlr.output);
+	free(wlserver.output_info.name);
+	free(wlserver.output_info.description);
+	wlserver.output_info.name = strdup(info->name);
+	wlserver.output_info.description = strdup(info->description);
+	wlserver.output_info.phys_width = info->phys_width;
+	wlserver.output_info.phys_height = info->phys_height;
 
-	wlr_output_set_name(wlserver.wlr.output, info->name);
-	wlr_output_set_description(wlserver.wlr.output, info->description);
-	wlserver.wlr.output->phys_width = info->phys_width;
-	wlserver.wlr.output->phys_height = info->phys_height;
+	for (size_t i = 0; i < wlserver.wlr.xwayland_servers.size(); i++) {
+		gamescope_xwayland_server_t *server = wlserver.wlr.xwayland_servers[i].get();
+		server->update_output_info();
+	}
+}
 
-	wlr_output_create_global(wlserver.wlr.output);
+static bool filter_global(const struct wl_client *client, const struct wl_global *global, void *data)
+{
+	const struct wl_interface *iface = wl_global_get_interface(global);
+	if (strcmp(iface->name, wl_output_interface.name) != 0)
+		return true;
+
+	struct wlr_output *output = (struct wlr_output *) wl_global_get_user_data(global);
+	assert(output);
+
+	/* We create one wl_output global per Xwayland server, to easily have
+	 * per-server output configuration. Only expose the wl_output belonging to
+	 * the server. */
+	for (size_t i = 0; i < wlserver.wlr.xwayland_servers.size(); i++) {
+		gamescope_xwayland_server_t *server = wlserver.wlr.xwayland_servers[i].get();
+		if (server->get_client() == client)
+			return server->get_output() == output;
+	}
+	return false;
 }
 
 bool wlsession_init( void ) {
@@ -525,9 +553,7 @@ bool wlsession_init( void ) {
 	wlserver.display = wl_display_create();
 	wlserver.wlr.headless_backend = wlr_headless_backend_create( wlserver.display );
 
-	wlserver.wlr.output = wlr_headless_add_output( wlserver.wlr.headless_backend, 1280, 720 );
-	strncpy(wlserver.wlr.output->make, "gamescope", sizeof(wlserver.wlr.output->make));
-	strncpy(wlserver.wlr.output->model, "gamescope", sizeof(wlserver.wlr.output->model));
+	wl_display_set_global_filter(wlserver.display, filter_global, nullptr);
 
 	const struct wlserver_output_info output_info = {
 		.name = "Virtual-1",
@@ -604,11 +630,45 @@ gamescope_xwayland_server_t::gamescope_xwayland_server_t(wl_display *display)
 	};
 	xwayland_server = wlr_xwayland_server_create(display, &xwayland_options);
 	wl_signal_add(&xwayland_server->events.ready, &xwayland_ready_listener);
+
+	output = wlr_headless_add_output(wlserver.wlr.headless_backend, 1280, 720);
+	strncpy(output->make, "gamescope", sizeof(output->make));
+	strncpy(output->model, "gamescope", sizeof(output->model));
+
+	int refresh = g_nNestedRefresh;
+	if (refresh == 0) {
+		refresh = g_nOutputRefresh;
+	}
+
+	wlr_output_enable(output, true);
+	wlr_output_set_custom_mode(output, g_nNestedWidth, g_nNestedHeight, refresh * 1000);
+	if (!wlr_output_commit(output))
+	{
+		wl_log.errorf("Failed to commit headless output");
+		abort();
+	}
+
+	update_output_info();
 }
 
 gamescope_xwayland_server_t::~gamescope_xwayland_server_t()
 {
 	wlr_xwayland_server_destroy(xwayland_server);
+	wlr_output_destroy(output);
+}
+
+void gamescope_xwayland_server_t::update_output_info()
+{
+	const auto *info = &wlserver.output_info;
+
+	wlr_output_destroy_global(output);
+
+	wlr_output_set_name(output, info->name);
+	wlr_output_set_description(output, info->description);
+	output->phys_width = info->phys_width;
+	output->phys_height = info->phys_height;
+
+	wlr_output_create_global(output);
 }
 
 bool wlserver_init( void ) {
@@ -695,19 +755,6 @@ bool wlserver_init( void ) {
 	}
 
 	wl_signal_emit( &wlserver.wlr.multi_backend->events.new_input, kbd_dev );
-
-	int refresh = g_nNestedRefresh;
-	if (refresh == 0) {
-		refresh = g_nOutputRefresh;
-	}
-
-	wlr_output_enable( wlserver.wlr.output, true );
-	wlr_output_set_custom_mode( wlserver.wlr.output, g_nNestedWidth, g_nNestedHeight, refresh * 1000 );
-	if ( !wlr_output_commit( wlserver.wlr.output ) )
-	{
-		wl_log.errorf("Failed to commit noop output");
-		return false;
-	}
 
 	for (int i = 0; i < g_nXWaylandCount; i++)
 	{
@@ -1109,16 +1156,14 @@ void wlserver_set_xwayland_server_mode( size_t idx, int w, int h, int refresh )
 	gamescope_xwayland_server_t *server = wlserver_get_xwayland_server( idx );
 	if ( !server )
 		return;
-	wl_client *client = server->get_client();
 
-	struct wl_resource *resource;
-	wl_resource_for_each( resource, &wlserver.wlr.output->resources )
+	struct wlr_output *output = server->get_output();
+	wlr_output_set_custom_mode(output, w, h, refresh * 1000);
+	if (!wlr_output_commit(output))
 	{
-		if ( wl_resource_get_client( resource ) == client )
-		{
-			wl_output_send_mode( resource, WL_OUTPUT_MODE_CURRENT, w, h, refresh * 1000 );
-			wl_output_send_done( resource );
-			wl_log.infof( "Updating mode for xwayland server %zu %dx%d@%d - client %p - resource %p", idx, w, h, refresh, client, resource );
-		}
+		wl_log.errorf("Failed to commit headless output");
+		abort();
 	}
+
+	wl_log.infof("Updating mode for xwayland server #%zu: %dx%d@%d", idx, w, h, refresh);
 }
