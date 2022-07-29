@@ -33,7 +33,7 @@ meson install -C build/ --skip-subprojects
 ## Keyboard shortcuts
 
 * **Super + F** : Toggle fullscreen
-* **Super + N** : Toggle integer scaling
+* **Super + N** : Toggle nearest neighbour filtering
 * **Super + U** : Toggle FSR upscaling
 * **Super + Y** : Toggle NIS upscaling
 * **Super + I** : Increase FSR sharpness by 1
@@ -46,7 +46,7 @@ On any X11 or Wayland desktop, you can set the Steam launch arguments of your ga
 
 ```sh
 # Upscale a 720p game to 1440p with integer scaling
-gamescope -h 720 -H 1440 -n -- %command%
+gamescope -h 720 -H 1440 -i -- %command%
 
 # Limit a vsynced game to 30 FPS
 gamescope -r 30 -- %command%
@@ -65,6 +65,6 @@ See `gamescope --help` for a full list of options.
 * `-o`: set a frame-rate limit for the game when unfocused. Specified in frames per second. Defaults to unlimited.
 * `-U`: use AMD FidelityFX™ Super Resolution 1.0 for upscaling
 * `-Y`: use NVIDIA Image Scaling v1.0.2 for upscaling
-* `-n`: use integer scaling.
+* `-i`: use integer scaling.
 * `-b`: create a border-less window.
 * `-f`: create a full-screen window.
