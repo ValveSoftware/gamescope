@@ -179,6 +179,14 @@ struct FrameInfo_t
 		bool blackBorder;
 		bool linearFilter;
 
+		bool isYcbcr() const
+		{
+			if ( !tex )
+				return false;
+
+			return tex->format() == VK_FORMAT_G8_B8R8_2PLANE_420_UNORM;
+		}
+
 		uint32_t integerWidth() const { return tex->width() / scale.x; }
 		uint32_t integerHeight() const { return tex->height() / scale.y; }
 		vec2_t offsetPixelCenter() const
@@ -202,11 +210,8 @@ struct FrameInfo_t
 		uint32_t result = 0;
 		for (int i = 0; i < layerCount; i++)
 		{
-			if ( layers[ i ].tex )
-			{
-				if (layers[ i ].tex->format() == VK_FORMAT_G8_B8R8_2PLANE_420_UNORM)
-					result |= 1 << i;
-			}
+			if (layers[ i ].isYcbcr())
+				result |= 1 << i;
 		}
 		return result;
 	}
