@@ -382,7 +382,8 @@ static void perform_action(struct wlserver_input_method *ime, enum gamescope_inp
 	}
 
 	const struct wlserver_input_method_key key = actions[action];
-	if (try_type_keysym(ime, key.keysym)) {
+	// type with default keymap if no crazy keymap is currently active
+	if (ime->keys.empty() && try_type_keysym(ime, key.keysym)) {
 		return;
 	}
 
@@ -402,6 +403,9 @@ static void perform_action(struct wlserver_input_method *ime, enum gamescope_inp
 	// Note: Xwayland doesn't care about the time field of the events
 	wlr_seat_keyboard_notify_key(seat, 0, key.keycode, WL_KEYBOARD_KEY_STATE_PRESSED);
 	wlr_seat_keyboard_notify_key(seat, 0, key.keycode, WL_KEYBOARD_KEY_STATE_RELEASED);
+
+	// Reset keymap when we're idle for a while
+	wl_event_source_timer_update(ime->ime_reset_ime_keyboard_event_source, 100 /* ms */);
 }
 
 static void ime_handle_commit(struct wl_client *client, struct wl_resource *ime_resource, uint32_t serial)
