@@ -1391,12 +1391,23 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo )
 			liftoff_layer_set_property( drm->lo_layers[ i ], "CRTC_W", crtcW);
 			liftoff_layer_set_property( drm->lo_layers[ i ], "CRTC_H", crtcH);
 
-			liftoff_layer_set_property( drm->lo_layers[ i ], "COLOR_ENCODING", drm_get_color_encoding( g_ForcedNV12ColorSpace ) );
-			liftoff_layer_set_property( drm->lo_layers[ i ], "COLOR_RANGE", drm_get_color_range( g_ForcedNV12ColorSpace ) );
+			if ( frameInfo->layers[i].isYcbcr() )
+			{
+				liftoff_layer_set_property( drm->lo_layers[ i ], "COLOR_ENCODING", drm_get_color_encoding( g_ForcedNV12ColorSpace ) );
+				liftoff_layer_set_property( drm->lo_layers[ i ], "COLOR_RANGE", drm_get_color_range( g_ForcedNV12ColorSpace ) );
+			}
+			else
+			{
+				liftoff_layer_unset_property( drm->lo_layers[ i ], "COLOR_ENCODING" );
+				liftoff_layer_unset_property( drm->lo_layers[ i ], "COLOR_RANGE" );
+			}
 		}
 		else
 		{
 			liftoff_layer_set_property( drm->lo_layers[ i ], "FB_ID", 0 );
+
+			liftoff_layer_unset_property( drm->lo_layers[ i ], "COLOR_ENCODING" );
+			liftoff_layer_unset_property( drm->lo_layers[ i ], "COLOR_RANGE" );
 		}
 	}
 
