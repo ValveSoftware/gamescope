@@ -107,8 +107,12 @@ struct wlserver_input_method {
 	struct wlr_input_device keyboard_device;
 	std::deque<struct wlserver_input_method_key> keys;
 	uint32_t next_keycode_index;
+	int32_t held_keycode;
+	xkb_mod_mask_t held_modifier_mask;
+	struct wlr_keyboard_modifiers prev_mods;
 
 	struct wl_event_source *ime_reset_ime_keyboard_event_source;
+	struct wl_event_source *ime_release_ime_keypress_event_source;
 };
 
 struct wlserver_input_method_manager {
@@ -256,6 +260,58 @@ static struct xkb_keymap *generate_keymap(struct wlserver_input_method *ime)
 	return keymap;
 }
 
+static int release_key_if_needed(void *data)
+{
+	struct wlserver_input_method *ime = (struct wlserver_input_method *)data;
+	struct wlr_seat *seat = ime->manager->server->wlr.seat;
+
+	if (ime->held_keycode >= 0)
+		wlr_seat_keyboard_notify_key(seat, 0, ime->held_keycode, WL_KEYBOARD_KEY_STATE_RELEASED);
+	ime->held_keycode = -1;
+
+	if (ime->held_modifier_mask)
+	{
+		if (ime->held_modifier_mask & WLR_MODIFIER_ALT)
+			wlr_seat_keyboard_notify_key(seat, 0, KEY_LEFTALT, WL_KEYBOARD_KEY_STATE_RELEASED);
+		if (ime->held_modifier_mask & WLR_MODIFIER_CTRL)
+			wlr_seat_keyboard_notify_key(seat, 0, KEY_LEFTCTRL, WL_KEYBOARD_KEY_STATE_RELEASED);
+		if (ime->held_modifier_mask & WLR_MODIFIER_SHIFT)
+			wlr_seat_keyboard_notify_key(seat, 0, KEY_LEFTSHIFT, WL_KEYBOARD_KEY_STATE_RELEASED);
+		wlr_seat_keyboard_notify_modifiers(seat, &ime->prev_mods);
+	}
+	ime->prev_mods = wlr_keyboard_modifiers{0};
+	ime->held_modifier_mask = 0;
+
+	return 0;
+}
+
+static void press_key(struct wlserver_input_method *ime, uint32_t keycode, struct wlr_keyboard_modifiers *pmods = nullptr)
+{
+	struct wlr_seat *seat = ime->manager->server->wlr.seat;
+
+	release_key_if_needed(ime);
+
+	if (pmods)
+	{
+		if (seat->keyboard_state.keyboard != nullptr)
+			ime->prev_mods = seat->keyboard_state.keyboard->modifiers;
+		wlr_seat_keyboard_notify_modifiers(seat, pmods);
+		ime->held_modifier_mask = pmods->depressed & ~ime->prev_mods.depressed;
+		if (ime->held_modifier_mask & WLR_MODIFIER_SHIFT)
+			wlr_seat_keyboard_notify_key(seat, 0, KEY_LEFTSHIFT, WL_KEYBOARD_KEY_STATE_PRESSED);
+		if (ime->held_modifier_mask & WLR_MODIFIER_CTRL)
+			wlr_seat_keyboard_notify_key(seat, 0, KEY_LEFTCTRL, WL_KEYBOARD_KEY_STATE_PRESSED);
+		if (ime->held_modifier_mask & WLR_MODIFIER_ALT)
+			wlr_seat_keyboard_notify_key(seat, 0, KEY_LEFTALT, WL_KEYBOARD_KEY_STATE_PRESSED);
+	}
+
+	// Note: Xwayland doesn't care about the time field of the events
+	wlr_seat_keyboard_notify_key(seat, 0, keycode, WL_KEYBOARD_KEY_STATE_PRESSED);
+	ime->held_keycode = keycode;
+
+	wl_event_source_timer_update(ime->ime_reset_ime_keyboard_event_source, 30 /* ms */);
+}
+
 static bool try_type_keysym(struct wlserver_input_method *ime, xkb_keysym_t keysym)
 {
 	struct wlr_seat *seat = ime->manager->server->wlr.seat;
@@ -289,37 +345,14 @@ static bool try_type_keysym(struct wlserver_input_method *ime, xkb_keysym_t keys
 					continue;
 				}
 
-				assert(keycode >= 8);
+				release_key_if_needed(ime); // before keymap change
+				wlr_seat_set_keyboard(seat, device);
 
-				uint32_t keycodes[8] = {0};
-				size_t n = 0;
-				if (mask & WLR_MODIFIER_SHIFT) {
-					keycodes[n++] = KEY_LEFTSHIFT;
-				}
-				if (mask & WLR_MODIFIER_CTRL) {
-					keycodes[n++] = KEY_LEFTCTRL;
-				}
-				if (mask & WLR_MODIFIER_ALT) {
-					keycodes[n++] = KEY_LEFTALT;
-				}
-				keycodes[n++] = keycode - 8;
-
-				struct wlr_keyboard_modifiers prev_mods = {0};
-				if (seat->keyboard_state.keyboard != nullptr) {
-					prev_mods = seat->keyboard_state.keyboard->modifiers;
-				}
 				struct wlr_keyboard_modifiers mods = {
 					.depressed = mask,
 				};
-				wlr_seat_set_keyboard(seat, device);
-				wlr_seat_keyboard_notify_modifiers(seat, &mods);
-				for (size_t i = 0; i < n; i++) {
-					wlr_seat_keyboard_notify_key(seat, 0, keycodes[i], WL_KEYBOARD_KEY_STATE_PRESSED);
-				}
-				for (ssize_t i = n - 1; i >= 0; i--) {
-					wlr_seat_keyboard_notify_key(seat, 0, keycodes[i], WL_KEYBOARD_KEY_STATE_RELEASED);
-				}
-				wlr_seat_keyboard_notify_modifiers(seat, &prev_mods);
+				assert(keycode >= 8);
+				press_key(ime, keycode - 8, &mods);
 
 				return true;
 			}
@@ -362,12 +395,12 @@ static void type_text(struct wlserver_input_method *ime, const char *text)
 	xkb_keymap_unref(keymap);
 
 	struct wlr_seat *seat = ime->manager->server->wlr.seat;
+	release_key_if_needed(ime); // before keymap change
 	wlr_seat_set_keyboard(seat, &ime->keyboard_device);
 
 	// Note: Xwayland doesn't care about the time field of the events
 	for (size_t i = 0; i < keycodes.size(); i++) {
-		wlr_seat_keyboard_notify_key(seat, 0, keycodes[i], WL_KEYBOARD_KEY_STATE_PRESSED);
-		wlr_seat_keyboard_notify_key(seat, 0, keycodes[i], WL_KEYBOARD_KEY_STATE_RELEASED);
+		press_key(ime, keycodes[i]);
 	}
 
 	// Reset keymap when we're idle for a while
@@ -398,11 +431,10 @@ static void perform_action(struct wlserver_input_method *ime, enum gamescope_inp
 	xkb_keymap_unref(keymap);
 
 	struct wlr_seat *seat = ime->manager->server->wlr.seat;
+	release_key_if_needed(ime); // before keymap change
 	wlr_seat_set_keyboard(seat, &ime->keyboard_device);
 
-	// Note: Xwayland doesn't care about the time field of the events
-	wlr_seat_keyboard_notify_key(seat, 0, key.keycode, WL_KEYBOARD_KEY_STATE_PRESSED);
-	wlr_seat_keyboard_notify_key(seat, 0, key.keycode, WL_KEYBOARD_KEY_STATE_RELEASED);
+	press_key(ime, key.keycode);
 
 	// Reset keymap when we're idle for a while
 	wl_event_source_timer_update(ime->ime_reset_ime_keyboard_event_source, 100 /* ms */);
@@ -488,6 +520,7 @@ static int reset_ime_keyboard(void *data)
 {
 	struct wlserver_input_method *ime = (struct wlserver_input_method *)data;
 
+	release_key_if_needed(ime);
 	ime->keys.clear();
 	ime->next_keycode_index = 0;  // preserve old behavior; could just let this keep going
 
@@ -512,6 +545,9 @@ static void manager_handle_create_input_method(struct wl_client *client, struct 
 	ime->manager = manager;
 	ime->serial = 1;
 	ime->next_keycode_index = 0;
+	ime->held_keycode = -1;
+	ime->held_modifier_mask = 0;
+	ime->prev_mods = wlr_keyboard_modifiers{0};
 
 	wlr_keyboard_init(&ime->keyboard, &keyboard_impl);
 	wlr_input_device_init(&ime->keyboard_device, WLR_INPUT_DEVICE_KEYBOARD, &keyboard_device_impl, "ime", 0, 0);
@@ -523,6 +559,7 @@ static void manager_handle_create_input_method(struct wl_client *client, struct 
 	gamescope_input_method_send_done(ime->resource, ime->serial);
 
 	ime->ime_reset_ime_keyboard_event_source = wl_event_loop_add_timer(manager->server->event_loop, reset_ime_keyboard, ime);
+	ime->ime_release_ime_keypress_event_source = wl_event_loop_add_timer(manager->server->event_loop, release_key_if_needed, ime);
 
 	active_input_method = ime;
 }
