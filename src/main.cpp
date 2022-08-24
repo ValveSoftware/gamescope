@@ -59,6 +59,7 @@ const struct option *gamescope_options = (struct option[]){
 	{ "prefer-output", required_argument, nullptr, 'O' },
 	{ "default-touch-mode", required_argument, nullptr, 0 },
 	{ "generate-drm-mode", required_argument, nullptr, 0 },
+	{ "immediate-flips", no_argument, nullptr, 0 },
 
 	// wlserver options
 	{ "xwayland-count", required_argument, nullptr, 0 },
@@ -116,6 +117,7 @@ const char usage[] =
 	"  -O, --prefer-output            list of connectors in order of preference\n"
 	"  --default-touch-mode           0: hover, 1: left, 2: right, 3: middle, 4: passthrough\n"
 	"  --generate-drm-mode            DRM mode generation algorithm (cvt, fixed)\n"
+	"  --immediate-flips              Enable immediate flips, may result in tearing\n"
 	"\n"
 	"Debug options:\n"
 	"  --disable-layers               disable libliftoff (hardware planes)\n"
@@ -174,6 +176,8 @@ bool g_bIntegerScale = false;
 
 uint32_t g_preferVendorID = 0;
 uint32_t g_preferDeviceID = 0;
+
+bool g_immediateFlips = false;
 
 pthread_t g_mainThread;
 
@@ -380,6 +384,8 @@ int main(int argc, char **argv)
 					sscanf( optarg, "%X:%X", &vendorID, &deviceID );
 					g_preferVendorID = vendorID;
 					g_preferDeviceID = deviceID;
+				} else if (strcmp(opt_name, "immediate-flips") == 0) {
+					g_immediateFlips = true;
 				}
 				break;
 			case '?':

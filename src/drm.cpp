@@ -32,6 +32,10 @@ extern "C" {
 #include <thread>
 #include <unordered_set>
 
+#ifndef DRM_CAP_ATOMIC_ASYNC_PAGE_FLIP
+#define DRM_CAP_ATOMIC_ASYNC_PAGE_FLIP 0x15
+#endif
+
 struct drm_t g_DRM = {};
 
 uint32_t g_nDRMFormat = DRM_FORMAT_INVALID;
@@ -840,6 +844,11 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 		drm->allow_modifiers = true;
 	}
 
+	if (g_immediateFlips && (drmGetCap(drm->fd, DRM_CAP_ATOMIC_ASYNC_PAGE_FLIP, &cap) != 0 || !cap)) {
+		drm_log.errorf("Immediate flips are not supported by the KMS driver");
+		return false;
+	}
+
 	if (!get_resources(drm)) {
 		return false;
 	}
@@ -1595,6 +1604,9 @@ int drm_prepare( struct drm_t *drm, const struct FrameInfo_t *frameInfo )
 
 	// We do internal refcounting with these events
 	flags |= DRM_MODE_PAGE_FLIP_EVENT;
+
+	if ( g_immediateFlips )
+		flags |= DRM_MODE_PAGE_FLIP_ASYNC;
 
 	if ( needs_modeset ) {
 		flags |= DRM_MODE_ATOMIC_ALLOW_MODESET;
