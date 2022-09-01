@@ -119,8 +119,6 @@ struct drm_t {
 	struct crtc *crtc;
 	struct connector *connector;
 	int crtc_index;
-	int kms_in_fence_fd;
-	int kms_out_fence_fd;
 	
 	struct wlr_drm_format_set primary_formats;
 	
@@ -193,6 +191,7 @@ extern bool g_bUseLayers;
 extern bool g_bRotated;
 extern bool g_bFlipped;
 extern bool g_bDebugLayers;
+extern bool g_bDrmExplicitSync;
 extern const char *g_sOutputName;
 
 enum drm_mode_generation {
@@ -204,7 +203,7 @@ extern enum drm_mode_generation g_drmModeGeneration;
 
 bool init_drm(struct drm_t *drm, int width, int height, int refresh);
 void finish_drm(struct drm_t *drm);
-int drm_commit(struct drm_t *drm, const struct FrameInfo_t *frameInfo );
+int drm_commit(struct drm_t *drm, const struct FrameInfo_t *frameInfo, int inFenceFd );
 int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameInfo );
 void drm_rollback( struct drm_t *drm );
 bool drm_poll_state(struct drm_t *drm);

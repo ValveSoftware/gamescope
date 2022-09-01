@@ -46,6 +46,7 @@ const char *g_sOutputName = nullptr;
 #endif
 
 bool g_bSupportsAsyncFlips = false;
+bool g_bDrmExplicitSync = false;
 
 enum drm_mode_generation g_drmModeGeneration = DRM_MODE_GENERATE_CVT;
 
@@ -899,7 +900,7 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 		return false;
 	}
 
-	drm->kms_in_fence_fd = -1;
+	g_bDrmExplicitSync = drm->primary->props.count("IN_FENCE_FD") > 0;
 
 	std::thread flip_handler_thread( flip_handler_thread_run );
 	flip_handler_thread.detach();
@@ -999,20 +1000,16 @@ void finish_drm(struct drm_t *drm)
 	// page-flip handler thread.
 }
 
-int drm_commit(struct drm_t *drm, const struct FrameInfo_t *frameInfo )
+int drm_commit(struct drm_t *drm, const struct FrameInfo_t *frameInfo, int inFenceFd )
 {
 	int ret;
 
 	assert( drm->req != nullptr );
 
-// 	if (drm->kms_in_fence_fd != -1) {
-// 		add_plane_property(req, plane_id, "IN_FENCE_FD", drm->kms_in_fence_fd);
-// 	}
-
-// 	drm->kms_out_fence_fd = -1;
-
-// 	add_crtc_property(req, drm->crtc_id, "OUT_FENCE_PTR",
-// 					  (uint64_t)(unsigned long)&drm->kms_out_fence_fd);
+	if (inFenceFd >= 0)
+	{
+		add_plane_property(drm->req, drm->primary, "IN_FENCE_FD", (uint64_t) inFenceFd);
+	}
 
 	drm->flip_lock.lock();
 

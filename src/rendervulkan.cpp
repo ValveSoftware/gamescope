@@ -414,6 +414,7 @@ private:
 	VK_FUNC(GetImageSubresourceLayout) \
 	VK_FUNC(GetMemoryFdKHR) \
 	VK_FUNC(GetSemaphoreCounterValue) \
+	VK_FUNC(GetSemaphoreFdKHR) \
 	VK_FUNC(GetSwapchainImagesKHR) \
 	VK_FUNC(MapMemory) \
 	VK_FUNC(QueuePresentKHR) \
@@ -436,6 +437,7 @@ public:
 	std::unique_ptr<CVulkanCmdBuffer> commandBuffer();
 	uint64_t submit( std::unique_ptr<CVulkanCmdBuffer> cmdBuf);
 	void wait(uint64_t sequence);
+	int exportTimelineSemaphore();
 	void waitIdle();
 	void garbageCollect();
 	inline VkDescriptorSet descriptorSet()
@@ -792,6 +794,9 @@ bool CVulkanDevice::createDevice()
 
 	enabledExtensions.push_back( VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME );
 	enabledExtensions.push_back( VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME );
+
+	enabledExtensions.push_back( VK_KHR_EXTERNAL_SEMAPHORE_EXTENSION_NAME );
+	enabledExtensions.push_back( VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME );
 
 	enabledExtensions.push_back( VK_EXT_ROBUSTNESS_2_EXTENSION_NAME );
 
@@ -1423,6 +1428,22 @@ void CVulkanDevice::wait(uint64_t sequence)
 	if (res != VK_SUCCESS)
 		assert( 0 );
 	resetCmdBuffers(sequence);
+}
+
+int CVulkanDevice::exportTimelineSemaphore()
+{
+	/* Sadly there's no VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_DRM_SYNCOBJ_FD_BIT
+	 * and jekstrand isn't sure we should add it... */
+	VkSemaphoreGetFdInfoKHR getFdInfo = {
+		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_GET_FD_INFO_KHR,
+		.semaphore = m_scratchTimelineSemaphore,
+		.handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT,
+	};
+	int fd = -1;
+	VkResult res = vk.GetSemaphoreFdKHR(device(), &getFdInfo, &fd);
+	if (res != VK_SUCCESS)
+		vk_errorf(res, "vkGetSemaphoreFdKHR() failed");
+	return fd;
 }
 
 void CVulkanDevice::waitIdle()
@@ -3014,7 +3035,45 @@ void bind_all_layers(CVulkanCmdBuffer* cmdBuffer, const struct FrameInfo_t *fram
 	}
 }
 
-bool vulkan_composite( const struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTexture> pScreenshotTexture )
+static int export_dmabuf_timeline_semaphore(std::shared_ptr<CVulkanTexture> texture, uint64_t sequence)
+{
+	if (g_device.drmRenderFd() < 0)
+		return -1;
+
+	int drmSyncObjFd = g_device.exportTimelineSemaphore();
+	if (drmSyncObjFd < 0)
+		return -1;
+
+	uint32_t timelineSyncobjHandle = 0;
+	int ret = drmSyncobjFDToHandle(g_device.drmRenderFd(), drmSyncObjFd, &timelineSyncobjHandle);
+	close(drmSyncObjFd);
+	if (ret != 0) {
+		vk_log.errorf_errno("drmSyncobjFDToHandle() failed");
+		return -1;
+	}
+
+	uint32_t binarySyncobjHandle = 0;
+	if (drmSyncobjCreate(g_device.drmRenderFd(), 0, &binarySyncobjHandle) != 0) {
+		vk_log.errorf_errno("drmSyncobjCreate() failed");
+		return -1;
+	}
+
+	if (drmSyncobjTransfer(g_device.drmRenderFd(), binarySyncobjHandle, 0, timelineSyncobjHandle, sequence, 0) != 0) {
+		vk_log.errorf_errno("drmSyncobjTransfer() failed");
+		return -1;
+	}
+
+	int syncFileFd = -1;
+	if (drmSyncobjExportSyncFile(g_device.drmRenderFd(), binarySyncobjHandle, &syncFileFd) != 0) {
+		vk_log.errorf_errno("drmSyncobjExportSyncFile() failed");
+		return -1;
+	}
+	drmSyncobjDestroy(g_device.drmRenderFd(), binarySyncobjHandle);
+
+	return syncFileFd;
+}
+
+bool vulkan_composite( const struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTexture> pScreenshotTexture, int *syncFileFd )
 {
 	auto compositeImage = g_output.outputImages[ g_output.nOutImage ];
 
@@ -3153,7 +3212,15 @@ bool vulkan_composite( const struct FrameInfo_t *frameInfo, std::shared_ptr<CVul
 	}
 
 	uint64_t sequence = g_device.submit(std::move(cmdBuffer));
-	g_device.wait(sequence);
+
+	/* If possible, export the timeline semaphore into a sync_file FD. If not,
+	 * fall back to a wait. */
+	if (syncFileFd) {
+		*syncFileFd = export_dmabuf_timeline_semaphore(compositeImage, sequence);
+	}
+	if (!syncFileFd || *syncFileFd < 0) {
+		g_device.wait(sequence);
+	}
 
 	if ( BIsNested() == false )
 	{
