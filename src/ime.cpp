@@ -66,7 +66,7 @@ static uint32_t utf8_decode(const char **str_ptr)
 	return ret;
 }
 
-#define IME_MANAGER_VERSION 1
+#define IME_MANAGER_VERSION 2
 
 /* Some clients assume keycodes are coming from evdev and interpret them. Only
  * use keys that would normally produce characters for our emulated events. */
@@ -90,6 +90,8 @@ static std::unordered_map<enum gamescope_input_method_action, struct wlserver_in
 	{ GAMESCOPE_INPUT_METHOD_ACTION_DELETE_RIGHT, { KEY_DELETE, XKB_KEY_Delete } },
 	{ GAMESCOPE_INPUT_METHOD_ACTION_MOVE_LEFT, { KEY_LEFT, XKB_KEY_Left } },
 	{ GAMESCOPE_INPUT_METHOD_ACTION_MOVE_RIGHT, { KEY_RIGHT, XKB_KEY_Right } },
+	{ GAMESCOPE_INPUT_METHOD_ACTION_MOVE_UP, { KEY_UP, XKB_KEY_Up } },
+	{ GAMESCOPE_INPUT_METHOD_ACTION_MOVE_DOWN, { KEY_DOWN, XKB_KEY_Down } },
 };
 
 struct wlserver_input_method {

@@ -45,7 +45,7 @@
     it.
   </description>
 
-  <interface name="gamescope_input_method_manager" version="1">
+  <interface name="gamescope_input_method_manager" version="2">
     <description summary="input method manager">
       The input method manager allows the client to become the input method on
       a chosen seat.
@@ -72,7 +72,7 @@
     </request>
   </interface>
 
-  <interface name="gamescope_input_method" version="1">
+  <interface name="gamescope_input_method" version="2">
     <description summary="input method">
       An input method object allows for clients to compose text.
 
@@ -162,6 +162,8 @@
       <entry name="delete_right" value="3" summary="delete one unit after the cursor"/>
       <entry name="move_left" value="4" summary="move the cursor to the left by one unit"/>
       <entry name="move_right" value="5" summary="move the cursor to the right by one unit"/>
+      <entry name="move_up" value="6" since="2" summary="move the cursor up by one unit"/>
+      <entry name="move_down" value="7" since="2" summary="move the cursor down by one unit"/>
     </enum>
 
     <request name="set_action">
