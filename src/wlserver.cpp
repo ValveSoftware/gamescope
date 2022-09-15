@@ -366,6 +366,14 @@ static wlserver_wl_surface_info *get_wl_surface_info(struct wlr_surface *wlr_sur
 static void handle_wl_surface_destroy( struct wl_listener *l, void *data )
 {
 	wlserver_wl_surface_info *surf = wl_container_of( l, surf, destroy );
+	if (surf->x11_surface)
+		surf->x11_surface->wlr = nullptr;
+
+	if ( surf->wlr == wlserver.mouse_focus_surface )
+		wlserver.mouse_focus_surface = nullptr;
+
+	if ( surf->wlr == wlserver.kb_focus_surface )
+		wlserver.kb_focus_surface = nullptr;
 	delete surf;
 }
 
@@ -1228,16 +1236,6 @@ void wlserver_x11_surface_info_finish( struct wlserver_x11_surface_info *surf )
 		wlserver_wl_surface_info *wl_info = get_wl_surface_info(surf->wlr);
 		if (wl_info)
 			wl_info->x11_surface = nullptr;
-	}
-
-	if ( surf->wlr == wlserver.mouse_focus_surface )
-	{
-		wlserver.mouse_focus_surface = nullptr;
-	}
-
-	if ( surf->wlr == wlserver.kb_focus_surface )
-	{
-		wlserver.kb_focus_surface = nullptr;
 	}
 
 	surf->wl_id = 0;
