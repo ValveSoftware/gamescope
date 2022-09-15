@@ -616,8 +616,8 @@ static bool filter_global(const struct wl_client *client, const struct wl_global
 	struct wlr_output *output = (struct wlr_output *) wl_global_get_user_data(global);
 	if (!output)
 	{
-		//assert(output);
-		wl_log.errorf("Global %p with interface %s had no userdata! Woah :(", global, wl_output_interface.name);
+		/* Can happen if the output has been destroyed, but the client hasn't
+		 * received the wl_registry.global_remove event yet. */
 		return false;
 	}
 
