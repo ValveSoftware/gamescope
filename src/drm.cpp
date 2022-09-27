@@ -772,8 +772,7 @@ static bool setup_best_connector(struct drm_t *drm, bool force)
 
 void load_pnps(void)
 {
-	// TODO: use hwdata's pkg-config file once they ship one
-	const char *filename = "/usr/share/hwdata/pnp.ids";
+	const char *filename = HWDATA_PNP_IDS;
 	FILE *f = fopen(filename, "r");
 	if (!f) {
 		drm_log.infof("failed to open PNP IDs file at '%s'", filename);

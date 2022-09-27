@@ -45,6 +45,7 @@ cap_dep = dependency('libcap')
 sdl_dep = dependency('SDL2')
 pipewire_dep = dependency('libpipewire-0.3', required: get_option('pipewire'))
 librt_dep = cppc.find_library('rt', required : get_option('pipewire'))
+hwdata_dep = dependency('hwdata')
 
 stb_dep = dependency('stb')
 
@@ -111,6 +112,7 @@ liftoff_dep = dependency(
 
 add_project_arguments(
   '-DHAVE_PIPEWIRE=@0@'.format(pipewire_dep.found().to_int()),
+  '-DHWDATA_PNP_IDS="@0@"'.format(hwdata_dep.get_variable('pkgdatadir') / 'pnp.ids'),
   language: 'cpp',
 )
 
