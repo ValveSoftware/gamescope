@@ -760,7 +760,6 @@ static bool setup_best_connector(struct drm_t *drm, bool force)
 	}
 
 	const struct wlserver_output_info wlserver_output_info = {
-		.name = best->name,
 		.description = description,
 		.phys_width = (int) best->connector->mmWidth,
 		.phys_height = (int) best->connector->mmHeight,

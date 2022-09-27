@@ -627,9 +627,7 @@ static void handle_wlr_log(enum wlr_log_importance importance, const char *fmt, 
 
 void wlserver_set_output_info( const wlserver_output_info *info )
 {
-	free(wlserver.output_info.name);
 	free(wlserver.output_info.description);
-	wlserver.output_info.name = strdup(info->name);
 	wlserver.output_info.description = strdup(info->description);
 	wlserver.output_info.phys_width = info->phys_width;
 	wlserver.output_info.phys_height = info->phys_height;
@@ -682,7 +680,6 @@ bool wlsession_init( void ) {
 	wl_display_set_global_filter(wlserver.display, filter_global, nullptr);
 
 	const struct wlserver_output_info output_info = {
-		.name = "Virtual-1",
 		.description = "Virtual gamescope output",
 	};
 	wlserver_set_output_info( &output_info );
@@ -760,6 +757,7 @@ gamescope_xwayland_server_t::gamescope_xwayland_server_t(wl_display *display)
 	output = wlr_headless_add_output(wlserver.wlr.headless_backend, 1280, 720);
 	strncpy(output->make, "gamescope", sizeof(output->make));
 	strncpy(output->model, "gamescope", sizeof(output->model));
+	wlr_output_set_name(output, "gamescope");
 
 	int refresh = g_nNestedRefresh;
 	if (refresh == 0) {
@@ -787,14 +785,17 @@ void gamescope_xwayland_server_t::update_output_info()
 {
 	const auto *info = &wlserver.output_info;
 
-	wlr_output_destroy_global(output);
-
-	wlr_output_set_name(output, info->name);
-	wlr_output_set_description(output, info->description);
 	output->phys_width = info->phys_width;
 	output->phys_height = info->phys_height;
+	struct wl_resource *resource;
+	wl_resource_for_each(resource, &output->resources) {
+		wl_output_send_geometry(resource, 0, 0,
+			output->phys_width, output->phys_height, output->subpixel,
+			output->make, output->model, output->transform);
+	}
+	wlr_output_schedule_done(output);
 
-	wlr_output_create_global(output);
+	wlr_output_set_description(output, info->description);
 }
 
 bool wlserver_init( void ) {

@@ -171,7 +171,6 @@ void wlserver_send_frame_done( struct wlr_surface *surf, const struct timespec *
 bool wlserver_surface_is_async( struct wlr_surface *surf );
 
 struct wlserver_output_info {
-	const char *name;
 	const char *description;
 	int phys_width, phys_height; // millimeters
 };
