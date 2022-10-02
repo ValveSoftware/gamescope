@@ -1881,7 +1881,14 @@ paint_all(bool async)
 			pCaptureTexture = vulkan_acquire_screenshot_texture(false);
 		}
 
-		bool bResult = vulkan_composite( &frameInfo, pCaptureTexture );
+		int syncFileFd = -1;
+		int *syncFileFdPtr = nullptr;
+		if (!pCaptureTexture && !BIsNested() && g_bDrmExplicitSync)
+		{
+			syncFileFdPtr = &syncFileFd;
+		}
+
+		bool bResult = vulkan_composite( &frameInfo, pCaptureTexture, syncFileFdPtr );
 
 		if ( bResult != true )
 		{
@@ -1952,7 +1959,8 @@ paint_all(bool async)
 				}
 			}
 
-			drm_commit( &g_DRM, &frameInfo );
+			drm_commit( &g_DRM, &frameInfo, syncFileFd );
+			close( syncFileFd );
 		}
 
 		if ( takeScreenshot )
@@ -2020,7 +2028,7 @@ paint_all(bool async)
 	{
 		assert( BIsNested() == false );
 
-		drm_commit( &g_DRM, &frameInfo );
+		drm_commit( &g_DRM, &frameInfo, -1 );
 	}
 
 	gpuvis_trace_end_ctx_printf( paintID, "paint_all" );
