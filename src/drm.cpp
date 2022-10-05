@@ -1278,6 +1278,33 @@ void drm_unlock_fbid( struct drm_t *drm, uint32_t fbid )
 	drm_unlock_fb_internal( drm, &fb );
 }
 
+/* Handle the orientation of the display */
+		uint64_t get_drm_effective_orientation()
+	{
+
+			switch ( g_drmModeOrientation )
+		{
+				case PANEL_ORIENTATION_0:
+				return DRM_MODE_ROTATE_0;
+				break;
+
+				case PANEL_ORIENTATION_90:
+				return DRM_MODE_ROTATE_90;
+				break;
+
+				case PANEL_ORIENTATION_180:
+				return DRM_MODE_ROTATE_180;
+				break;
+
+				case PANEL_ORIENTATION_270:
+				return DRM_MODE_ROTATE_270;
+				break;
+
+				case PANEL_ORIENTATION_AUTO:
+				return g_bRotated ? DRM_MODE_ROTATE_270 : DRM_MODE_ROTATE_0;
+				break;
+		}
+	}
 /* Prepares an atomic commit without using libliftoff */
 static int
 drm_prepare_basic( struct drm_t *drm, const struct FrameInfo_t *frameInfo )
@@ -1303,28 +1330,10 @@ drm_prepare_basic( struct drm_t *drm, const struct FrameInfo_t *frameInfo )
 	drm->fbids_in_req.push_back( fb_id );
 
 	drm_screen_type screenType = drm_get_screen_type(drm);
+
 	if ( screenType == DRM_SCREEN_TYPE_INTERNAL )
 	{
-		switch ( g_drmModeOrientation )
-		{
-		case PANEL_ORIENTATION_0:
-			add_plane_property(req, drm->primary, "rotation", DRM_MODE_ROTATE_0);
-			break;
-		case PANEL_ORIENTATION_270:
-			add_plane_property(req, drm->primary, "rotation", DRM_MODE_ROTATE_270);
-			break;
-		case PANEL_ORIENTATION_90:
-			add_plane_property(req, drm->primary, "rotation", DRM_MODE_ROTATE_90);
-			break;
-		case PANEL_ORIENTATION_180:
-			add_plane_property(req, drm->primary, "rotation", DRM_MODE_ROTATE_180);
-			break;
-		/* we are keeping the original method used for by default to prevent a sudden break in compatibility for devices using this method.*/
-		case PANEL_ORIENTATION_AUTO:
-		default:
-			add_plane_property(req, drm->primary, "rotation", g_bRotated ? DRM_MODE_ROTATE_270 : DRM_MODE_ROTATE_0);
-			break;
-		}
+		add_plane_property(req, drm->primary, "rotation", get_drm_effective_orientation());
 	}
 	else
 	{
@@ -1580,33 +1589,19 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 			liftoff_layer_set_property( drm->lo_layers[ i ], "SRC_H", entry.layerState[i].srcH );
 
 			drm_screen_type screenType = drm_get_screen_type(drm);
-			if ( screenType == DRM_SCREEN_TYPE_INTERNAL )
-			{
-				switch ( g_drmModeOrientation )
-				{
-					case PANEL_ORIENTATION_0:
-						liftoff_layer_set_property( drm->lo_layers[ i ], "rotation", DRM_MODE_ROTATE_0);
-						break;
-					case PANEL_ORIENTATION_270:
-						liftoff_layer_set_property( drm->lo_layers[ i ], "rotation", DRM_MODE_ROTATE_270);
-						break;
-					case PANEL_ORIENTATION_90:
-						liftoff_layer_set_property( drm->lo_layers[ i ], "rotation", DRM_MODE_ROTATE_90);
-						break;
-					case PANEL_ORIENTATION_180:
-						liftoff_layer_set_property( drm->lo_layers[ i ], "rotation", DRM_MODE_ROTATE_180);
-						break;
-					case PANEL_ORIENTATION_AUTO:
-					default: /* We are using auto to ensure compatibility with devicess that used this method*/
-						liftoff_layer_set_property( drm->lo_layers[ i ], "rotation", g_bRotated ? DRM_MODE_ROTATE_270 : DRM_MODE_ROTATE_0);
-						break;
-				}
-			}
-			else
-			{
-				liftoff_layer_set_property( drm->lo_layers[ i ], "rotation", g_bRotated ? DRM_MODE_ROTATE_270 : DRM_MODE_ROTATE_0);
-			}
 
+		if ( screenType == DRM_SCREEN_TYPE_INTERNAL )
+			
+		{
+			liftoff_layer_set_property( drm->lo_layers[ i ], "rotation", get_drm_effective_orientation());
+
+		}
+
+
+		else
+		{
+			liftoff_layer_set_property( drm->lo_layers[ i ], "rotation", g_bRotated ? : DRM_MODE_ROTATE_0);
+		}
 
 			liftoff_layer_set_property( drm->lo_layers[ i ], "CRTC_X", entry.layerState[i].crtcX);
 			liftoff_layer_set_property( drm->lo_layers[ i ], "CRTC_Y", entry.layerState[i].crtcY);
