@@ -36,7 +36,6 @@ struct drm_t g_DRM = {};
 
 uint32_t g_nDRMFormat = DRM_FORMAT_INVALID;
 bool g_bRotated = false;
-
 bool g_bUseLayers = true;
 bool g_bDebugLayers = false;
 const char *g_sOutputName = nullptr;
@@ -153,6 +152,15 @@ static bool get_plane_formats(struct drm_t *drm, struct plane *plane, struct wlr
 	}
 
 	return true;
+}
+
+static const char *get_enum_name(const drmModePropertyRes *prop, uint64_t value)
+{
+	for (int i = 0; i < prop->count_enums; i++) {
+		if (prop->enums[i].value == value)
+			return prop->enums[i].name;
+	}
+	return nullptr;
 }
 
 static uint32_t pick_plane_format( const struct wlr_drm_format_set *formats )
@@ -1886,6 +1894,32 @@ bool drm_set_connector( struct drm_t *drm, struct connector *conn )
 
 	drm->connector = conn;
 	drm->needs_modeset = true;
+
+	if (conn->props.count("panel orientation") > 0) 
+	{
+		const char *orientation = get_enum_name(conn->props["panel orientation"], conn->initial_prop_values["panel orientation"]);
+
+		if (orientation == "Normal")
+		{
+			g_drmModeOrientation = PANEL_ORIENTATION_0;
+		}
+		else if (orientation == "Right Left Up")
+		{
+			g_drmModeOrientation = PANEL_ORIENTATION_90;
+		}
+		else if (orientation == "Upside Down")
+		{
+			g_drmModeOrientation = PANEL_ORIENTATION_180;
+		}
+		else if (orientation == "Right Side Up")
+		{
+			g_drmModeOrientation = PANEL_ORIENTATION_270;
+		}
+		else
+		{
+			drm_log.errorf_errno("The orientation quirk wasn't found or couldn't be used. This isn't critical.");
+		}
+	} 
 
 	return true;
 }
