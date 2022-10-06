@@ -1279,32 +1279,28 @@ void drm_unlock_fbid( struct drm_t *drm, uint32_t fbid )
 }
 
 /* Handle the orientation of the display */
-		uint64_t get_drm_effective_orientation()
+uint64_t get_drm_effective_orientation()
+{
+	switch ( g_drmModeOrientation )
 	{
-
-			switch ( g_drmModeOrientation )
-		{
-				case PANEL_ORIENTATION_0:
-				return DRM_MODE_ROTATE_0;
-				break;
-
-				case PANEL_ORIENTATION_90:
-				return DRM_MODE_ROTATE_90;
-				break;
-
-				case PANEL_ORIENTATION_180:
-				return DRM_MODE_ROTATE_180;
-				break;
-
-				case PANEL_ORIENTATION_270:
-				return DRM_MODE_ROTATE_270;
-				break;
-
-				case PANEL_ORIENTATION_AUTO:
-				return g_bRotated ? DRM_MODE_ROTATE_270 : DRM_MODE_ROTATE_0;
-				break;
-		}
+		case PANEL_ORIENTATION_0:
+			return DRM_MODE_ROTATE_0;
+			break;
+		case PANEL_ORIENTATION_90:
+			return DRM_MODE_ROTATE_90;
+			break;
+		case PANEL_ORIENTATION_180:
+			return DRM_MODE_ROTATE_180;
+			break;
+		case PANEL_ORIENTATION_270:
+			return DRM_MODE_ROTATE_270;
+			break;
+		case PANEL_ORIENTATION_AUTO:
+			return g_bRotated ? DRM_MODE_ROTATE_270 : DRM_MODE_ROTATE_0;
+			break;
 	}
+}
+
 /* Prepares an atomic commit without using libliftoff */
 static int
 drm_prepare_basic( struct drm_t *drm, const struct FrameInfo_t *frameInfo )
@@ -1591,13 +1587,9 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 			drm_screen_type screenType = drm_get_screen_type(drm);
 
 		if ( screenType == DRM_SCREEN_TYPE_INTERNAL )
-			
 		{
 			liftoff_layer_set_property( drm->lo_layers[ i ], "rotation", get_drm_effective_orientation());
-
 		}
-
-
 		else
 		{
 			liftoff_layer_set_property( drm->lo_layers[ i ], "rotation", g_bRotated ? : DRM_MODE_ROTATE_0);
@@ -2198,7 +2190,7 @@ bool drm_update_degamma_lut(struct drm_t *drm)
 	if ( !drm->crtc->has_degamma_lut )
 		return true;
 
-	enum drm_screen_type screen_type = drm->pending.screen_type;		
+	enum drm_screen_type screen_type = drm->pending.screen_type;
 
 	if (drm->pending.color_degamma_exponent[screen_type][0] == drm->current.color_degamma_exponent[screen_type][0] &&
 		drm->pending.color_degamma_exponent[screen_type][1] == drm->current.color_degamma_exponent[screen_type][1] &&
