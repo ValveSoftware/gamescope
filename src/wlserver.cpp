@@ -1044,42 +1044,34 @@ bool wlserver_surface_is_async( struct wlr_surface *surf )
 }
 
 /* Handle the orientation of the touch inputs */
-
 void get_effective_touchscreen_orientation(double *x, double *y )
+{
+	double tx = 0;
+	double ty = 0;
+
+	switch ( get_drm_effective_orientation() )
 	{
-		double tx,ty;
-
-			switch ( g_drmModeOrientation )
-		{
-				case PANEL_ORIENTATION_0:
-				tx = *x;
-				ty = *y;
-				break;
-
-				case PANEL_ORIENTATION_90:
-				tx = 1.0 - *y;
-				ty = *x;
-				break;
-
-				case PANEL_ORIENTATION_180:
-				tx = 1.0 - *x;
-				ty = 1.0 - *y;
-				break;
-
-				case PANEL_ORIENTATION_270:
-				tx = *y;
-				ty = 1.0 - *x;
-				break;
-
-				case PANEL_ORIENTATION_AUTO:
-				tx = g_bRotated ? *y : *x;
-				ty = g_bRotated ? 1.0 - *x : *y;
-				break;
-		}
-
-		*x = tx;
-		*y = ty;
+		case DRM_MODE_ROTATE_0:
+			tx = *x;
+			ty = *y;
+			break;
+		case DRM_MODE_ROTATE_90:
+			tx = 1.0 - *y;
+			ty = *x;
+			break;
+		case DRM_MODE_ROTATE_180:
+			tx = 1.0 - *x;
+			ty = 1.0 - *y;
+			break;
+		case DRM_MODE_ROTATE_270:
+			tx = *y;
+			ty = 1.0 - *x;
+			break;
 	}
+
+	*x = tx;
+	*y = ty;
+}
 
 void wlserver_touchmotion( double x, double y, int touch_id, uint32_t time )
 {
@@ -1125,12 +1117,10 @@ void wlserver_touchdown( double x, double y, int touch_id, uint32_t time )
 {
 	if ( wlserver.mouse_focus_surface != NULL )
 	{
-		double tx = 0;
-		double ty = 0;
+		double tx = x;
+		double ty = y;
 
-		get_effective_touchscreen_orientation(&x, &y);
-		tx = x;
-		ty = y;
+		get_effective_touchscreen_orientation(&tx, &ty);
 
 		tx *= g_nOutputWidth;
 		ty *= g_nOutputHeight;
