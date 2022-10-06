@@ -1077,8 +1077,8 @@ void wlserver_touchmotion( double x, double y, int touch_id, uint32_t time )
 {
 	if ( wlserver.mouse_focus_surface != NULL )
 	{
-		double tx = 0;
-		double ty = 0;
+		double tx = x;
+		double ty = y;
 
 		get_effective_touchscreen_orientation(&tx, &ty);
 
