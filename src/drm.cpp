@@ -1299,6 +1299,7 @@ uint64_t get_drm_effective_orientation()
 			return g_bRotated ? DRM_MODE_ROTATE_270 : DRM_MODE_ROTATE_0;
 			break;
 	}
+	abort(); //Should not happen unless something went terribly wrong
 }
 
 /* Prepares an atomic commit without using libliftoff */
