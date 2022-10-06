@@ -1080,9 +1080,7 @@ void wlserver_touchmotion( double x, double y, int touch_id, uint32_t time )
 		double tx = 0;
 		double ty = 0;
 
-		get_effective_touchscreen_orientation(&x, &y);
-		tx = x;
-		ty = y;
+		get_effective_touchscreen_orientation(&tx, &ty);
 
 		tx *= g_nOutputWidth;
 		ty *= g_nOutputHeight;
