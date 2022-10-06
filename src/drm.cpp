@@ -1333,7 +1333,7 @@ drm_prepare_basic( struct drm_t *drm, const struct FrameInfo_t *frameInfo )
 	}
 	else
 	{
-		add_plane_property(req, drm->primary, "rotation", g_bRotated ? DRM_MODE_ROTATE_270 : DRM_MODE_ROTATE_0);
+		add_plane_property(req, drm->primary, "rotation", DRM_MODE_ROTATE_0);
 	}
 
 	add_plane_property(req, drm->primary, "FB_ID", fb_id);
@@ -1592,7 +1592,7 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 		}
 		else
 		{
-			liftoff_layer_set_property( drm->lo_layers[ i ], "rotation", g_bRotated ? : DRM_MODE_ROTATE_0);
+			liftoff_layer_set_property( drm->lo_layers[ i ], "rotation", DRM_MODE_ROTATE_0);
 		}
 
 			liftoff_layer_set_property( drm->lo_layers[ i ], "CRTC_X", entry.layerState[i].crtcX);
