@@ -1899,19 +1899,19 @@ bool drm_set_connector( struct drm_t *drm, struct connector *conn )
 	{
 		const char *orientation = get_enum_name(conn->props["panel orientation"], conn->initial_prop_values["panel orientation"]);
 
-		if (orientation == "Normal")
+		if (strcmp(orientation, "Normal") == 0)
 		{
 			g_drmModeOrientation = PANEL_ORIENTATION_0;
 		}
-		else if (orientation == "Right Left Up")
+		else if (strcmp(orientation, "Left Side Up") == 0)
 		{
 			g_drmModeOrientation = PANEL_ORIENTATION_90;
 		}
-		else if (orientation == "Upside Down")
+		else if (strcmp(orientation, "Upside Down") == 0)
 		{
 			g_drmModeOrientation = PANEL_ORIENTATION_180;
 		}
-		else if (orientation == "Right Side Up")
+		else if (strcmp(orientation, "Right Side Up") == 0)
 		{
 			g_drmModeOrientation = PANEL_ORIENTATION_270;
 		}
