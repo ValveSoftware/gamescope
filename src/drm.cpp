@@ -48,6 +48,7 @@ bool g_bSupportsAsyncFlips = false;
 
 enum drm_mode_generation g_drmModeGeneration = DRM_MODE_GENERATE_CVT;
 enum g_panel_orientation g_drmModeOrientation = PANEL_ORIENTATION_AUTO;
+uint64_t g_drmEffectiveOrientation = PANEL_ORIENTATION_AUTO;
 
 
 static LogScope drm_log("drm");
@@ -1292,15 +1293,19 @@ uint64_t get_drm_effective_orientation()
 	switch ( g_drmModeOrientation )
 	{
 		case PANEL_ORIENTATION_0:
-			return DRM_MODE_ROTATE_0;
+			g_drmEffectiveOrientation = DRM_MODE_ROTATE_0;
+			return g_drmModeOrientation;
 		case PANEL_ORIENTATION_90:
-			return DRM_MODE_ROTATE_90;
+			g_drmEffectiveOrientation = DRM_MODE_ROTATE_90;
+			return g_drmEffectiveOrientation;
 		case PANEL_ORIENTATION_180:
-			return DRM_MODE_ROTATE_180;
+			g_drmEffectiveOrientation = DRM_MODE_ROTATE_180;
+			return g_drmModeOrientation;
 		case PANEL_ORIENTATION_270:
-			return DRM_MODE_ROTATE_270;
+			g_drmEffectiveOrientation = DRM_MODE_ROTATE_270;
+			return g_drmEffectiveOrientation;
 		case PANEL_ORIENTATION_AUTO:
-			return g_bRotated ? DRM_MODE_ROTATE_270 : DRM_MODE_ROTATE_0;
+			return g_drmModeOrientation;
 	}
 	abort(); //Should not happen unless something went terribly wrong
 }
@@ -1333,7 +1338,8 @@ drm_prepare_basic( struct drm_t *drm, const struct FrameInfo_t *frameInfo )
 
 	if ( screenType == DRM_SCREEN_TYPE_INTERNAL )
 	{
-		add_plane_property(req, drm->primary, "rotation", get_drm_effective_orientation());
+		get_drm_effective_orientation();
+		add_plane_property(req, drm->primary, "rotation", g_drmEffectiveOrientation);
 	}
 	else
 	{
@@ -1592,7 +1598,8 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 
 			if ( screenType == DRM_SCREEN_TYPE_INTERNAL )
 			{
-				liftoff_layer_set_property( drm->lo_layers[ i ], "rotation", get_drm_effective_orientation());
+				get_drm_effective_orientation();
+				liftoff_layer_set_property( drm->lo_layers[ i ], "rotation", g_drmEffectiveOrientation);
 			}
 			else
 			{
@@ -1895,7 +1902,7 @@ bool drm_set_connector( struct drm_t *drm, struct connector *conn )
 	drm->connector = conn;
 	drm->needs_modeset = true;
 
-	if (conn->props.count("panel orientation") > 0) 
+	if (conn->props.count("panel orientation") > 0 && g_drmModeOrientation == PANEL_ORIENTATION_AUTO) 
 	{
 		const char *orientation = get_enum_name(conn->props["panel orientation"], conn->initial_prop_values["panel orientation"]);
 
