@@ -219,7 +219,7 @@ static enum drm_mode_generation parse_drm_mode_generation(const char *str)
 	}
 }
 
-static enum g_panel_orientation force_orientation (const char *str)
+static enum g_panel_orientation force_orientation(const char *str)
 {
 	if (strcmp(str, "normal") == 0) {
 		return PANEL_ORIENTATION_0;

@@ -1285,19 +1285,14 @@ uint64_t get_drm_effective_orientation()
 	{
 		case PANEL_ORIENTATION_0:
 			return DRM_MODE_ROTATE_0;
-			break;
 		case PANEL_ORIENTATION_90:
 			return DRM_MODE_ROTATE_90;
-			break;
 		case PANEL_ORIENTATION_180:
 			return DRM_MODE_ROTATE_180;
-			break;
 		case PANEL_ORIENTATION_270:
 			return DRM_MODE_ROTATE_270;
-			break;
 		case PANEL_ORIENTATION_AUTO:
 			return g_bRotated ? DRM_MODE_ROTATE_270 : DRM_MODE_ROTATE_0;
-			break;
 	}
 	abort(); //Should not happen unless something went terribly wrong
 }
@@ -1587,14 +1582,14 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 
 			drm_screen_type screenType = drm_get_screen_type(drm);
 
-		if ( screenType == DRM_SCREEN_TYPE_INTERNAL )
-		{
-			liftoff_layer_set_property( drm->lo_layers[ i ], "rotation", get_drm_effective_orientation());
-		}
-		else
-		{
-			liftoff_layer_set_property( drm->lo_layers[ i ], "rotation", DRM_MODE_ROTATE_0);
-		}
+			if ( screenType == DRM_SCREEN_TYPE_INTERNAL )
+			{
+				liftoff_layer_set_property( drm->lo_layers[ i ], "rotation", get_drm_effective_orientation());
+			}
+			else
+			{
+				liftoff_layer_set_property( drm->lo_layers[ i ], "rotation", DRM_MODE_ROTATE_0);
+			}
 
 			liftoff_layer_set_property( drm->lo_layers[ i ], "CRTC_X", entry.layerState[i].crtcX);
 			liftoff_layer_set_property( drm->lo_layers[ i ], "CRTC_Y", entry.layerState[i].crtcY);
