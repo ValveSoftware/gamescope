@@ -1044,7 +1044,7 @@ bool wlserver_surface_is_async( struct wlr_surface *surf )
 }
 
 /* Handle the orientation of the touch inputs */
-void get_effective_touchscreen_orientation(double *x, double *y )
+static void apply_touchscreen_orientation(double *x, double *y )
 {
 	double tx = 0;
 	double ty = 0;
@@ -1080,7 +1080,7 @@ void wlserver_touchmotion( double x, double y, int touch_id, uint32_t time )
 		double tx = x;
 		double ty = y;
 
-		get_effective_touchscreen_orientation(&tx, &ty);
+		apply_touchscreen_orientation(&tx, &ty);
 
 		tx *= g_nOutputWidth;
 		ty *= g_nOutputHeight;
@@ -1118,7 +1118,7 @@ void wlserver_touchdown( double x, double y, int touch_id, uint32_t time )
 		double tx = x;
 		double ty = y;
 
-		get_effective_touchscreen_orientation(&tx, &ty);
+		apply_touchscreen_orientation(&tx, &ty);
 
 		tx *= g_nOutputWidth;
 		ty *= g_nOutputHeight;
