@@ -1294,18 +1294,19 @@ uint64_t get_drm_effective_orientation()
 	{
 		case PANEL_ORIENTATION_0:
 			g_drmEffectiveOrientation = DRM_MODE_ROTATE_0;
-			return g_drmModeOrientation;
+			return g_drmEffectiveOrientation;
 		case PANEL_ORIENTATION_90:
 			g_drmEffectiveOrientation = DRM_MODE_ROTATE_90;
 			return g_drmEffectiveOrientation;
 		case PANEL_ORIENTATION_180:
 			g_drmEffectiveOrientation = DRM_MODE_ROTATE_180;
-			return g_drmModeOrientation;
+			return g_drmEffectiveOrientation;
 		case PANEL_ORIENTATION_270:
-			g_drmEffectiveOrientation = DRM_MODE_ROTATE_270;
+			g_drmEffectiveOrientation = DRM_MODE_ROTATE_270;	
 			return g_drmEffectiveOrientation;
 		case PANEL_ORIENTATION_AUTO:
-			return g_drmModeOrientation;
+			g_drmEffectiveOrientation = DRM_MODE_ROTATE_0;
+			return g_drmEffectiveOrientation;	
 	}
 	abort(); //Should not happen unless something went terribly wrong
 }
