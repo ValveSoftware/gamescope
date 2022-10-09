@@ -1288,7 +1288,7 @@ void drm_unlock_fbid( struct drm_t *drm, uint32_t fbid )
 }
 
 /* Handle the orientation of the display */
-	void update_drm_effective_orientation(struct drm_t *drm,  struct connector *conn )
+	void update_drm_effective_orientation(struct drm_t *drm,  struct connector *conn)
 {
 	drm_screen_type screenType = drm_get_screen_type(drm);
 	if ( screenType == DRM_SCREEN_TYPE_INTERNAL )
@@ -1315,23 +1315,20 @@ void drm_unlock_fbid( struct drm_t *drm, uint32_t fbid )
 					if (strcmp(orientation, "Normal") == 0)
 					{
 						g_drmEffectiveOrientation = DRM_MODE_ROTATE_0;
-						break;
 					}
 					else if (strcmp(orientation, "Left Side Up") == 0)
 					{
 						g_drmEffectiveOrientation = DRM_MODE_ROTATE_90;
-						break;
 					}
 					else if (strcmp(orientation, "Upside Down") == 0)
 					{
 						g_drmEffectiveOrientation = DRM_MODE_ROTATE_180;
-						break;
 					}
 					else if (strcmp(orientation, "Right Side Up") == 0)
 					{
 						g_drmEffectiveOrientation = DRM_MODE_ROTATE_270;
-						break;
 					}
+					break;
 				}
 				g_drmEffectiveOrientation = g_bRotated ? DRM_MODE_ROTATE_270 : DRM_MODE_ROTATE_0;
 				break;
@@ -1617,7 +1614,7 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 			liftoff_layer_set_property( drm->lo_layers[ i ], "SRC_W", entry.layerState[i].srcW );
 			liftoff_layer_set_property( drm->lo_layers[ i ], "SRC_H", entry.layerState[i].srcH );
 
-			liftoff_layer_set_property( drm->lo_layers[ i ], "rotation", g_drmEffectiveOrientation);
+			liftoff_layer_set_property( drm->lo_layers[ i ], "rotation", g_drmEffectiveOrientation );
 
 			liftoff_layer_set_property( drm->lo_layers[ i ], "CRTC_X", entry.layerState[i].crtcX);
 			liftoff_layer_set_property( drm->lo_layers[ i ], "CRTC_Y", entry.layerState[i].crtcY);
