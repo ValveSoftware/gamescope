@@ -216,6 +216,7 @@ enum g_panel_orientation {
 
 extern enum drm_mode_generation g_drmModeGeneration;
 extern enum g_panel_orientation g_drmModeOrientation;
+extern uint64_t g_drmEffectiveOrientation;
 
 bool init_drm(struct drm_t *drm, int width, int height, int refresh);
 void finish_drm(struct drm_t *drm);
@@ -244,7 +245,5 @@ drm_screen_type drm_get_screen_type(struct drm_t *drm);
 
 char *find_drm_node_by_devid(dev_t devid);
 int drm_get_default_refresh(struct drm_t *drm);
-
-uint64_t update_drm_effective_orientation();
 
 extern bool g_bSupportsAsyncFlips;
