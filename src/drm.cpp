@@ -1291,7 +1291,7 @@ void drm_unlock_fbid( struct drm_t *drm, uint32_t fbid )
 void update_drm_effective_orientation(struct drm_t *drm, struct connector *conn)
 {
 	drm_screen_type screenType = drm_get_screen_type(drm);
-	if ( screenType == DRM_SCREEN_TYPE_INTERNAL )
+	if ( screenType == DRM_SCREEN_TYPE_EXTERNAL )
 	{
 		g_drmEffectiveOrientation = DRM_MODE_ROTATE_0;
 		return;	
