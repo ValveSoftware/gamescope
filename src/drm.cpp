@@ -1336,6 +1336,7 @@ void update_drm_effective_orientation(struct drm_t *drm, struct connector *conn)
 			else
 			{
 				g_drmEffectiveOrientation = g_bRotated ? DRM_MODE_ROTATE_270 : DRM_MODE_ROTATE_0;
+				break;
 			}
 	}
 }
