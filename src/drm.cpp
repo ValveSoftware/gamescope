@@ -1282,14 +1282,24 @@ void drm_unlock_fbid( struct drm_t *drm, uint32_t fbid )
 }
 
 /* Handle the orientation of the display */
-void update_drm_effective_orientation(struct drm_t *drm, struct connector *conn)
+void update_drm_effective_orientation(struct drm_t *drm, const drmModeModeInfo *mode, struct connector *conn)
 {
 	drm_screen_type screenType = drm_get_screen_type(drm);
 	if ( screenType == DRM_SCREEN_TYPE_EXTERNAL )
 	{
 		g_drmEffectiveOrientation = DRM_MODE_ROTATE_0;
 		return;	
-	}	
+	}
+
+	// Auto-detect portrait mode
+	g_bRotated = g_nOutputWidth < g_nOutputHeight;
+
+	if ( g_bRotated )
+	{
+		g_nOutputWidth = mode->vdisplay;
+		g_nOutputHeight = mode->hdisplay;
+	}
+
 	switch ( g_drmModeOrientation )
 	{
 		case PANEL_ORIENTATION_0:
@@ -1331,6 +1341,11 @@ void update_drm_effective_orientation(struct drm_t *drm, struct connector *conn)
 				g_drmEffectiveOrientation = g_bRotated ? DRM_MODE_ROTATE_270 : DRM_MODE_ROTATE_0;
 			}
 			break;
+	}
+	if ((g_drmEffectiveOrientation == PANEL_ORIENTATION_0 && g_bRotated) || (g_drmEffectiveOrientation == PANEL_ORIENTATION_180 && g_bRotated))
+	{
+		g_nOutputWidth = mode->hdisplay;
+		g_nOutputHeight = mode->vdisplay;
 	}
 }
 
@@ -2258,26 +2273,15 @@ bool drm_set_mode( struct drm_t *drm, const drmModeModeInfo *mode )
 		return false;
 
 	drm_log.infof("selecting mode %dx%d@%uHz", mode->hdisplay, mode->vdisplay, mode->vrefresh);
+
 	drm->pending.mode_id = mode_id;
 	drm->needs_modeset = true;
 
+	g_nOutputWidth = mode->hdisplay;
+	g_nOutputHeight = mode->vdisplay;
 	g_nOutputRefresh = mode->vrefresh;
 
-	// Auto-detect portrait mode
-	g_bRotated = g_nOutputWidth < g_nOutputHeight;
-
-	if ( g_drmEffectiveOrientation == PANEL_ORIENTATION_90 || g_drmEffectiveOrientation == PANEL_ORIENTATION_270 )
-    {
-        g_nOutputWidth = mode->vdisplay;
-        g_nOutputHeight = mode->hdisplay;
-    }
-	else
-	{
-		g_nOutputWidth = mode->hdisplay;
-		g_nOutputHeight = mode->vdisplay;
-	}
-
-	update_drm_effective_orientation(drm, drm->connector);
+	update_drm_effective_orientation(drm, mode, drm->connector);
 
 	return true;
 }
