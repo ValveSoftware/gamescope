@@ -1325,13 +1325,12 @@ void update_drm_effective_orientation(struct drm_t *drm, struct connector *conn)
 				{
 					g_drmEffectiveOrientation = DRM_MODE_ROTATE_270;
 				}
-				break;
 			}
 			else
 			{
 				g_drmEffectiveOrientation = g_bRotated ? DRM_MODE_ROTATE_270 : DRM_MODE_ROTATE_0;
-				break;
 			}
+			break;
 	}
 }
 
@@ -1906,9 +1905,7 @@ bool drm_set_connector( struct drm_t *drm, struct connector *conn )
 
 	drm->connector = conn;
 	drm->needs_modeset = true;
-
-	update_drm_effective_orientation(drm, conn);
-
+	
 	return true;
 }
 
@@ -2261,7 +2258,6 @@ bool drm_set_mode( struct drm_t *drm, const drmModeModeInfo *mode )
 		return false;
 
 	drm_log.infof("selecting mode %dx%d@%uHz", mode->hdisplay, mode->vdisplay, mode->vrefresh);
-
 	drm->pending.mode_id = mode_id;
 	drm->needs_modeset = true;
 
@@ -2272,11 +2268,18 @@ bool drm_set_mode( struct drm_t *drm, const drmModeModeInfo *mode )
 	// Auto-detect portrait mode
 	g_bRotated = g_nOutputWidth < g_nOutputHeight;
 
-	if ( g_bRotated )
+	if ( g_drmEffectiveOrientation == PANEL_ORIENTATION_90 || g_drmEffectiveOrientation == PANEL_ORIENTATION_270 )
+    {
+        g_nOutputWidth = mode->vdisplay;
+        g_nOutputHeight = mode->hdisplay;
+    }
+	else if ( g_bRotated )
 	{
 		g_nOutputWidth = mode->vdisplay;
-		g_nOutputHeight = mode->hdisplay;
+        g_nOutputHeight = mode->hdisplay;
 	}
+
+	update_drm_effective_orientation(drm, drm->connector);
 
 	return true;
 }
