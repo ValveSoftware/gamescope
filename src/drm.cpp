@@ -2261,8 +2261,6 @@ bool drm_set_mode( struct drm_t *drm, const drmModeModeInfo *mode )
 	drm->pending.mode_id = mode_id;
 	drm->needs_modeset = true;
 
-	g_nOutputWidth = mode->hdisplay;
-	g_nOutputHeight = mode->vdisplay;
 	g_nOutputRefresh = mode->vrefresh;
 
 	// Auto-detect portrait mode
@@ -2273,10 +2271,10 @@ bool drm_set_mode( struct drm_t *drm, const drmModeModeInfo *mode )
         g_nOutputWidth = mode->vdisplay;
         g_nOutputHeight = mode->hdisplay;
     }
-	else if ( g_bRotated )
+	else
 	{
-		g_nOutputWidth = mode->vdisplay;
-        g_nOutputHeight = mode->hdisplay;
+		g_nOutputWidth = mode->hdisplay;
+		g_nOutputHeight = mode->vdisplay;
 	}
 
 	update_drm_effective_orientation(drm, drm->connector);
