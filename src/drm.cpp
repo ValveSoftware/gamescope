@@ -1290,16 +1290,13 @@ void update_drm_effective_orientation(struct drm_t *drm, const drmModeModeInfo *
 		g_drmEffectiveOrientation = DRM_MODE_ROTATE_0;
 		return;	
 	}
-
 	// Auto-detect portrait mode
 	g_bRotated = g_nOutputWidth < g_nOutputHeight;
-
 	if ( g_bRotated )
 	{
 		g_nOutputWidth = mode->vdisplay;
 		g_nOutputHeight = mode->hdisplay;
 	}
-
 	switch ( g_drmModeOrientation )
 	{
 		case PANEL_ORIENTATION_0:
@@ -1346,6 +1343,7 @@ void update_drm_effective_orientation(struct drm_t *drm, const drmModeModeInfo *
 	{
 		g_nOutputWidth = mode->hdisplay;
 		g_nOutputHeight = mode->vdisplay;
+		g_bRotated = !g_bRotated;
 	}
 }
 
