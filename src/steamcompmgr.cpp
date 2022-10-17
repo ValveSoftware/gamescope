@@ -1919,7 +1919,7 @@ paint_all(bool async)
 
 			if ( ret != 0 )
 			{
-				if ( g_DRM.current.mode_id == 0 )
+				if ( g_DRM.current.mode_id == 0 && g_DRM.pending.mode_id == 0)
 				{
 					xwm_log.errorf("We failed our modeset and have no mode to fall back to! (Initial modeset failed?): %s", strerror(-ret));
 					abort();
