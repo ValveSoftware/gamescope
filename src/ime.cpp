@@ -14,7 +14,6 @@
 
 extern "C" {
 #define delete delete_
-#include <wlr/interfaces/wlr_input_device.h>
 #include <wlr/interfaces/wlr_keyboard.h>
 #include <wlr/types/wlr_keyboard.h>
 #include <wlr/types/wlr_seat.h>
@@ -106,7 +105,6 @@ struct wlserver_input_method {
 
 	// Used to send emulated input events
 	struct wlr_keyboard keyboard;
-	struct wlr_input_device keyboard_device;
 	std::deque<struct wlserver_input_method_key> keys;
 	uint32_t next_keycode_index;
 	int32_t held_keycode;
@@ -317,9 +315,9 @@ static void press_key(struct wlserver_input_method *ime, uint32_t keycode, struc
 static bool try_type_keysym(struct wlserver_input_method *ime, xkb_keysym_t keysym)
 {
 	struct wlr_seat *seat = ime->manager->server->wlr.seat;
-	struct wlr_input_device *device = ime->manager->server->wlr.virtual_keyboard_device;
+	struct wlr_keyboard *keyboard = ime->manager->server->wlr.virtual_keyboard_device;
 
-	struct xkb_keymap *keymap = device->keyboard->keymap;
+	struct xkb_keymap *keymap = keyboard->keymap;
 	xkb_keycode_t min_keycode = xkb_keymap_min_keycode(keymap);
 	xkb_keycode_t max_keycode = xkb_keymap_max_keycode(keymap);
 	for (xkb_keycode_t keycode = min_keycode; keycode <= max_keycode; keycode++) {
@@ -348,7 +346,7 @@ static bool try_type_keysym(struct wlserver_input_method *ime, xkb_keysym_t keys
 				}
 
 				release_key_if_needed(ime); // before keymap change
-				wlr_seat_set_keyboard(seat, device);
+				wlr_seat_set_keyboard(seat, keyboard);
 
 				struct wlr_keyboard_modifiers mods = {
 					.depressed = mask,
@@ -398,7 +396,7 @@ static void type_text(struct wlserver_input_method *ime, const char *text)
 
 	struct wlr_seat *seat = ime->manager->server->wlr.seat;
 	release_key_if_needed(ime); // before keymap change
-	wlr_seat_set_keyboard(seat, &ime->keyboard_device);
+	wlr_seat_set_keyboard(seat, &ime->keyboard);
 
 	// Note: Xwayland doesn't care about the time field of the events
 	for (size_t i = 0; i < keycodes.size(); i++) {
@@ -434,7 +432,7 @@ static void perform_action(struct wlserver_input_method *ime, enum gamescope_inp
 
 	struct wlr_seat *seat = ime->manager->server->wlr.seat;
 	release_key_if_needed(ime); // before keymap change
-	wlr_seat_set_keyboard(seat, &ime->keyboard_device);
+	wlr_seat_set_keyboard(seat, &ime->keyboard);
 
 	press_key(ime, key.keycode);
 
@@ -501,21 +499,15 @@ static void ime_handle_resource_destroy(struct wl_resource *ime_resource)
 
 	active_input_method = nullptr;
 
-	wlr_input_device_destroy(&ime->keyboard_device);
+	wlr_keyboard_finish(&ime->keyboard);
 
 	delete ime;
 }
 
-static void keyboard_destroy(struct wlr_keyboard *kyeboard) {}
+static void handle_led_update(struct wlr_keyboard *keyboard, uint32_t leds) {}
 
 static const struct wlr_keyboard_impl keyboard_impl = {
-	.destroy = keyboard_destroy,
-};
-
-static void keyboard_device_destroy(struct wlr_input_device *dev) {}
-
-static const struct wlr_input_device_impl keyboard_device_impl = {
-	.destroy = keyboard_device_destroy,
+	.led_update = handle_led_update,
 };
 
 static int reset_ime_keyboard(void *data)
@@ -551,9 +543,7 @@ static void manager_handle_create_input_method(struct wl_client *client, struct 
 	ime->held_modifier_mask = 0;
 	ime->prev_mods = wlr_keyboard_modifiers{0};
 
-	wlr_keyboard_init(&ime->keyboard, &keyboard_impl);
-	wlr_input_device_init(&ime->keyboard_device, WLR_INPUT_DEVICE_KEYBOARD, &keyboard_device_impl, "ime", 0, 0);
-	ime->keyboard_device.keyboard = &ime->keyboard;
+	wlr_keyboard_init(&ime->keyboard, &keyboard_impl, "ime");
 
 	wlr_keyboard_set_repeat_info(&ime->keyboard, 0, 0);
 

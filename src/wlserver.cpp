@@ -20,16 +20,17 @@ extern "C" {
 #define class class_
 #include <wlr/backend.h>
 #include <wlr/backend/headless.h>
-#include <wlr/backend/multi.h>
 #include <wlr/backend/libinput.h>
-#include <wlr/interfaces/wlr_input_device.h>
+#include <wlr/backend/multi.h>
 #include <wlr/interfaces/wlr_keyboard.h>
 #include <wlr/render/wlr_renderer.h>
+#include <wlr/types/wlr_compositor.h>
 #include <wlr/types/wlr_keyboard.h>
 #include <wlr/types/wlr_pointer.h>
+#include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_touch.h>
-#include <wlr/xwayland.h>
 #include <wlr/util/log.h>
+#include <wlr/xwayland/server.h>
 #undef static
 #undef class
 }
@@ -141,7 +142,7 @@ void xwayland_surface_role_commit(struct wlr_surface *wlr_surface) {
 	}
 }
 
-static void xwayland_surface_role_precommit(struct wlr_surface *wlr_surface) {
+static void xwayland_surface_role_precommit(struct wlr_surface *wlr_surface, const wlr_surface_state *wlr_surface_state) {
 	assert(wlr_surface->role == &xwayland_surface_role);
 }
 
@@ -177,8 +178,8 @@ static void wlserver_handle_modifiers(struct wl_listener *listener, void *data)
 {
 	struct wlserver_keyboard *keyboard = wl_container_of( listener, keyboard, modifiers );
 
-	wlr_seat_set_keyboard( wlserver.wlr.seat, keyboard->device );
-	wlr_seat_keyboard_notify_modifiers( wlserver.wlr.seat, &keyboard->device->keyboard->modifiers );
+	wlr_seat_set_keyboard( wlserver.wlr.seat, keyboard->wlr );
+	wlr_seat_keyboard_notify_modifiers( wlserver.wlr.seat, &keyboard->wlr->modifiers );
 
 	bump_input_counter();
 }
@@ -186,10 +187,10 @@ static void wlserver_handle_modifiers(struct wl_listener *listener, void *data)
 static void wlserver_handle_key(struct wl_listener *listener, void *data)
 {
 	struct wlserver_keyboard *keyboard = wl_container_of( listener, keyboard, key );
-	struct wlr_event_keyboard_key *event = (struct wlr_event_keyboard_key *) data;
+	struct wlr_keyboard_key_event *event = (struct wlr_keyboard_key_event *) data;
 
 	xkb_keycode_t keycode = event->keycode + 8;
-	xkb_keysym_t keysym = xkb_state_key_get_one_sym(keyboard->device->keyboard->xkb_state, keycode);
+	xkb_keysym_t keysym = xkb_state_key_get_one_sym(keyboard->wlr->xkb_state, keycode);
 
 	if (wlserver.wlr.session && event->state == WL_KEYBOARD_KEY_STATE_PRESSED && keysym >= XKB_KEY_XF86Switch_VT_1 && keysym <= XKB_KEY_XF86Switch_VT_12) {
 		unsigned vt = keysym - XKB_KEY_XF86Switch_VT_1 + 1;
@@ -205,14 +206,14 @@ static void wlserver_handle_key(struct wl_listener *listener, void *data)
 		if ( new_kb_surf )
 		{
 			wlserver_keyboardfocus( new_kb_surf );
-			wlr_seat_set_keyboard( wlserver.wlr.seat, keyboard->device );
+			wlr_seat_set_keyboard( wlserver.wlr.seat, keyboard->wlr );
 			wlr_seat_keyboard_notify_key( wlserver.wlr.seat, event->time_msec, event->keycode, event->state );
 			wlserver_keyboardfocus( old_kb_surf );
 			return;
 		}
 	}
 
-	wlr_seat_set_keyboard( wlserver.wlr.seat, keyboard->device);
+	wlr_seat_set_keyboard( wlserver.wlr.seat, keyboard->wlr );
 	wlr_seat_keyboard_notify_key( wlserver.wlr.seat, event->time_msec, event->keycode, event->state );
 
 	bump_input_counter();
@@ -220,7 +221,7 @@ static void wlserver_handle_key(struct wl_listener *listener, void *data)
 
 static void wlserver_handle_pointer_motion(struct wl_listener *listener, void *data)
 {
-	struct wlr_event_pointer_motion *event = (struct wlr_event_pointer_motion *) data;
+	struct wlr_pointer_motion_event *event = (struct wlr_pointer_motion_event *) data;
 
 	// TODO: Pick the xwayland_server with active focus
 	auto server = steamcompmgr_get_focused_server();
@@ -241,7 +242,7 @@ static void wlserver_handle_pointer_motion(struct wl_listener *listener, void *d
 static void wlserver_handle_pointer_button(struct wl_listener *listener, void *data)
 {
 	struct wlserver_pointer *pointer = wl_container_of( listener, pointer, button );
-	struct wlr_event_pointer_button *event = (struct wlr_event_pointer_button *) data;
+	struct wlr_pointer_button_event *event = (struct wlr_pointer_button_event *) data;
 
 	wlr_seat_pointer_notify_button( wlserver.wlr.seat, event->time_msec, event->button, event->state );
 }
@@ -249,7 +250,7 @@ static void wlserver_handle_pointer_button(struct wl_listener *listener, void *d
 static void wlserver_handle_pointer_axis(struct wl_listener *listener, void *data)
 {
 	struct wlserver_pointer *pointer = wl_container_of( listener, pointer, axis );
-	struct wlr_event_pointer_axis *event = (struct wlr_event_pointer_axis *) data;
+	struct wlr_pointer_axis_event *event = (struct wlr_pointer_axis_event *) data;
 
 	wlr_seat_pointer_notify_axis( wlserver.wlr.seat, event->time_msec, event->orientation, event->delta, event->delta_discrete, event->source );
 }
@@ -282,7 +283,7 @@ std::atomic<bool> g_bPendingTouchMovement = { false };
 static void wlserver_handle_touch_down(struct wl_listener *listener, void *data)
 {
 	struct wlserver_touch *touch = wl_container_of( listener, touch, down );
-	struct wlr_event_touch_down *event = (struct wlr_event_touch_down *) data;
+	struct wlr_touch_down_event *event = (struct wlr_touch_down_event *) data;
 
 	wlserver_touchdown( event->x, event->y, event->touch_id, event->time_msec );
 }
@@ -290,7 +291,7 @@ static void wlserver_handle_touch_down(struct wl_listener *listener, void *data)
 static void wlserver_handle_touch_up(struct wl_listener *listener, void *data)
 {
 	struct wlserver_touch *touch = wl_container_of( listener, touch, up );
-	struct wlr_event_touch_up *event = (struct wlr_event_touch_up *) data;
+	struct wlr_touch_up_event *event = (struct wlr_touch_up_event *) data;
 
 	wlserver_touchup( event->touch_id, event->time_msec );
 }
@@ -298,7 +299,7 @@ static void wlserver_handle_touch_up(struct wl_listener *listener, void *data)
 static void wlserver_handle_touch_motion(struct wl_listener *listener, void *data)
 {
 	struct wlserver_touch *touch = wl_container_of( listener, touch, motion );
-	struct wlr_event_touch_motion *event = (struct wlr_event_touch_motion *) data;
+	struct wlr_touch_motion_event *event = (struct wlr_touch_motion_event *) data;
 
 	wlserver_touchmotion( event->x, event->y, event->touch_id, event->time_msec );
 }
@@ -311,9 +312,9 @@ static void wlserver_new_input(struct wl_listener *listener, void *data)
 	{
 		case WLR_INPUT_DEVICE_KEYBOARD:
 		{
-			struct wlserver_keyboard *pKB = (struct wlserver_keyboard *) calloc( 1, sizeof( struct wlserver_keyboard ) );
+			struct wlserver_keyboard *keyboard = (struct wlserver_keyboard *) calloc( 1, sizeof( struct wlserver_keyboard ) );
 
-			pKB->device = device;
+			keyboard->wlr = (struct wlr_keyboard *)device;
 
 			struct xkb_rule_names rules = { 0 };
 			struct xkb_context *context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
@@ -325,48 +326,48 @@ static void wlserver_new_input(struct wl_listener *listener, void *data)
 			struct xkb_keymap *keymap = xkb_keymap_new_from_names(context, &rules,
 															   XKB_KEYMAP_COMPILE_NO_FLAGS);
 
-			wlr_keyboard_set_keymap(device->keyboard, keymap);
+			wlr_keyboard_set_keymap(keyboard->wlr, keymap);
 			xkb_keymap_unref(keymap);
 			xkb_context_unref(context);
-			wlr_keyboard_set_repeat_info(device->keyboard, 25, 600);
+			wlr_keyboard_set_repeat_info(keyboard->wlr, 25, 600);
 
-			device->keyboard->data = pKB;
+			keyboard->wlr->data = keyboard;
 
-			pKB->modifiers.notify = wlserver_handle_modifiers;
-			wl_signal_add( &device->keyboard->events.modifiers, &pKB->modifiers );
+			keyboard->modifiers.notify = wlserver_handle_modifiers;
+			wl_signal_add( &keyboard->wlr->events.modifiers, &keyboard->modifiers );
 
-			pKB->key.notify = wlserver_handle_key;
-			wl_signal_add( &device->keyboard->events.key, &pKB->key );
+			keyboard->key.notify = wlserver_handle_key;
+			wl_signal_add( &keyboard->wlr->events.key, &keyboard->key );
 		}
 		break;
 		case WLR_INPUT_DEVICE_POINTER:
 		{
 			struct wlserver_pointer *pointer = (struct wlserver_pointer *) calloc( 1, sizeof( struct wlserver_pointer ) );
 
-			pointer->device = device;
+			pointer->wlr = (struct wlr_pointer *)device;
 
 			pointer->motion.notify = wlserver_handle_pointer_motion;
-			wl_signal_add( &device->pointer->events.motion, &pointer->motion );
+			wl_signal_add( &pointer->wlr->events.motion, &pointer->motion );
 			pointer->button.notify = wlserver_handle_pointer_button;
-			wl_signal_add( &device->pointer->events.button, &pointer->button );
+			wl_signal_add( &pointer->wlr->events.button, &pointer->button );
 			pointer->axis.notify = wlserver_handle_pointer_axis;
-			wl_signal_add( &device->pointer->events.axis, &pointer->axis);
+			wl_signal_add( &pointer->wlr->events.axis, &pointer->axis);
 			pointer->frame.notify = wlserver_handle_pointer_frame;
-			wl_signal_add( &device->pointer->events.frame, &pointer->frame);
+			wl_signal_add( &pointer->wlr->events.frame, &pointer->frame);
 		}
 		break;
 		case WLR_INPUT_DEVICE_TOUCH:
 		{
 			struct wlserver_touch *touch = (struct wlserver_touch *) calloc( 1, sizeof( struct wlserver_touch ) );
 
-			touch->device = device;
+			touch->wlr = (struct wlr_touch *)device;
 
 			touch->down.notify = wlserver_handle_touch_down;
-			wl_signal_add( &device->touch->events.down, &touch->down );
+			wl_signal_add( &touch->wlr->events.down, &touch->down );
 			touch->up.notify = wlserver_handle_touch_up;
-			wl_signal_add( &device->touch->events.up, &touch->up );
+			wl_signal_add( &touch->wlr->events.up, &touch->up );
 			touch->motion.notify = wlserver_handle_touch_motion;
-			wl_signal_add( &device->touch->events.motion, &touch->motion );
+			wl_signal_add( &touch->wlr->events.motion, &touch->motion );
 		}
 		break;
 		default:
@@ -756,8 +757,8 @@ gamescope_xwayland_server_t::gamescope_xwayland_server_t(wl_display *display)
 	wl_signal_add(&xwayland_server->events.ready, &xwayland_ready_listener);
 
 	output = wlr_headless_add_output(wlserver.wlr.headless_backend, 1280, 720);
-	strncpy(output->make, "gamescope", sizeof(output->make));
-	strncpy(output->model, "gamescope", sizeof(output->model));
+	output->make = strdup("gamescope");  // freed by wlroots
+	output->model = strdup("gamescope"); // freed by wlroots
 	wlr_output_set_name(output, "gamescope");
 
 	int refresh = g_nNestedRefresh;
@@ -830,13 +831,9 @@ bool wlserver_init( void ) {
 	// Create a stub wlr_keyboard only used to set the keymap
 	// We need to wait for the backend to be started before adding the device
 	struct wlr_keyboard *kbd = (struct wlr_keyboard *) calloc(1, sizeof(*kbd));
-	wlr_keyboard_init(kbd, nullptr);
+	wlr_keyboard_init(kbd, nullptr, "virtual");
 
-	struct wlr_input_device *kbd_dev = (struct wlr_input_device *) calloc(1, sizeof(*kbd_dev));
-	wlr_input_device_init(kbd_dev, WLR_INPUT_DEVICE_KEYBOARD, nullptr, "virtual", 0, 0);
-	kbd_dev->keyboard = kbd;
-
-	wlserver.wlr.virtual_keyboard_device = kbd_dev;
+	wlserver.wlr.virtual_keyboard_device = kbd;
 
 	wlserver.wlr.renderer = vulkan_renderer_create();
 
@@ -886,7 +883,7 @@ bool wlserver_init( void ) {
 		return false;
 	}
 
-	wl_signal_emit( &wlserver.wlr.multi_backend->events.new_input, kbd_dev );
+	wl_signal_emit( &wlserver.wlr.multi_backend->events.new_input, kbd );
 
 	for (int i = 0; i < g_nXWaylandCount; i++)
 	{

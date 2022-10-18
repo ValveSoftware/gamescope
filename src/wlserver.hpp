@@ -83,7 +83,7 @@ struct wlserver_t {
 		struct wlr_seat *seat;
 
 		// Used to simulate key events and set the keymap
-		struct wlr_input_device *virtual_keyboard_device;
+		struct wlr_keyboard *virtual_keyboard_device;
 
 		std::vector<std::unique_ptr<gamescope_xwayland_server_t>> xwayland_servers;
 	} wlr;
@@ -107,14 +107,14 @@ struct wlserver_t {
 };
 
 struct wlserver_keyboard {
-	struct wlr_input_device *device;
+	struct wlr_keyboard *wlr;
 	
 	struct wl_listener modifiers;
 	struct wl_listener key;
 };
 
 struct wlserver_pointer {
-	struct wlr_input_device *device;
+	struct wlr_pointer *wlr;
 	
 	struct wl_listener motion;
 	struct wl_listener button;
@@ -123,7 +123,7 @@ struct wlserver_pointer {
 };
 
 struct wlserver_touch {
-	struct wlr_input_device *device;
+	struct wlr_touch *wlr;
 	
 	struct wl_listener down;
 	struct wl_listener up;

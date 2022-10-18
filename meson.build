@@ -50,9 +50,9 @@ stb_dep = dependency('stb')
 
 wlroots_dep = dependency(
   'wlroots',
-  version: ['>= 0.15.0', '< 0.16.0'],
+  version: ['>= 0.16.0', '< 0.17.0'],
   fallback: ['wlroots', 'wlroots'],
-  default_options: ['default_library=static', 'examples=false', 'xwayland=enabled', 'backends=libinput', 'renderers=[]'],
+  default_options: ['default_library=static', 'examples=false', 'xwayland=enabled', 'backends=libinput', 'renderers=[]', 'allocators=[]'],
 )
 
 required_wlroots_features = ['xwayland', 'libinput_backend']
