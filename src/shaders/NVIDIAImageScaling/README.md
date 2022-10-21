@@ -1,4 +1,4 @@
-# NVIDIA Image Scaling SDK v1.0.2
+# NVIDIA Image Scaling SDK v1.0.3
 
 The MIT License(MIT)
 
@@ -74,7 +74,7 @@ If the input color texture sent to NVScaler/NVSharpen is in HDR format set NIS_H
 ### Input and output formats:
 
 Input and output formats are expected to be in the rages defined in previous section and should be
-specified using non-integer data types such as DXGI_FORMAT_R8G8B8A8_UNORM.
+specified using non-integer data types such as DXGI_FORMAT_R8G8B8A8_UNORM or DXGI_FORMAT_NV12.
 
 ### Coefficients formats:
 
@@ -127,6 +127,8 @@ values (NVScalerUpdateConfig, and NVSharpenUpdateConfig), and to access the algo
 **NIS_HLSL_6_2**: default (**0**) HLSL v5, (1) HLSL v6.2 forces NIS_HLSL=1\
 **NIS_GLSL**: default (**0**) disabled, (1) enabled\
 **NIS_VIEWPORT_SUPPORT**: default(**0**) disabled, (1) enable input/output viewport support\
+**NIS_NV12_SUPPORT**: default(**0**) disabled, (1) enable NV12 input\
+**NIS_CLAMP_OUTPUT**: default(**0**) disabled, (1) enable output clamp
 
 
 *Default NVScaler shader constants:*
@@ -376,7 +378,11 @@ context->CSSetShader(NVSharpenCS.Get(), nullptr, 0);
 context->Dispatch(UINT(std::ceil(outputWidth / float(blockWidth))),
                   UINT(std::ceil(outputHeight / float(blockHeight))), 1);
 ```
-
+###	Streamline Nvidia Image Scaling Plug-in Integration
+Streamline is an open-source solution that facilitates the integration of the latest NVIDIA and other independent hardware vendors super resolution technologies into applications and games.
+For a high-level overview of NIVIDA Streamline, visit NVIDIA Developer Streamline page https://developer.nvidia.com/rtx/streamline. \
+The Streamline SDK can be found here NVIDIA Streamline Github Page https://github.com/NVIDIAGameWorks/Streamline. \
+For Streamline NIS plug-in integration instructions and documentation, see the Streamline NIS Programming Guide https://github.com/NVIDIAGameWorks/Streamline/blob/main/docs/ProgrammingGuideNIS.md
 
 
 ## Samples
@@ -401,13 +407,30 @@ $> cd build
 $> cmake ..
 ```
 
-for building the Vulkan sample:
+For building the Vulkan sample add the following command line option:
+
+```
+$> cmake .. -DNIS_VK_SAMPLE=ON
+```
+
+For building the NV12 sample add the following command line option
+
+```
+$> cmake .. -DNIS_NV12_SAMPLE=ON
+```
+
+For building the Streamline sample, first checkout and build the NVIDA Streamline SDK. Specify your Visual Studio version (default vs2017)
+
+```
+$> cd samples\third_party
+$> setup_streamline.bat vs2019
+```
+
+After the Streamline build process is completed then add the following command line option to the cmake command. Note that you can also build other samples by concatenating command line options
 
 ```
 $> cd samples
-$> mkdir build
-$> cd build
-$> cmake .. -DNIS_VK_SAMPLE=ON
+$> cmake .. -DNIS_SL_SAMPLE=ON
 ```
 
 Open the solution with Visual Studio 2019. Right-click the sample project and select "Set as Startup Project" before building the project. For Linux, only the VK sample will be generated.

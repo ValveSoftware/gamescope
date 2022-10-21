@@ -20,7 +20,7 @@
 // CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 //---------------------------------------------------------------------------------
-// NVIDIA Image Scaling SDK  - v1.0.2
+// NVIDIA Image Scaling SDK  - v1.0.3
 //---------------------------------------------------------------------------------
 // The NVIDIA Image Scaling SDK provides a single spatial scaling and sharpening algorithm
 // for cross-platform support. The scaling algorithm uses a 6-tap scaling filter combined
@@ -97,12 +97,17 @@
 // NIS_HLSL_6_2: default (0) HLSL v5, (1) HLSL v6.2 forces NIS_HLSL=1
 // NIS_GLSL: (1) enabled, (0) disabled
 // NIS_VIEWPORT_SUPPORT: default(0) disabled, (1) enable input/output viewport support
+// NIS_NV12_SUPPORT: default(0) disabled, (1) enable NV12 input
+// NIS_CLAMP_OUTPUT: default(0) disabled, (1) enable output clamp
 //
 // Default NVScaler shader constants:
 // [NIS_BLOCK_WIDTH, NIS_BLOCK_HEIGHT, NIS_THREAD_GROUP_SIZE] = [32, 24, 256]
 //
 // Default NVSharpen shader constants:
 // [NIS_BLOCK_WIDTH, NIS_BLOCK_HEIGHT, NIS_THREAD_GROUP_SIZE] = [32, 32, 256]
+// 
+// NIS_UNROLL: default [unroll]
+// NIS_UNROLL_INNER: default NIS_UNROLL, define in case of a compiler error for inner nested loops
 //---------------------------------------------------------------------------------
 
 // NVScaler enable by default. Set to 0 for NVSharpen only
@@ -222,6 +227,10 @@
 #endif
 #endif // NIS_GLSL
 
+#ifndef NIS_UNROLL_INNER
+#define NIS_UNROLL_INNER NIS_UNROLL
+#endif
+
 // Texture gather
 #ifndef NIS_TEXTURE_GATHER
 #define NIS_TEXTURE_GATHER 0
@@ -230,6 +239,17 @@
 // NIS Scaling
 #define NIS_SCALE_INT 1
 #define NIS_SCALE_FLOAT NVF(1.f)
+
+// NIS output clamp
+#if NIS_CLAMP_OUTPUT
+#if NIS_HDR_MODE == NIS_HDR_MODE_LINEAR
+#define NVCLAMP(x) ( clamp(x, 0.0f, 12.5f) )
+#else
+#define NVCLAMP(x) ( saturate(x) )
+#endif
+#else
+#define NVCLAMP(x) (x)
+#endif
 
 NVF getY(NVF3 rgba)
 {
@@ -245,6 +265,18 @@ NVF getY(NVF3 rgba)
 NVF getYLinear(NVF3 rgba)
 {
     return NVF(0.2126f) * rgba.x + NVF(0.7152f) * rgba.y + NVF(0.0722f) * rgba.z;
+}
+
+NVF3 YUVtoRGB(NVF3 yuv)
+{
+    float y = yuv.x - 16.0f / 255.0f;
+    float u = yuv.y - 128.0f / 255.0f;
+    float v = yuv.z - 128.0f / 255.0f;
+    NVF3 rgb;
+    rgb.x = saturate(1.164f * y + 1.596f * v);
+    rgb.y = saturate(1.164f * y - 0.392f * u - 0.813f * v);
+    rgb.z = saturate(1.164f * y + 2.017f * u);
+    return rgb;
 }
 
 #if NIS_SCALER
@@ -321,10 +353,15 @@ NVSHARED NVH shCoefScaler[kPhaseCount][kFilterSize];
 NVSHARED NVH shCoefUSM[kPhaseCount][kFilterSize];
 NVSHARED NVH4 shEdgeMap[kEdgeMapSize];
 
-void LoadFilterBanksSh(NVI i0, NVI di) {
+void LoadFilterBanksSh(NVI i0) {
     // Load up filter banks to shared memory
     // The work is spread over (kPhaseCount * 2) threads
-    for (NVI i = i0; i < kPhaseCount * 2; i += di)
+    NVI i = i0;
+#if( kPhaseCount * 2 > NIS_THREAD_GROUP_SIZE )
+    for (; i < kPhaseCount * 2; i += NIS_THREAD_GROUP_SIZE)
+#else
+    if (i < kPhaseCount * 2)
+#endif
     {
         NVI phase = i >> 1;
         NVI vIdx = i & 1;
@@ -610,14 +647,18 @@ void NVScaler(NVU2 blockIdx, NVU threadIdx)
                 p[1][1] = getY(NVF3(sr.y, sg.y, sb.y));
             }
 #else
-            NIS_UNROLL
+            NIS_UNROLL_INNER
             for (NVI j = 0; j < 2; j++)
             {
-                NIS_UNROLL
+                NIS_UNROLL_INNER
                 for (NVI k = 0; k < 2; k++)
                 {
+#if NIS_NV12_SUPPORT
+                    p[j][k] = NVTEX_SAMPLE(in_texture_y, samplerLinearClamp, NVF2(tx + k * kSrcNormX, ty + j * kSrcNormY));
+#else
                     const NVF4 px = NVTEX_SAMPLE(in_texture, samplerLinearClamp, NVF2(tx + k * kSrcNormX, ty + j * kSrcNormY));
                     p[j][k] = getY(px.xyz);
+#endif
                 }
             }
 #endif
@@ -638,12 +679,12 @@ void NVScaler(NVU2 blockIdx, NVU threadIdx)
 
             const NVU edgeMapIdx = py * kEdgeMapPitch + px;
 
-            NVU tileCornerIdx = (py+1) * kTilePitch + px + 1;
+            NVU tileCornerIdx = (py + 1) * kTilePitch + px + 1;
             NVF p[4][4];
-            NIS_UNROLL
+            NIS_UNROLL_INNER
             for (NVI j = 0; j < 4; j++)
             {
-                NIS_UNROLL
+                NIS_UNROLL_INNER
                 for (NVI k = 0; k < 4; k++)
                 {
                     p[j][k] = shPixelsY[tileCornerIdx + j * kTilePitch + k];
@@ -656,7 +697,7 @@ void NVScaler(NVU2 blockIdx, NVU threadIdx)
             shEdgeMap[edgeMapIdx + kEdgeMapPitch + 1] = NVH4(GetEdgeMap(p, 1, 1));
         }
     }
-    LoadFilterBanksSh(NVI(threadIdx), NIS_THREAD_GROUP_SIZE);
+    LoadFilterBanksSh(NVI(threadIdx));
     GroupMemoryBarrierWithGroupSync();
 
     // output coord within a tile
@@ -671,7 +712,12 @@ void NVScaler(NVU2 blockIdx, NVU threadIdx)
     const NVF fx = srcX - floor(srcX);
     // discretized phase
     const NVI fx_int = NVI(fx * kPhaseCount);
-
+#if NIS_VIEWPORT_SUPPORT
+    if (NVU(srcX) > kInputViewportWidth || NVU(dstX) > kOutputViewportWidth)
+    {
+        return;
+    }
+#endif
     for (NVI k = 0; k < NIS_BLOCK_WIDTH * NIS_BLOCK_HEIGHT / NIS_THREAD_GROUP_SIZE; ++k)
     {
         // y coord inside the output image
@@ -679,87 +725,91 @@ void NVScaler(NVU2 blockIdx, NVU threadIdx)
         // y coord inside the input image
         const NVF srcY = (0.5f + dstY) * kScaleY - 0.5f;
 #if NIS_VIEWPORT_SUPPORT
-        if (srcX > kInputViewportWidth || srcY > kInputViewportHeight ||
-            dstX > kOutputViewportWidth || dstY > kOutputViewportHeight)
-        {
-            return;
-        }
+        if (!(NVU(srcY) > kInputViewportHeight || NVU(dstY) > kOutputViewportHeight))
 #endif
-        // nearest integer part
-        const NVI py = NVI(floor(srcY) - srcBlockStartY);
-        // fractional part
-        const NVF fy = srcY - floor(srcY);
-        // discretized phase
-        const NVI fy_int = NVI(fy * kPhaseCount);
-
-        // generate weights for directional filters
-        const NVI startEdgeMapIdx = py * kEdgeMapPitch + px;
-        NVF4 edge[2][2];
-        NIS_UNROLL
-        for (NVI i = 0; i < 2; i++)
         {
-            NIS_UNROLL
-            for (NVI j = 0; j < 2; j++)
-            {
-                // need to shift edge map sampling since it's a 2x2 centered inside 6x6 grid
-                edge[i][j] = shEdgeMap[startEdgeMapIdx + (i * kEdgeMapPitch) + j];
-            }
-        }
-        const NVF4 w = GetInterpEdgeMap(edge, fx, fy) * NIS_SCALE_INT;
+            // nearest integer part
+            const NVI py = NVI(floor(srcY) - srcBlockStartY);
+            // fractional part
+            const NVF fy = srcY - floor(srcY);
+            // discretized phase
+            const NVI fy_int = NVI(fy * kPhaseCount);
 
-        // load 6x6 support to regs
-        const NVI startTileIdx = py * kTilePitch + px;
-        NVF p[6][6];
-        {
+            // generate weights for directional filters
+            const NVI startEdgeMapIdx = py * kEdgeMapPitch + px;
+            NVF4 edge[2][2];
             NIS_UNROLL
-            for (NVI i = 0; i < 6; ++i)
+            for (NVI i = 0; i < 2; i++)
             {
                 NIS_UNROLL
-                for (NVI j = 0; j < 6; ++j)
+                for (NVI j = 0; j < 2; j++)
                 {
-                    p[i][j] = shPixelsY[startTileIdx + i * kTilePitch + j];
+                    // need to shift edge map sampling since it's a 2x2 centered inside 6x6 grid
+                    edge[i][j] = shEdgeMap[startEdgeMapIdx + (i * kEdgeMapPitch) + j];
                 }
             }
-        }
+            const NVF4 w = GetInterpEdgeMap(edge, fx, fy) * NIS_SCALE_INT;
 
-        // weigth for luma
-        const NVF baseWeight = NIS_SCALE_FLOAT - w.x - w.y - w.z - w.w;
+            // load 6x6 support to regs
+            const NVI startTileIdx = py * kTilePitch + px;
+            NVF p[6][6];
+            {
+                NIS_UNROLL
+                for (NVI i = 0; i < 6; ++i)
+                {
+                    NIS_UNROLL
+                    for (NVI j = 0; j < 6; ++j)
+                    {
+                        p[i][j] = shPixelsY[startTileIdx + i * kTilePitch + j];
+                    }
+                }
+            }
 
-        // final luma is a weighted product of directional & normal filters
-        NVF opY = 0;
+            // weigth for luma
+            const NVF baseWeight = NIS_SCALE_FLOAT - w.x - w.y - w.z - w.w;
 
-        // get traditional scaler filter output
-        opY += FilterNormal(p, fx_int, fy_int) * baseWeight;
+            // final luma is a weighted product of directional & normal filters
+            NVF opY = 0;
 
-        // get directional filter bank output
-        opY += AddDirFilters(p, fx, fy, fx_int, fy_int, w);
+            // get traditional scaler filter output
+            opY += FilterNormal(p, fx_int, fy_int) * baseWeight;
 
-        // do bilinear tap for chroma upscaling
+            // get directional filter bank output
+            opY += AddDirFilters(p, fx, fy, fx_int, fy_int, w);
+
 #if NIS_VIEWPORT_SUPPORT
-        NVF4 op = NVTEX_SAMPLE(in_texture, samplerLinearClamp, NVF2((srcX + kInputViewportOriginX + 0.5f) * kSrcNormX, (srcY + kInputViewportOriginY + 0.5f) * kSrcNormY));
+            NVF2 coord = NVF2((srcX + kInputViewportOriginX + 0.5f) * kSrcNormX, (srcY + kInputViewportOriginY + 0.5f) * kSrcNormY);
+            NVF2 dstCoord = NVF2(dstX + kOutputViewportOriginX, dstY + kOutputViewportOriginY);
 #else
-        NVF4 op = NVTEX_SAMPLE(in_texture, samplerLinearClamp, NVF2((srcX + 0.5f) * kSrcNormX, (srcY + 0.5f) * kSrcNormY));
+            NVF2 coord = NVF2((srcX + 0.5f) * kSrcNormX, (srcY + 0.5f) * kSrcNormY);
+            NVF2 dstCoord = NVF2(dstX, dstY);
 #endif
+            // do bilinear tap for chroma upscaling
+#if NIS_NV12_SUPPORT
+            NVF y = NVTEX_SAMPLE(in_texture_y, samplerLinearClamp, coord);
+            NVF2 uv = NVTEX_SAMPLE(in_texture_uv, samplerLinearClamp, coord);
+            NVF4 op = NVF4(YUVtoRGB(NVF3(y, uv)), 1.0f);
+#else
+            NVF4 op = NVTEX_SAMPLE(in_texture, samplerLinearClamp, coord);
+            NVF y = getY(NVF3(op.x, op.y, op.z));
+#endif
+
 #if NIS_HDR_MODE == NIS_HDR_MODE_LINEAR
-        const NVF kEps = 1e-4f;
-        const NVF kNorm = 1.0f / (NIS_SCALE_FLOAT * kHDRCompressionFactor);
-        const NVF opYN = max(opY, 0.0f) * kNorm;
-        const NVF corr = (opYN * opYN + kEps) / (max(getYLinear(NVF3(op.x, op.y, op.z)), 0.0f) + kEps);
-        op.x *= corr;
-        op.y *= corr;
-        op.z *= corr;
+            const NVF kEps = 1e-4f;
+            const NVF kNorm = 1.0f / (NIS_SCALE_FLOAT * kHDRCompressionFactor);
+            const NVF opYN = max(opY, 0.0f) * kNorm;
+            const NVF corr = (opYN * opYN + kEps) / (max(getYLinear(NVF3(op.x, op.y, op.z)), 0.0f) + kEps);
+            op.x *= corr;
+            op.y *= corr;
+            op.z *= corr;
 #else
-        const NVF corr = opY * (1.0f / NIS_SCALE_FLOAT) - getY(NVF3(op.x, op.y, op.z));
-        op.x += corr;
-        op.y += corr;
-        op.z += corr;
+            const NVF corr = opY * (1.0f / NIS_SCALE_FLOAT) - y;
+            op.x += corr;
+            op.y += corr;
+            op.z += corr;
 #endif
-
-#if NIS_VIEWPORT_SUPPORT
-        NVTEX_STORE(out_texture, NVU2(dstX + kOutputViewportOriginX, dstY + kOutputViewportOriginY), op);
-#else
-        NVTEX_STORE(out_texture, NVU2(dstX, dstY), op);
-#endif
+            NVTEX_STORE(out_texture, dstCoord, NVCLAMP(op));
+        }
     }
 }
 #else
@@ -892,8 +942,12 @@ void NVSharpen(NVU2 blockIdx, NVU threadIdx)
                 const NVF tx = (dstBlockX + pos.x + dx + kShift) * kSrcNormX;
                 const NVF ty = (dstBlockY + pos.y + dy + kShift) * kSrcNormY;
 #endif
+#if NIS_NV12_SUPPORT
+                shPixelsY[pos.y + dy][pos.x + dx] = NVTEX_SAMPLE(in_texture_y, samplerLinearClamp, NVF2(tx, ty));
+#else
                 const NVF4 px = NVTEX_SAMPLE(in_texture, samplerLinearClamp, NVF2(tx, ty));
                 shPixelsY[pos.y + dy][pos.x + dx] = getY(px.xyz);
+#endif
             }
         }
     }
@@ -930,36 +984,37 @@ void NVSharpen(NVU2 blockIdx, NVU threadIdx)
         const NVI dstY = dstBlockY + pos.y;
 
 #if NIS_VIEWPORT_SUPPORT
-        if (dstX > kOutputViewportWidth || dstY > kOutputViewportHeight)
-        {
-            return;
-        }
-#endif
-
-#if NIS_VIEWPORT_SUPPORT
-        NVF4 op = NVTEX_SAMPLE(in_texture, samplerLinearClamp, NVF2((dstX + kInputViewportOriginX + 0.5f) * kSrcNormX, (dstY + kInputViewportOriginY + 0.5f) * kSrcNormY));
+        NVF2 coord = NVF2((dstX + kInputViewportOriginX + 0.5f) * kSrcNormX, (dstY + kInputViewportOriginY + 0.5f) * kSrcNormY);
+        NVF2 dstCoord = NVF2(dstX + kOutputViewportOriginX, dstY + kOutputViewportOriginY);
+        if (!(NVU(dstX) > kOutputViewportWidth || NVU(dstY) > kOutputViewportHeight))
 #else
-        NVF4 op = NVTEX_SAMPLE(in_texture, samplerLinearClamp, NVF2((dstX + 0.5f) * kSrcNormX, (dstY + 0.5f) * kSrcNormY));
+        NVF2 coord = NVF2((dstX + 0.5f) * kSrcNormX, (dstY + 0.5f) * kSrcNormY);
+        NVF2 dstCoord = NVF2(dstX, dstY);
+#endif
+        {
+#if NIS_NV12_SUPPORT
+            NVF y = NVTEX_SAMPLE(in_texture_y, samplerLinearClamp, coord);
+            NVF2 uv = NVTEX_SAMPLE(in_texture_uv, samplerLinearClamp, coord);
+            NVF4 op = NVF4(YUVtoRGB(NVF3(y, uv)), 1.0f);
+#else
+            NVF4 op = NVTEX_SAMPLE(in_texture, samplerLinearClamp, coord);
 #endif
 #if NIS_HDR_MODE == NIS_HDR_MODE_LINEAR
-        const NVF kEps = 1e-4f * kHDRCompressionFactor * kHDRCompressionFactor;
-        NVF newY = p[2][2] + usmY;
-        newY = max(newY, 0.0f);
-        const NVF oldY = p[2][2];
-        const NVF corr = (newY * newY + kEps) / (oldY * oldY + kEps);
-        op.x *= corr;
-        op.y *= corr;
-        op.z *= corr;
+            const NVF kEps = 1e-4f * kHDRCompressionFactor * kHDRCompressionFactor;
+            NVF newY = p[2][2] + usmY;
+            newY = max(newY, 0.0f);
+            const NVF oldY = p[2][2];
+            const NVF corr = (newY * newY + kEps) / (oldY * oldY + kEps);
+            op.x *= corr;
+            op.y *= corr;
+            op.z *= corr;
 #else
-        op.x += usmY;
-        op.y += usmY;
-        op.z += usmY;
+            op.x += usmY;
+            op.y += usmY;
+            op.z += usmY;
 #endif
-#if NIS_VIEWPORT_SUPPORT
-        NVTEX_STORE(out_texture, NVU2(dstX + kOutputViewportOriginX, dstY + kOutputViewportOriginY), op);
-#else
-        NVTEX_STORE(out_texture, NVU2(dstX, dstY), op);
-#endif
+            NVTEX_STORE(out_texture, dstCoord, NVCLAMP(op));
+        }
     }
 }
 #endif

@@ -19,6 +19,12 @@
 // IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 // CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+//---------------------------------------------------------------------------------
+// NVIDIA Image Scaling SDK  - v1.0.3
+//---------------------------------------------------------------------------------
+// HLSL main example
+//---------------------------------------------------------------------------------
+
 #define NIS_HLSL 1
 
 #ifndef NIS_SCALER
@@ -78,7 +84,12 @@ NIS_BINDING(0) cbuffer cb : register(b0)
 };
 
 NIS_BINDING(1) SamplerState samplerLinearClamp : register(s0);
+#if NIS_NV12_SUPPORT
+NIS_BINDING(2) Texture2D<float> in_texture_y   : register(t0);
+NIS_BINDING(2) Texture2D<float2> in_texture_uv : register(t3);
+#else
 NIS_BINDING(2) Texture2D in_texture            : register(t0);
+#endif
 NIS_BINDING(3) RWTexture2D<float4> out_texture : register(u0);
 #if NIS_SCALER
 NIS_BINDING(4) Texture2D coef_scaler           : register(t1);

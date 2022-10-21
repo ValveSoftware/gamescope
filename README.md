@@ -64,7 +64,7 @@ See `gamescope --help` for a full list of options.
 * `-r`: set a frame-rate limit for the game. Specified in frames per second. Defaults to unlimited.
 * `-o`: set a frame-rate limit for the game when unfocused. Specified in frames per second. Defaults to unlimited.
 * `-U`: use AMD FidelityFX™ Super Resolution 1.0 for upscaling
-* `-Y`: use NVIDIA Image Scaling v1.0.2 for upscaling
+* `-Y`: use NVIDIA Image Scaling v1.0.3 for upscaling
 * `-i`: use integer scaling.
 * `-b`: create a border-less window.
 * `-f`: create a full-screen window.

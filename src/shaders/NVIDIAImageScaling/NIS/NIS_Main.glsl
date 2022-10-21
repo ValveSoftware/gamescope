@@ -19,6 +19,12 @@
 // IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 // CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+//---------------------------------------------------------------------------------
+// NVIDIA Image Scaling SDK  - v1.0.3
+//---------------------------------------------------------------------------------
+// GLSL main example
+//---------------------------------------------------------------------------------
+
 #version 450
 #extension GL_ARB_separate_shader_objects : enable
 #extension GL_ARB_shading_language_420pack : enable
@@ -73,7 +79,7 @@ layout(set=0,binding=0) uniform const_buffer
 
 layout(set=0,binding=1) uniform sampler samplerLinearClamp;
 layout(set=0,binding=2) uniform texture2D in_texture;
-layout(set=0,binding=3,rgba8_snorm) uniform image2D out_texture;
+layout(set=0,binding=3) uniform writeonly image2D out_texture;
 
 #if NIS_SCALER
 layout(set=0,binding=4) uniform texture2D coef_scaler;
