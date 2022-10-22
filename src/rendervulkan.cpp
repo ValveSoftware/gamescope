@@ -284,6 +284,24 @@ static inline uint32_t DRMFormatGetBPP( uint32_t nDRMFormat )
 	return false;
 }
 
+static inline VkFormat ToSrgbVulkanFormat( VkFormat format )
+{
+	switch ( format )
+	{
+		case VK_FORMAT_B8G8R8A8_UNORM:	return VK_FORMAT_B8G8R8A8_SRGB;
+		default:						return format;
+	}
+}
+
+static inline VkFormat ToLinearVulkanFormat( VkFormat format )
+{
+	switch ( format )
+	{
+		case VK_FORMAT_B8G8R8A8_SRGB:	return VK_FORMAT_B8G8R8A8_UNORM;
+		default:						return format;
+	}
+}
+
 class CVulkanDevice;
 
 struct TextureState
@@ -1617,8 +1635,8 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z)
 
 void CVulkanCmdBuffer::copyImage(std::shared_ptr<CVulkanTexture> src, std::shared_ptr<CVulkanTexture> dst)
 {
-	//assert(src->width() == dst->width());
-	//assert(src->height() == dst->height());
+	assert(src->width() == dst->width());
+	assert(src->height() == dst->height());
 	m_textureRefs.emplace(src.get(), src);
 	m_textureRefs.emplace(dst.get(), dst);
 	prepareSrcImage(src.get());
@@ -2314,7 +2332,7 @@ bool CVulkanTexture::BInitFromSwapchain( VkImage image, uint32_t width, uint32_t
 		.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
 		.image = image,
 		.viewType = VK_IMAGE_VIEW_TYPE_2D,
-		.format = format,
+		.format = ToLinearVulkanFormat( format ),
 		.components = {
 			.r = VK_COMPONENT_SWIZZLE_IDENTITY,
 			.g = VK_COMPONENT_SWIZZLE_IDENTITY,
@@ -2334,6 +2352,13 @@ bool CVulkanTexture::BInitFromSwapchain( VkImage image, uint32_t width, uint32_t
 		return false;
 	}
 
+	createInfo.format = ToSrgbVulkanFormat( format );
+
+	res = g_device.vk.CreateImageView(g_device.device(), &createInfo, nullptr, &m_linearView);
+	if ( res != VK_SUCCESS ) {
+		vk_errorf( res, "vkCreateImageView failed" );
+		return false;
+	}
 
 	m_bInitialized = true;
 
@@ -2565,8 +2590,22 @@ bool vulkan_make_swapchain( VulkanOutput_t *pOutput )
 
 	pOutput->outputFormat = pOutput->surfaceFormats[ surfaceFormat ].format;
 	
+	VkFormat formats[2] =
+	{
+		ToSrgbVulkanFormat( pOutput->outputFormat ),
+		ToLinearVulkanFormat( pOutput->outputFormat ),
+	};
+
+	VkImageFormatListCreateInfo usageListInfo = {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO,
+		.viewFormatCount = 2,
+		.pViewFormats = formats,
+	};
+
 	VkSwapchainCreateInfoKHR createInfo = {
 		.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
+		.pNext = formats[0] != formats[1] ? &usageListInfo : nullptr,
+		.flags = formats[0] != formats[1] ? VK_SWAPCHAIN_CREATE_MUTABLE_FORMAT_BIT_KHR : (VkSwapchainCreateFlagBitsKHR )0,
 		.surface = pOutput->surface,
 		.minImageCount = imageCount,
 		.imageFormat = pOutput->outputFormat,
@@ -2576,7 +2615,7 @@ bool vulkan_make_swapchain( VulkanOutput_t *pOutput )
 			.height = g_nOutputHeight,
 		},
 		.imageArrayLayers = 1,
-		.imageUsage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+		.imageUsage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
 		.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
 		.preTransform = pOutput->surfaceCaps.currentTransform,
 		.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
@@ -2635,6 +2674,7 @@ static bool vulkan_make_output_images( VulkanOutput_t *pOutput )
 	outputImageflags.bFlippable = true;
 	outputImageflags.bStorage = true;
 	outputImageflags.bTransferSrc = true; // for screenshots
+	outputImageflags.bSampled = true; // for pipewire blits
 
 	pOutput->outputImages.resize(2);
 
@@ -2882,6 +2922,7 @@ std::shared_ptr<CVulkanTexture> vulkan_acquire_screenshot_texture(uint32_t width
 			if (exportable) {
 				screenshotImageFlags.bExportable = true;
 				screenshotImageFlags.bLinear = true; // TODO: support multi-planar DMA-BUF export via PipeWire
+				screenshotImageFlags.bStorage = true;
 			}
 
 			bool bSuccess = pScreenshotImage->BInit( width, height, VulkanFormatToDRM(g_output.outputFormat), screenshotImageFlags );
@@ -2916,6 +2957,14 @@ struct BlitPushData_t
 		}
 		borderMask = frameInfo->borderMask();
 		frameId = s_frameId++;
+	}
+
+	explicit BlitPushData_t(float blit_scale) {
+		scale[0] = { blit_scale, blit_scale };
+		offset[0] = { 0.0f, 0.0f };
+		opacity[0] = 1.0f;
+		borderMask = 0;
+		frameId = s_frameId;
 	}
 };
 
@@ -3142,14 +3191,36 @@ bool vulkan_composite( const struct FrameInfo_t *frameInfo, std::shared_ptr<CVul
 		cmdBuffer->bindTarget(compositeImage);
 		cmdBuffer->pushConstants<BlitPushData_t>(frameInfo);
 
-		int pixelsPerGroup = 8;
+		const int pixelsPerGroup = 8;
 
 		cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup));
 	}
 
 	if ( pScreenshotTexture != nullptr )
 	{
-		cmdBuffer->copyImage(compositeImage, pScreenshotTexture);
+		if (compositeImage->width() == pScreenshotTexture->width() &&
+		    compositeImage->height() == pScreenshotTexture->height()) {
+			cmdBuffer->copyImage(compositeImage, pScreenshotTexture);
+		} else {
+			float scale = (float)compositeImage->width() / pScreenshotTexture->width();
+			BlitPushData_t constants( scale );
+
+			cmdBuffer->bindPipeline(g_device.pipeline(SHADER_TYPE_BLIT));
+			cmdBuffer->bindTexture(0, compositeImage);
+			cmdBuffer->setTextureSrgb(0, false);
+			cmdBuffer->setSamplerNearest(0, false);
+			cmdBuffer->setSamplerUnnormalized(0, true);
+			for (uint32_t i = 1; i < VKR_SAMPLER_SLOTS; i++)
+			{
+				cmdBuffer->bindTexture(i, nullptr);
+			}
+			cmdBuffer->bindTarget(pScreenshotTexture);
+			cmdBuffer->pushConstants<BlitPushData_t>(constants);
+
+			const int pixelsPerGroup = 8;
+
+			cmdBuffer->dispatch(div_roundup(pScreenshotTexture->width(), pixelsPerGroup), div_roundup(pScreenshotTexture->height(), pixelsPerGroup));
+		}
 	}
 
 	uint64_t sequence = g_device.submit(std::move(cmdBuffer));
