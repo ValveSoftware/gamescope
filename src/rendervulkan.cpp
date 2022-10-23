@@ -2908,7 +2908,7 @@ void vulkan_garbage_collect( void )
 	g_device.garbageCollect();
 }
 
-std::shared_ptr<CVulkanTexture> vulkan_acquire_screenshot_texture(uint32_t width, uint32_t height, bool exportable)
+std::shared_ptr<CVulkanTexture> vulkan_acquire_screenshot_texture(uint32_t width, uint32_t height, bool exportable, EStreamColorspace colorspace)
 {
 	for (auto& pScreenshotImage : g_output.pScreenshotImages)
 	{
@@ -2930,7 +2930,7 @@ std::shared_ptr<CVulkanTexture> vulkan_acquire_screenshot_texture(uint32_t width
 			assert( bSuccess );
 		}
 
-		if (pScreenshotImage.use_count() > 1 || width != pScreenshotImage->width() || height != pScreenshotImage->height())
+		if (pScreenshotImage.use_count() > 1 || width != pScreenshotImage->width() || height != pScreenshotImage->height() /* || colorspace != pScreenshotImage->colorspace() */)
 			continue;
 
 		return pScreenshotImage;

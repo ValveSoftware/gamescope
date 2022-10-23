@@ -1880,7 +1880,7 @@ paint_all(bool async)
 #endif
 		if ( bCapture && pCaptureTexture == nullptr )
 		{
-			pCaptureTexture = vulkan_acquire_screenshot_texture(g_nOutputWidth, g_nOutputHeight, false);
+			pCaptureTexture = vulkan_acquire_screenshot_texture(g_nOutputWidth, g_nOutputHeight);
 		}
 
 		bool bResult = vulkan_composite( &frameInfo, pCaptureTexture );

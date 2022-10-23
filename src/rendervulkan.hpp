@@ -229,7 +229,7 @@ std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struct wl
 
 bool vulkan_composite( const struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTexture> pScreenshotTexture );
 std::shared_ptr<CVulkanTexture> vulkan_get_last_output_image( void );
-std::shared_ptr<CVulkanTexture> vulkan_acquire_screenshot_texture(uint32_t width, uint32_t height, bool exportable);
+std::shared_ptr<CVulkanTexture> vulkan_acquire_screenshot_texture(uint32_t width, uint32_t height, bool exportable = false, EStreamColorspace colorspace = k_EStreamColorspace_Unknown);
 
 void vulkan_present_to_window( void );
 
