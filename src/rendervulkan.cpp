@@ -2352,6 +2352,12 @@ bool CVulkanTexture::BInitFromSwapchain( VkImage image, uint32_t width, uint32_t
 		return false;
 	}
 
+	VkImageViewUsageCreateInfo viewUsageInfo = {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO,
+		.usage = VK_IMAGE_USAGE_SAMPLED_BIT,
+	};
+
+	createInfo.pNext = &viewUsageInfo;
 	createInfo.format = ToSrgbVulkanFormat( format );
 
 	res = g_device.vk.CreateImageView(g_device.device(), &createInfo, nullptr, &m_linearView);
