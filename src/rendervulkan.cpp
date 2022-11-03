@@ -800,6 +800,7 @@ bool CVulkanDevice::createDevice()
 	if ( BIsNested() == true )
 	{
 		enabledExtensions.push_back( VK_KHR_SWAPCHAIN_EXTENSION_NAME );
+		enabledExtensions.push_back( VK_KHR_SWAPCHAIN_MUTABLE_FORMAT_EXTENSION_NAME );
 	}
 
 	if ( m_bSupportsModifiers )
