@@ -351,6 +351,9 @@ unsigned int g_BlurFadeStartTime = 0;
 
 pid_t focusWindow_pid;
 
+static inline void stats_printf( const char* format, ...);
+bool statsFrametime = false;
+
 static bool
 window_is_steam( win *w )
 {
@@ -521,7 +524,7 @@ retry:
 	close( entry.fence );
 
 	uint64_t frametime;
-	if ( entry.mangoapp_nudge )
+	if ( entry.mangoapp_nudge || statsFrametime )
 	{
 		uint64_t now = get_time_in_nanos();
 		static uint64_t lastFrameTime = now;
@@ -538,6 +541,9 @@ retry:
 
 	if ( entry.mangoapp_nudge )
 		mangoapp_update( frametime, frametime, uint64_t(~0ull) );	
+
+	if ( statsFrametime )
+		stats_printf( "frametime=%llu\n", frametime );
 
 	goto retry;
 }
@@ -596,8 +602,8 @@ retry:
 
 static inline void stats_printf( const char* format, ...)
 {
-	static char buffer[256];
-	static std::string eventstr;
+	char buffer[256];
+	std::string eventstr;
 
 	va_list args;
 	va_start(args, format);
@@ -5418,6 +5424,9 @@ steamcompmgr_main(int argc, char **argv)
 					std::thread statsThreads( statsThreadMain );
 					statsThreads.detach();
 				}
+				break;
+			case 'F':
+				statsFrametime = true;
 				break;
 			case 'C':
 				cursorHideTime = atoi( optarg );

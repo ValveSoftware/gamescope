@@ -71,6 +71,7 @@ const struct option *gamescope_options = (struct option[]){
 	{ "cursor-hotspot", required_argument, nullptr, 0 },
 	{ "ready-fd", required_argument, nullptr, 'R' },
 	{ "stats-path", required_argument, nullptr, 'T' },
+	{ "stats-frametime", no_argument, nullptr, 'F' },
 	{ "hide-cursor-delay", required_argument, nullptr, 'C' },
 	{ "debug-focus", no_argument, nullptr, 0 },
 	{ "synchronous-x11", no_argument, nullptr, 0 },
@@ -106,6 +107,7 @@ const char usage[] =
 	"  -R, --ready-fd                 notify FD when ready\n"
 	"  --rt                           Use realtime scheduling\n"
 	"  -T, --stats-path               write statistics to path\n"
+	"  -F, --stats-frametime          print frametime in statistics\n"
 	"  -C, --hide-cursor-delay        hide cursor image after delay\n"
 	"  -e, --steam                    enable Steam integration\n"
 	"  --xwayland-count               create N xwayland servers\n"
