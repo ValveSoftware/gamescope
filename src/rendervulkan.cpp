@@ -305,7 +305,7 @@ class CVulkanDevice;
 
 struct TextureState
 {
-	bool discared : 1;
+	bool discarded : 1;
 	bool dirty : 1;
 	bool needsPresentLayout : 1;
 	bool needsExport : 1;
@@ -313,7 +313,7 @@ struct TextureState
 
 	TextureState()
 	{
-		discared = false;
+		discarded = false;
 		dirty = false;
 		needsPresentLayout = false;
 		needsExport = false;
@@ -1727,7 +1727,7 @@ void CVulkanCmdBuffer::prepareDestImage(CVulkanTexture *image)
 	// no need to discard if the image is already image/in the correct layout
 	if (!result.second)
 		return;
-	result.first->second.discared = true;
+	result.first->second.discarded = true;
 	result.first->second.needsExport = image->externalImage();
 	result.first->second.needsPresentLayout = image->swapchainImage();
 }
@@ -1762,7 +1762,7 @@ void CVulkanCmdBuffer::insertBarrier(bool flush)
 		bool isExport = flush && state.needsExport;
 		bool isPresent = flush && state.needsPresentLayout;
 
-		if (!state.discared && !state.dirty && !state.needsImport && !isExport && !isPresent)
+		if (!state.discarded && !state.dirty && !state.needsImport && !isExport && !isPresent)
 			continue;
 
 		const VkAccessFlags write_bits = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -1773,7 +1773,7 @@ void CVulkanCmdBuffer::insertBarrier(bool flush)
 			.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
 			.srcAccessMask = state.dirty ? write_bits : 0u,
 			.dstAccessMask = flush ? 0u : read_bits | write_bits,
-			.oldLayout = (state.discared || state.needsImport) ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_GENERAL,
+			.oldLayout = (state.discarded || state.needsImport) ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_GENERAL,
 			.newLayout = isPresent ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR : VK_IMAGE_LAYOUT_GENERAL,
 			.srcQueueFamilyIndex = isExport ? m_device->queueFamily() : state.needsImport ? externalQueue : VK_QUEUE_FAMILY_IGNORED,
 			.dstQueueFamilyIndex = isExport ? externalQueue : state.needsImport ? m_device->queueFamily() : VK_QUEUE_FAMILY_IGNORED,
@@ -1783,7 +1783,7 @@ void CVulkanCmdBuffer::insertBarrier(bool flush)
 
 		barriers.push_back(memoryBarrier);
 
-		state.discared = false;
+		state.discarded = false;
 		state.dirty = false;
 		state.needsImport = false;
 	}
