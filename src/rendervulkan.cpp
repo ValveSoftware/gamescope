@@ -3415,7 +3415,7 @@ static uint32_t renderer_get_render_buffer_caps( struct wlr_renderer *renderer )
 	return 0;
 }
 
-static void renderer_begin( struct wlr_renderer *renderer, uint32_t width, uint32_t height )
+static bool renderer_begin( struct wlr_renderer *renderer, uint32_t width, uint32_t height )
 {
 	abort(); // unreachable
 }
