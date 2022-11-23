@@ -1378,9 +1378,9 @@ void xdg_surface_new(struct wl_listener *listener, void *data)
 	wlserver_surface->xdg_surface = xdg_surface_info;
 
 	xdg_surface_info->map.notify = xdg_toplevel_map;
-	wl_signal_add(&xdg_surface->events.map, &xdg_surface_info->map);
+	wl_signal_add(&xdg_surface->surface->events.map, &xdg_surface_info->map);
 	xdg_surface_info->unmap.notify = xdg_toplevel_unmap;
-	wl_signal_add(&xdg_surface->events.unmap, &xdg_surface_info->unmap);
+	wl_signal_add(&xdg_surface->surface->events.unmap, &xdg_surface_info->unmap);
 	xdg_surface_info->destroy.notify = xdg_toplevel_destroy;
 	wl_signal_add(&xdg_surface->events.destroy, &xdg_surface_info->destroy);
 
@@ -1438,7 +1438,7 @@ bool wlserver_init( void ) {
 
 	wlr_renderer_init_wl_display(wlserver.wlr.renderer, wlserver.display);
 
-	wlserver.wlr.compositor = wlr_compositor_create(wlserver.display, wlserver.wlr.renderer);
+	wlserver.wlr.compositor = wlr_compositor_create(wlserver.display, 5, wlserver.wlr.renderer);
 
 	wl_signal_add( &wlserver.wlr.compositor->events.new_surface, &new_surface_listener );
 
