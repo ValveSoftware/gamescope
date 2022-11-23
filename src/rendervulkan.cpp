@@ -12,6 +12,10 @@
 #include <thread>
 #include <vulkan/vulkan_core.h>
 
+#if defined(__linux__)
+#include <sys/sysmacros.h>
+#endif
+
 // Used to remove the config struct alignment specified by the NIS header
 #define NIS_ALIGNED(x)
 // NIS_Config needs to be included before the X11 headers because of conflicting defines introduced by X11
@@ -2554,7 +2558,7 @@ bool vulkan_init_formats()
 	vk_log.infof( "supported DRM formats for sampling usage:" );
 	for ( size_t i = 0; i < sampledDRMFormats.len; i++ )
 	{
-		uint32_t fmt = sampledDRMFormats.formats[ i ]->format;
+		uint32_t fmt = sampledDRMFormats.formats[ i ].format;
 		char *name = drmGetFormatName(fmt);
 		vk_log.infof( "  %s (0x%" PRIX32 ")", name, fmt );
 		free(name);
@@ -3889,7 +3893,7 @@ static uint32_t renderer_get_render_buffer_caps( struct wlr_renderer *renderer )
 	return 0;
 }
 
-static void renderer_begin( struct wlr_renderer *renderer, uint32_t width, uint32_t height )
+static bool renderer_begin( struct wlr_renderer *renderer, uint32_t width, uint32_t height )
 {
 	abort(); // unreachable
 }
@@ -3939,7 +3943,7 @@ static int renderer_get_drm_fd( struct wlr_renderer *wlr_renderer )
 static struct wlr_texture *renderer_texture_from_buffer( struct wlr_renderer *wlr_renderer, struct wlr_buffer *buf )
 {
 	VulkanWlrTexture_t *tex = new VulkanWlrTexture_t();
-	wlr_texture_init( &tex->base, &texture_impl, buf->width, buf->height );
+	wlr_texture_init( &tex->base, wlr_renderer, &texture_impl, buf->width, buf->height );
 	tex->buf = wlr_buffer_lock( buf );
 	// TODO: check format/modifier
 	// TODO: if DMA-BUF, try importing it into Vulkan
