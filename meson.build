@@ -38,7 +38,7 @@ drm_dep = dependency('libdrm', version: '>= 2.4.112')
 vulkan_dep = dependency('vulkan')
 
 wayland_server = dependency('wayland-server', version: '>=1.21')
-wayland_protos = dependency('wayland-protocols', version: '>=1.17')
+wayland_protos = dependency('wayland-protocols', version: '>=1.30')
 xkbcommon = dependency('xkbcommon')
 thread_dep = dependency('threads')
 cap_dep = dependency('libcap')

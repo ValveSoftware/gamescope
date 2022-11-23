@@ -91,6 +91,7 @@ struct wlserver_t {
 		struct wlr_compositor *compositor;
 		struct wlr_session *session;
 		struct wlr_seat *seat;
+		struct wlr_tearing_control_manager_v1 *tearing_control_manager_v1;
 
 		// Used to simulate key events and set the keymap
 		struct wlr_keyboard *virtual_keyboard_device;

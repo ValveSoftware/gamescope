@@ -28,6 +28,7 @@ extern "C" {
 #include <wlr/types/wlr_keyboard.h>
 #include <wlr/types/wlr_pointer.h>
 #include <wlr/types/wlr_seat.h>
+#include <wlr/types/wlr_tearing_control_v1.h>
 #include <wlr/types/wlr_touch.h>
 #include <wlr/util/log.h>
 #include <wlr/xwayland/server.h>
@@ -130,7 +131,19 @@ void xwayland_surface_role_commit(struct wlr_surface *wlr_surface) {
 
 	gpuvis_trace_printf( "xwayland_surface_role_commit wlr_surface %p", wlr_surface );
 
-	wlserver_x11_surface_info *wlserver_x11_surface_info = get_wl_surface_info(wlr_surface)->x11_surface;
+	wlserver_wl_surface_info *wl_surface_info = get_wl_surface_info(wlr_surface);
+	enum wp_tearing_control_v1_presentation_hint hint =
+		wlr_tearing_control_manager_v1_surface_hint_from_surface(wlserver.wlr.tearing_control_manager_v1, wlr_surface);
+	switch (hint) {
+	case WP_TEARING_CONTROL_V1_PRESENTATION_HINT_VSYNC:
+		wl_surface_info->presentation_hint = GAMESCOPE_SURFACE_TEARING_CONTROL_V1_PRESENTATION_HINT_VSYNC;
+		break;
+	case WP_TEARING_CONTROL_V1_PRESENTATION_HINT_ASYNC:
+		wl_surface_info->presentation_hint = GAMESCOPE_SURFACE_TEARING_CONTROL_V1_PRESENTATION_HINT_ASYNC;
+		break;
+	}
+
+	wlserver_x11_surface_info *wlserver_x11_surface_info = wl_surface_info->x11_surface;
 	if (wlserver_x11_surface_info)
 	{
 		assert(wlserver_x11_surface_info->xwayland_server);
@@ -842,6 +855,8 @@ bool wlserver_init( void ) {
 	wlserver.wlr.compositor = wlr_compositor_create(wlserver.display, wlserver.wlr.renderer);
 
 	wl_signal_add( &wlserver.wlr.compositor->events.new_surface, &new_surface_listener );
+
+	wlserver.wlr.tearing_control_manager_v1 = wlr_tearing_control_manager_v1_create(wlserver.display, 1);
 
 	create_ime_manager( &wlserver );
 
