@@ -10,7 +10,6 @@
 #include <map>
 
 #define WLSERVER_BUTTON_COUNT 4
-#define WLSERVER_TOUCH_COUNT 11 // Ten fingers + nose ought to be enough for anyone
 
 struct _XDisplay;
 struct xwayland_ctx_t;
