@@ -93,7 +93,6 @@ struct wlserver_t {
 	double mouse_surface_cursory;
 	
 	bool button_held[ WLSERVER_BUTTON_COUNT ];
-	bool touch_down[ WLSERVER_TOUCH_COUNT ];
 
 	struct {
 		char *name;
