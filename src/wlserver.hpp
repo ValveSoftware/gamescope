@@ -8,9 +8,9 @@
 #include <memory>
 #include <mutex>
 #include <map>
+#include <set>
 
 #define WLSERVER_BUTTON_COUNT 4
-#define WLSERVER_TOUCH_COUNT 11 // Ten fingers + nose ought to be enough for anyone
 
 struct _XDisplay;
 struct xwayland_ctx_t;
@@ -94,7 +94,7 @@ struct wlserver_t {
 	double mouse_surface_cursory;
 	
 	bool button_held[ WLSERVER_BUTTON_COUNT ];
-	bool touch_down[ WLSERVER_TOUCH_COUNT ];
+	std::set <uint32_t> touch_down_ids;
 
 	struct {
 		char *name;
