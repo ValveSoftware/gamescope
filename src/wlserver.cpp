@@ -55,6 +55,7 @@ extern "C" {
 
 #include <algorithm>
 #include <list>
+#include <set>
 
 static LogScope wl_log("wlserver");
 
@@ -69,6 +70,7 @@ struct wlserver_content_override {
 enum wlserver_touch_click_mode g_nDefaultTouchClickMode = WLSERVER_TOUCH_CLICK_LEFT;
 enum wlserver_touch_click_mode g_nTouchClickMode = g_nDefaultTouchClickMode;
 
+static std::set <uint32_t> wlserver_touch_down_ids = {};
 
 static struct wl_list pending_surfaces = {0};
 
@@ -1111,6 +1113,26 @@ void wlserver_touchmotion( double x, double y, int touch_id, uint32_t time )
 	bump_input_counter();
 }
 
+
+void wlserver_capture_touch_down( int touch_id )
+{
+	if ( wlserver_touch_down_ids.size() < WLSERVER_TOUCH_COUNT )
+	{
+		wlserver_touch_down_ids.insert( touch_id );
+	}
+}
+
+void wlserver_release_touch_down( int touch_id )
+{
+	wlserver_touch_down_ids.erase( touch_id ); 
+}
+
+bool wlserver_touch_is_down( int touch_id )
+{
+	return wlserver_touch_down_ids.find( touch_id ) != wlserver_touch_down_ids.end();
+}
+
+
 void wlserver_touchdown( double x, double y, int touch_id, uint32_t time )
 {
 	if ( wlserver.mouse_focus_surface != NULL )
@@ -1131,12 +1153,13 @@ void wlserver_touchdown( double x, double y, int touch_id, uint32_t time )
 
 		if ( g_nTouchClickMode == WLSERVER_TOUCH_CLICK_PASSTHROUGH )
 		{
-			if ( touch_id >= 0 && touch_id < WLSERVER_TOUCH_COUNT )
+			int wlserver_touch_down_count = wlserver_touch_down_ids.size();
+			if (wlserver_touch_down_count >= 0 && wlserver_touch_down_count < WLSERVER_TOUCH_COUNT )
 			{
 				wlr_seat_touch_notify_down( wlserver.wlr.seat, wlserver.mouse_focus_surface, time, touch_id,
 											wlserver.mouse_surface_cursorx, wlserver.mouse_surface_cursory );
 
-				wlserver.touch_down[ touch_id ] = true;
+				wlserver_capture_touch_down( touch_id );
 			}
 		}
 		else if ( g_nTouchClickMode == WLSERVER_TOUCH_CLICK_DISABLED )
@@ -1191,10 +1214,11 @@ void wlserver_touchup( int touch_id, uint32_t time )
 			wlr_seat_pointer_notify_frame( wlserver.wlr.seat );
 		}
 
-		if ( touch_id >= 0 && touch_id < WLSERVER_TOUCH_COUNT && wlserver.touch_down[ touch_id ] == true )
+		int wlserver_touch_down_count = wlserver_touch_down_ids.size();
+		if ( wlserver_touch_down_count >= 0 && wlserver_touch_down_count < WLSERVER_TOUCH_COUNT && wlserver_touch_is_down(touch_id) )
 		{
 			wlr_seat_touch_notify_up( wlserver.wlr.seat, time, touch_id );
-			wlserver.touch_down[ touch_id ] = false;
+			wlserver_release_touch_down( touch_id );
 		}
 	}
 
