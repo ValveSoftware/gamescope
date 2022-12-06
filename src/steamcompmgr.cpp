@@ -1757,7 +1757,7 @@ paint_all(bool async)
 				paint_window(w, w, &frameInfo, global_focus.cursor, PaintWindowFlag::BasePlane | PaintWindowFlag::DrawBorders, 1.0f, override);
 
 				bool needsScaling = frameInfo.layers[0].scale.x < 1.0f && frameInfo.layers[0].scale.y < 1.0f;
-				frameInfo.useFSRLayer0 = g_upscaleFilter == GamescopeUpscaleFilter::FSR && needsScaling;
+				frameInfo.useFSRLayer0 = g_upscaleFilter == GamescopeUpscaleFilter::FSR;
 				frameInfo.useNISLayer0 = g_upscaleFilter == GamescopeUpscaleFilter::NIS && needsScaling;
 			}
 			update_touch_scaling( &frameInfo );
