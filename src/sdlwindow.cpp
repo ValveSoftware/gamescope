@@ -115,6 +115,11 @@ void inputSDLThreadRun( void )
 		nSDLWindowFlags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
 	}
 
+	if ( g_bGrabbed == true )
+	{
+		nSDLWindowFlags |= SDL_WINDOW_KEYBOARD_GRABBED;
+	}
+
 	g_SDLWindow = SDL_CreateWindow( DEFAULT_TITLE,
 							   SDL_WINDOWPOS_UNDEFINED,
 							SDL_WINDOWPOS_UNDEFINED,
@@ -235,6 +240,15 @@ void inputSDLThreadRun( void )
 						case KEY_S:
 							take_screenshot();
 							break;
+						case KEY_G:
+							g_bGrabbed = !g_bGrabbed;
+							SDL_SetWindowKeyboardGrab( g_SDLWindow, g_bGrabbed ? SDL_TRUE : SDL_FALSE );
+							g_bUpdateSDLWindowTitle = true;
+
+							SDL_Event event;
+							event.type = g_unSDLUserEventID + USER_EVENT_TITLE;
+							SDL_PushEvent( &event );
+							break;
 						default:
 							handled = false;
 					}
@@ -293,8 +307,13 @@ void inputSDLThreadRun( void )
 					g_SDLWindowTitleLock.lock();
 					if ( g_bUpdateSDLWindowTitle )
 					{
+						std::string window_title = g_SDLWindowTitle;
 						g_bUpdateSDLWindowTitle = false;
-						SDL_SetWindowTitle( g_SDLWindow, g_SDLWindowTitle.c_str() );
+						if ( g_bGrabbed )
+						{
+							window_title += " (grabbed)";
+						}
+						SDL_SetWindowTitle( g_SDLWindow, window_title.c_str() );
 					}
 					g_SDLWindowTitleLock.unlock();
 				}

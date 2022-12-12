@@ -21,6 +21,8 @@ extern bool g_bOutputHDREnabled;
 
 extern bool g_bFullscreen;
 
+extern bool g_bGrabbed;
+
 enum class GamescopeUpscaleFilter : uint32_t
 {
     LINEAR = 0,

@@ -60,6 +60,7 @@ const struct option *gamescope_options = (struct option[]){
 	{ "nested-unfocused-refresh", required_argument, nullptr, 'o' },
 	{ "borderless", no_argument, nullptr, 'b' },
 	{ "fullscreen", no_argument, nullptr, 'f' },
+	{ "grab", no_argument, nullptr, 'g' },
 	{ "force-grab-cursor", no_argument, nullptr, 0 },
 
 	// embedded mode options
@@ -154,6 +155,7 @@ const char usage[] =
 	"  -o, --nested-unfocused-refresh game refresh rate when unfocused\n"
 	"  -b, --borderless               make the window borderless\n"
 	"  -f, --fullscreen               make the window fullscreen\n"
+	"  -g, --grab                     grab the keyboard\n"
 	"  --force-grab-cursor            always use relative mouse mode instead of flipping dependent on cursor visibility.\n"
 	"\n"
 	"Embedded mode options:\n"
@@ -202,6 +204,7 @@ const char usage[] =
 	"  Super + I                      increase FSR sharpness by 1\n"
 	"  Super + O                      decrease FSR sharpness by 1\n"
 	"  Super + S                      take a screenshot\n"
+	"  Super + G                      toggle keyboard grab\n"
 	"";
 
 std::atomic< bool > g_bRun{true};
@@ -220,6 +223,8 @@ bool g_bFullscreen = false;
 bool g_bForceRelativeMouse = false;
 
 bool g_bIsNested = false;
+
+bool g_bGrabbed = false;
 
 GamescopeUpscaleFilter g_upscaleFilter = GamescopeUpscaleFilter::LINEAR;
 GamescopeUpscaleScaler g_upscaleScaler = GamescopeUpscaleScaler::AUTO;
@@ -450,6 +455,9 @@ int main(int argc, char **argv)
 				break;
 			case 'Y':
 				g_wantedUpscaleFilter = GamescopeUpscaleFilter::NIS;
+				break;
+			case 'g':
+				g_bGrabbed = true;
 				break;
 			case 0: // long options without a short option
 				opt_name = gamescope_options[opt_index].name;
