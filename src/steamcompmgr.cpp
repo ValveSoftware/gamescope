@@ -2072,9 +2072,15 @@ paint_all(bool async)
 						char cmd[4096];
 						sprintf(cmd, "ffmpeg -f rawvideo -pixel_format nv12 -video_size %dx%d -i %s %s_encoded.png", pCaptureTexture->width(), pCaptureTexture->height(), pTimeBuffer, pTimeBuffer);
 
-						system(cmd);
+						int ret = system(cmd);
 
-						xwm_log.infof("Screenshot saved to %s", pTimeBuffer);
+						/* Above call may fail, ffmpeg returns 0 on success */
+						if (ret)
+							xwm_log.infof("Ffmpeg call return status %i", ret);
+							xwm_log.errorf( "Failed to save screenshot to %s", pTimeBuffer );
+						else {
+							xwm_log.infof("Screenshot saved to %s", pTimeBuffer);
+						}
 					}
 					else
 					{
