@@ -511,7 +511,7 @@ retry:
 	assert( bFound == true );
 
 	gpuvis_trace_begin_ctx_printf( entry.commitID, "wait fence" );
-	struct pollfd fd = { entry.fence, POLLOUT, 0 };
+	struct pollfd fd = { entry.fence, POLLIN, 0 };
 	int ret = poll( &fd, 1, 100 );
 	if ( ret < 0 )
 	{
