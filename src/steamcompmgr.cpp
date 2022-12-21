@@ -2075,10 +2075,10 @@ paint_all(bool async)
 						int ret = system(cmd);
 
 						/* Above call may fail, ffmpeg returns 0 on success */
-						if (ret)
+						if (ret) {
 							xwm_log.infof("Ffmpeg call return status %i", ret);
 							xwm_log.errorf( "Failed to save screenshot to %s", pTimeBuffer );
-						else {
+						} else {
 							xwm_log.infof("Screenshot saved to %s", pTimeBuffer);
 						}
 					}
