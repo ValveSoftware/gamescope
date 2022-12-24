@@ -80,7 +80,7 @@ void inputSDLThreadRun( void )
 	g_SDLUserEvent.type = g_unSDLUserEventID;
 	g_SDLUserEvent.user.code = 32;
 
-	uint32_t nSDLWindowFlags = SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN;
+	uint32_t nSDLWindowFlags = SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN | SDL_WINDOW_ALLOW_HIGHDPI;
 
 	if ( g_bBorderlessOutputWindow == true )
 	{
@@ -221,8 +221,10 @@ void inputSDLThreadRun( void )
 						updateOutputRefresh();
 						break;
 					case SDL_WINDOWEVENT_SIZE_CHANGED:
-						g_nOutputWidth = event.window.data1;
-						g_nOutputHeight = event.window.data2;
+						int width, height;
+						SDL_GetWindowSizeInPixels( g_SDLWindow, &width, &height );
+						g_nOutputWidth = width;
+						g_nOutputHeight = height;
 
 						updateOutputRefresh();
 
