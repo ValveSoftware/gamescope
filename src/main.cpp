@@ -51,6 +51,7 @@ const struct option *gamescope_options = (struct option[]){
 	{ "nearest-neighbor-filter", no_argument, nullptr, 'n' },
 	{ "fsr-upscaling", no_argument, nullptr, 'U' },
 	{ "nis-upscaling", no_argument, nullptr, 'Y' },
+	{ "bicubic-downscaling", no_argument, nullptr, 'D' },
 	{ "sharpness", required_argument, nullptr, 0 },
 	{ "fsr-sharpness", required_argument, nullptr, 0 },
 	{ "rt", no_argument, nullptr, 0 },
@@ -460,6 +461,9 @@ int main(int argc, char **argv)
 				break;
 			case 'n':
 				g_wantedUpscaleFilter = GamescopeUpscaleFilter::NEAREST;
+				break;
+			case 'D':
+				g_wantedUpscaleFilter = GamescopeUpscaleFilter::BICUBIC;
 				break;
 			case 'b':
 				g_bBorderlessOutputWindow = true;

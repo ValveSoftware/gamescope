@@ -27,6 +27,7 @@ enum class GamescopeUpscaleFilter : uint32_t
 {
     LINEAR = 0,
     NEAREST,
+    BICUBIC,
     FSR,
     NIS
 };
