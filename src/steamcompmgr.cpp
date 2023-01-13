@@ -97,6 +97,9 @@
 #include "gpuvis_trace_utils.h"
 
 extern float g_flLinearToNits;
+extern bool g_bHDRItmEnable;
+extern float g_flHDRItmSdrNits;
+extern float g_flHDRItmTargetNits;
 
 const uint32_t WS_OVERLAPPED          		= 0x00000000u;
 const uint32_t WS_POPUP               		= 0x80000000u;
@@ -4591,6 +4594,29 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 			g_flLinearToNits = 400.0f;
 		hasRepaint = true;
 	}
+	if ( ev->atom == ctx->atoms.gamescopeHDRItmEnable )
+	{
+		g_bHDRItmEnable = !!get_prop( ctx, ctx->root, ctx->atoms.gamescopeHDRItmEnable, 0 );
+		hasRepaint = true;
+	}
+	if ( ev->atom == ctx->atoms.gamescopeHDRItmSDRNits )
+	{
+		g_flHDRItmSdrNits = get_prop( ctx, ctx->root, ctx->atoms.gamescopeHDRItmSDRNits, 0 );
+		if ( g_flHDRItmSdrNits < 1.f )
+			g_flHDRItmSdrNits = 100.f;
+		else if ( g_flHDRItmSdrNits > 1000.f)
+			g_flHDRItmSdrNits = 1000.f;
+		hasRepaint = true;
+	}
+	if ( ev->atom == ctx->atoms.gamescopeHDRItmTargetNits )
+	{
+		g_flHDRItmTargetNits = get_prop( ctx, ctx->root, ctx->atoms.gamescopeHDRItmTargetNits, 0 );
+		if ( g_flHDRItmTargetNits < 1.f )
+			g_flHDRItmTargetNits = 1000.f;
+		else if ( g_flHDRItmTargetNits > 10000.f)
+			g_flHDRItmTargetNits = 10000.f;
+		hasRepaint = true;
+	}
 	if ( ev->atom == ctx->atoms.gamescopeForceWindowsFullscreen )
 	{
 		ctx->force_windows_fullscreen = !!get_prop( ctx, ctx->root, ctx->atoms.gamescopeForceWindowsFullscreen, 0 );
@@ -5625,6 +5651,9 @@ void init_xwayland_ctx(gamescope_xwayland_server_t *xwayland_server)
 	ctx->atoms.gamescopeHDROnSDRTonemapOperator = XInternAtom( ctx->dpy, "GAMESCOPE_HDR_ON_SDR_TONEMAP_OPERATOR", false );
 	ctx->atoms.gamescopeHDROutputFeedback = XInternAtom( ctx->dpy, "GAMESCOPE_HDR_OUTPUT_FEEDBACK", false );
 	ctx->atoms.gamescopeHDRSDRContentBrightness = XInternAtom( ctx->dpy, "GAMESCOPE_HDR_SDR_CONTENT_BRIGHTNESS", false );
+	ctx->atoms.gamescopeHDRItmEnable = XInternAtom( ctx->dpy, "GAMESCOPE_HDR_ITM_ENABLE", false );
+	ctx->atoms.gamescopeHDRItmSDRNits = XInternAtom( ctx->dpy, "GAMESCOPE_HDR_ITM_SDR_NITS", false );
+	ctx->atoms.gamescopeHDRItmTargetNits = XInternAtom( ctx->dpy, "GAMESCOPE_HDR_ITM_TARGET_NITS", false );
 
 	ctx->atoms.gamescopeForceWindowsFullscreen = XInternAtom( ctx->dpy, "GAMESCOPE_FORCE_WINDOWS_FULLSCREEN", false );
 
@@ -5844,6 +5873,12 @@ steamcompmgr_main(int argc, char **argv)
 					g_bForceHDR10OutputDebug = true;
 				} else if (strcmp(opt_name, "hdr-wide-gammut-for-sdr") == 0) {
 					g_bHDRForceWideGammutForSDR = true;
+				} else if (strcmp(opt_name, "hdr-itm-enable") == 0) {
+					g_bHDRItmEnable = true;
+				} else if (strcmp(opt_name, "hdr-itm-sdr-nits") == 0) {
+					g_flHDRItmSdrNits = atof(optarg);
+				} else if (strcmp(opt_name, "hdr-itm-target-nits") == 0) {
+					g_flHDRItmTargetNits = atof(optarg);
 				}
 				break;
 			case '?':

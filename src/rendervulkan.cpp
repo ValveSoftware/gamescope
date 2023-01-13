@@ -3156,6 +3156,9 @@ std::shared_ptr<CVulkanTexture> vulkan_acquire_screenshot_texture(uint32_t width
 
 float g_flLinearToNits = 400.0f;
 float g_flNitsToLinear = 1.0f / 100.0f;
+bool g_bHDRItmEnable = false;
+float g_flHDRItmSdrNits = 100.f;
+float g_flHDRItmTargetNits = 1000.f;
 
 struct BlitPushData_t
 {
@@ -3168,6 +3171,9 @@ struct BlitPushData_t
 
 	float linearToNits;
 	float nitsToLinear;
+	bool itmEnable;
+	float itmSdrNits;
+	float itmTargetNits;
 
 	explicit BlitPushData_t(const struct FrameInfo_t *frameInfo)
 	{
@@ -3183,6 +3189,9 @@ struct BlitPushData_t
 
 		linearToNits = g_flLinearToNits;
 		nitsToLinear = g_flNitsToLinear;
+		itmEnable = g_bHDRItmEnable;
+		itmSdrNits = g_flHDRItmSdrNits;
+		itmTargetNits = g_flHDRItmTargetNits;
 	}
 
 	explicit BlitPushData_t(float blit_scale) {
@@ -3194,6 +3203,9 @@ struct BlitPushData_t
 
 		linearToNits = g_flLinearToNits;
 		nitsToLinear = g_flNitsToLinear;
+		itmEnable = g_bHDRItmEnable;
+		itmSdrNits = g_flHDRItmSdrNits;
+		itmTargetNits = g_flHDRItmTargetNits;
 	}
 };
 
@@ -3253,6 +3265,9 @@ struct RcasPushData_t
 
     float linearToNits;
     float nitsToLinear;
+    bool itmEnable;
+    float itmSdrNits;
+    float itmTargetNits;
 
 	RcasPushData_t(const struct FrameInfo_t *frameInfo, float sharpness)
 	{
@@ -3266,6 +3281,9 @@ struct RcasPushData_t
 		u_c1 = tmp.x;
 		linearToNits = g_flLinearToNits;
 		nitsToLinear = g_flNitsToLinear;
+		itmEnable = g_bHDRItmEnable;
+		itmSdrNits = g_flHDRItmSdrNits;
+		itmTargetNits = g_flHDRItmTargetNits;
 		for (uint32_t i = 1; i < k_nMaxLayers; i++)
 		{
 			u_scale[i - 1] = frameInfo->layers[i].scale;

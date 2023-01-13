@@ -180,6 +180,9 @@ struct xwayland_ctx_t
 		Atom gamescopeHDROnSDRTonemapOperator;
 		Atom gamescopeHDROutputFeedback;
 		Atom gamescopeHDRSDRContentBrightness;
+		Atom gamescopeHDRItmEnable;
+		Atom gamescopeHDRItmSDRNits;
+		Atom gamescopeHDRItmTargetNits;
 
 		Atom gamescopeForceWindowsFullscreen;
 

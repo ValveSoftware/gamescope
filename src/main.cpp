@@ -112,6 +112,9 @@ const struct option *gamescope_options = (struct option[]){
 	{ "hdr-enabled", no_argument, nullptr, 0 },
 	{ "hdr-sdr-content-nits", required_argument, nullptr, 0 },
 	{ "hdr-wide-gammut-for-sdr", no_argument, nullptr, 0 },
+	{ "hdr-itm-enable", no_argument, nullptr, 0 },
+	{ "hdr-itm-sdr-nits", required_argument, nullptr, 0 },
+	{ "hdr-itm-target-nits", required_argument, nullptr, 0 },
 	{ "hdr-debug-force-support", no_argument, nullptr, 0 },
 	{ "hdr-debug-force-output", no_argument, nullptr, 0 },
 	{ "hdr-debug-heatmap", no_argument, nullptr, 0 },
@@ -148,7 +151,12 @@ const char usage[] =
 	"  --hdr-enabled                  enable HDR output (needs Gamescope WSI layer enabled for support from clients)\n"
 	"                                 If this is not set, and there is a HDR client, it will be tonemapped SDR.\n"
 	"  --hdr-wide-gammut-for-sdr      treat SDR sRGB content as having Rec.2020 primaries. Makes colors more vivid at cost of 'correctness'.\n"
-	"  --hdr-sdr-content-nits		  set the luminance of SDR content in nits. Default: 400 nits.\n"
+	"  --hdr-sdr-content-nits         set the luminance of SDR content in nits. Default: 400 nits.\n"
+	"  --hdr-itm-enable               enable SDR->HDR inverse tone mapping. only works for SDR input.\n"
+	"  --hdr-itm-sdr-nits             set the luminance of SDR content in nits used as the input for the inverse tone mapping process.\n"
+	"                                 Default: 100 nits, Max: 1000 nits\n"
+	"  --hdr-itm-target-nits          set the target luminace of the inverse tone mapping process.\n"
+	"                                 Default: 1000 nits, Max: 10000 nits\n"
 	"\n"
 	"Nested mode options:\n"
 	"  -o, --nested-unfocused-refresh game refresh rate when unfocused\n"
