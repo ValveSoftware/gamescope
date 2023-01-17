@@ -80,11 +80,7 @@ vec4 sampleLayer(sampler2D layerSampler, uint layerIdx, vec2 uv, bool unnormaliz
             color.rgb = bt2446a_inverse_tonemapping(color.rgb, u_itmSdrNits, u_itmTargetNits);
         }
         if (checkDebugFlag(compositedebug_Heatmap)) {
-            if(c_itmEnable) {
-                color.rgb = hdr_heatmap(color.rgb, c_itmEnable, true, c_st2084Output);
-            } else {
-                color.rgb = hdr_heatmap(color.rgb, false, false, c_st2084Output);
-            }
+            color.rgb = hdr_heatmap(color.rgb, c_itmEnable, c_itmEnable, c_st2084Output);
         } else {
             if (!c_itmEnable && c_st2084Output) {
                 color.rgb = linearToNits(color.rgb);
