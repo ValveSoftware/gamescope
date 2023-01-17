@@ -81,7 +81,7 @@ vec4 sampleLayer(sampler2D layerSampler, uint layerIdx, vec2 uv, bool unnormaliz
         }
         if (checkDebugFlag(compositedebug_Heatmap)) {
             if(c_itmEnable) {
-                color.rgb = hdr_heatmap(color.rgb, true, true, c_st2084Output);
+                color.rgb = hdr_heatmap(color.rgb, true, true, c_itmEnable);
             } else {
                 color.rgb = hdr_heatmap(color.rgb, false, false, c_st2084Output);
             }
@@ -99,7 +99,7 @@ vec4 sampleLayer(sampler2D layerSampler, uint layerIdx, vec2 uv, bool unnormaliz
         }
         if (checkDebugFlag(compositedebug_Heatmap)) {
             if(c_itmEnable) {
-                color.rgb = hdr_heatmap(color.rgb, true, true, c_st2084Output);
+                color.rgb = hdr_heatmap(color.rgb, true, true, c_itmEnable);
             } else {
                 color.rgb = hdr_heatmap(color.rgb, false, false, c_st2084Output);
             }
