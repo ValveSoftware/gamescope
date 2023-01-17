@@ -17,7 +17,6 @@ layout(
 const uint u_frameId = 0;
 const float u_linearToNits = 400.0f;
 const float u_nitsToLinear = 1.0f / 100.0f;
-const bool u_itmEnable = false;
 const float u_itmSdrNits = 100.f;
 const float u_itmTargetNits = 1000.f;
 

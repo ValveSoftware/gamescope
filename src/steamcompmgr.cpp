@@ -97,7 +97,6 @@
 #include "gpuvis_trace_utils.h"
 
 extern float g_flLinearToNits;
-extern bool g_bHDRItmEnable;
 extern float g_flHDRItmSdrNits;
 extern float g_flHDRItmTargetNits;
 
@@ -248,6 +247,7 @@ bool g_bForceHDR10OutputDebug = false;
 bool g_bForceHDRSupportDebug = false;
 bool g_bHDREnabled = false;
 bool g_bHDRForceWideGammutForSDR = false;
+bool g_bHDRItmEnable = false;
 std::pair<uint32_t, uint32_t> g_LastConnectorIdentifier = { 0u, 0u };
 
 struct motif_hints_t
