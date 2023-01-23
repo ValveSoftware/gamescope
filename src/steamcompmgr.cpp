@@ -43,6 +43,7 @@
 #include <fstream>
 #include <string>
 #include <queue>
+#include <variant>
 
 #include <assert.h>
 #include <stdlib.h>
@@ -262,6 +263,7 @@ struct motif_hints_t
 enum class steamcompmgr_win_type_t
 {
 	XWAYLAND,
+	XDG,
 };
 
 struct steamcompmgr_xwayland_win_t
@@ -279,6 +281,11 @@ struct steamcompmgr_xwayland_win_t
 	struct wlserver_x11_surface_info surface;
 
 	xwayland_ctx_t *ctx;
+};
+
+struct steamcompmgr_xdg_win_t
+{
+	struct wlserver_xdg_surface_info surface;
 };
 
 struct steamcompmgr_win_t {
@@ -322,10 +329,14 @@ struct steamcompmgr_win_t {
 
 	steamcompmgr_win_type_t		type;
 
-	steamcompmgr_xwayland_win_t& xwayland() { return _xwayland; }
-	const steamcompmgr_xwayland_win_t& xwayland() const { return _xwayland; }
+	steamcompmgr_xwayland_win_t& xwayland() { return std::get<steamcompmgr_xwayland_win_t>(_window_types); }
+	const steamcompmgr_xwayland_win_t& xwayland() const { return std::get<steamcompmgr_xwayland_win_t>(_window_types); }
 
-	steamcompmgr_xwayland_win_t _xwayland;
+	steamcompmgr_xdg_win_t& xdg() { return std::get<steamcompmgr_xdg_win_t>(_window_types); }
+	const steamcompmgr_xdg_win_t& xdg() const { return std::get<steamcompmgr_xdg_win_t>(_window_types); }
+
+	std::variant<steamcompmgr_xwayland_win_t, steamcompmgr_xdg_win_t>
+		_window_types;
 };
 
 Window x11_win(steamcompmgr_win_t *w) {
@@ -3593,6 +3604,10 @@ add_win(xwayland_ctx_t *ctx, Window id, Window prev, unsigned long sequence)
 
 	if (!new_win)
 		return;
+
+	new_win->type = steamcompmgr_win_type_t::XWAYLAND;
+	new_win->_window_types.emplace<steamcompmgr_xwayland_win_t>();
+
 	if (prev)
 	{
 		for (p = &ctx->list; *p; p = &(*p)->xwayland().next)
@@ -3609,7 +3624,6 @@ add_win(xwayland_ctx_t *ctx, Window id, Window prev, unsigned long sequence)
 		return;
 	}
 
-	new_win->type = steamcompmgr_win_type_t::XWAYLAND;
 	new_win->xwayland().ctx = ctx;
 	new_win->xwayland().damage_sequence = 0;
 	new_win->xwayland().map_sequence = 0;
