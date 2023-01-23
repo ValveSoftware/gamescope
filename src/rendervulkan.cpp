@@ -3673,7 +3673,7 @@ std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struct wl
 	VkMemoryRequirements memRequirements;
 	g_device.vk.GetBufferMemoryRequirements(g_device.device(), buffer, &memRequirements);
 
-	uint32_t memTypeIndex =  g_device.findMemoryType(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT|VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, memRequirements.memoryTypeBits );
+	uint32_t memTypeIndex =  g_device.findMemoryType(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT|VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, memRequirements.memoryTypeBits );
 	if ( memTypeIndex == ~0u )
 	{
 		wlr_buffer_end_data_ptr_access( buf );
@@ -3724,7 +3724,7 @@ std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struct wl
 
 	auto cmdBuffer = g_device.commandBuffer();
 
-	cmdBuffer->copyBufferToImage( buffer, 0, stride, pTex);
+	cmdBuffer->copyBufferToImage( buffer, 0, stride / DRMFormatGetBPP(drmFormat), pTex);
 
 	uint64_t sequence = g_device.submit(std::move(cmdBuffer));
 
