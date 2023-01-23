@@ -13,6 +13,7 @@
 #include <vulkan/vulkan_core.h>
 
 #include "drm.hpp"
+#include "steamcompmgr_shared.hpp"
 
 #define WLSERVER_BUTTON_COUNT 4
 
@@ -209,36 +210,6 @@ void wlserver_set_output_info( const wlserver_output_info *info );
 
 gamescope_xwayland_server_t *wlserver_get_xwayland_server( size_t index );
 const char *wlserver_get_wl_display_name( void );
-
-struct wlserver_x11_surface_info
-{
-	std::atomic<struct wlr_surface *> override_surface;
-	std::atomic<struct wlr_surface *> main_surface;
-
-	struct wlr_surface *current_surface()
-	{
-		if ( override_surface )
-			return override_surface;
-		return main_surface;
-	}
-
-	// owned by wlserver
-	uint32_t wl_id, x11_id;
-	struct wl_list pending_link;
-
-	gamescope_xwayland_server_t *xwayland_server;
-};
-
-struct wlserver_xdg_surface_info
-{
-	struct wlr_xdg_toplevel *xdg_toplevel = nullptr;
-
-	struct wl_list link;
-
-	struct wl_listener map;
-	struct wl_listener unmap;
-	struct wl_listener destroy;
-};
 
 struct wlserver_wl_surface_info
 {
