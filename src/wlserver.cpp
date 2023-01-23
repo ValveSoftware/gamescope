@@ -31,6 +31,7 @@ extern "C" {
 #include <wlr/types/wlr_touch.h>
 #include <wlr/util/log.h>
 #include <wlr/xwayland/server.h>
+#include <wlr/types/wlr_xdg_shell.h>
 #undef static
 #undef class
 }
@@ -929,6 +930,69 @@ void gamescope_xwayland_server_t::update_output_info()
 	wlr_output_set_description(output, info->description);
 }
 
+static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
+	struct wlserver_xdg_surface_info* info =
+		wl_container_of(listener, info, map);
+
+	wl_list_insert(&wlserver.mapped_xdg_views, &info->link);
+}
+
+static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
+	struct wlserver_xdg_surface_info* info =
+		wl_container_of(listener, info, unmap);
+
+	wl_list_remove(&info->link);
+}
+
+static void xdg_toplevel_destroy(struct wl_listener *listener, void *data) {
+	struct wlserver_xdg_surface_info* info =
+		wl_container_of(listener, info, destroy);
+
+	wl_list_remove(&info->map.link);
+	wl_list_remove(&info->unmap.link);
+	wl_list_remove(&info->destroy.link);
+
+	wlserver_wl_surface_info *wlserver_surface = get_wl_surface_info(info->xdg_toplevel->base->surface);
+	if (!wlserver_surface)
+	{
+		wl_log.infof("No base surface info. (destroy)");
+		return;
+	}
+	wlserver_surface->xdg_surface = nullptr;
+
+	delete info;
+}
+
+void xdg_surface_new(struct wl_listener *listener, void *data)
+{
+	struct wlr_xdg_surface *xdg_surface = (struct wlr_xdg_surface *)data;
+
+	if (xdg_surface->role != WLR_XDG_SURFACE_ROLE_TOPLEVEL)
+	{
+		wl_log.infof("Not top level surface.");
+		return;
+	}
+
+	wlserver_wl_surface_info *wlserver_surface = get_wl_surface_info(xdg_surface->surface);
+	if (!wlserver_surface)
+	{
+		wl_log.infof("No base surface info. (new)");
+		return;
+	}
+
+	wlserver_xdg_surface_info *xdg_surface_info = new wlserver_xdg_surface_info;
+	wlserver_surface->xdg_surface = xdg_surface_info;
+
+	xdg_surface_info->xdg_toplevel = xdg_surface->toplevel;
+
+	xdg_surface_info->map.notify = xdg_toplevel_map;
+	wl_signal_add(&xdg_surface->events.map, &xdg_surface_info->map);
+	xdg_surface_info->unmap.notify = xdg_toplevel_unmap;
+	wl_signal_add(&xdg_surface->events.unmap, &xdg_surface_info->unmap);
+	xdg_surface_info->destroy.notify = xdg_toplevel_destroy;
+	wl_signal_add(&xdg_surface->events.destroy, &xdg_surface_info->destroy);
+}
+
 bool wlserver_init( void ) {
 	assert( wlserver.display != nullptr );
 
@@ -979,6 +1043,17 @@ bool wlserver_init( void ) {
 #endif
 
 	create_gamescope_tearing();
+
+	wlserver.xdg_shell = wlr_xdg_shell_create(wlserver.display, 3);
+	if (!wlserver.xdg_shell)
+	{
+		wl_log.infof("Unable to create XDG shell interface");
+		return false;
+	}
+	wlserver.new_xdg_surface.notify = xdg_surface_new;
+	wl_signal_add(&wlserver.xdg_shell->events.new_surface, &wlserver.new_xdg_surface);
+	wl_list_init(&wlserver.mapped_xdg_views);
+
 
 	int result = -1;
 	int display_slot = 0;

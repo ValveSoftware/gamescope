@@ -127,6 +127,10 @@ struct wlserver_t {
 
 	struct wl_listener session_active;
 	struct wl_listener new_input_method;
+
+	struct wlr_xdg_shell *xdg_shell;
+	struct wl_listener new_xdg_surface;
+	struct wl_list mapped_xdg_views;
 };
 
 struct wlserver_keyboard {
@@ -225,9 +229,23 @@ struct wlserver_x11_surface_info
 	gamescope_xwayland_server_t *xwayland_server;
 };
 
+struct wlserver_xdg_surface_info
+{
+	struct wlr_xdg_toplevel *xdg_toplevel = nullptr;
+
+	struct wl_list link;
+
+	struct wl_listener map;
+	struct wl_listener unmap;
+	struct wl_listener destroy;
+};
+
 struct wlserver_wl_surface_info
 {
 	wlserver_x11_surface_info *x11_surface = nullptr;
+	wlserver_xdg_surface_info *xdg_surface = nullptr;
+
+
 	struct wlr_surface *wlr = nullptr;
 	struct wl_listener commit;
 	struct wl_listener destroy;

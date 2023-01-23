@@ -7,6 +7,7 @@ protocols = [
 	'gamescope-pipewire',
 	'gamescope-input-method',
 	'gamescope-tearing-control-unstable-v1',
+	'xdg-shell',
 ]
 
 protocols_client_src = []
