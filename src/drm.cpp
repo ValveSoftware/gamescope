@@ -317,17 +317,9 @@ static bool compare_modes( drmModeModeInfo mode1, drmModeModeInfo mode2 )
 }
 
 static void
-drm_hdr_parse_edid(drm_t *drm, struct connector *connector, drmModePropertyBlobRes *blob)
+drm_hdr_parse_edid(drm_t *drm, struct connector *connector, const struct di_edid *edid)
 {
 	struct connector_metadata_t *metadata = &connector->metadata;
-	struct di_info* info = di_info_parse_edid(blob->data, blob->length);
-
-	if (!info) {
-		fprintf(stderr, "drm_hdr_parse_edid: Failed to parse edid.\n");
-		return;
-	}
-
-	const struct di_edid* edid = di_info_get_edid(info);
 
 	const struct di_edid_chromaticity_coords* chroma = di_edid_get_chromaticity_coords(edid);
 	const struct di_cta_hdr_static_metadata_block* hdr_static_metadata = NULL;
@@ -391,8 +383,6 @@ drm_hdr_parse_edid(drm_t *drm, struct connector *connector, drmModePropertyBlobR
 			metadata->hdr10_metadata_blob = 0;
 		}
 	}
-
-	di_info_destroy(info);
 }
 
 static void parse_edid( drm_t *drm, struct connector *conn)
@@ -418,19 +408,21 @@ static void parse_edid( drm_t *drm, struct connector *conn)
 		return;
 	}
 
-	if (blob->length < 128) {
-		drm_log.errorf("Truncated EDID");
+	struct di_info *info = di_info_parse_edid(blob->data, blob->length);
+	if (!info) {
+		drm_log.errorf("Failed to parse edid");
 		return;
 	}
 
-	const uint8_t *data = (const uint8_t *) blob->data;
+	drmModeFreePropertyBlob(blob);
 
-	// The ASCII 3-letter manufacturer PnP ID is encoded in 5-bit codes
-	uint16_t id = (data[8] << 8) | data[9];
+	const struct di_edid *edid = di_info_get_edid(info);
+
+	const struct di_edid_vendor_product *vendor_product = di_edid_get_vendor_product(edid);
 	char pnp_id[] = {
-		(char)(((id >> 10) & 0x1F) + '@'),
-		(char)(((id >> 5) & 0x1F) + '@'),
-		(char)(((id >> 0) & 0x1F) + '@'),
+		vendor_product->manufacturer[0],
+		vendor_product->manufacturer[1],
+		vendor_product->manufacturer[2],
 		'\0',
 	};
 	memcpy(conn->make_pnp, pnp_id, sizeof(pnp_id));
@@ -444,23 +436,17 @@ static void parse_edid( drm_t *drm, struct connector *conn)
 		conn->make = strdup(pnp_id);
 	}
 
-	for (size_t i = 72; i <= 108; i += 18) {
-		uint16_t flag = (data[i] << 8) | data[i + 1];
-		if (flag == 0 && data[i + 3] == 0xFC) {
-			char model[14];
-			snprintf(model, sizeof(model), "%.13s", &data[i + 5]);
-			char *nl = strchr(model, '\n');
-			if (nl) {
-				*nl = '\0';
-			}
-
-			conn->model = strdup(model);
+	const struct di_edid_display_descriptor *const *descriptors = di_edid_get_display_descriptors(edid);
+	for (size_t i = 0; descriptors[i] != NULL; i++) {
+		const struct di_edid_display_descriptor *desc = descriptors[i];
+		if (di_edid_display_descriptor_get_tag(desc) == DI_EDID_DISPLAY_DESCRIPTOR_PRODUCT_NAME) {
+			conn->model = strdup(di_edid_display_descriptor_get_string(desc));
 		}
 	}
 
-	drm_hdr_parse_edid(drm, conn, blob);
+	drm_hdr_parse_edid(drm, conn, edid);
 
-	drmModeFreePropertyBlob(blob);
+	di_info_destroy(info);
 }
 
 static bool refresh_state( drm_t *drm )
