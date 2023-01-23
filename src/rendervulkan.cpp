@@ -3093,6 +3093,9 @@ std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_dmabuf( struct wlr_dm
 
 	CVulkanTexture::createFlags texCreateFlags;
 	texCreateFlags.bSampled = true;
+
+	//fprintf(stderr, "pDMA->width: %d pDMA->height: %d pDMA->format: 0x%x pDMA->modifier: 0x%lx pDMA->n_planes: %d\n",
+	//	pDMA->width, pDMA->height, pDMA->format, pDMA->modifier, pDMA->n_planes);
 	
 	if ( pTex->BInit( pDMA->width, pDMA->height, pDMA->format, texCreateFlags, pDMA ) == false )
 		return nullptr;

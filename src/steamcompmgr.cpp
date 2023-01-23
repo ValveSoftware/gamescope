@@ -165,6 +165,8 @@ constexpr const T& clamp( const T& x, const T& min, const T& max )
 extern bool g_bForceRelativeMouse;
 bool bSteamCompMgrGrab = false;
 
+CommitDoneList_t g_steamcompmgr_xdg_done_commits;
+
 struct ignore {
 	struct ignore	*next;
 	unsigned long	sequence;
@@ -329,6 +331,8 @@ unsigned int g_BlurFadeStartTime = 0;
 
 pid_t focusWindow_pid;
 
+std::vector<std::shared_ptr<steamcompmgr_win_t>> g_steamcompmgr_xdg_wins;
+
 static bool
 window_is_steam( steamcompmgr_win_t *w )
 {
@@ -440,7 +444,7 @@ private:
 
 struct WaitListEntry_t
 {
-	xwayland_ctx_t *ctx;
+	CommitDoneList_t *doneCommits;
 	int fence;
 	// Josh: Whether or not to nudge mangoapp that we got
 	// a frame as soon as we know this commit is done.
@@ -510,8 +514,8 @@ retry:
 	}
 
 	{
-		std::unique_lock< std::mutex > lock( entry.ctx->listCommitsDoneLock );
-		entry.ctx->listCommitsDone.push_back( entry.commitID );
+		std::unique_lock< std::mutex > lock( entry.doneCommits->listCommitsDoneLock );
+		entry.doneCommits->listCommitsDone.push_back( entry.commitID );
 	}
 
 	nudge_steamcompmgr();
@@ -1591,14 +1595,18 @@ paint_window(steamcompmgr_win_t *w, steamcompmgr_win_t *scaleW, struct FrameInfo
 		}
 	}
 
-	if (sourceWidth != currentOutputWidth || sourceHeight != currentOutputHeight || ( ( w->xwayland().a.x || w->xwayland().a.y ) && w != scaleW ) || globalScaleRatio != 1.0f)
+	bool offset = false;
+	if ( w->type == steamcompmgr_win_type_t::XWAYLAND )
+		offset = ( ( w->xwayland().a.x || w->xwayland().a.y ) && w != scaleW );
+
+	if (sourceWidth != currentOutputWidth || sourceHeight != currentOutputHeight || offset || globalScaleRatio != 1.0f)
 	{
 		calc_scale_factor(currentScaleRatio_x, currentScaleRatio_y, sourceWidth, sourceHeight);
 
 		drawXOffset = ((int)currentOutputWidth - (int)sourceWidth * currentScaleRatio_x) / 2.0f;
 		drawYOffset = ((int)currentOutputHeight - (int)sourceHeight * currentScaleRatio_y) / 2.0f;
 
-		if (w != scaleW)
+		if ( w->type == steamcompmgr_win_type_t::XWAYLAND && w != scaleW )
 		{
 			drawXOffset += w->xwayland().a.x * currentScaleRatio_x;
 			drawYOffset += w->xwayland().a.y * currentScaleRatio_y;
@@ -2274,6 +2282,9 @@ win_has_game_id( steamcompmgr_win_t *w )
 static bool
 win_is_useless( steamcompmgr_win_t *w )
 {
+	if (w->type != steamcompmgr_win_type_t::XWAYLAND)
+		return false;
+
 	// Windows that are 1x1 are pretty useless for override redirects.
 	// Just ignore them.
 	// Fixes the Xbox Login in Age of Empires 2: DE.
@@ -2283,6 +2294,9 @@ win_is_useless( steamcompmgr_win_t *w )
 static bool
 win_is_override_redirect( steamcompmgr_win_t *w )
 {
+	if (w->type != steamcompmgr_win_type_t::XWAYLAND)
+		return false;
+
 	return w->xwayland().a.override_redirect && !w->ignoreOverrideRedirect && !win_is_useless( w );
 }
 
@@ -2301,6 +2315,9 @@ win_skip_and_not_fullscreen( steamcompmgr_win_t *w )
 static bool
 win_maybe_a_dropdown( steamcompmgr_win_t *w )
 {
+	if ( w->type != steamcompmgr_win_type_t::XWAYLAND )
+		return false;
+
 	// Josh:
 	// Right now we don't get enough info from Wine
 	// about the true nature of windows to distringuish
@@ -2406,13 +2423,15 @@ is_focus_priority_greater( steamcompmgr_win_t *a, steamcompmgr_win_t *b )
 		a->is_dialog != b->is_dialog )
 		return !a->is_dialog;
 
-	// Attempt to tie-break dropdowns by transient-for.
-	if (a->type == steamcompmgr_win_type_t::XWAYLAND)
+	if (a->type != steamcompmgr_win_type_t::XWAYLAND)
 	{
-		if ( win_maybe_a_dropdown( a ) && win_maybe_a_dropdown( b ) &&
-			!a->xwayland().transientFor != !b->xwayland().transientFor )
-			return !a->xwayland().transientFor;
+		return true;
 	}
+
+	// Attempt to tie-break dropdowns by transient-for.
+	if ( win_maybe_a_dropdown( a ) && win_maybe_a_dropdown( b ) &&
+		!a->xwayland().transientFor != !b->xwayland().transientFor )
+		return !a->xwayland().transientFor;
 
 	if ( win_has_game_id( a ) && a->xwayland().map_sequence != b->xwayland().map_sequence )
 		return a->xwayland().map_sequence > b->xwayland().map_sequence;
@@ -2851,10 +2870,17 @@ wlr_surface *win_surface(steamcompmgr_win_t *window)
 	if (!window)
 		return nullptr;
 
-	if (window->type != steamcompmgr_win_type_t::XWAYLAND)
-		return nullptr;
+	return window->main_surface();
+}
 
-	return window->xwayland().surface.main_surface;
+const char *get_win_display_name(steamcompmgr_win_t *window)
+{
+	if ( global_focus.focusWindow->type == steamcompmgr_win_type_t::XWAYLAND )
+		return global_focus.focusWindow->xwayland().ctx->xwayland_server->get_nested_display_name();
+	else if ( global_focus.focusWindow->type == steamcompmgr_win_type_t::XDG )
+		return wlserver_get_wl_display_name();
+	else
+		return "";
 }
 
 static void
@@ -2881,8 +2907,17 @@ determine_and_apply_focus()
 		}
 	}
 
+	for ( const auto& xdg_win : g_steamcompmgr_xdg_wins )
+	{
+		if ( xdg_win->xdg().surface.mapped )
+			vecPossibleFocusWindows.push_back( xdg_win.get() );
+	}
+
 	for ( steamcompmgr_win_t *focusable_window : vecPossibleFocusWindows )
 	{
+		if ( focusable_window->type != steamcompmgr_win_type_t::XWAYLAND )
+			continue;
+
 		// Exclude windows that are useless (1x1), skip taskbar + pager or override redirect windows
 		// from the reported focusable windows to Steam.
 		if ( win_is_useless( focusable_window ) ||
@@ -2946,7 +2981,24 @@ determine_and_apply_focus()
 
 	// Initially pick cursor from the ctx of our input focus.
 	if (global_focus.inputFocusWindow)
-		global_focus.cursor = global_focus.inputFocusWindow->xwayland().ctx->cursor.get();
+	{
+		if (global_focus.inputFocusWindow->type == steamcompmgr_win_type_t::XWAYLAND)
+			global_focus.cursor = global_focus.inputFocusWindow->xwayland().ctx->cursor.get();
+		else
+		{
+			// TODO XDG:
+			// Implement cursor support.
+			// Probably want some form of abstraction here for
+			// wl cursor vs x11 cursor given we have virtual cursors.
+			// wlserver should update wl cursor pos xy directly.
+			static bool s_once = false;
+			if (!s_once)
+			{
+				xwm_log.errorf("NO CURSOR IMPL XDG");
+				s_once = true;
+			}
+		}
+	}
 
 	if (global_focus.inputFocusWindow)
 		global_focus.inputFocusMode = global_focus.inputFocusWindow->inputFocusMode;
@@ -2966,11 +3018,11 @@ determine_and_apply_focus()
 			 win_surface(global_focus.keyboardFocusWindow) != nullptr )
 		{
 			wlserver_lock();
-			if ( win_surface(global_focus.inputFocusWindow) != nullptr )
-				wlserver_mousefocus( global_focus.inputFocusWindow->xwayland().surface.main_surface, global_focus.cursor->x(), global_focus.cursor->y() );
+			if ( win_surface(global_focus.inputFocusWindow) != nullptr && global_focus.cursor )
+				wlserver_mousefocus( global_focus.inputFocusWindow->main_surface(), global_focus.cursor->x(), global_focus.cursor->y() );
 
 			if ( win_surface(global_focus.keyboardFocusWindow) != nullptr )
-				wlserver_keyboardfocus( global_focus.keyboardFocusWindow->xwayland().surface.main_surface );
+				wlserver_keyboardfocus( global_focus.keyboardFocusWindow->main_surface() );
 			wlserver_unlock();
 		}
 
@@ -3007,21 +3059,21 @@ determine_and_apply_focus()
 
 	if ( global_focus.focusWindow )
 	{
-		focusedWindow = global_focus.focusWindow->xwayland().id;
+		focusedWindow = (unsigned long)global_focus.focusWindow->id();
 		focusedBaseAppId = global_focus.focusWindow->appID;
 		focusedAppId = global_focus.inputFocusWindow->appID;
-		focused_display = global_focus.focusWindow->xwayland().ctx->xwayland_server->get_nested_display_name();
+		focused_display = get_win_display_name(global_focus.focusWindow);
 		focusWindow_pid = global_focus.focusWindow->pid;
 	}
 
 	if ( global_focus.inputFocusWindow )
 	{
-		focused_mouse_display = global_focus.inputFocusWindow->xwayland().ctx->xwayland_server->get_nested_display_name();
+		focused_mouse_display = get_win_display_name(global_focus.inputFocusWindow);
 	}
 
 	if ( global_focus.keyboardFocusWindow )
 	{
-		focused_keyboard_display = global_focus.keyboardFocusWindow->xwayland().ctx->xwayland_server->get_nested_display_name();
+		focused_keyboard_display = get_win_display_name(global_focus.keyboardFocusWindow);
 	}
 
 	if ( steamMode )
@@ -4028,6 +4080,42 @@ init_runtime_info()
 }
 
 static void
+steamcompmgr_send_done( steamcompmgr_win_t *w, uint64_t vblank_idx, struct timespec& now )
+{
+	wlr_surface *main_surface = w->main_surface();
+	wlr_surface *current_surface = w->current_surface();
+	bool bSendCallback = main_surface != nullptr;
+
+	int nRefresh = g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh;
+	int nTargetFPS = g_nSteamCompMgrTargetFPS;
+	if ( g_nSteamCompMgrTargetFPS && steamcompmgr_window_should_limit_fps( w ) && nRefresh > nTargetFPS )
+	{
+		int nVblankDivisor = nRefresh / nTargetFPS;
+
+		if ( vblank_idx % nVblankDivisor != 0 )
+			bSendCallback = false;
+	}
+
+	if ( bSendCallback )
+	{
+		// Acknowledge commit once.
+		wlserver_lock();
+
+		if ( main_surface != nullptr )
+		{
+			wlserver_send_frame_done(main_surface, &now);
+		}
+
+		if ( current_surface != nullptr && main_surface != current_surface )
+		{
+			wlserver_send_frame_done(current_surface, &now);
+		}
+
+		wlserver_unlock();
+	}
+}
+
+static void
 handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 {
 	/* check if Trans property was changed */
@@ -4738,6 +4826,7 @@ steamcompmgr_exit(void)
 				w->commit_queue.clear();
 		}
 	}
+	g_steamcompmgr_xdg_wins.clear();
 	g_HeldCommits[ HELD_COMMIT_BASE ] = nullptr;
 	g_HeldCommits[ HELD_COMMIT_FADE ] = nullptr;
 
@@ -4842,85 +4931,119 @@ register_systray(xwayland_ctx_t *ctx)
 	XSetSelectionOwner(ctx->dpy, net_system_tray, ctx->ourWindow, 0);
 }
 
-void handle_done_commits( xwayland_ctx_t *ctx )
+bool handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint64_t commitID )
 {
-	std::lock_guard<std::mutex> lock( ctx->listCommitsDoneLock );
-
-	// very fast loop yes
-	for ( uint32_t i = 0; i < ctx->listCommitsDone.size(); i++ )
+	bool bFoundWindow = false;
+	uint32_t j;
+	for ( j = 0; j < w->commit_queue.size(); j++ )
 	{
-		bool bFoundWindow = false;
-		for ( steamcompmgr_win_t *w = ctx->list; w; w = w->xwayland().next )
+		if ( w->commit_queue[ j ]->commitID == commitID )
 		{
-			uint32_t j;
-			for ( j = 0; j < w->commit_queue.size(); j++ )
+			gpuvis_trace_printf( "commit %lu done", w->commit_queue[ j ]->commitID );
+			w->commit_queue[ j ]->done = true;
+			bFoundWindow = true;
+
+			// Window just got a new available commit, determine if that's worth a repaint
+
+			// If this is an overlay that we're presenting, repaint
+			if ( gameFocused )
 			{
-				if ( w->commit_queue[ j ]->commitID == ctx->listCommitsDone[ i ] )
+				if ( w == global_focus.overlayWindow && w->opacity != TRANSLUCENT )
 				{
-					gpuvis_trace_printf( "commit %lu done", w->commit_queue[ j ]->commitID );
-					w->commit_queue[ j ]->done = true;
-					bFoundWindow = true;
+					hasRepaintNonBasePlane = true;
+				}
 
-					// Window just got a new available commit, determine if that's worth a repaint
-
-					// If this is an overlay that we're presenting, repaint
-					if ( gameFocused )
-					{
-						if ( w == global_focus.overlayWindow && w->opacity != TRANSLUCENT )
-						{
-							hasRepaintNonBasePlane = true;
-						}
-
-						if ( w == global_focus.notificationWindow && w->opacity != TRANSLUCENT )
-						{
-							hasRepaintNonBasePlane = true;
-						}
-					}
-					if ( ctx->focus.outdatedInteractiveFocus )
-					{
-						focusDirty = true;
-						ctx->focus.outdatedInteractiveFocus = false;
-					}
-					// If this is an external overlay, repaint
-					if ( w == ctx->focus.externalOverlayWindow && w->opacity != TRANSLUCENT )
-					{
-						hasRepaintNonBasePlane = true;
-					}
-					// If this is the main plane, repaint
-					if ( w == global_focus.focusWindow && !w->isSteamStreamingClient )
-					{
-						g_HeldCommits[ HELD_COMMIT_BASE ] = w->commit_queue[ j ];
-						hasRepaint = true;
-					}
-
-					if ( w == global_focus.overrideWindow )
-					{
-						hasRepaintNonBasePlane = true;
-					}
-
-					if ( w->isSteamStreamingClientVideo && global_focus.focusWindow && global_focus.focusWindow->isSteamStreamingClient )
-					{
-						g_HeldCommits[ HELD_COMMIT_BASE ] = w->commit_queue[ j ];
-						hasRepaint = true;
-					}
-
-					break;
+				if ( w == global_focus.notificationWindow && w->opacity != TRANSLUCENT )
+				{
+					hasRepaintNonBasePlane = true;
 				}
 			}
-
-			if ( bFoundWindow == true )
+			if ( ctx )
 			{
-				if ( j > 0 )
+				if ( ctx->focus.outdatedInteractiveFocus )
 				{
-					// we can release all commits prior to done ones
-					w->commit_queue.erase( w->commit_queue.begin(), w->commit_queue.begin() + j );
+					focusDirty = true;
+					ctx->focus.outdatedInteractiveFocus = false;
 				}
-				break;
 			}
+			if ( global_focus.outdatedInteractiveFocus )
+			{
+				focusDirty = true;
+				global_focus.outdatedInteractiveFocus = false;
+
+				// If this is an external overlay, repaint
+				if ( w == global_focus.externalOverlayWindow && w->opacity != TRANSLUCENT )
+				{
+					hasRepaintNonBasePlane = true;
+				}
+			}
+			// If this is the main plane, repaint
+			if ( w == global_focus.focusWindow && !w->isSteamStreamingClient )
+			{
+				g_HeldCommits[ HELD_COMMIT_BASE ] = w->commit_queue[ j ];
+				hasRepaint = true;
+			}
+
+			if ( w == global_focus.overrideWindow )
+			{
+				hasRepaintNonBasePlane = true;
+			}
+
+			if ( w->isSteamStreamingClientVideo && global_focus.focusWindow && global_focus.focusWindow->isSteamStreamingClient )
+			{
+				g_HeldCommits[ HELD_COMMIT_BASE ] = w->commit_queue[ j ];
+				hasRepaint = true;
+			}
+
+			break;
 		}
 	}
 
-	ctx->listCommitsDone.clear();
+	if ( bFoundWindow == true )
+	{
+		if ( j > 0 )
+		{
+			// we can release all commits prior to done ones
+			w->commit_queue.erase( w->commit_queue.begin(), w->commit_queue.begin() + j );
+		}
+		return true;
+	}
+
+	return false;
+}
+
+void handle_done_commits_xwayland( xwayland_ctx_t *ctx )
+{
+	std::lock_guard<std::mutex> lock( ctx->doneCommits.listCommitsDoneLock );
+
+	// very fast loop yes
+	for ( uint32_t i = 0; i < ctx->doneCommits.listCommitsDone.size(); i++ )
+	{
+		for ( steamcompmgr_win_t *w = ctx->list; w; w = w->xwayland().next )
+		{
+			if (handle_done_commit(w, ctx, ctx->doneCommits.listCommitsDone[i]))
+				break;
+		}
+	}
+
+	ctx->doneCommits.listCommitsDone.clear();
+}
+
+void handle_done_commits_xdg()
+{
+	std::lock_guard<std::mutex> lock( g_steamcompmgr_xdg_done_commits.listCommitsDoneLock );
+
+	// very fast loop yes
+	for ( uint32_t i = 0; i < g_steamcompmgr_xdg_done_commits.listCommitsDone.size(); i++ )
+	{
+		for (const auto& xdg_win : g_steamcompmgr_xdg_wins)
+		{
+			if (handle_done_commit(xdg_win.get(), nullptr, g_steamcompmgr_xdg_done_commits.listCommitsDone[i]))
+				break;
+		}
+	}
+
+	g_steamcompmgr_xdg_done_commits.listCommitsDone.clear();
 }
 
 void nudge_steamcompmgr( void )
@@ -4941,7 +5064,75 @@ void force_repaint( void )
 	nudge_steamcompmgr();
 }
 
-void check_new_wayland_res(xwayland_ctx_t *ctx)
+void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, ResListEntry_t& reslistentry)
+{
+	struct wlr_buffer *buf = reslistentry.buf;
+
+	if ( w == nullptr )
+	{
+		wlserver_lock();
+		wlr_buffer_unlock( buf );
+		wlserver_unlock();
+		xwm_log.errorf( "waylandres but no win" );
+		return;
+	}
+
+	bool already_exists = false;
+	for ( const auto& existing_commit : w->commit_queue )
+	{
+		if (existing_commit->buf == buf)
+			already_exists = true;
+	}
+
+	if ( already_exists )
+	{
+		wlserver_lock();
+		wlr_buffer_unlock( buf );
+		wlserver_unlock();
+		xwm_log.errorf( "got the same buffer commited twice, ignoring." );
+		return;
+	}
+
+	std::shared_ptr<commit_t> newCommit = import_commit( buf, reslistentry.async, std::move(reslistentry.feedback) );
+
+	int fence = -1;
+	if ( newCommit )
+	{
+		struct wlr_dmabuf_attributes dmabuf = {0};
+		if ( wlr_buffer_get_dmabuf( buf, &dmabuf ) )
+		{
+			fence = dup( dmabuf.fd[0] );
+		}
+		else
+		{
+			fence = newCommit->vulkanTex->memoryFence();
+		}
+
+		// Whether or not to nudge mango app when this commit is done.
+		const bool mango_nudge = ( w == global_focus.focusWindow && !w->isSteamStreamingClient ) ||
+									( global_focus.focusWindow && global_focus.focusWindow->isSteamStreamingClient && w->isSteamStreamingClientVideo );
+
+		gpuvis_trace_printf( "pushing wait for commit %lu win %lx", newCommit->commitID, w->type == steamcompmgr_win_type_t::XWAYLAND ? w->xwayland().id : 0 );
+		{
+			std::unique_lock< std::mutex > lock( waitListLock );
+			WaitListEntry_t entry
+			{
+				.doneCommits = doneCommits,
+				.fence = fence,
+				.mangoapp_nudge = mango_nudge,
+				.commitID = newCommit->commitID,
+			};
+			waitList.push_back( entry );
+		}
+
+		// Wake up commit wait thread if chilling
+		waitListSem.signal();
+
+		w->commit_queue.push_back( std::move(newCommit) );
+	}
+}
+
+void check_new_xwayland_res(xwayland_ctx_t *ctx)
 {
 	// When importing buffer, we'll potentially need to perform operations with
 	// a wlserver lock (e.g. wlr_buffer_lock). We can't do this with a
@@ -4950,71 +5141,23 @@ void check_new_wayland_res(xwayland_ctx_t *ctx)
 
 	for ( uint32_t i = 0; i < tmp_queue.size(); i++ )
 	{
-		struct wlr_buffer *buf = tmp_queue[ i ].buf;
-
 		steamcompmgr_win_t	*w = find_win( ctx, tmp_queue[ i ].surf );
+		update_wayland_res( &ctx->doneCommits, w, tmp_queue[ i ]);
+	}
+}
 
-		if ( w == nullptr )
+void check_new_xdg_res()
+{
+	std::vector<ResListEntry_t> tmp_queue = wlserver_xdg_commit_queue();
+	for ( uint32_t i = 0; i < tmp_queue.size(); i++ )
+	{
+		for ( const auto& xdg_win : g_steamcompmgr_xdg_wins )
 		{
-			wlserver_lock();
-			wlr_buffer_unlock( buf );
-			wlserver_unlock();
-			xwm_log.errorf( "waylandres but no win" );
-			continue;
-		}
-
-		bool already_exists = false;
-		for ( const auto& existing_commit : w->commit_queue )
-		{
-			if (existing_commit->buf == buf)
-				already_exists = true;
-		}
-
-		if ( already_exists )
-		{
-			wlserver_lock();
-			wlr_buffer_unlock( buf );
-			wlserver_unlock();
-			xwm_log.errorf( "got the same buffer commited twice, ignoring." );
-			continue;
-		}
-
-		std::shared_ptr<commit_t> newCommit = import_commit( buf, tmp_queue[ i ].async, std::move(tmp_queue[ i ].feedback) );
-
-		int fence = -1;
-		if ( newCommit )
-		{
-			struct wlr_dmabuf_attributes dmabuf = {0};
-			if ( wlr_buffer_get_dmabuf( buf, &dmabuf ) )
+			if ( xdg_win->xdg().surface.main_surface == tmp_queue[ i ].surf )
 			{
-				fence = dup( dmabuf.fd[0] );
+				update_wayland_res( &g_steamcompmgr_xdg_done_commits, xdg_win.get(), tmp_queue[ i ] );
+				break;
 			}
-			else
-			{
-				fence = newCommit->vulkanTex->memoryFence();
-			}
-
-			// Whether or not to nudge mango app when this commit is done.
-			const bool mango_nudge = ( w == global_focus.focusWindow && !w->isSteamStreamingClient ) ||
-									 ( global_focus.focusWindow && global_focus.focusWindow->isSteamStreamingClient && w->isSteamStreamingClientVideo );
-
-			gpuvis_trace_printf( "pushing wait for commit %lu win %lx", newCommit->commitID, w->xwayland().id );
-			{
-				std::unique_lock< std::mutex > lock( waitListLock );
-				WaitListEntry_t entry
-				{
-					.ctx = ctx,
-					.fence = fence,
-					.mangoapp_nudge = mango_nudge,
-					.commitID = newCommit->commitID,
-				};
-				waitList.push_back( entry );
-			}
-
-			// Wake up commit wait thread if chilling
-			waitListSem.signal();
-
-			w->commit_queue.push_back( std::move(newCommit) );
 		}
 	}
 }
@@ -5798,6 +5941,18 @@ static bool g_bWasFSRActive = false;
 
 extern std::atomic<uint64_t> g_nCompletedPageFlipCount;
 
+void steamcompmgr_check_xdg()
+{
+	if (wlserver_xdg_dirty())
+	{
+		g_steamcompmgr_xdg_wins = wlserver_get_xdg_shell_windows();
+		focusDirty = true;
+	}
+
+	handle_done_commits_xdg();
+	check_new_xdg_res();
+}
+
 void
 steamcompmgr_main(int argc, char **argv)
 {
@@ -6154,14 +6309,16 @@ steamcompmgr_main(int argc, char **argv)
 		{
 			gamescope_xwayland_server_t *server = NULL;
 			for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
-				handle_done_commits(server->ctx.get());
+				handle_done_commits_xwayland(server->ctx.get());
 		}
 
 		{
 			gamescope_xwayland_server_t *server = NULL;
 			for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
-				check_new_wayland_res(server->ctx.get());
+				check_new_xwayland_res(server->ctx.get());
 		}
+
+		steamcompmgr_check_xdg();
 
 		// Handles if we got a commit for the window we want to focus
 		// to switch to it for painting (outdatedInteractiveFocus)
@@ -6256,38 +6413,13 @@ steamcompmgr_main(int argc, char **argv)
 				{
 					for (steamcompmgr_win_t *w = server->ctx->list; w; w = w->xwayland().next)
 					{
-						wlr_surface *main_surface = w->xwayland().surface.main_surface;
-						wlr_surface *current_surface = w->xwayland().surface.current_surface();
-						bool bSendCallback = main_surface != nullptr;
-
-						int nRefresh = g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh;
-						int nTargetFPS = g_nSteamCompMgrTargetFPS;
-						if ( g_nSteamCompMgrTargetFPS && steamcompmgr_window_should_limit_fps( w ) && nRefresh > nTargetFPS )
-						{
-							int nVblankDivisor = nRefresh / nTargetFPS;
-
-							if ( vblank_idx % nVblankDivisor != 0 )
-								bSendCallback = false;
-						}
-
-						if ( bSendCallback )
-						{
-							// Acknowledge commit once.
-							wlserver_lock();
-
-							if ( main_surface != nullptr )
-							{
-								wlserver_send_frame_done(main_surface, &now);
-							}
-
-							if ( current_surface != nullptr && main_surface != current_surface )
-							{
-								wlserver_send_frame_done(current_surface, &now);
-							}
-
-							wlserver_unlock();
-						}
+						steamcompmgr_send_done( w, vblank_idx, now );
 					}
+				}
+
+				for ( const auto& xdg_win : g_steamcompmgr_xdg_wins )
+				{
+					steamcompmgr_send_done( xdg_win.get(), vblank_idx, now );
 				}
 			}
 			vblank_idx++;

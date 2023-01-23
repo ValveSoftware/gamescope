@@ -20,7 +20,7 @@ struct wlserver_x11_surface_info
 	std::atomic<struct wlr_surface *> override_surface;
 	std::atomic<struct wlr_surface *> main_surface;
 
-	struct wlr_surface *current_surface()
+	struct wlr_surface *current_surface() const
 	{
 		if ( override_surface )
 			return override_surface;
@@ -36,7 +36,18 @@ struct wlserver_x11_surface_info
 
 struct wlserver_xdg_surface_info
 {
+	std::atomic<struct wlr_surface *> main_surface;
+
+	struct wlr_surface *current_surface()
+	{
+		return main_surface;
+	}
+
+	// owned by wlserver
 	struct wlr_xdg_toplevel *xdg_toplevel = nullptr;
+	steamcompmgr_win_t *win = nullptr;
+
+	std::atomic<bool> mapped = { false };
 
 	struct wl_list link;
 
@@ -71,6 +82,8 @@ struct steamcompmgr_xwayland_win_t
 
 struct steamcompmgr_xdg_win_t
 {
+	uint32_t id;
+
 	struct wlserver_xdg_surface_info surface;
 };
 
@@ -123,4 +136,32 @@ struct steamcompmgr_win_t {
 
 	std::variant<steamcompmgr_xwayland_win_t, steamcompmgr_xdg_win_t>
 		_window_types;
+
+	uint32_t id() const
+	{
+		if (type == steamcompmgr_win_type_t::XWAYLAND)
+			return uint32_t(xwayland().id);
+		else if (type == steamcompmgr_win_type_t::XDG)
+			return xdg().id;
+		else
+			return ~(0u);
+	}
+
+	wlr_surface *main_surface() const
+	{
+		if (type == steamcompmgr_win_type_t::XWAYLAND)
+			return xwayland().surface.main_surface;
+		else if (type == steamcompmgr_win_type_t::XDG)
+			return xdg().surface.main_surface;
+		else
+			return nullptr;
+	}
+
+	wlr_surface *current_surface() const
+	{
+		if (type == steamcompmgr_win_type_t::XWAYLAND)
+			return xwayland().surface.current_surface();
+
+		return main_surface();
+	}
 };

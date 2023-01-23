@@ -74,6 +74,8 @@ enum wlserver_touch_click_mode g_nDefaultTouchClickMode = WLSERVER_TOUCH_CLICK_L
 enum wlserver_touch_click_mode g_nTouchClickMode = g_nDefaultTouchClickMode;
 
 
+std::mutex g_wlserver_xdg_shell_windows_lock;
+
 static struct wl_list pending_surfaces = {0};
 
 static void wlserver_x11_surface_info_set_wlr( struct wlserver_x11_surface_info *surf, struct wlr_surface *wlr_surf, bool override );
@@ -114,6 +116,23 @@ struct PendingCommit_t
 
 std::list<PendingCommit_t> g_PendingCommits;
 
+void wlserver_xdg_commit(struct wlr_surface *surf, struct wlr_buffer *buf)
+{
+	{
+		std::lock_guard<std::mutex> lock( wlserver.xdg_commit_lock );
+
+		ResListEntry_t newEntry = {
+			.surf = surf,
+			.buf = buf,
+			.async = wlserver_surface_is_async(surf),
+			.feedback = wlserver_surface_swapchain_feedback(surf),
+		};
+		wlserver.xdg_commit_queue.push_back( newEntry );
+	}
+
+	nudge_steamcompmgr();
+}
+
 void xwayland_surface_commit(struct wlr_surface *wlr_surface) {
 	uint32_t committed = wlr_surface->current.committed;
 	wlr_surface->current.committed = 0;
@@ -133,10 +152,15 @@ void xwayland_surface_commit(struct wlr_surface *wlr_surface) {
 	gpuvis_trace_printf( "xwayland_surface_commit wlr_surface %p", wlr_surface );
 
 	wlserver_x11_surface_info *wlserver_x11_surface_info = get_wl_surface_info(wlr_surface)->x11_surface;
+	wlserver_xdg_surface_info *wlserver_xdg_surface_info = get_wl_surface_info(wlr_surface)->xdg_surface;
 	if (wlserver_x11_surface_info)
 	{
 		assert(wlserver_x11_surface_info->xwayland_server);
 		wlserver_x11_surface_info->xwayland_server->wayland_commit( wlr_surface, buf );
+	}
+	else if (wlserver_xdg_surface_info)
+	{
+		wlserver_xdg_commit(wlr_surface, buf);
 	}
 	else
 	{
@@ -934,23 +958,21 @@ static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 	struct wlserver_xdg_surface_info* info =
 		wl_container_of(listener, info, map);
 
-	wl_list_insert(&wlserver.mapped_xdg_views, &info->link);
+	info->mapped = true;
+	wlserver.xdg_dirty = true;
 }
 
 static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 	struct wlserver_xdg_surface_info* info =
 		wl_container_of(listener, info, unmap);
 
-	wl_list_remove(&info->link);
+	info->mapped = false;
+	wlserver.xdg_dirty = true;
 }
 
 static void xdg_toplevel_destroy(struct wl_listener *listener, void *data) {
 	struct wlserver_xdg_surface_info* info =
 		wl_container_of(listener, info, destroy);
-
-	wl_list_remove(&info->map.link);
-	wl_list_remove(&info->unmap.link);
-	wl_list_remove(&info->destroy.link);
 
 	wlserver_wl_surface_info *wlserver_surface = get_wl_surface_info(info->xdg_toplevel->base->surface);
 	if (!wlserver_surface)
@@ -958,9 +980,21 @@ static void xdg_toplevel_destroy(struct wl_listener *listener, void *data) {
 		wl_log.infof("No base surface info. (destroy)");
 		return;
 	}
-	wlserver_surface->xdg_surface = nullptr;
 
-	delete info;
+	{
+		std::unique_lock lock(g_wlserver_xdg_shell_windows_lock);
+		std::erase_if(wlserver.xdg_wins, [=](auto win) { return win.get() == info->win; });
+	}
+	info->main_surface = nullptr;
+	info->win = nullptr;
+	info->xdg_toplevel = nullptr;
+	info->mapped = false;
+
+	wl_list_remove(&info->map.link);
+	wl_list_remove(&info->unmap.link);
+	wl_list_remove(&info->destroy.link);
+
+	wlserver_surface->xdg_surface = nullptr;
 }
 
 void xdg_surface_new(struct wl_listener *listener, void *data)
@@ -980,10 +1014,24 @@ void xdg_surface_new(struct wl_listener *listener, void *data)
 		return;
 	}
 
-	wlserver_xdg_surface_info *xdg_surface_info = new wlserver_xdg_surface_info;
-	wlserver_surface->xdg_surface = xdg_surface_info;
+	auto window = std::make_shared<steamcompmgr_win_t>();
+	{
+		std::unique_lock lock(g_wlserver_xdg_shell_windows_lock);
+		wlserver.xdg_wins.emplace_back(window);
+	}
 
+	window->type = steamcompmgr_win_type_t::XDG;
+	window->_window_types.emplace<steamcompmgr_xdg_win_t>();
+
+	static uint32_t s_window_serial = 0;
+	window->xdg().id = ++s_window_serial;
+
+	wlserver_xdg_surface_info* xdg_surface_info = &window->xdg().surface;
+	xdg_surface_info->main_surface = xdg_surface->surface;
+	xdg_surface_info->win = window.get();
 	xdg_surface_info->xdg_toplevel = xdg_surface->toplevel;
+
+	wlserver_surface->xdg_surface = xdg_surface_info;
 
 	xdg_surface_info->map.notify = xdg_toplevel_map;
 	wl_signal_add(&xdg_surface->events.map, &xdg_surface_info->map);
@@ -991,6 +1039,22 @@ void xdg_surface_new(struct wl_listener *listener, void *data)
 	wl_signal_add(&xdg_surface->events.unmap, &xdg_surface_info->unmap);
 	xdg_surface_info->destroy.notify = xdg_toplevel_destroy;
 	wl_signal_add(&xdg_surface->events.destroy, &xdg_surface_info->destroy);
+
+	for (auto it = g_PendingCommits.begin(); it != g_PendingCommits.end();)
+	{
+		if (it->surf == xdg_surface->surface)
+		{
+			PendingCommit_t pending = *it;
+
+			wlserver_xdg_commit(pending.surf, pending.buf);
+
+			it = g_PendingCommits.erase(it);
+		}
+		else
+		{
+			it++;
+		}
+	}
 }
 
 bool wlserver_init( void ) {
@@ -1052,8 +1116,6 @@ bool wlserver_init( void ) {
 	}
 	wlserver.new_xdg_surface.notify = xdg_surface_new;
 	wl_signal_add(&wlserver.xdg_shell->events.new_surface, &wlserver.new_xdg_surface);
-	wl_list_init(&wlserver.mapped_xdg_views);
-
 
 	int result = -1;
 	int display_slot = 0;
@@ -1167,6 +1229,16 @@ void wlserver_run(void)
 
 			wlserver_unlock();
 		}
+	}
+
+	{
+		std::unique_lock lock3(wlserver.xdg_commit_lock);
+		wlserver.xdg_commit_queue.clear();
+	}
+
+	{
+		std::unique_lock lock2(g_wlserver_xdg_shell_windows_lock);
+		wlserver.xdg_wins.clear();
 	}
 
 	// Released when steamcompmgr closes.
@@ -1621,4 +1693,25 @@ void wlserver_set_xwayland_server_mode( size_t idx, int w, int h, int refresh )
 	}
 
 	wl_log.infof("Updating mode for xwayland server #%zu: %dx%d@%d", idx, w, h, refresh);
+}
+
+std::vector<std::shared_ptr<steamcompmgr_win_t>> wlserver_get_xdg_shell_windows()
+{
+	std::unique_lock lock(g_wlserver_xdg_shell_windows_lock);
+	return wlserver.xdg_wins;
+}
+
+bool wlserver_xdg_dirty()
+{
+	return wlserver.xdg_dirty.exchange(false);
+}
+
+std::vector<ResListEntry_t> wlserver_xdg_commit_queue()
+{
+	std::vector<ResListEntry_t> commits;
+	{
+		std::lock_guard<std::mutex> lock( wlserver.xdg_commit_lock );
+		commits = std::move(wlserver.xdg_commit_queue);
+	}
+	return commits;
 }

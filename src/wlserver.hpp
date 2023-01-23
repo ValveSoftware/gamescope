@@ -9,6 +9,7 @@
 #include <mutex>
 #include <map>
 #include <set>
+#include <list>
 #include <optional>
 #include <vulkan/vulkan_core.h>
 
@@ -131,8 +132,13 @@ struct wlserver_t {
 
 	struct wlr_xdg_shell *xdg_shell;
 	struct wl_listener new_xdg_surface;
-	struct wl_list mapped_xdg_views;
+	std::vector<std::shared_ptr<steamcompmgr_win_t>> xdg_wins;
+	std::atomic<bool> xdg_dirty;
+	std::mutex xdg_commit_lock;
+	std::vector<ResListEntry_t> xdg_commit_queue;
 };
+
+std::vector<ResListEntry_t> wlserver_xdg_commit_queue();
 
 struct wlserver_keyboard {
 	struct wlr_keyboard *wlr;
@@ -200,6 +206,9 @@ void wlserver_send_frame_done( struct wlr_surface *surf, const struct timespec *
 
 bool wlserver_surface_is_async( struct wlr_surface *surf );
 const std::shared_ptr<wlserver_vk_swapchain_feedback>& wlserver_surface_swapchain_feedback( struct wlr_surface *surf );
+
+std::vector<std::shared_ptr<steamcompmgr_win_t>> wlserver_get_xdg_shell_windows();
+bool wlserver_xdg_dirty();
 
 struct wlserver_output_info {
 	const char *description;

@@ -33,6 +33,12 @@ struct focus_t
 	bool			outdatedInteractiveFocus;
 };
 
+struct CommitDoneList_t
+{
+	std::mutex listCommitsDoneLock;
+	std::vector< uint64_t > listCommitsDone;
+};
+
 struct xwayland_ctx_t
 {
 	gamescope_xwayland_server_t *xwayland_server;
@@ -59,8 +65,7 @@ struct xwayland_ctx_t
 
 	std::unique_ptr<MouseCursor> cursor;
 
-	std::mutex listCommitsDoneLock;
-	std::vector< uint64_t > listCommitsDone;
+	CommitDoneList_t doneCommits;
 
 	double accum_x = 0.0;
 	double accum_y = 0.0;
