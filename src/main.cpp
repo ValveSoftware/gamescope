@@ -55,6 +55,7 @@ const struct option *gamescope_options = (struct option[]){
 	{ "fsr-sharpness", required_argument, nullptr, 0 },
 	{ "rt", no_argument, nullptr, 0 },
 	{ "prefer-vk-device", required_argument, 0 },
+	{ "expose-wayland", no_argument, 0 },
 
 	// nested mode options
 	{ "nested-unfocused-refresh", required_argument, nullptr, 'o' },
@@ -140,6 +141,7 @@ const char usage[] =
 	"  -U, --fsr-upscaling            use AMD FidelityFX™ Super Resolution 1.0 for upscaling\n"
 	"  -Y, --nis-upscaling            use NVIDIA Image Scaling v1.0.3 for upscaling\n"
 	"  --sharpness, --fsr-sharpness   upscaler sharpness from 0 (max) to 20 (min)\n"
+	"  --expose-wayland               support wayland clients using xdg-shell\n"
 	"  --cursor                       path to default cursor image\n"
 	"  -R, --ready-fd                 notify FD when ready\n"
 	"  --rt                           Use realtime scheduling\n"
@@ -415,6 +417,8 @@ int main(int argc, char **argv)
 	// Force disable this horrible broken layer.
 	setenv("DISABLE_LAYER_AMD_SWITCHABLE_GRAPHICS_1", "1", 1);
 
+	bool bExposeWayland = false;
+
 	static std::string optstring = build_optstring(gamescope_options);
 	gamescope_optstring = optstring.c_str();
 
@@ -509,6 +513,8 @@ int main(int argc, char **argv)
 					g_bForceRelativeMouse = true;
 				} else if (strcmp(opt_name, "adaptive-sync") == 0) {
 					s_bInitialWantsVRREnabled = true;
+				} else if (strcmp(opt_name, "expose-wayland") == 0) {
+					bExposeWayland = true;
 				}
 #if HAVE_OPENVR
 				else if (strcmp(opt_name, "openvr") == 0) {
@@ -694,7 +700,10 @@ int main(int argc, char **argv)
 	gamescope_xwayland_server_t *base_server = wlserver_get_xwayland_server(0);
 
 	setenv("DISPLAY", base_server->get_nested_display_name(), 1);
-	setenv("XDG_SESSION_TYPE", "x11", 1);
+	if ( bExposeWayland )
+		setenv("XDG_SESSION_TYPE", "wayland", 1);
+	else
+		setenv("XDG_SESSION_TYPE", "x11", 1);
 	setenv("XDG_CURRENT_DESKTOP", "gamescope", 1);
 	if (g_nXWaylandCount > 1)
 	{
@@ -711,6 +720,8 @@ int main(int argc, char **argv)
 		setenv("STEAM_GAME_DISPLAY_0", base_server->get_nested_display_name(), 1);
 	}
 	setenv("GAMESCOPE_WAYLAND_DISPLAY", wlserver_get_wl_display_name(), 1);
+	if ( bExposeWayland )
+		setenv("WAYLAND_DISPLAY", wlserver_get_wl_display_name(), 1);
 
 #if HAVE_PIPEWIRE
 	if ( !init_pipewire() )
