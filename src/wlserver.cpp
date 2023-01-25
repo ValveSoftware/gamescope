@@ -1695,6 +1695,16 @@ void wlserver_set_xwayland_server_mode( size_t idx, int w, int h, int refresh )
 	wl_log.infof("Updating mode for xwayland server #%zu: %dx%d@%d", idx, w, h, refresh);
 }
 
+// Definitely not very efficient if we end up with
+// a lot of Wayland windows in the future.
+//
+// Lots of atomic reference stuff will happen whenever
+// this is called with a lot of windows.
+// May want to change this down the line.
+//
+// Given we are only expecting like 1-2 xdg-shell
+// windows for our current usecases (Waydroid, etc)
+// I think this is reasonable for now.
 std::vector<std::shared_ptr<steamcompmgr_win_t>> wlserver_get_xdg_shell_windows()
 {
 	std::unique_lock lock(g_wlserver_xdg_shell_windows_lock);
