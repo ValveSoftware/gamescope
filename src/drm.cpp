@@ -1751,6 +1751,10 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
  * negative errno on failure or if the scene-graph can't be presented directly. */
 int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameInfo )
 {
+	if (!(drm->connector)){
+		return -EACCES;
+	}
+	
 	drm->pending.screen_type = drm_get_screen_type(drm);
 
 	drm_update_gamma_lut(drm);
