@@ -56,14 +56,14 @@ bool g_bSupportsAsyncFlips = false;
 enum drm_mode_generation g_drmModeGeneration = DRM_MODE_GENERATE_CVT;
 enum g_panel_orientation g_drmModeOrientation = PANEL_ORIENTATION_AUTO;
 std::atomic<uint64_t> g_drmEffectiveOrientation(DRM_MODE_ROTATE_0);
-
+std::atomic<drm_screen_type> g_drmScreenType(DRM_SCREEN_TYPE_INTERNAL);
 
 static LogScope drm_log("drm");
 static LogScope drm_verbose_log("drm", LOG_SILENT);
 
 static std::map< std::string, std::string > pnps = {};
 
-drm_screen_type drm_get_connector_type(drmModeConnector *connector);
+static drm_screen_type drm_get_connector_type(drmModeConnector *connector);
 
 static struct fb& get_fb( struct drm_t& drm, uint32_t id )
 {
@@ -1747,11 +1747,27 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 	return ret;
 }
 
+static drm_screen_type drm_get_connector_type(drmModeConnector *connector)
+{
+	if (connector->connector_type == DRM_MODE_CONNECTOR_eDP ||
+		connector->connector_type == DRM_MODE_CONNECTOR_LVDS)
+		 return DRM_SCREEN_TYPE_INTERNAL;
+
+	return DRM_SCREEN_TYPE_EXTERNAL;
+}
+
+static drm_screen_type drm_compute_screen_type(struct drm_t *drm)
+{
+	if (!drm->connector || !drm->connector->connector)
+		return DRM_SCREEN_TYPE_INTERNAL;
+	return drm_get_connector_type(drm->connector->connector);
+}
+
 /* Prepares an atomic commit for the provided scene-graph. Returns 0 on success,
  * negative errno on failure or if the scene-graph can't be presented directly. */
 int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameInfo )
 {
-	drm->pending.screen_type = drm_get_screen_type(drm);
+	drm->pending.screen_type = drm_compute_screen_type(drm);
 
 	drm_update_gamma_lut(drm);
 	drm_update_degamma_lut(drm);
@@ -2299,21 +2315,9 @@ bool drm_set_degamma_exponent(struct drm_t *drm, float *vec, enum drm_screen_typ
 	return false;
 }
 
-drm_screen_type drm_get_connector_type(drmModeConnector *connector)
-{
-	if (connector->connector_type == DRM_MODE_CONNECTOR_eDP ||
-		connector->connector_type == DRM_MODE_CONNECTOR_LVDS)
-		 return DRM_SCREEN_TYPE_INTERNAL;
-
-	return DRM_SCREEN_TYPE_EXTERNAL;
-}
-
 drm_screen_type drm_get_screen_type(struct drm_t *drm)
 {
-	if (!drm->connector || !drm->connector->connector)
-		return DRM_SCREEN_TYPE_INTERNAL;
-
-	return drm_get_connector_type(drm->connector->connector);
+	return drm->pending.screen_type;
 }
 
 inline float flerp( float a, float b, float t )
