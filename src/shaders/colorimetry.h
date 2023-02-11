@@ -294,8 +294,10 @@ vec3 bt2446a_inverse_tonemapping(
                          (p_hdr - 1);
 
         // Colour scaling function
-        const float col_scale = y_sdr /
-                                (1.1f * y_);
+        float col_scale = 0.f;
+        if (y_ > 0.f) // avoid divison by zero
+          col_scale = y_sdr /
+                      (1.1f * y_);
 
         // Colour difference signals (inverse) and Luma (inverse)
         // get R'G'B'
