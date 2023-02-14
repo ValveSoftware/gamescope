@@ -2371,8 +2371,9 @@ bool drm_set_degamma_exponent(struct drm_t *drm, float *vec, enum drm_screen_typ
 drm_screen_type drm_get_connector_type(drmModeConnector *connector)
 {
 	if (connector->connector_type == DRM_MODE_CONNECTOR_eDP ||
-		connector->connector_type == DRM_MODE_CONNECTOR_LVDS)
-		 return DRM_SCREEN_TYPE_INTERNAL;
+		connector->connector_type == DRM_MODE_CONNECTOR_LVDS ||
+			connector->connector_type == DRM_MODE_CONNECTOR_DSI)
+		return DRM_SCREEN_TYPE_INTERNAL;
 
 	return DRM_SCREEN_TYPE_EXTERNAL;
 }
