@@ -122,6 +122,8 @@ const struct option *gamescope_options = (struct option[]){
 	{ "hdr-debug-force-output", no_argument, nullptr, 0 },
 	{ "hdr-debug-heatmap", no_argument, nullptr, 0 },
 
+	{ "wm-class", required_argument, nullptr, 0 },
+
 	{} // keep last
 };
 
@@ -149,6 +151,7 @@ const char usage[] =
 	"  -C, --hide-cursor-delay        hide cursor image after delay\n"
 	"  -e, --steam                    enable Steam integration\n"
 	"  --xwayland-count               create N xwayland servers\n"
+	"  --wm-class                     set WM_CLASS hint on X11\n"
 	"  --prefer-vk-device             prefer Vulkan device for compositing (ex: 1002:7300)\n"
 	"  --force-orientation            rotate the internal display (left, right, normal, upsidedown)\n"
 	"  --force-windows-fullscreen     force windows inside of gamescope to be the size of the nested display (fullscreen)\n"
@@ -515,6 +518,8 @@ int main(int argc, char **argv)
 					s_bInitialWantsVRREnabled = true;
 				} else if (strcmp(opt_name, "expose-wayland") == 0) {
 					bExposeWayland = true;
+				} else if (strcmp(opt_name, "wm-class") == 0) {
+					setenv( "SDL_VIDEO_X11_WMCLASS", strdup(optarg), 1);
 				}
 #if HAVE_OPENVR
 				else if (strcmp(opt_name, "openvr") == 0) {
