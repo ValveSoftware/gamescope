@@ -3184,7 +3184,7 @@ determine_and_apply_focus()
 
 	sdlwindow_visible( global_focus.focusWindow != nullptr );
 
-	// Some games such as Disagea PC (405900) don't take controller input until
+	// Some games such as Disgaea PC (405900) don't take controller input until
 	// the window is first clicked on despite it having focus.
 	if ( global_focus.inputFocusWindow && global_focus.inputFocusWindow->appID == 405900 )
 	{
