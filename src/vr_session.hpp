@@ -7,7 +7,7 @@
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wnon-virtual-dtor"
-#include "../subprojects/openvr/headers/openvr.h"
+#include <openvr.h>
 #pragma GCC diagnostic pop
 
 bool vr_init(int argc, char **argv);
