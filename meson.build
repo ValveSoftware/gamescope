@@ -36,7 +36,7 @@ dep_x11 = dependency('x11')
 vulkan_dep = dependency('vulkan')
 
 if get_option('enable_openvr_support')
-  openvr_dep = dependency('openvr_api', required : false)
+  openvr_dep = dependency('openvr', required : false)
   if not openvr_dep.found()
     cmake = import('cmake')
     openvr_var = cmake.subproject_options()
