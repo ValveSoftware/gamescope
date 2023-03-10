@@ -2372,7 +2372,7 @@ drm_screen_type drm_get_connector_type(drmModeConnector *connector)
 {
 	if (connector->connector_type == DRM_MODE_CONNECTOR_eDP ||
 		connector->connector_type == DRM_MODE_CONNECTOR_LVDS ||
-			connector->connector_type == DRM_MODE_CONNECTOR_DSI)
+		connector->connector_type == DRM_MODE_CONNECTOR_DSI)
 		return DRM_SCREEN_TYPE_INTERNAL;
 
 	return DRM_SCREEN_TYPE_EXTERNAL;
