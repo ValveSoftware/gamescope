@@ -27,7 +27,7 @@ wlroots_dep = dependency(
 )
 
 displayinfo_dep = dependency(
-  'display-info',
+  'libdisplay-info',
   version: ['>= 0.0.0', '< 0.2.0'],
   fallback: ['libdisplay-info', 'di_dep'],
   default_options: ['default_library=static'],
