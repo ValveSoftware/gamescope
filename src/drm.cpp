@@ -67,6 +67,31 @@ drm_screen_type drm_get_connector_type(drmModeConnector *connector);
 static void drm_unset_mode( struct drm_t *drm );
 static void drm_unset_connector( struct drm_t *drm );
 
+inline uint64_t drm_calc_s31_32(float val)
+{
+	// S31.32 sign-magnitude
+	float integral = 0.0f;
+	float fractional = modf( fabsf( val ), &integral );
+
+	union
+	{
+		struct
+		{
+			uint64_t fractional : 32;
+			uint64_t integral   : 31;
+			uint64_t sign_part  : 1;
+		} s31_32_bits;
+		uint64_t s31_32;
+	} color;
+
+	color.s31_32_bits.sign_part  = val < 0 ? 1 : 0;
+	color.s31_32_bits.integral   = uint64_t( integral );
+	color.s31_32_bits.fractional = uint64_t( fractional * float( 1ull << 32 ) );
+
+	return color.s31_32;
+}
+
+
 static struct fb& get_fb( struct drm_t& drm, uint32_t id )
 {
 	std::lock_guard<std::mutex> m( drm.fb_map_mutex );
@@ -1721,6 +1746,8 @@ static bool is_liftoff_caching_enabled()
 	return !disabled;
 }
 
+extern float g_flLinearToNits;
+
 static int
 drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, bool needs_modeset )
 {
@@ -1780,6 +1807,22 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 				liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_DEGAMMA_TF", entry.layerState[i].transferFunction );
 			}
 
+			if ( g_bOutputHDREnabled && ( entry.layerState[i].transferFunction == DRM_VALVE1_TRANSFER_FUNCTION_SRGB ) )
+			{
+				// Multiplier to 'gain' the plane.
+				// When PQ is decoded using the fixed func transfer function to the internal FP16 fb,
+				// 1.0 -> 80 nits (on AMD at least)
+				// When sRGB is decoded, 1.0 -> 1.0, obviously.
+				// Therefore, 1.0 multiplier = 80 nits for SDR content.
+				// So if you want, 203 nits for SDR content, pass in (203.0 / 80.0).
+				liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_HDR_MULT", drm_calc_s31_32( g_flLinearToNits / 80.0f ) );
+			}
+			else
+			{
+				// 1.0 in S32.31 is 0x100000000LL
+				liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_HDR_MULT", 0x100000000ULL );
+			}
+
 		}
 		else
 		{
@@ -1789,6 +1832,7 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 			liftoff_layer_unset_property( drm->lo_layers[ i ], "COLOR_RANGE" );
 
 			liftoff_layer_unset_property( drm->lo_layers[ i ], "VALVE1_PLANE_DEGAMMA_TF" );
+			liftoff_layer_unset_property( drm->lo_layers[ i ], "VALVE1_PLANE_HDR_MULT" );
 		}
 	}
 
@@ -2508,26 +2552,7 @@ bool drm_update_color_mtx(struct drm_t *drm)
 	{
 		const float val = drm->pending.color_mtx[screen_type][i];
 
-		// S31.32 sign-magnitude
-		float integral;
-		float fractional = modf( fabsf( val ), &integral );
-
-		union
-		{
-			struct
-			{
-				uint64_t fractional : 32;
-				uint64_t integral   : 31;
-				uint64_t sign_part  : 1;
-			} s31_32_bits;
-			uint64_t s31_32;
-		} color;
-
-		color.s31_32_bits.sign_part  = val < 0 ? 1 : 0;
-		color.s31_32_bits.integral   = uint64_t( integral );
-		color.s31_32_bits.fractional = uint64_t( fractional * float( 1ull << 32 ) );
-
-		drm_ctm.matrix[i] = color.s31_32;
+		drm_ctm.matrix[i] = drm_calc_s31_32(val);
 	}
 
 	uint32_t blob_id = 0;
