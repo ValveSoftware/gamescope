@@ -74,14 +74,6 @@ struct VulkanWlrTexture_t
 	struct wlr_buffer *buf;
 };
 
-enum GamescopeAppTextureColorspace {
-	GAMESCOPE_APP_TEXTURE_COLORSPACE_LINEAR = 0,
-	GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB,
-	GAMESCOPE_APP_TEXTURE_COLORSPACE_SCRGB,
-	GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ,
-};
-const uint32_t GamescopeAppTextureColorspace_Bits = 2;
-
 inline VkFormat ToSrgbVulkanFormat( VkFormat format )
 {
 	switch ( format )

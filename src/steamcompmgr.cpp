@@ -1992,9 +1992,12 @@ paint_all(bool async)
 		frameInfo.useNISLayer0 = false;
 	}
 
-	// For now! We can avoid this in the future in some cases.
-	bool bHDRNeedsComposite = g_bOutputHDREnabled && ( frameInfo.layerCount > 1 || frameInfo.layers[0].colorspace != GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ );
-	bNeedsComposite |= bHDRNeedsComposite;
+	if ( g_bOutputHDREnabled )
+	{
+		bNeedsComposite |= g_bHDRItmEnable;
+		if ( !drm_supports_hdr_planes(&g_DRM) )
+			bNeedsComposite |= ( frameInfo.layerCount > 1 || frameInfo.layers[0].colorspace != GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ );
+	}
 	bNeedsComposite |= !!(g_uCompositeDebug & CompositeDebugFlag::Heatmap);
 
 	if ( !bNeedsComposite )
@@ -2067,7 +2070,7 @@ paint_all(bool async)
 			layer->fbid = layer->tex->fbid();
 
 			layer->linearFilter = false;
-			layer->colorspace = GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB;
+			layer->colorspace = g_bOutputHDREnabled ? GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ : GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB;
 
 			int ret = drm_prepare( &g_DRM, async, &frameInfo );
 

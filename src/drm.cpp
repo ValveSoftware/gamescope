@@ -574,6 +574,9 @@ static bool refresh_state( drm_t *drm )
 		crtc->has_vrr_enabled = crtc->props.contains( "VRR_ENABLED" );
 		if (!crtc->has_vrr_enabled)
 			drm_log.infof("CRTC %" PRIu32 " has no VRR_ENABLED support", crtc->id);
+		crtc->has_valve1_regamma_tf = crtc->props.contains( "VALVE1_CRTC_REGAMMA_TF" );
+		if (!crtc->has_valve1_regamma_tf)
+			drm_log.infof("CRTC %" PRIu32 " has no VALVE1_CRTC_REGAMMA_TF support", crtc->id);
 
 		crtc->lut3d_size = crtc->props.contains( "VALVE1_LUT3D_SIZE" ) ? uint32_t(crtc->initial_prop_values["VALVE1_LUT3D_SIZE"]) : 0;
 		crtc->shaperlut_size = crtc->props.contains( "VALVE1_SHAPER_LUT_SIZE" ) ? uint32_t(crtc->initial_prop_values["VALVE1_SHAPER_LUT_SIZE"]) : 0;
@@ -581,6 +584,8 @@ static bool refresh_state( drm_t *drm )
 		crtc->current.active = crtc->initial_prop_values["ACTIVE"];
 		if (crtc->has_vrr_enabled)
 			drm->current.vrr_enabled = crtc->initial_prop_values["VRR_ENABLED"];
+		if (crtc->has_valve1_regamma_tf)
+			drm->current.regamma_tf = (drm_valve1_transfer_function) crtc->initial_prop_values["VALVE1_CRTC_REGAMMA_TF"];
 	}
 
 	for (size_t i = 0; i < drm->planes.size(); i++) {
@@ -1083,6 +1088,8 @@ void finish_drm(struct drm_t *drm)
 			add_crtc_property(req, &drm->crtcs[i], "VALVE1_SHAPER_LUT", 0);
 		if ( drm->crtcs[i].has_vrr_enabled )
 			add_crtc_property(req, &drm->crtcs[i], "VRR_ENABLED", 0);
+		if ( drm->crtcs[i].has_valve1_regamma_tf )
+			add_crtc_property(req, &drm->crtcs[i], "VALVE1_CRTC_REGAMMA_TF", 0);
 		add_crtc_property(req, &drm->crtcs[i], "ACTIVE", 0);
 	}
 	for ( size_t i = 0; i < drm->planes.size(); i++ ) {
@@ -1599,6 +1606,7 @@ struct LiftoffStateCacheEntry
 		uint32_t crtcX, crtcY, crtcW, crtcH;
 		drm_color_encoding colorEncoding;
 		drm_color_range    colorRange;
+		drm_valve1_transfer_function transferFunction;
 	} layerState[ k_nMaxLayers ];
 
 	bool operator == (const LiftoffStateCacheEntry& entry) const
@@ -1625,6 +1633,7 @@ struct LiftoffStateCacheEntryKasher
 			hash_combine(hash, k.layerState[i].crtcH);
 			hash_combine(hash, k.layerState[i].colorEncoding);
 			hash_combine(hash, k.layerState[i].colorRange);
+			hash_combine(hash, k.layerState[i].transferFunction);
 		}
 
 		return hash;
@@ -1633,6 +1642,20 @@ struct LiftoffStateCacheEntryKasher
 
 
 std::unordered_set<LiftoffStateCacheEntry, LiftoffStateCacheEntryKasher> g_LiftoffStateCache;
+
+static inline drm_valve1_transfer_function convert_colorspace(GamescopeAppTextureColorspace colorspace)
+{
+	switch ( colorspace )
+	{
+		default:
+		case GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB:
+			return DRM_VALVE1_TRANSFER_FUNCTION_SRGB;
+		case GAMESCOPE_APP_TEXTURE_COLORSPACE_SCRGB:
+			return DRM_VALVE1_TRANSFER_FUNCTION_DEFAULT; // TODO(Josh): Use LUT.
+		case GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ:
+			return DRM_VALVE1_TRANSFER_FUNCTION_PQ;
+	}
+}
 
 LiftoffStateCacheEntry FrameInfoToLiftoffStateCacheEntry( const FrameInfo_t *frameInfo )
 {
@@ -1673,6 +1696,11 @@ LiftoffStateCacheEntry FrameInfoToLiftoffStateCacheEntry( const FrameInfo_t *fra
 		{
 			entry.layerState[i].colorEncoding = drm_get_color_encoding( g_ForcedNV12ColorSpace );
 			entry.layerState[i].colorRange    = drm_get_color_range( g_ForcedNV12ColorSpace );
+			entry.layerState[i].transferFunction = DRM_VALVE1_TRANSFER_FUNCTION_DEFAULT;
+		}
+		else
+		{
+			entry.layerState[i].transferFunction = convert_colorspace(frameInfo->layers[ i ].colorspace);
 		}
 	}
 
@@ -1743,12 +1771,15 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 			{
 				liftoff_layer_set_property( drm->lo_layers[ i ], "COLOR_ENCODING", entry.layerState[i].colorEncoding );
 				liftoff_layer_set_property( drm->lo_layers[ i ], "COLOR_RANGE",    entry.layerState[i].colorRange );
+				liftoff_layer_unset_property( drm->lo_layers[ i ], "VALVE1_PLANE_DEGAMMA_TF" );
 			}
 			else
 			{
 				liftoff_layer_unset_property( drm->lo_layers[ i ], "COLOR_ENCODING" );
 				liftoff_layer_unset_property( drm->lo_layers[ i ], "COLOR_RANGE" );
+				liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_DEGAMMA_TF", entry.layerState[i].transferFunction );
 			}
+
 		}
 		else
 		{
@@ -1756,6 +1787,8 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 
 			liftoff_layer_unset_property( drm->lo_layers[ i ], "COLOR_ENCODING" );
 			liftoff_layer_unset_property( drm->lo_layers[ i ], "COLOR_RANGE" );
+
+			liftoff_layer_unset_property( drm->lo_layers[ i ], "VALVE1_PLANE_DEGAMMA_TF" );
 		}
 	}
 
@@ -1827,6 +1860,12 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 
 			drm->connector->pending.hdr_output_metadata = hdr_output_metadata;
 		}
+	}
+
+	if (drm_supports_hdr_planes(drm)) {
+		drm->pending.regamma_tf = g_bOutputHDREnabled
+			? DRM_VALVE1_TRANSFER_FUNCTION_PQ
+			: DRM_VALVE1_TRANSFER_FUNCTION_SRGB;
 	}
 
 	uint32_t flags = DRM_MODE_ATOMIC_NONBLOCK;
@@ -1919,6 +1958,12 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 				if (ret < 0)
 					return ret;
 			}
+			if (crtc->has_valve1_regamma_tf)
+			{
+				int ret = add_crtc_property(drm->req, crtc, "VALVE1_CRTC_REGAMMA_TF", 0);
+				if (ret < 0)
+					return ret;
+			}
 
 			ret = add_crtc_property(drm->req, crtc, "ACTIVE", 0);
 			if (ret < 0)
@@ -2001,6 +2046,13 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 					return ret;
 			}
 
+			if (drm->crtc->has_valve1_regamma_tf)
+			{
+				ret = add_crtc_property(drm->req, drm->crtc, "VALVE1_CRTC_REGAMMA_TF", drm->pending.regamma_tf);
+				if (ret < 0)
+					return ret;
+			}
+
 			ret = add_crtc_property(drm->req, drm->crtc, "ACTIVE", 1);
 			if (ret < 0)
 				return ret;
@@ -2069,6 +2121,13 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 			if ( drm->crtc->has_vrr_enabled && drm->pending.vrr_enabled != drm->current.vrr_enabled )
 			{
 				int ret = add_crtc_property(drm->req, drm->crtc, "VRR_ENABLED", drm->pending.vrr_enabled );
+				if (ret < 0)
+					return ret;
+			}
+
+			if ( drm->crtc->has_valve1_regamma_tf && drm->pending.regamma_tf != drm->current.regamma_tf )
+			{
+				int ret = add_crtc_property(drm->req, drm->crtc, "VALVE1_CRTC_REGAMMA_TF", drm->pending.regamma_tf );
 				if (ret < 0)
 					return ret;
 			}
@@ -2396,7 +2455,7 @@ inline uint16_t drm_quantize_lut_value( float flValue )
 	return (uint16_t)quantize( flValue, (float)UINT16_MAX );
 }
 
-inline uint16_t drm_calc_lut_value( float input, float flLinearGain, float flGain, float flBlend )
+inline uint16_t drm_calc_lut_value( float input, float flLinearGain, float flGain, float flBlend, drm_valve1_transfer_function regamma_tf )
 {
     float flValue = flerp( flGain * input, linear_to_srgb( flLinearGain * srgb_to_linear( input ) ), flBlend );
 	return drm_quantize_lut_value( flValue );
@@ -2596,7 +2655,8 @@ bool drm_update_gamma_lut(struct drm_t *drm)
 
 	enum drm_screen_type screen_type = drm->pending.screen_type;
 
-	if (drm->pending.color_gain[0] == drm->current.color_gain[0] &&
+	if (drm->pending.regamma_tf == drm->current.regamma_tf &&
+		drm->pending.color_gain[0] == drm->current.color_gain[0] &&
 		drm->pending.color_gain[1] == drm->current.color_gain[1] &&
 		drm->pending.color_gain[2] == drm->current.color_gain[2] &&
 		drm->pending.color_linear_gain[0] == drm->current.color_linear_gain[0] &&
@@ -2642,9 +2702,9 @@ bool drm_update_gamma_lut(struct drm_t *drm)
 		float g_exp = safe_pow( input, drm->pending.color_gamma_exponent[screen_type][1] );
 		float b_exp = safe_pow( input, drm->pending.color_gamma_exponent[screen_type][2] );
 
-		gamma_lut[i].red   = drm_calc_lut_value( r_exp, drm->pending.color_linear_gain[0], drm->pending.color_gain[0], drm->pending.gain_blend );
-		gamma_lut[i].green = drm_calc_lut_value( g_exp, drm->pending.color_linear_gain[1], drm->pending.color_gain[1], drm->pending.gain_blend );
-		gamma_lut[i].blue  = drm_calc_lut_value( b_exp, drm->pending.color_linear_gain[2], drm->pending.color_gain[2], drm->pending.gain_blend );
+		gamma_lut[i].red   = drm_calc_lut_value( r_exp, drm->pending.color_linear_gain[0], drm->pending.color_gain[0], drm->pending.gain_blend, drm->pending.regamma_tf );
+		gamma_lut[i].green = drm_calc_lut_value( g_exp, drm->pending.color_linear_gain[1], drm->pending.color_gain[1], drm->pending.gain_blend, drm->pending.regamma_tf );
+		gamma_lut[i].blue  = drm_calc_lut_value( b_exp, drm->pending.color_linear_gain[2], drm->pending.color_gain[2], drm->pending.gain_blend, drm->pending.regamma_tf );
 	}
 
 	uint32_t blob_id = 0;
@@ -2918,4 +2978,12 @@ std::shared_ptr<wlserver_hdr_metadata> drm_create_hdr_metadata_blob(struct drm_t
 void drm_destroy_hdr_metadata_blob(struct drm_t *drm, uint32_t blob)
 {
 	drmModeDestroyPropertyBlob(drm->fd, blob);
+}
+
+bool drm_supports_hdr_planes(struct drm_t *drm)
+{
+	if (!drm->crtc)
+		return false;
+
+	return drm->crtc->has_valve1_regamma_tf;
 }
