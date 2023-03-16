@@ -1133,6 +1133,10 @@ void finish_drm(struct drm_t *drm)
 			add_plane_property(req, plane, "rotation", DRM_MODE_ROTATE_0);
 		if (plane->props.count("alpha") > 0)
 			add_plane_property(req, plane, "alpha", 0xFFFF);
+		if (plane->props.count("VALVE1_PLANE_HDR_MULT") > 0)
+			add_plane_property(req, plane, "VALVE1_PLANE_HDR_MULT", 0x100000000ULL);
+		if (plane->props.count("VALVE1_PLANE_DEGAMMA_TF") > 0)
+			add_plane_property(req, plane, "VALVE1_PLANE_DEGAMMA_TF", DRM_VALVE1_TRANSFER_FUNCTION_DEFAULT );
 	}
 	// We can't do a non-blocking commit here or else risk EBUSY in case the
 	// previous page-flip is still in flight.
@@ -1676,7 +1680,11 @@ static inline drm_valve1_transfer_function convert_colorspace(GamescopeAppTextur
 		case GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB:
 			return DRM_VALVE1_TRANSFER_FUNCTION_SRGB;
 		case GAMESCOPE_APP_TEXTURE_COLORSPACE_SCRGB:
-			return DRM_VALVE1_TRANSFER_FUNCTION_DEFAULT; // TODO(Josh): Use LUT.
+			// Use LINEAR TF for scRGB float format as 80 nit = 1.0 in scRGB, which matches
+			// what PQ TF decodes to/encodes from.
+			// AMD internal format is FP16, and generally expected for 1.0 -> 80 nit.
+			// which just so happens to match scRGB.
+			return DRM_VALVE1_TRANSFER_FUNCTION_LINEAR;
 		case GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ:
 			return DRM_VALVE1_TRANSFER_FUNCTION_PQ;
 	}
@@ -1798,7 +1806,7 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 			{
 				liftoff_layer_set_property( drm->lo_layers[ i ], "COLOR_ENCODING", entry.layerState[i].colorEncoding );
 				liftoff_layer_set_property( drm->lo_layers[ i ], "COLOR_RANGE",    entry.layerState[i].colorRange );
-				liftoff_layer_unset_property( drm->lo_layers[ i ], "VALVE1_PLANE_DEGAMMA_TF" );
+				liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_DEGAMMA_TF", DRM_VALVE1_TRANSFER_FUNCTION_BT709 );
 			}
 			else
 			{
@@ -1831,8 +1839,8 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 			liftoff_layer_unset_property( drm->lo_layers[ i ], "COLOR_ENCODING" );
 			liftoff_layer_unset_property( drm->lo_layers[ i ], "COLOR_RANGE" );
 
-			liftoff_layer_unset_property( drm->lo_layers[ i ], "VALVE1_PLANE_DEGAMMA_TF" );
-			liftoff_layer_unset_property( drm->lo_layers[ i ], "VALVE1_PLANE_HDR_MULT" );
+			liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_DEGAMMA_TF", DRM_VALVE1_TRANSFER_FUNCTION_DEFAULT );
+			liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_HDR_MULT", 0x100000000ULL );
 		}
 	}
 
