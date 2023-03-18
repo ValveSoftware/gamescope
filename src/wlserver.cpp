@@ -1217,7 +1217,7 @@ void wlserver_run(void)
 		.events = POLLIN,
 	};
 	while ( g_bRun ) {
-		int ret = poll( &pollfd, 1, -1 );
+		int ret = poll( &pollfd, 1, 3 );
 		if ( ret < 0 ) {
 			if ( errno == EINTR )
 				continue;
