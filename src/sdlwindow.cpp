@@ -334,7 +334,10 @@ void inputSDLThreadRun( void )
 					if ( g_bUpdateSDLWindowIcon )
 					{
 						if ( icon_surface )
+						{
 							SDL_FreeSurface( icon_surface );
+							icon_surface = nullptr;
+						}
 
 						if ( g_SDLWindowIcon && g_SDLWindowIcon->size() >= 3 )
 						{
