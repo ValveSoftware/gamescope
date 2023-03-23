@@ -120,6 +120,8 @@ struct connector_metadata_t {
    struct hdr_output_metadata defaultHdrMetadata = {};
    std::shared_ptr<wlserver_hdr_metadata> hdr10_metadata_blob;
    bool supportsST2084 = false;
+
+   displaycolorimetry_t colorimetry = {};
 };
 
 struct connector {
@@ -133,6 +135,7 @@ struct connector {
 	char make_pnp[4];
 	char *make;
 	char *model;
+	bool is_steam_deck_display;
 
 	int target_refresh;
 	bool vrr_capable;
@@ -178,6 +181,16 @@ enum drm_valve1_transfer_function {
 	DRM_VALVE1_TRANSFER_FUNCTION_MAX,
 };
 
+struct gamescope_color_mgmt_t
+{
+	bool enabled;
+	nightmode_t nightmode;
+	float sdrGamutWideness; // user property to widen gamut
+	displaycolorimetry_t nativeDisplayColorimetry;
+
+	bool operator <=> (const gamescope_color_mgmt_t&) const = default;
+};
+
 struct drm_t {
 	int fd;
 
@@ -218,30 +231,12 @@ struct drm_t {
 		uint32_t ctm_id;
 		uint32_t lut3d_id;
 		uint32_t shaperlut_id;
-		float color_gain[3] = { 1.0f, 1.0f, 1.0f };
-		float color_linear_gain[3] = { 1.0f, 1.0f, 1.0f };
-		float color_gamma_exponent[DRM_SCREEN_TYPE_COUNT][3]   = { { 1.0f, 1.0f, 1.0f }, { 1.0f, 1.0f, 1.0f } };
-		float color_degamma_exponent[DRM_SCREEN_TYPE_COUNT][3] = { { 1.0f, 1.0f, 1.0f }, { 1.0f, 1.0f, 1.0f } };
-		float color_mtx[DRM_SCREEN_TYPE_COUNT][9] =
-		{
-			{
-				1.0f, 0.0f, 0.0f,
-				0.0f, 1.0f, 0.0f,
-				0.0f, 0.0f, 1.0f,
-			},
-
-			{
-				1.0f, 0.0f, 0.0f,
-				0.0f, 1.0f, 0.0f,
-				0.0f, 0.0f, 1.0f,
-			},
-		};
 		drm_valve1_transfer_function regamma_tf = DRM_VALVE1_TRANSFER_FUNCTION_DEFAULT;
-		float gain_blend = 0.0f;
 		enum drm_screen_type screen_type = DRM_SCREEN_TYPE_INTERNAL;
 		bool vrr_enabled = false;
-		std::shared_ptr<std::vector<drm_color_lut>> color_lut3d[DRM_SCREEN_TYPE_COUNT];
-		std::shared_ptr<std::vector<drm_color_lut>> color_shaperlut[DRM_SCREEN_TYPE_COUNT];
+		std::shared_ptr<std::vector<drm_color_lut>> color_lut3d_override;
+		std::shared_ptr<std::vector<drm_color_lut>> color_shaperlut_override;
+		gamescope_color_mgmt_t color_mgmt{};
 	} current, pending;
 	bool wants_vrr_enabled = false;
 
@@ -318,18 +313,10 @@ bool drm_set_connector( struct drm_t *drm, struct connector *conn );
 bool drm_set_mode( struct drm_t *drm, const drmModeModeInfo *mode );
 bool drm_set_refresh( struct drm_t *drm, int refresh );
 bool drm_set_resolution( struct drm_t *drm, int width, int height );
-bool drm_set_color_linear_gains(struct drm_t *drm, float *gains);
-bool drm_set_color_gains(struct drm_t *drm, float *gains);
-bool drm_set_color_mtx(struct drm_t *drm, float *mtx, enum drm_screen_type screen_type);
-bool drm_set_color_gain_blend(struct drm_t *drm, float blend);
-bool drm_update_gamma_lut(struct drm_t *drm);
-bool drm_update_degamma_lut(struct drm_t *drm);
-bool drm_update_color_mtx(struct drm_t *drm);
-bool drm_update_lut3d(struct drm_t *drm);
-bool drm_update_shaperlut(struct drm_t *drm);
+bool drm_update_lut3d_override(struct drm_t *drm);
+bool drm_update_shaperlut_override(struct drm_t *drm);
+bool drm_update_color_mgmt(struct drm_t *drm);
 bool drm_update_vrr_state(struct drm_t *drm);
-bool drm_set_gamma_exponent(struct drm_t *drm, float *vec, enum drm_screen_type screen_type);
-bool drm_set_degamma_exponent(struct drm_t *drm, float *vec, enum drm_screen_type screen_type);
 drm_screen_type drm_get_screen_type(struct drm_t *drm);
 
 char *find_drm_node_by_devid(dev_t devid);
@@ -348,8 +335,11 @@ const char *drm_get_device_name(struct drm_t *drm);
 std::pair<uint32_t, uint32_t> drm_get_connector_identifier(struct drm_t *drm);
 void drm_set_hdr_state(struct drm_t *drm, bool enabled);
 
-bool drm_set_3dlut(struct drm_t *drm, const char *path, enum drm_screen_type screen_type);
-bool drm_set_shaperlut(struct drm_t *drm, const char *path, enum drm_screen_type screen_type);
+bool drm_set_3dlut(struct drm_t *drm, const char *path);
+bool drm_set_shaperlut(struct drm_t *drm, const char *path);
+bool drm_set_color_sdr_gamut_wideness( struct drm_t *drm, float flVal );
+bool drm_set_color_nightmode( struct drm_t *drm, const nightmode_t &nightmode );
+bool drm_set_color_mgmt_enabled( struct drm_t *drm, bool bEnabled );
 
 extern bool g_bSupportsAsyncFlips;
 

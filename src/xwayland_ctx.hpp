@@ -132,13 +132,6 @@ struct xwayland_ctx_t
 		Atom gamescopeFSRSharpness;
 		Atom gamescopeSharpness;
 
-		Atom gamescopeColorLinearGain;
-		Atom gamescopeColorGain;
-		Atom gamescopeColorMatrix[DRM_SCREEN_TYPE_COUNT];
-		Atom gamescopeColorLinearGainBlend;
-
-		Atom gamescopeColorGammaExponent[DRM_SCREEN_TYPE_COUNT];
-
 		Atom gamescopeXWaylandModeControl;
 
 		Atom gamescopeFPSLimit;
@@ -192,8 +185,12 @@ struct xwayland_ctx_t
 
 		Atom gamescopeForceWindowsFullscreen;
 
-		Atom gamescopeColorLut3D[DRM_SCREEN_TYPE_COUNT];
-		Atom gamescopeColorShaperLut[DRM_SCREEN_TYPE_COUNT];
+		Atom gamescopeColorLut3DOverride;
+		Atom gamescopeColorShaperLutOverride;
+
+		Atom gamescopeColorSDRGamutWideness;
+		Atom gamescopeColorNightMode; // amount, hue, saturation
+		Atom gamescopeColorManagementDisable;
 
 		Atom gamescopeCreateXWaylandServer;
 		Atom gamescopeCreateXWaylandServerFeedback;

@@ -84,6 +84,7 @@ liftoff_dep = dependency(
 
 src = [
   'steamcompmgr.cpp',
+  'color_helpers.cpp',
   'main.cpp',
   'wlserver.cpp',
   'drm.cpp',

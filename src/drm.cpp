@@ -57,7 +57,8 @@ enum drm_mode_generation g_drmModeGeneration = DRM_MODE_GENERATE_CVT;
 enum g_panel_orientation g_drmModeOrientation = PANEL_ORIENTATION_AUTO;
 std::atomic<uint64_t> g_drmEffectiveOrientation(DRM_MODE_ROTATE_0);
 
-bool g_bForceDisableTransferFunctions = false;
+// Until we hook up color toys to be TF aware.
+bool g_bForceDisableTransferFunctions = true;
 
 static LogScope drm_log("drm");
 static LogScope drm_verbose_log("drm", LOG_SILENT);
@@ -407,6 +408,33 @@ drm_hdr_parse_edid(drm_t *drm, struct connector *connector, const struct di_edid
 			fprintf(stderr, "Failed to create blob for HDR_OUTPUT_METADATA. Falling back to null blob.\n");
 		}
 	}
+
+	if (connector->is_steam_deck_display)
+	{
+		// Hardcode Steam Deck display info to support
+		// BIOSes with missing info for this in EDID.
+		metadata->colorimetry = displaycolorimetry_steamdeck;
+	}
+	else if (chroma && chroma->red_x != 0.0f)
+	{
+		metadata->colorimetry.primaries = { { chroma->red_x, chroma->red_y }, { chroma->green_x, chroma->green_y }, { chroma->blue_x, chroma->blue_y } };
+		metadata->colorimetry.white = { chroma->white_x, chroma->white_y };
+		metadata->colorimetry.eotf = infoframe->eotf == HDMI_EOTF_ST2084 ? EOTF::PQ : EOTF::Gamma22;
+	}
+	else
+	{
+		// No valid chroma data in the EDID, fill it in ourselves.
+		if (infoframe->eotf == HDMI_EOTF_ST2084)
+		{
+			// Fallback to 2020 primaries for HDR
+			metadata->colorimetry = displaycolorimetry_709_gamma22;
+		}
+		else
+		{
+			// Fallback to 709 primaries for SDR
+			metadata->colorimetry = displaycolorimetry_2020_pq;
+		}
+	}
 }
 
 static void parse_edid( drm_t *drm, struct connector *conn)
@@ -467,6 +495,12 @@ static void parse_edid( drm_t *drm, struct connector *conn)
 			conn->model = strdup(di_edid_display_descriptor_get_string(desc));
 		}
 	}
+
+	conn->is_steam_deck_display =
+		(strcmp(conn->make_pnp, "WLC") == 0 && strcmp(conn->model, "ANX7530 U") == 0) ||
+		(strcmp(conn->make_pnp, "ANX") == 0 && strcmp(conn->model, "ANX7530 U") == 0) ||
+		(strcmp(conn->make_pnp, "VLV") == 0 && strcmp(conn->model, "ANX7530 U") == 0) ||
+		(strcmp(conn->make_pnp, "VLV") == 0 && strcmp(conn->model, "Jupiter") == 0);
 
 	drm_hdr_parse_edid(drm, conn, edid);
 
@@ -1031,6 +1065,9 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh, bool wants_
 
 	drm->flipcount = 0;
 	drm->needs_modeset = true;
+
+	// Enable color mgmt by default.
+	drm->pending.color_mgmt.enabled = true;
 
 	return true;
 }
@@ -1885,12 +1922,17 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 {
 	drm->pending.screen_type = drm_get_screen_type(drm);
 
-	drm_update_gamma_lut(drm);
-	drm_update_degamma_lut(drm);
-	drm_update_color_mtx(drm);
 	drm_update_vrr_state(drm);
-	drm_update_lut3d(drm);
-	drm_update_shaperlut(drm);
+	if (drm->pending.color_lut3d_override || drm->pending.color_shaperlut_override || !drm->pending.color_mgmt.enabled)
+	{
+		// LUT overrides
+		drm_update_lut3d_override(drm);
+		drm_update_shaperlut_override(drm);
+	}
+	else
+	{
+		drm_update_color_mgmt(drm);
+	}
 
 	drm->fbids_in_req.clear();
 
@@ -2323,121 +2365,90 @@ static void drm_unset_connector( struct drm_t *drm )
 	drm->needs_modeset = true;
 }
 
-inline float srgb_to_linear( float fVal )
+bool drm_set_3dlut(struct drm_t *drm, const char *path)
 {
-    return ( fVal < 0.04045f ) ? fVal / 12.92f : std::pow( ( fVal + 0.055f) / 1.055f, 2.4f );
-}
+	bool had_lut = drm->current.color_lut3d_override != nullptr;
 
-inline float linear_to_srgb( float fVal )
-{
-    return ( fVal < 0.0031308f ) ? fVal * 12.92f : std::pow( fVal, 1.0f / 2.4f ) * 1.055f - 0.055f;
-}
+	drm->pending.color_lut3d_override = nullptr;
 
-inline int quantize( float fVal, float fMaxVal )
-{
-    return std::max( 0.f, std::min( fMaxVal, roundf( fVal * fMaxVal ) ) );
-}
-
-bool drm_set_color_gains(struct drm_t *drm, float *gains)
-{
-	for (int i = 0; i < 3; i++)
-		drm->pending.color_gain[i] = gains[i];
-
-	for (int i = 0; i < 3; i++)
-	{
-		if ( drm->current.color_gain[i] != drm->pending.color_gain[i] )
-			return true;
+	FILE *f = fopen(path, "rb");
+	if (!f) {
+		return had_lut;
 	}
-	return false;
-}
 
-bool drm_set_color_linear_gains(struct drm_t *drm, float *gains)
-{
-	for (int i = 0; i < 3; i++)
-		drm->pending.color_linear_gain[i] = gains[i];
+	fseek(f, 0, SEEK_END);
+	long fsize = ftell(f);
+	fseek(f, 0, SEEK_SET);
 
-	for (int i = 0; i < 3; i++)
-	{
-		if ( drm->current.color_linear_gain[i] != drm->pending.color_linear_gain[i] )
-			return true;
+	size_t elems = fsize / sizeof(drm_color_lut);
+
+	if (elems == 0) {
+		return had_lut;
 	}
-	return false;
+
+	auto data = std::make_shared<std::vector<drm_color_lut>>(elems);
+	fread(data->data(), elems, sizeof(drm_color_lut), f);
+
+	drm->pending.color_lut3d_override = std::move(data);
+
+	return true;
 }
 
-bool drm_set_color_mtx(struct drm_t *drm, float *mtx, enum drm_screen_type screen_type)
+bool drm_set_shaperlut(struct drm_t *drm, const char *path)
 {
-	for (int i = 0; i < 9; i++)
-		drm->pending.color_mtx[screen_type][i] = mtx[i];
+	bool had_lut = drm->current.color_shaperlut_override != nullptr;
 
-	if ( drm_get_screen_type(drm) != screen_type )
+	drm->pending.color_shaperlut_override = nullptr;
+
+	FILE *f = fopen(path, "rb");
+	if (!f) {
+		return had_lut;
+	}
+
+	fseek(f, 0, SEEK_END);
+	long fsize = ftell(f);
+	fseek(f, 0, SEEK_SET);
+
+	size_t elems = fsize / sizeof(drm_color_lut);
+
+	if (elems == 0) {
+		return had_lut;
+	}
+
+	auto data = std::make_shared<std::vector<drm_color_lut>>(elems);
+	fread(data->data(), elems, sizeof(drm_color_lut), f);
+
+	drm->pending.color_shaperlut_override = std::move(data);
+
+	return true;
+}
+
+bool drm_set_color_sdr_gamut_wideness( struct drm_t *drm, float flVal )
+{
+	if ( drm->pending.color_mgmt.sdrGamutWideness == flVal )
 		return false;
 
-	for (int i = 0; i < 9; i++)
-	{
-		if ( drm->current.color_mtx[screen_type][i] != drm->pending.color_mtx[screen_type][i] )
-			return true;
-	}
-	return false;
+	drm->pending.color_mgmt.sdrGamutWideness = flVal;
+
+	return drm->pending.color_mgmt.enabled;
 }
-
-bool drm_set_3dlut(struct drm_t *drm, const char *path, enum drm_screen_type screen_type)
+bool drm_set_color_nightmode( struct drm_t *drm, const nightmode_t &nightmode )
 {
-	bool current_screen = drm_get_screen_type(drm) == screen_type;
-	bool had_lut = drm->current.color_lut3d[screen_type] != nullptr;
+	if ( drm->pending.color_mgmt.nightmode == nightmode )
+		return false;
 
-	drm->pending.color_lut3d[screen_type] = nullptr;
+	drm->pending.color_mgmt.nightmode = nightmode;
 
-	FILE *f = fopen(path, "rb");
-	if (!f) {
-		return had_lut && current_screen;
-	}
-
-	fseek(f, 0, SEEK_END);
-	long fsize = ftell(f);
-	fseek(f, 0, SEEK_SET);
-
-	size_t elems = fsize / sizeof(drm_color_lut);
-
-	if (elems == 0) {
-		return had_lut && current_screen;
-	}
-
-	auto data = std::make_shared<std::vector<drm_color_lut>>(elems);
-	fread(data->data(), elems, sizeof(drm_color_lut), f);
-
-	drm->pending.color_lut3d[screen_type] = std::move(data);
-
-	return current_screen;
+	return drm->pending.color_mgmt.enabled;
 }
-
-bool drm_set_shaperlut(struct drm_t *drm, const char *path, enum drm_screen_type screen_type)
+bool drm_set_color_mgmt_enabled( struct drm_t *drm, bool bEnabled )
 {
-	bool current_screen = drm_get_screen_type(drm) == screen_type;
-	bool had_lut = drm->current.color_shaperlut[screen_type] != nullptr;
+	if ( drm->pending.color_mgmt.enabled == bEnabled )
+		return false;
 
-	drm->pending.color_shaperlut[screen_type] = nullptr;
+	drm->pending.color_mgmt.enabled = bEnabled;
 
-	FILE *f = fopen(path, "rb");
-	if (!f) {
-		return had_lut && current_screen;
-	}
-
-	fseek(f, 0, SEEK_END);
-	long fsize = ftell(f);
-	fseek(f, 0, SEEK_SET);
-
-	size_t elems = fsize / sizeof(drm_color_lut);
-
-	if (elems == 0) {
-		return had_lut && current_screen;
-	}
-
-	auto data = std::make_shared<std::vector<drm_color_lut>>(elems);
-	fread(data->data(), elems, sizeof(drm_color_lut), f);
-
-	drm->pending.color_shaperlut[screen_type] = std::move(data);
-
-	return current_screen;
+	return true;
 }
 
 void drm_set_vrr_enabled(struct drm_t *drm, bool enabled)
@@ -2448,46 +2459,6 @@ void drm_set_vrr_enabled(struct drm_t *drm, bool enabled)
 bool drm_get_vrr_in_use(struct drm_t *drm)
 {
 	return drm->current.vrr_enabled;
-}
-
-bool drm_set_color_gain_blend(struct drm_t *drm, float blend)
-{
-	drm->pending.gain_blend = blend;
-	if ( drm->current.gain_blend != drm->pending.gain_blend )
-		return true;
-	return false;
-}
-
-bool drm_set_gamma_exponent(struct drm_t *drm, float *vec, enum drm_screen_type screen_type)
-{
-	for (int i = 0; i < 3; i++)
-		drm->pending.color_gamma_exponent[screen_type][i] = vec[i];
-
-	if ( drm_get_screen_type(drm) != screen_type )
-		return false;
-
-	for (int i = 0; i < 3; i++)
-	{
-		if ( drm->current.color_gamma_exponent[screen_type][i] != drm->pending.color_gamma_exponent[screen_type][i] )
-			return true;
-	}
-	return false;
-}
-
-bool drm_set_degamma_exponent(struct drm_t *drm, float *vec, enum drm_screen_type screen_type)
-{
-	for (int i = 0; i < 3; i++)
-		drm->pending.color_degamma_exponent[screen_type][i] = vec[i];
-
-	if ( drm_get_screen_type(drm) != screen_type )
-		return false;
-
-	for (int i = 0; i < 3; i++)
-	{
-		if ( drm->current.color_degamma_exponent[screen_type][i] != drm->pending.color_degamma_exponent[screen_type][i] )
-			return true;
-	}
-	return false;
 }
 
 drm_screen_type drm_get_connector_type(drmModeConnector *connector)
@@ -2508,96 +2479,14 @@ drm_screen_type drm_get_screen_type(struct drm_t *drm)
 	return drm_get_connector_type(drm->connector->connector);
 }
 
-inline float flerp( float a, float b, float t )
-{
-    return a + t * (b - a);
-}
-
-inline uint16_t drm_quantize_lut_value( float flValue )
-{
-	return (uint16_t)quantize( flValue, (float)UINT16_MAX );
-}
-
-inline uint16_t drm_calc_lut_value( float input, float flLinearGain, float flGain, float flBlend, drm_valve1_transfer_function regamma_tf )
-{
-    float flValue = flerp( flGain * input, linear_to_srgb( flLinearGain * srgb_to_linear( input ) ), flBlend );
-	return drm_quantize_lut_value( flValue );
-}
-
-bool drm_update_color_mtx(struct drm_t *drm)
-{
-	if ( drm->crtc == nullptr || !drm->crtc->has_ctm )
-		return true;
-
-	static constexpr float g_identity_mtx[9] =
-	{
-		1.0f, 0.0f, 0.0f,
-		0.0f, 1.0f, 0.0f,
-		0.0f, 0.0f, 1.0f,
-	};
-
-	bool dirty = false;
-
-	enum drm_screen_type screen_type = drm->pending.screen_type;
-
-	if (drm->pending.screen_type != drm->current.screen_type)
-		dirty = true;
-
-	for (int i = 0; i < 9; i++)
-	{
-		if (drm->pending.color_mtx[screen_type][i] != drm->current.color_mtx[screen_type][i])
-			dirty = true;
-	}
-
-	if (!dirty)
-		return true;
-
-	bool identity = true;
-	for (int i = 0; i < 9; i++)
-	{
-		if (drm->pending.color_mtx[screen_type][i] != g_identity_mtx[i])
-			identity = false;
-	}
-
-
-	if (identity)
-	{
-		drm->pending.ctm_id = 0;
-		return true;
-	}
-
-	struct drm_color_ctm drm_ctm;
-	for (int i = 0; i < 9; i++)
-	{
-		const float val = drm->pending.color_mtx[screen_type][i];
-
-		drm_ctm.matrix[i] = drm_calc_s31_32(val);
-	}
-
-	uint32_t blob_id = 0;
-	if (drmModeCreatePropertyBlob(drm->fd, &drm_ctm,
-			sizeof(struct drm_color_ctm), &blob_id) != 0) {
-		drm_log.errorf_errno("Unable to create CTM property blob");
-		return false;
-	}
-
-	drm->pending.ctm_id = blob_id;
-	return true;
-}
-
-bool drm_update_lut3d(struct drm_t *drm)
+bool drm_update_lut3d_override(struct drm_t *drm)
 {
 	if ( drm->crtc == nullptr || !drm->crtc->lut3d_size )
 		return true;
 
 	bool dirty = false;
 
-	enum drm_screen_type screen_type = drm->pending.screen_type;
-
-	if (drm->pending.screen_type != drm->current.screen_type)
-		dirty = true;
-
-	if (drm->pending.color_lut3d[screen_type] != drm->current.color_lut3d[screen_type])
+	if (drm->pending.color_lut3d_override != drm->current.color_lut3d_override)
 		dirty = true;
 
 	if (!dirty)
@@ -2606,8 +2495,8 @@ bool drm_update_lut3d(struct drm_t *drm)
 	// Don't actually check for this, it's a lot of values...
 	// Just check if it's empty or missing.
 	bool identity =
-		!drm->pending.color_lut3d[screen_type] ||
-		drm->pending.color_lut3d[screen_type]->empty();
+		!drm->pending.color_lut3d_override ||
+		drm->pending.color_lut3d_override->empty();
 
 	if (identity)
 	{
@@ -2616,8 +2505,8 @@ bool drm_update_lut3d(struct drm_t *drm)
 	}
 
 	uint32_t blob_id = 0;
-	if (drmModeCreatePropertyBlob(drm->fd, drm->pending.color_lut3d[screen_type]->data(),
-			sizeof(drm_color_lut) * drm->pending.color_lut3d[screen_type]->size(), &blob_id) != 0) {
+	if (drmModeCreatePropertyBlob(drm->fd, drm->pending.color_lut3d_override->data(),
+			sizeof(drm_color_lut) * drm->pending.color_lut3d_override->size(), &blob_id) != 0) {
 		drm_log.errorf_errno("Unable to create LUT3D property blob");
 		return false;
 	}
@@ -2626,19 +2515,14 @@ bool drm_update_lut3d(struct drm_t *drm)
 	return true;
 }
 
-bool drm_update_shaperlut(struct drm_t *drm)
+bool drm_update_shaperlut_override(struct drm_t *drm)
 {
 	if ( drm->crtc == nullptr || !drm->crtc->shaperlut_size )
 		return true;
 
 	bool dirty = false;
 
-	enum drm_screen_type screen_type = drm->pending.screen_type;
-
-	if (drm->pending.screen_type != drm->current.screen_type)
-		dirty = true;
-
-	if (drm->pending.color_shaperlut[screen_type] != drm->current.color_shaperlut[screen_type])
+	if (drm->pending.color_shaperlut_override != drm->current.color_shaperlut_override)
 		dirty = true;
 
 	if (!dirty)
@@ -2647,8 +2531,8 @@ bool drm_update_shaperlut(struct drm_t *drm)
 	// Don't actually check for this, it's a lot of values...
 	// Just check if it's empty or missing.
 	bool identity =
-		!drm->pending.color_shaperlut[screen_type] ||
-		drm->pending.color_shaperlut[screen_type]->empty();
+		!drm->pending.color_shaperlut_override ||
+		drm->pending.color_shaperlut_override->empty();
 
 	if (identity)
 	{
@@ -2657,13 +2541,59 @@ bool drm_update_shaperlut(struct drm_t *drm)
 	}
 
 	uint32_t blob_id = 0;
-	if (drmModeCreatePropertyBlob(drm->fd, drm->pending.color_shaperlut[screen_type]->data(),
-			sizeof(drm_color_lut) * drm->pending.color_shaperlut[screen_type]->size(), &blob_id) != 0) {
+	if (drmModeCreatePropertyBlob(drm->fd, drm->pending.color_shaperlut_override->data(),
+			sizeof(drm_color_lut) * drm->pending.color_shaperlut_override->size(), &blob_id) != 0) {
 		drm_log.errorf_errno("Unable to create SHAPERLUT property blob");
 		return false;
 	}
 
 	drm->pending.shaperlut_id = blob_id;
+	return true;
+}
+
+bool drm_update_color_mgmt(struct drm_t *drm)
+{
+	if ( !drm->crtc || !drm->connector || !drm->crtc->shaperlut_size || !drm->crtc->lut3d_size )
+		return true;
+
+	// update pending native display colorimetry
+	drm->pending.color_mgmt.nativeDisplayColorimetry = drm->connector->metadata.colorimetry;
+
+	// check if any part of our color mgmt stack is dirty
+	if (drm->pending.color_mgmt == drm->current.color_mgmt)
+		return true;
+
+	const displaycolorimetry_t& nativeDisplayOutput = drm->pending.color_mgmt.nativeDisplayColorimetry;
+	const float flSDRGamutWideness = drm->pending.color_mgmt.sdrGamutWideness;
+
+	displaycolorimetry_t syntheticInputColorimetry{};
+	colormapping_t syntheticInputColorMapping{};
+	generateSyntheticInputColorimetry( &syntheticInputColorimetry, &syntheticInputColorMapping, flSDRGamutWideness, nativeDisplayOutput );
+
+    std::vector<uint16_t> lut3d;
+    uint32_t nLutEdgeSize3d = 17;//drm->crtc->lut3d_size; // need to cube root
+    lut3d.resize( nLutEdgeSize3d*nLutEdgeSize3d*nLutEdgeSize3d*4 );
+
+    std::vector<uint16_t> lut1d;
+    uint32_t nLutSize1d = 4096;//drm->crtc->shaperlut_size;
+    lut1d.resize( nLutSize1d*4 );
+
+	calcColorTransform( &lut1d[0], nLutSize1d, &lut3d[0], nLutEdgeSize3d, syntheticInputColorimetry, nativeDisplayOutput, syntheticInputColorMapping, drm->pending.color_mgmt.nightmode );
+
+	uint32_t shaper_blob_id = 0;
+	if (drmModeCreatePropertyBlob(drm->fd, lut1d.data(), sizeof(uint16_t) * lut1d.size(), &shaper_blob_id) != 0) {
+		drm_log.errorf_errno("Unable to create SHAPERLUT property blob");
+		return false;
+	}
+	drm->pending.shaperlut_id = shaper_blob_id;
+
+	uint32_t lut3d_blob_id = 0;
+	if (drmModeCreatePropertyBlob(drm->fd, lut3d.data(), sizeof(uint16_t) * lut3d.size(), &lut3d_blob_id) != 0) {
+		drm_log.errorf_errno("Unable to create LUT3D property blob");
+		return false;
+	}
+	drm->pending.lut3d_id = lut3d_blob_id;
+
 	return true;
 }
 
@@ -2679,139 +2609,6 @@ bool drm_update_vrr_state(struct drm_t *drm)
 
 	if (drm->pending.vrr_enabled != drm->current.vrr_enabled)
 		drm->needs_modeset = true;
-
-	return true;
-}
-
-static float safe_pow(float x, float y)
-{
-	// Avoids pow(x, 1.0f) != x.
-	if (y == 1.0f)
-		return x;
-
-	return pow(x, y);
-}
-
-bool drm_update_gamma_lut(struct drm_t *drm)
-{
-	if ( drm->crtc == nullptr || !drm->crtc->has_gamma_lut )
-		return true;
-
-	enum drm_screen_type screen_type = drm->pending.screen_type;
-
-	if (drm->pending.regamma_tf == drm->current.regamma_tf &&
-		drm->pending.color_gain[0] == drm->current.color_gain[0] &&
-		drm->pending.color_gain[1] == drm->current.color_gain[1] &&
-		drm->pending.color_gain[2] == drm->current.color_gain[2] &&
-		drm->pending.color_linear_gain[0] == drm->current.color_linear_gain[0] &&
-		drm->pending.color_linear_gain[1] == drm->current.color_linear_gain[1] &&
-		drm->pending.color_linear_gain[2] == drm->current.color_linear_gain[2] &&
-		drm->pending.color_gamma_exponent[screen_type][0] == drm->current.color_gamma_exponent[screen_type][0] &&
-		drm->pending.color_gamma_exponent[screen_type][1] == drm->current.color_gamma_exponent[screen_type][1] &&
-		drm->pending.color_gamma_exponent[screen_type][2] == drm->current.color_gamma_exponent[screen_type][2] &&
-		drm->pending.gain_blend == drm->current.gain_blend &&
-		drm->pending.screen_type == drm->current.screen_type )
-	{
-		return true;
-	}
-
-	bool color_gain_identity = drm->pending.gain_blend == 1.0f ||
-		( drm->pending.color_gain[0] == 1.0f &&
-		  drm->pending.color_gain[1] == 1.0f &&
-		  drm->pending.color_gain[2] == 1.0f );
-
-	bool linear_gain_identity = drm->pending.gain_blend == 0.0f ||
-		( drm->pending.color_linear_gain[0] == 1.0f &&
-		  drm->pending.color_linear_gain[1] == 1.0f &&
-		  drm->pending.color_linear_gain[2] == 1.0f );
-
-	bool gamma_exponent_identity =
-		( drm->pending.color_gamma_exponent[screen_type][0] == 1.0f &&
-		  drm->pending.color_gamma_exponent[screen_type][1] == 1.0f &&
-		  drm->pending.color_gamma_exponent[screen_type][2] == 1.0f );
-
-	if ( color_gain_identity && linear_gain_identity && gamma_exponent_identity )
-	{
-		drm->pending.gamma_lut_id = 0;
-		return true;
-	}
-
-	const int lut_entries = drm->crtc->initial_prop_values["GAMMA_LUT_SIZE"];
-	drm_color_lut *gamma_lut = new drm_color_lut[lut_entries];
-	for ( int i = 0; i < lut_entries; i++ )
-	{
-        float input = float(i) / float(lut_entries - 1);
-
-		float r_exp = safe_pow( input, drm->pending.color_gamma_exponent[screen_type][0] );
-		float g_exp = safe_pow( input, drm->pending.color_gamma_exponent[screen_type][1] );
-		float b_exp = safe_pow( input, drm->pending.color_gamma_exponent[screen_type][2] );
-
-		gamma_lut[i].red   = drm_calc_lut_value( r_exp, drm->pending.color_linear_gain[0], drm->pending.color_gain[0], drm->pending.gain_blend, drm->pending.regamma_tf );
-		gamma_lut[i].green = drm_calc_lut_value( g_exp, drm->pending.color_linear_gain[1], drm->pending.color_gain[1], drm->pending.gain_blend, drm->pending.regamma_tf );
-		gamma_lut[i].blue  = drm_calc_lut_value( b_exp, drm->pending.color_linear_gain[2], drm->pending.color_gain[2], drm->pending.gain_blend, drm->pending.regamma_tf );
-	}
-
-	uint32_t blob_id = 0;
-	if (drmModeCreatePropertyBlob(drm->fd, gamma_lut,
-			lut_entries * sizeof(struct drm_color_lut), &blob_id) != 0) {
-		drm_log.errorf_errno("Unable to create gamma LUT property blob");
-		delete[] gamma_lut;
-		return false;
-	}
-	delete[] gamma_lut;
-
-	drm->pending.gamma_lut_id = blob_id;
-
-	return true;
-}
-
-bool drm_update_degamma_lut(struct drm_t *drm)
-{
-	if ( drm->crtc == nullptr || !drm->crtc->has_degamma_lut )
-		return true;
-
-	enum drm_screen_type screen_type = drm->pending.screen_type;
-
-	if (drm->pending.color_degamma_exponent[screen_type][0] == drm->current.color_degamma_exponent[screen_type][0] &&
-		drm->pending.color_degamma_exponent[screen_type][1] == drm->current.color_degamma_exponent[screen_type][1] &&
-		drm->pending.color_degamma_exponent[screen_type][2] == drm->current.color_degamma_exponent[screen_type][2] &&
-		drm->pending.screen_type == drm->current.screen_type )
-	{
-		return true;
-	}
-
-	bool degamma_exponent_identity =
-		( drm->pending.color_degamma_exponent[screen_type][0] == 1.0f &&
-		  drm->pending.color_degamma_exponent[screen_type][1] == 1.0f &&
-		  drm->pending.color_degamma_exponent[screen_type][2] == 1.0f );
-
-	if ( degamma_exponent_identity )
-	{
-		drm->pending.degamma_lut_id = 0;
-		return true;
-	}
-
-	const int lut_entries = drm->crtc->initial_prop_values["DEGAMMA_LUT_SIZE"];
-	drm_color_lut *degamma_lut = new drm_color_lut[lut_entries];
-	for ( int i = 0; i < lut_entries; i++ )
-	{
-        float input = float(i) / float(lut_entries - 1);
-
-		degamma_lut[i].red   = drm_quantize_lut_value( safe_pow( input, drm->pending.color_degamma_exponent[screen_type][0] ) );
-		degamma_lut[i].green = drm_quantize_lut_value( safe_pow( input, drm->pending.color_degamma_exponent[screen_type][1] ) );
-		degamma_lut[i].blue  = drm_quantize_lut_value( safe_pow( input, drm->pending.color_degamma_exponent[screen_type][2] ) );
-	}
-
-	uint32_t blob_id = 0;
-	if (drmModeCreatePropertyBlob(drm->fd, degamma_lut,
-			lut_entries * sizeof(struct drm_color_lut), &blob_id) != 0) {
-		drm_log.errorf_errno("Unable to create degamma LUT property blob");
-		delete[] degamma_lut;
-		return false;
-	}
-	delete[] degamma_lut;
-
-	drm->pending.degamma_lut_id = blob_id;
 
 	return true;
 }
@@ -2903,16 +2700,8 @@ bool drm_set_refresh( struct drm_t *drm, int refresh )
 			break;
 		case DRM_MODE_GENERATE_FIXED:
 			{
-				const char *make_pnp = drm->connector->make_pnp;
-				const char *model = drm->connector->model;
-				bool is_steam_deck_display =
-					(strcmp(make_pnp, "WLC") == 0 && strcmp(model, "ANX7530 U") == 0) ||
-					(strcmp(make_pnp, "ANX") == 0 && strcmp(model, "ANX7530 U") == 0) ||
-					(strcmp(make_pnp, "VLV") == 0 && strcmp(model, "ANX7530 U") == 0) ||
-					(strcmp(make_pnp, "VLV") == 0 && strcmp(model, "Jupiter") == 0);
-
 				const drmModeModeInfo *preferred_mode = find_mode(connector, 0, 0, 0);
-				generate_fixed_mode( &mode, preferred_mode, refresh, is_steam_deck_display );
+				generate_fixed_mode( &mode, preferred_mode, refresh, drm->connector->is_steam_deck_display );
 				break;
 			}
 		}

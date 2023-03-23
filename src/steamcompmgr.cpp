@@ -4474,88 +4474,6 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 		if ( g_upscaleFilter == GamescopeUpscaleFilter::FSR || g_upscaleFilter == GamescopeUpscaleFilter::NIS )
 			hasRepaint = true;
 	}
-	if ( ev->atom == ctx->atoms.gamescopeColorLinearGain )
-	{
-		std::vector< uint32_t > user_gains;
-		bool bHasColor = get_prop( ctx, ctx->root, ctx->atoms.gamescopeColorLinearGain, user_gains );
-		
-		float gains[3] = { 1.0f, 1.0f, 1.0f };
-		if ( bHasColor && user_gains.size() == 3 )
-		{
-			for (int i = 0; i < 3; i++)
-				gains[i] = bit_cast<float>( user_gains[i] );
-		}
-
-		if ( drm_set_color_linear_gains( &g_DRM, gains ) )
-			hasRepaint = true;
-	}
-	if ( ev->atom == ctx->atoms.gamescopeColorGain )
-	{
-		std::vector< uint32_t > user_gains;
-		bool bHasColor = get_prop( ctx, ctx->root, ctx->atoms.gamescopeColorGain, user_gains );
-		
-		float gains[3] = { 1.0f, 1.0f, 1.0f };
-		if ( bHasColor && user_gains.size() == 3 )
-		{
-			for (int i = 0; i < 3; i++)
-				gains[i] = bit_cast<float>( user_gains[i] );
-		}
-
-		if ( drm_set_color_gains( &g_DRM, gains ) )
-			hasRepaint = true;
-	}
-	for (int i = 0; i < DRM_SCREEN_TYPE_COUNT; i++)
-	{
-		if ( ev->atom == ctx->atoms.gamescopeColorMatrix[i] )
-		{
-			std::vector< uint32_t > user_mtx;
-			bool bHasMatrix = get_prop( ctx, ctx->root, ctx->atoms.gamescopeColorMatrix[i], user_mtx );
-			
-			// identity
-			float mtx[9] =
-			{
-				1.0f, 0.0f, 0.0f,
-				0.0f, 1.0f, 0.0f,
-				0.0f, 0.0f, 1.0f,
-			};
-			if ( bHasMatrix && user_mtx.size() == 9 )
-			{
-				for (int i = 0; i < 9; i++)
-					mtx[i] = bit_cast<float>( user_mtx[i] );
-			}
-
-			if ( drm_set_color_mtx( &g_DRM, mtx, drm_screen_type(i) ) )
-				hasRepaint = true;
-		}
-	}
-	if ( ev->atom == ctx->atoms.gamescopeColorLinearGainBlend )
-	{
-		float flBlend = bit_cast<float>(get_prop(ctx, ctx->root, ctx->atoms.gamescopeColorLinearGainBlend, 0));
-		if ( drm_set_color_gain_blend( &g_DRM, flBlend ) )
-			hasRepaint = true;
-	}
-	for (int i = 0; i < DRM_SCREEN_TYPE_COUNT; i++)
-	{
-		if ( ev->atom == ctx->atoms.gamescopeColorGammaExponent[i] )
-		{
-			std::vector< uint32_t > user_vec;
-			bool bHasVec = get_prop( ctx, ctx->root, ctx->atoms.gamescopeColorGammaExponent[i], user_vec );
-			
-			// identity
-			float vec[6] = { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
-			if ( bHasVec && user_vec.size() == 6 )
-			{
-				for (int i = 0; i < 6; i++)
-					vec[i] = bit_cast<float>( user_vec[i] );
-			}
-
-			if ( drm_set_degamma_exponent( &g_DRM, &vec[0], drm_screen_type(i) ) )
-				hasRepaint = true;
-
-			if ( drm_set_gamma_exponent( &g_DRM, &vec[3], drm_screen_type(i) ) )
-				hasRepaint = true;
-		}
-	}
 	if ( ev->atom == ctx->atoms.gamescopeXWaylandModeControl )
 	{
 		std::vector< uint32_t > xwayland_mode_ctl;
@@ -4768,23 +4686,50 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 		ctx->force_windows_fullscreen = !!get_prop( ctx, ctx->root, ctx->atoms.gamescopeForceWindowsFullscreen, 0 );
 		focusDirty = true;
 	}
-	for (int i = 0; i < DRM_SCREEN_TYPE_COUNT; i++)
+	if ( ev->atom == ctx->atoms.gamescopeColorLut3DOverride )
 	{
-		if ( ev->atom == ctx->atoms.gamescopeColorLut3D[i] )
-		{
-			std::string path = get_string_prop( ctx, ctx->root, ctx->atoms.gamescopeColorLut3D[i] );
-			if ( drm_set_3dlut( &g_DRM, path.c_str(), drm_screen_type(i) ) )
-				hasRepaint = true;
-		}
+		std::string path = get_string_prop( ctx, ctx->root, ctx->atoms.gamescopeColorLut3DOverride );
+		if ( drm_set_3dlut( &g_DRM, path.c_str() ) )
+			hasRepaint = true;
 	}
-	for (int i = 0; i < DRM_SCREEN_TYPE_COUNT; i++)
+	if ( ev->atom == ctx->atoms.gamescopeColorShaperLutOverride )
 	{
-		if ( ev->atom == ctx->atoms.gamescopeColorShaperLut[i] )
+		std::string path = get_string_prop( ctx, ctx->root, ctx->atoms.gamescopeColorShaperLutOverride );
+		if ( drm_set_shaperlut( &g_DRM, path.c_str() ) )
+			hasRepaint = true;
+	}
+	if ( ev->atom == ctx->atoms.gamescopeColorSDRGamutWideness )
+	{
+		uint32_t val = get_prop(ctx, ctx->root, ctx->atoms.gamescopeColorSDRGamutWideness, 0);
+		if ( drm_set_color_sdr_gamut_wideness( &g_DRM, bit_cast<float>(val) ) )
+			hasRepaint = true;
+	}
+	if ( ev->atom == ctx->atoms.gamescopeColorNightMode )
+	{
+		std::vector< uint32_t > user_vec;
+		bool bHasVec = get_prop( ctx, ctx->root, ctx->atoms.gamescopeColorNightMode, user_vec );
+
+		// identity
+		float vec[3] = { 0.0f, 0.0f, 0.0f };
+		if ( bHasVec && user_vec.size() == 3 )
 		{
-			std::string path = get_string_prop( ctx, ctx->root, ctx->atoms.gamescopeColorShaperLut[i] );
-			if ( drm_set_shaperlut( &g_DRM, path.c_str(), drm_screen_type(i) ) )
-				hasRepaint = true;
+			for (int i = 0; i < 3; i++)
+				vec[i] = bit_cast<float>( user_vec[i] );
 		}
+
+		nightmode_t nightmode;
+		nightmode.amount = vec[0];
+		nightmode.hue = vec[1];
+		nightmode.saturation = vec[2];
+
+		if ( drm_set_color_nightmode( &g_DRM, nightmode ) )
+			hasRepaint = true;
+	}
+	if ( ev->atom == ctx->atoms.gamescopeColorManagementDisable )
+	{
+		uint32_t val = get_prop(ctx, ctx->root, ctx->atoms.gamescopeColorManagementDisable, 0);
+		if ( drm_set_color_mgmt_enabled( &g_DRM, !val ) )
+			hasRepaint = true;
 	}
 	if (ev->atom == ctx->atoms.gamescopeCreateXWaylandServer)
 	{
@@ -5887,15 +5832,6 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 	ctx->atoms.gamescopeFSRSharpness = XInternAtom( ctx->dpy, "GAMESCOPE_FSR_SHARPNESS", false );
 	ctx->atoms.gamescopeSharpness = XInternAtom( ctx->dpy, "GAMESCOPE_SHARPNESS", false );
 
-	ctx->atoms.gamescopeColorLinearGain = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_LINEARGAIN", false );
-	ctx->atoms.gamescopeColorGain = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_GAIN", false );
-	ctx->atoms.gamescopeColorMatrix[DRM_SCREEN_TYPE_INTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_MATRIX", false );
-	ctx->atoms.gamescopeColorMatrix[DRM_SCREEN_TYPE_EXTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_MATRIX_EXTERNAL", false );
-	ctx->atoms.gamescopeColorLinearGainBlend = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_LINEARGAIN_BLEND", false );
-
-	ctx->atoms.gamescopeColorGammaExponent[DRM_SCREEN_TYPE_INTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_GAMMA_EXPONENT", false );
-	ctx->atoms.gamescopeColorGammaExponent[DRM_SCREEN_TYPE_EXTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_GAMMA_EXPONENT_EXTERNAL", false );
-
 	ctx->atoms.gamescopeXWaylandModeControl = XInternAtom( ctx->dpy, "GAMESCOPE_XWAYLAND_MODE_CONTROL", false );
 	ctx->atoms.gamescopeFPSLimit = XInternAtom( ctx->dpy, "GAMESCOPE_FPS_LIMIT", false );
 	ctx->atoms.gamescopeDynamicRefresh[DRM_SCREEN_TYPE_INTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_DYNAMIC_REFRESH", false );
@@ -5947,11 +5883,11 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 
 	ctx->atoms.gamescopeForceWindowsFullscreen = XInternAtom( ctx->dpy, "GAMESCOPE_FORCE_WINDOWS_FULLSCREEN", false );
 
-	ctx->atoms.gamescopeColorLut3D[DRM_SCREEN_TYPE_INTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_3DLUT", false );
-	ctx->atoms.gamescopeColorLut3D[DRM_SCREEN_TYPE_EXTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_3DLUT_EXTERNAL", false );
-
-	ctx->atoms.gamescopeColorShaperLut[DRM_SCREEN_TYPE_INTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_SHAPERLUT", false );
-	ctx->atoms.gamescopeColorShaperLut[DRM_SCREEN_TYPE_EXTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_SHAPERLUT_EXTERNAL", false );
+	ctx->atoms.gamescopeColorLut3DOverride = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_3DLUT_OVERRIDE", false );
+	ctx->atoms.gamescopeColorShaperLutOverride = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_SHAPERLUT_OVERRIDE", false );
+	ctx->atoms.gamescopeColorSDRGamutWideness = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_SDR_GAMUT_WIDENESS", false );
+	ctx->atoms.gamescopeColorNightMode = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_NIGHT_MODE", false );
+	ctx->atoms.gamescopeColorManagementDisable = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_MANAGEMENT_DISABLE", false );
 
 	ctx->atoms.gamescopeCreateXWaylandServer = XInternAtom( ctx->dpy, "GAMESCOPE_CREATE_XWAYLAND_SERVER", false );
 	ctx->atoms.gamescopeCreateXWaylandServerFeedback = XInternAtom( ctx->dpy, "GAMESCOPE_CREATE_XWAYLAND_SERVER_FEEDBACK", false );
