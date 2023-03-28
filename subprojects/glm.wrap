@@ -1,0 +1,11 @@
+[wrap-file]
+directory = glm-0.9.9.8
+source_url = https://github.com/g-truc/glm/archive/0.9.9.8.tar.gz
+source_filename = 0.9.9.8.tar.gz
+source_hash = 7d508ab72cb5d43227a3711420f06ff99b0a0cb63ee2f93631b162bfe1fe9592
+patch_url = https://wrapdb.mesonbuild.com/v2/glm_0.9.9.8-2/get_patch
+patch_filename = glm-0.9.9.8-2-wrap.zip
+patch_hash = d930a1fcd3a28d84be4e92cc4c71ff59e170a1ebbd3dbfce631eba19e478d83d
+
+[provide]
+glm = glm_dep
