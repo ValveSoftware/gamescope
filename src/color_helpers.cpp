@@ -215,10 +215,11 @@ void calcColorTransform( uint16_t * pRgbxData1d, int nLutSize1d,
     glm::mat3 xyz_from_dest = normalised_primary_matrix( dest.primaries, dest.white, 1.f );
     glm::mat3 dest_from_xyz = glm::inverse( xyz_from_dest );
     glm::mat3 xyz_from_source = normalised_primary_matrix( source.primaries, source.white, 1.f );
-    // TODO: include color adaptation matrix if white point conversion is needed
-    glm::mat3 dest_from_source = dest_from_xyz * xyz_from_source;
+    glm::mat3 dest_from_source = dest_from_xyz * xyz_from_source; // Absolute colorimetric mapping
 
     // Generate shaper lut (for now, identity)
+    // TODO: if source EOTF doest match dest EOTF, generate a proper shaper lut (and the inverse)
+    // and then compute a shaper-aware 3DLUT
     if ( pRgbxData1d )
     {
         float flScale = 1.f / ( (float) nLutSize1d - 1.f );
@@ -236,13 +237,13 @@ void calcColorTransform( uint16_t * pRgbxData1d, int nLutSize1d,
 
     if ( pRgbxData3d )
     {
-        int nOutOfGamut = 0;
         float flScale = 1.f / ( (float) nLutEdgeSize3d - 1.f );
 
+        // Precalc night mode scalars
         // amount and saturation are overdetermined but we separate the two as they conceptually represent
         // different quantities, and this preserves forwards algorithmic compatibility
         glm::vec3 nightModeMultHSV( nightmode.hue, clamp01( nightmode.saturation * nightmode.amount ), 1.f );
-        glm::vec3 vNightModeGammaMult = hsv_to_rgb( nightModeMultHSV );
+        glm::vec3 vNightModeMultLinear = glm::pow( hsv_to_rgb( nightModeMultHSV ), glm::vec3( 2.2f ) );
 
         for ( int nBlue=0; nBlue<nLutEdgeSize3d; ++nBlue )
         {
@@ -266,18 +267,17 @@ void calcColorTransform( uint16_t * pRgbxData1d, int nLutSize1d,
                     // Convert to dest colorimetry (linearized display referred)
                     glm::vec3 destColorLinear = dest_from_source * sourceColorLinear;
 
-                    // Do a naieve blending with native gamut based on saturation
+                    // Do a naive blending with native gamut based on saturation
                     // ( A very simplified form of gamut mapping )
-                    glm::vec3 hsvColor = rgb_to_hsv( sourceColor );
-                    float amount = cfit( hsvColor.y, mapping.blendEnableMinSat, mapping.blendEnableMaxSat, mapping.blendAmountMin, mapping.blendAmountMax );
+                    // float colorSaturation = rgb_to_hsv( sourceColor ).y;
+                    float colorSaturation = rgb_to_hsv( sourceColorLinear ).y;
+                    float amount = cfit( colorSaturation, mapping.blendEnableMinSat, mapping.blendEnableMaxSat, mapping.blendAmountMin, mapping.blendAmountMax );
                     destColorLinear = glm::mix( destColorLinear, sourceColorLinear, amount );
 
-                    if ( BOutOfGamut( destColorLinear ) )
-                    {
-                        nOutOfGamut += 1;
-                    }
+                    // Apply night mode
+                    destColorLinear = vNightModeMultLinear * destColorLinear;
 
-                    // Apply output gamma
+                    // Apply dest EOTF
                     destColorLinear = glm::clamp( destColorLinear, glm::vec3( 0.f ), glm::vec3( 1.f ) );
                     glm::vec3 destColor;
                     if ( dest.eotf == EOTF::Gamma22 )
@@ -289,10 +289,7 @@ void calcColorTransform( uint16_t * pRgbxData1d, int nLutSize1d,
                         destColor = destColorLinear;
                     }
 
-                    // Apply night mode
-                    destColor = vNightModeGammaMult * destColor;
-
-                    // Save in output LUT
+                    // Write LUT
                     int nLutIndex = nBlue * nLutEdgeSize3d * nLutEdgeSize3d + nGreen * nLutEdgeSize3d + nRed;
                     pRgbxData3d[nLutIndex * 4 + 0] = drm_quantize_lut_value( destColor.x );
                     pRgbxData3d[nLutIndex * 4 + 1] = drm_quantize_lut_value( destColor.y );
@@ -311,39 +308,36 @@ void generateSyntheticInputColorimetry( displaycolorimetry_t * pSynetheticInputC
     // Generic narrow gamut display (709)   --> COLOR 0.5
     // Generic wide gamut display   --> COLOR 1.0
 
-    displaycolorimetry_t narrowGamutGeneric;
-    narrowGamutGeneric.primaries = { { 0.64f, 0.33f }, { 0.30f, 0.60f }, { 0.15f, 0.06f } }; // BT.709
-    narrowGamutGeneric.white = { 0.3127f, 0.3290f };  // D65
-    narrowGamutGeneric.eotf = EOTF::Gamma22;
-
     displaycolorimetry_t wideGamutGeneric;
     wideGamutGeneric.primaries = { { 0.6825f, 0.3165f }, { 0.241f, 0.719f }, { 0.138f, 0.050f } };
     wideGamutGeneric.white = { 0.3127f, 0.3290f };  // D65
     wideGamutGeneric.eotf = EOTF::Gamma22;
 
-    colormapping_t mappingWideGamut;
-    mappingWideGamut.blendEnableMinSat = 0.75f;
-    mappingWideGamut.blendEnableMaxSat = 1.0f;
-    mappingWideGamut.blendAmountMin = 0.0f;
-    mappingWideGamut.blendAmountMax = 0.5f;
+    // Assume linear saturation computation
+    colormapping_t mapSmoothToCubeLinearSat;
+    mapSmoothToCubeLinearSat.blendEnableMinSat = 0.7f;
+    mapSmoothToCubeLinearSat.blendEnableMaxSat = 1.0f;
+    mapSmoothToCubeLinearSat.blendAmountMin = 0.0f;
+    mapSmoothToCubeLinearSat.blendAmountMax = 1.f;
 
-    colormapping_t mappingNone;
-    mappingNone.blendEnableMinSat = 0.65f;
-    mappingNone.blendEnableMaxSat = 0.90f;
-    mappingNone.blendAmountMin = 0.0f;
-    mappingNone.blendAmountMax = 0.0f;
+    // Assume linear saturation computation
+    colormapping_t mapPartialToCubeLinearSat;
+    mapPartialToCubeLinearSat.blendEnableMinSat = 0.7f;
+    mapPartialToCubeLinearSat.blendEnableMaxSat = 1.0f;
+    mapPartialToCubeLinearSat.blendAmountMin = 0.0f;
+    mapPartialToCubeLinearSat.blendAmountMax = 0.25;
 
     if ( flSDRGamutWideness < 0.5f )
     {
         float t = cfit( flSDRGamutWideness, 0.f, 0.5f, 0.0f, 1.0f );
-        *pSynetheticInputColorimetry = lerp( nativeDisplayOutput, narrowGamutGeneric, t );
-        *pSyntheticColorMapping = mappingNone;
+        *pSynetheticInputColorimetry = lerp( nativeDisplayOutput, wideGamutGeneric, t );
+        *pSyntheticColorMapping = mapSmoothToCubeLinearSat;
     }
     else
     {
         float t = cfit( flSDRGamutWideness, 0.5f, 1.0f, 0.0f, 1.0f );
-        *pSynetheticInputColorimetry = lerp( narrowGamutGeneric, wideGamutGeneric, t );
-        *pSyntheticColorMapping = lerp( mappingNone, mappingWideGamut, t );
+        *pSynetheticInputColorimetry = wideGamutGeneric;
+        *pSyntheticColorMapping = lerp( mapSmoothToCubeLinearSat, mapPartialToCubeLinearSat, t );
     }
 }
 

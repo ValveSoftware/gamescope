@@ -117,6 +117,8 @@ colormapping_t lerp( const colormapping_t & a, const colormapping_t & b, float t
 // I.e., for a shaper lut with 256 input colors  nLutSize1d = 256, countof(pRgbxData1d) = 1024
 // nLutEdgeSize3d is the number of color entries, per edge, in the 3d lut
 // I.e., for a 17x17x17 lut nLutEdgeSize3d = 17, countof(pRgbxData3d) = 19652
+//
+// If the white points differ, this performs an absolute colorimetric match
 
 void calcColorTransform( uint16_t * pRgbxData1d, int nLutSize1d,
 	uint16_t * pRgbxData3d, int nLutEdgeSize3d,
@@ -177,14 +179,14 @@ nits_to_u16_dark(float nits)
 
 static constexpr displaycolorimetry_t displaycolorimetry_709_gamma22
 {
-	.primaries = { { 0.64f, 0.33f }, { 0.30f, 0.60f }, { 0.15f, 0.06f } }, // BT.709
+	.primaries = { { 0.64f, 0.33f }, { 0.30f, 0.60f }, { 0.15f, 0.06f } },
 	.white = { 0.3127f, 0.3290f },  // D65
 	.eotf = EOTF::Gamma22,
 };
 
 static constexpr displaycolorimetry_t displaycolorimetry_2020_pq
 {
-	.primaries = { { 0.708f, 0.292f }, { 0.170f, 0.797f }, { 0.131f, 0.046f } }, // BT.709
+	.primaries = { { 0.708f, 0.292f }, { 0.170f, 0.797f }, { 0.131f, 0.046f } },
 	.white = { 0.3127f, 0.3290f },  // D65
 	.eotf = EOTF::PQ,
 };
