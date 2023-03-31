@@ -107,7 +107,6 @@ struct crtc {
 	bool has_degamma_lut;
 	bool has_ctm;
 	bool has_vrr_enabled;
-	bool has_valve1_regamma_tf;
 	uint32_t lut3d_size;
 	uint32_t shaperlut_size;
 
@@ -325,7 +324,7 @@ bool drm_get_vrr_capable(struct drm_t *drm);
 bool drm_supports_st2084(struct drm_t *drm);
 void drm_set_vrr_enabled(struct drm_t *drm, bool enabled);
 bool drm_get_vrr_in_use(struct drm_t *drm);
-bool drm_supports_hdr_planes(struct drm_t *drm);
+bool drm_supports_color_mgmt(struct drm_t *drm);
 std::shared_ptr<wlserver_hdr_metadata> drm_create_hdr_metadata_blob(struct drm_t *drm, hdr_output_metadata *metadata);
 void drm_destroy_hdr_metadata_blob(struct drm_t *drm, uint32_t blob);
 

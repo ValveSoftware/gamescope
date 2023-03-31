@@ -1995,7 +1995,7 @@ paint_all(bool async)
 	if ( !BIsNested() && g_bOutputHDREnabled )
 	{
 		bNeedsComposite |= g_bHDRItmEnable;
-		if ( !drm_supports_hdr_planes(&g_DRM) )
+		if ( !drm_supports_color_mgmt(&g_DRM) )
 			bNeedsComposite |= ( frameInfo.layerCount > 1 || frameInfo.layers[0].colorspace != GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ );
 	}
 	bNeedsComposite |= !!(g_uCompositeDebug & CompositeDebugFlag::Heatmap);

@@ -57,8 +57,7 @@ enum drm_mode_generation g_drmModeGeneration = DRM_MODE_GENERATE_CVT;
 enum g_panel_orientation g_drmModeOrientation = PANEL_ORIENTATION_AUTO;
 std::atomic<uint64_t> g_drmEffectiveOrientation(DRM_MODE_ROTATE_0);
 
-// Until we hook up color toys to be TF aware.
-bool g_bForceDisableTransferFunctions = true;
+bool g_bForceDisableColorMgmt = false;
 
 static LogScope drm_log("drm");
 static LogScope drm_verbose_log("drm", LOG_SILENT);
@@ -634,9 +633,6 @@ static bool refresh_state( drm_t *drm )
 		crtc->has_vrr_enabled = crtc->props.contains( "VRR_ENABLED" );
 		if (!crtc->has_vrr_enabled)
 			drm_log.infof("CRTC %" PRIu32 " has no VRR_ENABLED support", crtc->id);
-		crtc->has_valve1_regamma_tf = crtc->props.contains( "VALVE1_CRTC_REGAMMA_TF" );
-		if (!crtc->has_valve1_regamma_tf)
-			drm_log.infof("CRTC %" PRIu32 " has no VALVE1_CRTC_REGAMMA_TF support", crtc->id);
 
 		crtc->lut3d_size = crtc->props.contains( "VALVE1_LUT3D_SIZE" ) ? uint32_t(crtc->initial_prop_values["VALVE1_LUT3D_SIZE"]) : 0;
 		crtc->shaperlut_size = crtc->props.contains( "VALVE1_SHAPER_LUT_SIZE" ) ? uint32_t(crtc->initial_prop_values["VALVE1_SHAPER_LUT_SIZE"]) : 0;
@@ -644,8 +640,6 @@ static bool refresh_state( drm_t *drm )
 		crtc->current.active = crtc->initial_prop_values["ACTIVE"];
 		if (crtc->has_vrr_enabled)
 			drm->current.vrr_enabled = crtc->initial_prop_values["VRR_ENABLED"];
-		if (crtc->has_valve1_regamma_tf)
-			drm->current.regamma_tf = (drm_valve1_transfer_function) crtc->initial_prop_values["VALVE1_CRTC_REGAMMA_TF"];
 	}
 
 	for (size_t i = 0; i < drm->planes.size(); i++) {
@@ -1151,8 +1145,6 @@ void finish_drm(struct drm_t *drm)
 			add_crtc_property(req, &drm->crtcs[i], "VALVE1_SHAPER_LUT", 0);
 		if ( drm->crtcs[i].has_vrr_enabled )
 			add_crtc_property(req, &drm->crtcs[i], "VRR_ENABLED", 0);
-		if ( drm->crtcs[i].has_valve1_regamma_tf )
-			add_crtc_property(req, &drm->crtcs[i], "VALVE1_CRTC_REGAMMA_TF", 0);
 		add_crtc_property(req, &drm->crtcs[i], "ACTIVE", 0);
 	}
 	for ( size_t i = 0; i < drm->planes.size(); i++ ) {
@@ -1175,6 +1167,12 @@ void finish_drm(struct drm_t *drm)
 			add_plane_property(req, plane, "VALVE1_PLANE_HDR_MULT", 0x100000000ULL);
 		if (plane->props.count("VALVE1_PLANE_DEGAMMA_TF") > 0)
 			add_plane_property(req, plane, "VALVE1_PLANE_DEGAMMA_TF", DRM_VALVE1_TRANSFER_FUNCTION_DEFAULT );
+		if (plane->props.count("VALVE1_PLANE_SHAPER_LUT") > 0)
+			add_plane_property(req, plane, "VALVE1_PLANE_SHAPER_LUT", 0 );
+		if (plane->props.count("VALVE1_PLANE_LUT3D") > 0)
+			add_plane_property(req, plane, "VALVE1_PLANE_LUT3D", 0 );
+		if (plane->props.count("VALVE1_PLANE_SHAPER_TF") > 0)
+			add_plane_property(req, plane, "VALVE1_PLANE_SHAPER_TF", DRM_VALVE1_TRANSFER_FUNCTION_DEFAULT );
 	}
 	// We can't do a non-blocking commit here or else risk EBUSY in case the
 	// previous page-flip is still in flight.
@@ -1771,8 +1769,7 @@ LiftoffStateCacheEntry FrameInfoToLiftoffStateCacheEntry( struct drm_t *drm, con
 		}
 		else
 		{
-			if ( drm_supports_hdr_planes( drm ) )
-				entry.layerState[i].transferFunction = convert_colorspace(frameInfo->layers[ i ].colorspace);
+			entry.layerState[i].transferFunction = convert_colorspace(frameInfo->layers[ i ].colorspace);
 		}
 	}
 
@@ -1845,35 +1842,24 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 			{
 				liftoff_layer_set_property( drm->lo_layers[ i ], "COLOR_ENCODING", entry.layerState[i].colorEncoding );
 				liftoff_layer_set_property( drm->lo_layers[ i ], "COLOR_RANGE",    entry.layerState[i].colorRange );
-				if ( drm_supports_hdr_planes( drm ) )
-					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_DEGAMMA_TF", DRM_VALVE1_TRANSFER_FUNCTION_BT709 );
+				if ( drm_supports_color_mgmt( drm ) )
+				{
+					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_SHAPER_LUT", 0 );
+					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_SHAPER_TF", DRM_VALVE1_TRANSFER_FUNCTION_DEFAULT );
+					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_LUT3D", 0 );
+				}
 			}
 			else
 			{
 				liftoff_layer_unset_property( drm->lo_layers[ i ], "COLOR_ENCODING" );
 				liftoff_layer_unset_property( drm->lo_layers[ i ], "COLOR_RANGE" );
-				if ( drm_supports_hdr_planes( drm ) )
-					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_DEGAMMA_TF", entry.layerState[i].transferFunction );
+				if ( drm_supports_color_mgmt( drm ) )
+				{
+					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_SHAPER_LUT", drm->pending.shaperlut_id );
+					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_SHAPER_TF", DRM_VALVE1_TRANSFER_FUNCTION_DEFAULT );
+					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_LUT3D", drm->pending.lut3d_id );
+				}
 			}
-
-			if ( g_bOutputHDREnabled && drm_supports_hdr_planes( drm ) && ( entry.layerState[i].transferFunction == DRM_VALVE1_TRANSFER_FUNCTION_SRGB ) )
-			{
-				// Multiplier to 'gain' the plane.
-				// When PQ is decoded using the fixed func transfer function to the internal FP16 fb,
-				// 1.0 -> 80 nits (on AMD at least)
-				// When sRGB is decoded, 1.0 -> 1.0, obviously.
-				// Therefore, 1.0 multiplier = 80 nits for SDR content.
-				// So if you want, 203 nits for SDR content, pass in (203.0 / 80.0).
-				if ( drm_supports_hdr_planes( drm ) )
-					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_HDR_MULT", drm_calc_s31_32( g_flLinearToNits / 80.0f ) );
-			}
-			else
-			{
-				// 1.0 in S32.31 is 0x100000000LL
-				if ( drm_supports_hdr_planes( drm ) )
-					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_HDR_MULT", 0x100000000ULL );
-			}
-
 		}
 		else
 		{
@@ -1882,10 +1868,11 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 			liftoff_layer_unset_property( drm->lo_layers[ i ], "COLOR_ENCODING" );
 			liftoff_layer_unset_property( drm->lo_layers[ i ], "COLOR_RANGE" );
 
-			if ( drm_supports_hdr_planes( drm ) )
+			if ( drm_supports_color_mgmt( drm ) )
 			{
-				liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_DEGAMMA_TF", DRM_VALVE1_TRANSFER_FUNCTION_DEFAULT );
-				liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_HDR_MULT", 0x100000000ULL );
+				liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_SHAPER_LUT", 0 );
+				liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_SHAPER_TF", DRM_VALVE1_TRANSFER_FUNCTION_DEFAULT );
+				liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_LUT3D", 0 );
 			}
 		}
 	}
@@ -1923,7 +1910,12 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 	drm->pending.screen_type = drm_get_screen_type(drm);
 
 	drm_update_vrr_state(drm);
-	if (drm->pending.color_lut3d_override || drm->pending.color_shaperlut_override || !drm->pending.color_mgmt.enabled)
+	if (!drm->pending.color_mgmt.enabled)
+	{
+		drm->pending.lut3d_id = 0;
+		drm->pending.shaperlut_id = 0;
+	}
+	else if (drm->pending.color_lut3d_override || drm->pending.color_shaperlut_override)
 	{
 		// LUT overrides
 		drm_update_lut3d_override(drm);
@@ -1965,13 +1957,7 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 		}
 	}
 
-	if (drm_supports_hdr_planes(drm)) {
-		drm->pending.regamma_tf = g_bOutputHDREnabled
-			? DRM_VALVE1_TRANSFER_FUNCTION_PQ
-			: DRM_VALVE1_TRANSFER_FUNCTION_SRGB;
-	} else {
-		drm->pending.regamma_tf = DRM_VALVE1_TRANSFER_FUNCTION_DEFAULT;
-	}
+	drm->pending.regamma_tf = DRM_VALVE1_TRANSFER_FUNCTION_DEFAULT;
 
 	uint32_t flags = DRM_MODE_ATOMIC_NONBLOCK;
 
@@ -2063,12 +2049,6 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 				if (ret < 0)
 					return ret;
 			}
-			if (crtc->has_valve1_regamma_tf)
-			{
-				int ret = add_crtc_property(drm->req, crtc, "VALVE1_CRTC_REGAMMA_TF", 0);
-				if (ret < 0)
-					return ret;
-			}
 
 			ret = add_crtc_property(drm->req, crtc, "ACTIVE", 0);
 			if (ret < 0)
@@ -2130,30 +2110,9 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 					return ret;
 			}
 
-			if (drm->crtc->lut3d_size)
-			{
-				ret = add_crtc_property(drm->req, drm->crtc, "VALVE1_LUT3D", drm->pending.lut3d_id);
-				if (ret < 0)
-					return ret;
-			}
-
-			if (drm->crtc->shaperlut_size)
-			{
-				ret = add_crtc_property(drm->req, drm->crtc, "VALVE1_SHAPER_LUT", drm->pending.shaperlut_id);
-				if (ret < 0)
-					return ret;
-			}
-
 			if (drm->crtc->has_vrr_enabled)
 			{
 				ret = add_crtc_property(drm->req, drm->crtc, "VRR_ENABLED", drm->pending.vrr_enabled);
-				if (ret < 0)
-					return ret;
-			}
-
-			if (drm->crtc->has_valve1_regamma_tf)
-			{
-				ret = add_crtc_property(drm->req, drm->crtc, "VALVE1_CRTC_REGAMMA_TF", drm->pending.regamma_tf);
 				if (ret < 0)
 					return ret;
 			}
@@ -2209,30 +2168,9 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 					return ret;
 			}
 
-			if ( drm->crtc->lut3d_size && drm->pending.lut3d_id != drm->current.lut3d_id )
-			{
-				int ret = add_crtc_property(drm->req, drm->crtc, "VALVE1_LUT3D", drm->pending.lut3d_id);
-				if (ret < 0)
-					return ret;
-			}
-
-			if ( drm->crtc->shaperlut_size && drm->pending.shaperlut_id != drm->current.shaperlut_id )
-			{
-				int ret = add_crtc_property(drm->req, drm->crtc, "VALVE1_SHAPER_LUT", drm->pending.shaperlut_id);
-				if (ret < 0)
-					return ret;
-			}
-
 			if ( drm->crtc->has_vrr_enabled && drm->pending.vrr_enabled != drm->current.vrr_enabled )
 			{
 				int ret = add_crtc_property(drm->req, drm->crtc, "VRR_ENABLED", drm->pending.vrr_enabled );
-				if (ret < 0)
-					return ret;
-			}
-
-			if ( drm->crtc->has_valve1_regamma_tf && drm->pending.regamma_tf != drm->current.regamma_tf )
-			{
-				int ret = add_crtc_property(drm->req, drm->crtc, "VALVE1_CRTC_REGAMMA_TF", drm->pending.regamma_tf );
 				if (ret < 0)
 					return ret;
 			}
@@ -2813,13 +2751,14 @@ void drm_destroy_hdr_metadata_blob(struct drm_t *drm, uint32_t blob)
 	drmModeDestroyPropertyBlob(drm->fd, blob);
 }
 
-bool drm_supports_hdr_planes(struct drm_t *drm)
+bool drm_supports_color_mgmt(struct drm_t *drm)
 {
-	if (g_bForceDisableTransferFunctions)
+	if (g_bForceDisableColorMgmt)
 		return false;
 
 	if (!drm->crtc)
 		return false;
 
-	return drm->crtc->has_valve1_regamma_tf;
+	// TODO: hook up
+	return true;
 }
