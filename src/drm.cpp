@@ -1281,10 +1281,13 @@ int drm_commit(struct drm_t *drm, const struct FrameInfo_t *frameInfo )
 				drmModeDestroyPropertyBlob(drm->fd, drm->current.gamma_lut_id);
 			if ( drm->pending.degamma_lut_id != drm->current.degamma_lut_id )
 				drmModeDestroyPropertyBlob(drm->fd, drm->current.degamma_lut_id);
-			if ( drm->pending.lut3d_id != drm->current.lut3d_id )
-				drmModeDestroyPropertyBlob(drm->fd, drm->current.lut3d_id);
-			if ( drm->pending.shaperlut_id != drm->current.shaperlut_id )
-				drmModeDestroyPropertyBlob(drm->fd, drm->current.shaperlut_id);
+			for ( uint32_t i = 0; i < ColorHelpers_EOTFCount; i++ )
+			{
+				if ( drm->pending.lut3d_id[i] != drm->current.lut3d_id[i] )
+					drmModeDestroyPropertyBlob(drm->fd, drm->current.lut3d_id[i]);
+				if ( drm->pending.shaperlut_id[i] != drm->current.shaperlut_id[i] )
+					drmModeDestroyPropertyBlob(drm->fd, drm->current.shaperlut_id[i]);
+			}
 			drm->crtcs[i].current = drm->crtcs[i].pending;
 		}
 
@@ -1671,7 +1674,7 @@ struct LiftoffStateCacheEntry
 		uint32_t crtcX, crtcY, crtcW, crtcH;
 		drm_color_encoding colorEncoding;
 		drm_color_range    colorRange;
-		drm_valve1_transfer_function transferFunction;
+		uint32_t transferFunction;
 	} layerState[ k_nMaxLayers ];
 
 	bool operator == (const LiftoffStateCacheEntry& entry) const
@@ -1708,7 +1711,7 @@ struct LiftoffStateCacheEntryKasher
 
 std::unordered_set<LiftoffStateCacheEntry, LiftoffStateCacheEntryKasher> g_LiftoffStateCache;
 
-static inline drm_valve1_transfer_function convert_colorspace(GamescopeAppTextureColorspace colorspace)
+static inline drm_valve1_transfer_function convert_colorspace_to_valve1_drm(GamescopeAppTextureColorspace colorspace)
 {
 	switch ( colorspace )
 	{
@@ -1725,6 +1728,27 @@ static inline drm_valve1_transfer_function convert_colorspace(GamescopeAppTextur
 			return DRM_VALVE1_TRANSFER_FUNCTION_PQ;
 	}
 }
+
+static inline uint32_t ColorSpaceToEOTFIndex( GamescopeAppTextureColorspace colorspace )
+{
+	switch ( colorspace )
+	{
+		default:
+		case GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB:
+			// SDR sRGB content treated as native Gamma 22 curve. No need to do sRGB -> 2.2 or whatever.
+			return EOTFToIndex( EOTF::Gamma22 );
+		case GAMESCOPE_APP_TEXTURE_COLORSPACE_SCRGB:
+			// Okay, so this is WEIRD right? OKAY Let me explain it to you.
+			// The plan for scRGB content is to go from scRGB -> PQ in a DEGAMMA_LUT
+			// I know I know this sounds crazy, but this then goes into the same shaper + 3D LUT
+			// path as everything else does.
+			// TODO(Josh): Hook up DEGAMMA_LUT + DEGAMMA_TF to actually do re-gamma.
+			return EOTFToIndex( EOTF::PQ );
+		case GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ:
+			return EOTFToIndex( EOTF::PQ );
+	}
+}
+
 
 LiftoffStateCacheEntry FrameInfoToLiftoffStateCacheEntry( struct drm_t *drm, const FrameInfo_t *frameInfo )
 {
@@ -1765,11 +1789,11 @@ LiftoffStateCacheEntry FrameInfoToLiftoffStateCacheEntry( struct drm_t *drm, con
 		{
 			entry.layerState[i].colorEncoding = drm_get_color_encoding( g_ForcedNV12ColorSpace );
 			entry.layerState[i].colorRange    = drm_get_color_range( g_ForcedNV12ColorSpace );
-			entry.layerState[i].transferFunction = DRM_VALVE1_TRANSFER_FUNCTION_DEFAULT;
+			entry.layerState[i].transferFunction = ColorSpaceToEOTFIndex( GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB );
 		}
 		else
 		{
-			entry.layerState[i].transferFunction = convert_colorspace(frameInfo->layers[ i ].colorspace);
+			entry.layerState[i].transferFunction = ColorSpaceToEOTFIndex(frameInfo->layers[ i ].colorspace);
 		}
 	}
 
@@ -1789,8 +1813,6 @@ static bool is_liftoff_caching_enabled()
 	static bool disabled = env_to_bool(getenv("GAMESCOPE_LIFTOFF_CACHE_DISABLE"));
 	return !disabled;
 }
-
-extern float g_flLinearToNits;
 
 static int
 drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, bool needs_modeset )
@@ -1855,9 +1877,9 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 				liftoff_layer_unset_property( drm->lo_layers[ i ], "COLOR_RANGE" );
 				if ( drm_supports_color_mgmt( drm ) )
 				{
-					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_SHAPER_LUT", drm->pending.shaperlut_id );
+					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_SHAPER_LUT", drm->pending.shaperlut_id[ entry.layerState[i].transferFunction ] );
 					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_SHAPER_TF", DRM_VALVE1_TRANSFER_FUNCTION_DEFAULT );
-					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_LUT3D", drm->pending.lut3d_id );
+					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_LUT3D", drm->pending.lut3d_id[ entry.layerState[i].transferFunction ] );
 				}
 			}
 		}
@@ -1912,8 +1934,11 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 	drm_update_vrr_state(drm);
 	if (!drm->pending.color_mgmt.enabled)
 	{
-		drm->pending.lut3d_id = 0;
-		drm->pending.shaperlut_id = 0;
+		for ( uint32_t i = 0; i < ColorHelpers_EOTFCount; i++ )
+		{
+			drm->pending.lut3d_id[ i ] = 0;
+			drm->pending.shaperlut_id[ i ] = 0;
+		}
 	}
 	else if (drm->pending.color_lut3d_override || drm->pending.color_shaperlut_override)
 	{
@@ -1933,27 +1958,37 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 	assert( drm->req == nullptr );
 	drm->req = drmModeAtomicAlloc();
 
+	bool bConnectorSupportsHDR = drm->connector->metadata.supportsST2084;
+	bool bConnectorHDR = g_bOutputHDREnabled && bConnectorSupportsHDR;
+
 	if (drm->connector != nullptr) {
 		if (drm->connector->has_colorspace) {
-			drm->connector->pending.colorspace = g_bOutputHDREnabled ? DRM_MODE_COLORIMETRY_BT2020_RGB : DRM_MODE_COLORIMETRY_DEFAULT;
+			drm->connector->pending.colorspace = ( bConnectorHDR ) ? DRM_MODE_COLORIMETRY_BT2020_RGB : DRM_MODE_COLORIMETRY_DEFAULT;
 		}
 
 		if (drm->connector->has_content_type) {
 			drm->connector->pending.content_type = DRM_MODE_CONTENT_TYPE_GAME;
 		}
 
-		if (drm->connector->has_hdr_output_metadata) {
-			auto hdr_output_metadata = get_default_hdr_metadata( drm, drm->connector );
-			if ( g_bOutputHDREnabled ) {
-				if ( drm->connector->metadata.hdr10_metadata_blob )
-					hdr_output_metadata = drm->connector->metadata.hdr10_metadata_blob;
+		if ( bConnectorHDR )
+		{
+			if (drm->connector->has_hdr_output_metadata) {
+				auto hdr_output_metadata = get_default_hdr_metadata( drm, drm->connector );
+				if ( bConnectorHDR ) {
+					if ( drm->connector->metadata.hdr10_metadata_blob )
+						hdr_output_metadata = drm->connector->metadata.hdr10_metadata_blob;
 
-				auto feedback = steamcompmgr_get_base_layer_swapchain_feedback();
-				if (feedback && feedback->hdr_metadata_blob)
-					hdr_output_metadata = feedback->hdr_metadata_blob;
+					auto feedback = steamcompmgr_get_base_layer_swapchain_feedback();
+					if (feedback && feedback->hdr_metadata_blob)
+						hdr_output_metadata = feedback->hdr_metadata_blob;
+				}
+
+				drm->connector->pending.hdr_output_metadata = hdr_output_metadata;
 			}
-
-			drm->connector->pending.hdr_output_metadata = hdr_output_metadata;
+		}
+		else
+		{
+			drm->connector->pending.hdr_output_metadata = nullptr;
 		}
 	}
 
@@ -2438,7 +2473,8 @@ bool drm_update_lut3d_override(struct drm_t *drm)
 
 	if (identity)
 	{
-		drm->pending.lut3d_id = 0;
+		for ( uint32_t i = 0; i < ColorHelpers_EOTFCount; i++ )
+			drm->pending.lut3d_id[i] = 0;
 		return true;
 	}
 
@@ -2449,7 +2485,8 @@ bool drm_update_lut3d_override(struct drm_t *drm)
 		return false;
 	}
 
-	drm->pending.lut3d_id = blob_id;
+	for ( uint32_t i = 0; i < ColorHelpers_EOTFCount; i++ )
+		drm->pending.lut3d_id[i] = blob_id;
 	return true;
 }
 
@@ -2474,7 +2511,8 @@ bool drm_update_shaperlut_override(struct drm_t *drm)
 
 	if (identity)
 	{
-		drm->pending.shaperlut_id = 0;
+		for ( uint32_t i = 0; i < ColorHelpers_EOTFCount; i++ )
+			drm->pending.shaperlut_id[i] = 0;
 		return true;
 	}
 
@@ -2485,7 +2523,8 @@ bool drm_update_shaperlut_override(struct drm_t *drm)
 		return false;
 	}
 
-	drm->pending.shaperlut_id = blob_id;
+	for ( uint32_t i = 0; i < ColorHelpers_EOTFCount; i++ )
+		drm->pending.shaperlut_id[i] = blob_id;
 	return true;
 }
 
@@ -2516,21 +2555,25 @@ bool drm_update_color_mgmt(struct drm_t *drm)
     uint32_t nLutSize1d = 4096;//drm->crtc->shaperlut_size;
     lut1d.resize( nLutSize1d*4 );
 
-	calcColorTransform( &lut1d[0], nLutSize1d, &lut3d[0], nLutEdgeSize3d, syntheticInputColorimetry, nativeDisplayOutput, syntheticInputColorMapping, drm->pending.color_mgmt.nightmode );
+	for ( uint32_t i = 0; i < ColorHelpers_EOTFCount; i++ )
+	{
+		EOTF planeEOTF = static_cast<EOTF>( i );
+		calcColorTransform( &lut1d[0], nLutSize1d, &lut3d[0], nLutEdgeSize3d, syntheticInputColorimetry, nativeDisplayOutput, syntheticInputColorMapping, drm->pending.color_mgmt.nightmode, planeEOTF );
 
-	uint32_t shaper_blob_id = 0;
-	if (drmModeCreatePropertyBlob(drm->fd, lut1d.data(), sizeof(uint16_t) * lut1d.size(), &shaper_blob_id) != 0) {
-		drm_log.errorf_errno("Unable to create SHAPERLUT property blob");
-		return false;
-	}
-	drm->pending.shaperlut_id = shaper_blob_id;
+		uint32_t shaper_blob_id = 0;
+		if (drmModeCreatePropertyBlob(drm->fd, lut1d.data(), sizeof(uint16_t) * lut1d.size(), &shaper_blob_id) != 0) {
+			drm_log.errorf_errno("Unable to create SHAPERLUT property blob");
+			return false;
+		}
+		drm->pending.shaperlut_id[ i ] = shaper_blob_id;
 
-	uint32_t lut3d_blob_id = 0;
-	if (drmModeCreatePropertyBlob(drm->fd, lut3d.data(), sizeof(uint16_t) * lut3d.size(), &lut3d_blob_id) != 0) {
-		drm_log.errorf_errno("Unable to create LUT3D property blob");
-		return false;
+		uint32_t lut3d_blob_id = 0;
+		if (drmModeCreatePropertyBlob(drm->fd, lut3d.data(), sizeof(uint16_t) * lut3d.size(), &lut3d_blob_id) != 0) {
+			drm_log.errorf_errno("Unable to create LUT3D property blob");
+			return false;
+		}
+		drm->pending.lut3d_id[ i ] = lut3d_blob_id;
 	}
-	drm->pending.lut3d_id = lut3d_blob_id;
 
 	return true;
 }

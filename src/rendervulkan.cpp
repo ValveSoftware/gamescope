@@ -3169,8 +3169,13 @@ std::shared_ptr<CVulkanTexture> vulkan_acquire_screenshot_texture(uint32_t width
 	return nullptr;
 }
 
+// SDR -> HDR - For external HDR displays
 float g_flLinearToNits = 203.0f;
-float g_flNitsToLinear = 1.0f / 100.0f;
+
+// Internal display's native brightness.
+// We use this when doing tonemapping as a fallback when undocking from an external HDR display.
+float g_flInternalDisplayNativeBrightness = 500.0f;
+
 float g_flHDRItmSdrNits = 100.f;
 float g_flHDRItmTargetNits = 1000.f;
 
@@ -3201,7 +3206,7 @@ struct BlitPushData_t
 		blurRadius = frameInfo->blurRadius ? ( frameInfo->blurRadius * 2 ) - 1 : 0;
 
 		linearToNits = g_flLinearToNits;
-		nitsToLinear = g_flNitsToLinear;
+		nitsToLinear = 1.0f / g_flInternalDisplayNativeBrightness;
 		itmSdrNits = g_flHDRItmSdrNits;
 		itmTargetNits = g_flHDRItmTargetNits;
 	}
@@ -3214,7 +3219,7 @@ struct BlitPushData_t
 		frameId = s_frameId;
 
 		linearToNits = g_flLinearToNits;
-		nitsToLinear = g_flNitsToLinear;
+		nitsToLinear = 1.0f / g_flInternalDisplayNativeBrightness;
 		itmSdrNits = g_flHDRItmSdrNits;
 		itmTargetNits = g_flHDRItmTargetNits;
 	}
@@ -3290,7 +3295,7 @@ struct RcasPushData_t
 		u_frameId = s_frameId++;
 		u_c1 = tmp.x;
 		linearToNits = g_flLinearToNits;
-		nitsToLinear = g_flNitsToLinear;
+		nitsToLinear = 1.0f / g_flInternalDisplayNativeBrightness;
 		itmSdrNits = g_flHDRItmSdrNits;
 		itmTargetNits = g_flHDRItmTargetNits;
 		for (uint32_t i = 1; i < k_nMaxLayers; i++)

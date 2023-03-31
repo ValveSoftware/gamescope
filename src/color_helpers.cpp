@@ -210,7 +210,7 @@ bool BOutOfGamut( const glm::vec3 & color )
 void calcColorTransform( uint16_t * pRgbxData1d, int nLutSize1d,
     uint16_t * pRgbxData3d, int nLutEdgeSize3d,
     const displaycolorimetry_t & source, const displaycolorimetry_t & dest, const colormapping_t & mapping,
-    const nightmode_t & nightmode )
+    const nightmode_t & nightmode, EOTF contentEOTF )
 {
     glm::mat3 xyz_from_dest = normalised_primary_matrix( dest.primaries, dest.white, 1.f );
     glm::mat3 dest_from_xyz = glm::inverse( xyz_from_dest );
@@ -227,6 +227,26 @@ void calcColorTransform( uint16_t * pRgbxData1d, int nLutSize1d,
         for ( int nVal=0; nVal<nLutSize1d; ++nVal )
         {
             float flVal = nVal * flScale;
+
+            if ( contentEOTF != dest.eotf )
+            {
+                extern float g_flLinearToNits;
+                extern float g_flInternalDisplayNativeBrightness;
+
+                float flSDRInputBrightness = dest.eotf == EOTF::PQ ? g_flLinearToNits : g_flInternalDisplayNativeBrightness;
+
+                if ( contentEOTF == EOTF::PQ )
+                    flVal = pq_to_nits( flVal );
+                else if ( contentEOTF == EOTF::Gamma22 )
+                    flVal = std::pow( flVal * flSDRInputBrightness, 2.2f );
+
+
+                if ( dest.eotf == EOTF::PQ )
+                    flVal = nits_to_pq( flVal );
+                else if ( dest.eotf == EOTF::Gamma22 )
+                    flVal = std::pow( flVal / g_flInternalDisplayNativeBrightness, 1.0f / 2.2f );
+            }
+
             uint16_t outputVal = drm_quantize_lut_value( flVal );
             pRgbxData1d[nVal * 4 + 0] = outputVal;
             pRgbxData1d[nVal * 4 + 1] = outputVal;

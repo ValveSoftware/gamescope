@@ -228,8 +228,8 @@ struct drm_t {
 		uint32_t gamma_lut_id;
 		uint32_t degamma_lut_id;
 		uint32_t ctm_id;
-		uint32_t lut3d_id;
-		uint32_t shaperlut_id;
+		uint32_t lut3d_id[ ColorHelpers_EOTFCount ];
+		uint32_t shaperlut_id[ ColorHelpers_EOTFCount ];
 		drm_valve1_transfer_function regamma_tf = DRM_VALVE1_TRANSFER_FUNCTION_DEFAULT;
 		enum drm_screen_type screen_type = DRM_SCREEN_TYPE_INTERNAL;
 		bool vrr_enabled = false;

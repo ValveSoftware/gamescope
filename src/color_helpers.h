@@ -109,6 +109,12 @@ enum class EOTF
 	Gamma22 = 1,
 	PQ = 2,
 };
+static constexpr uint32_t ColorHelpers_EOTFCount = 3;
+
+static constexpr uint32_t EOTFToIndex( EOTF eotf )
+{
+	return static_cast<uint32_t>( eotf );
+}
 
 struct displaycolorimetry_t
 {
@@ -152,7 +158,7 @@ colormapping_t lerp( const colormapping_t & a, const colormapping_t & b, float t
 void calcColorTransform( uint16_t * pRgbxData1d, int nLutSize1d,
 	uint16_t * pRgbxData3d, int nLutEdgeSize3d,
 	const displaycolorimetry_t & source, const displaycolorimetry_t & dest, const colormapping_t & mapping,
-	const nightmode_t & nightmode );
+	const nightmode_t & nightmode, EOTF contentEOTF );
 
 int writeRawLut( const char * outputFilename, uint16_t * pData, size_t nSize );
 
