@@ -44,6 +44,35 @@ inline float linear_to_srgb( float fVal )
     return ( fVal < 0.0031308f ) ? fVal * 12.92f : std::pow( fVal, 1.0f / 2.4f ) * 1.055f - 0.055f;
 }
 
+inline float pq_to_nits( float pq )
+{
+    const float c1 = 0.8359375f;
+    const float c2 = 18.8515625f;
+    const float c3 = 18.6875f;
+
+    const float oo_m1 = 1.0f / 0.1593017578125f;
+    const float oo_m2 = 1.0f / 78.84375f;
+
+    float num = std::max(std::pow(pq, oo_m2) - c1, 0.0f);
+    float den = c2 - c3 * std::pow(pq, oo_m2);
+
+    return 10000.0f * std::pow(num / den, oo_m1);
+}
+
+inline float nits_to_pq( float nits )
+{
+    float y = clamp(nits / 10000.0f, 0.0f, 1.0f);
+    const float c1 = 0.8359375f;
+    const float c2 = 18.8515625f;
+    const float c3 = 18.6875f;
+    const float m1 = 0.1593017578125f;
+    const float m2 = 78.84375f;
+    float num = c1 + c2 * std::pow(y, m1);
+    float den = 1.0 + c3 * std::pow(y, m1);
+    float n = std::pow(num / den, m2);
+    return n;
+}
+
 inline float flerp( float a, float b, float t )
 {
     return a + t * (b - a);
