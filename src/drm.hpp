@@ -108,6 +108,7 @@ struct crtc {
 	bool has_degamma_lut;
 	bool has_ctm;
 	bool has_vrr_enabled;
+	bool has_valve1_regamma_tf;
 	uint32_t lut3d_size;
 	uint32_t shaperlut_size;
 
@@ -221,6 +222,7 @@ struct drm_t {
 		uint32_t shaperlut_id[ ColorHelpers_EOTFCount ];
 		enum drm_screen_type screen_type = DRM_SCREEN_TYPE_INTERNAL;
 		bool vrr_enabled = false;
+		drm_valve1_transfer_function output_tf = DRM_VALVE1_TRANSFER_FUNCTION_DEFAULT;
 	} current, pending;
 	bool wants_vrr_enabled = false;
 
