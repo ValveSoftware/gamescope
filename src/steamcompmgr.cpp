@@ -97,9 +97,171 @@
 #define GPUVIS_TRACE_IMPLEMENTATION
 #include "gpuvis_trace_utils.h"
 
+///
+// Color Mgmt
+//
+
+gamescope_color_mgmt_tracker_t g_ColorMgmt{};
+
+static gamescope_color_mgmt_luts g_ColorMgmtLutsOverride[ ColorHelpers_EOTFCount ];
+gamescope_color_mgmt_luts g_ColorMgmtLuts[ ColorHelpers_EOTFCount ];
+
+static void
+update_color_mgmt()
+{
+	// update pending native display colorimetry
+	if ( !BIsNested() )
+	{
+		g_ColorMgmt.pending.nativeDisplayColorimetry = drm_get_native_colorimetry( &g_DRM );
+	}
+	else
+	{
+		g_ColorMgmt.pending.nativeDisplayColorimetry = displaycolorimetry_709_gamma22;
+	}
+
+	// check if any part of our color mgmt stack is dirty
+	if ( g_ColorMgmt.pending == g_ColorMgmt.current && g_ColorMgmt.serial != 0 )
+		return;
+
+	if (g_ColorMgmt.pending.enabled)
+	{
+		const displaycolorimetry_t& nativeDisplayOutput = g_ColorMgmt.pending.nativeDisplayColorimetry;
+		const float flSDRGamutWideness = g_ColorMgmt.pending.sdrGamutWideness;
+
+		displaycolorimetry_t syntheticInputColorimetry{};
+		colormapping_t syntheticInputColorMapping{};
+		generateSyntheticInputColorimetry( &syntheticInputColorimetry, &syntheticInputColorMapping, flSDRGamutWideness, nativeDisplayOutput );
+
+		std::vector<uint16_t> lut3d;
+		uint32_t nLutEdgeSize3d = 17;
+		lut3d.resize( nLutEdgeSize3d*nLutEdgeSize3d*nLutEdgeSize3d*4 );
+
+		std::vector<uint16_t> lut1d;
+		uint32_t nLutSize1d = 4096;
+		lut1d.resize( nLutSize1d*4 );
+
+		for ( uint32_t i = 0; i < ColorHelpers_EOTFCount; i++ )
+		{
+			EOTF planeEOTF = static_cast<EOTF>( i );
+			calcColorTransform( &lut1d[0], nLutSize1d, &lut3d[0], nLutEdgeSize3d, syntheticInputColorimetry, nativeDisplayOutput, syntheticInputColorMapping, g_ColorMgmt.pending.nightmode, planeEOTF );
+
+			if ( g_ColorMgmt.pending.hasOverrides )
+				g_ColorMgmtLuts[i] = g_ColorMgmtLutsOverride[i];
+			else if ( !lut3d.empty() && !lut1d.empty() )
+				g_ColorMgmtLuts[i] = gamescope_color_mgmt_luts{ lut3d, lut1d };
+			else
+				g_ColorMgmtLuts[i].reset();
+		}
+	}
+	else
+	{
+		for ( uint32_t i = 0; i < ColorHelpers_EOTFCount; i++ )
+			g_ColorMgmtLuts[i].reset();
+	}
+
+	static uint32_t s_NextColorMgmtSerial = 0;
+
+	g_ColorMgmt.serial = ++s_NextColorMgmtSerial;
+	g_ColorMgmt.current = g_ColorMgmt.pending;
+}
+
+bool set_color_sdr_gamut_wideness( float flVal )
+{
+	if ( g_ColorMgmt.pending.sdrGamutWideness == flVal )
+		return false;
+
+	g_ColorMgmt.pending.sdrGamutWideness = flVal;
+
+	return g_ColorMgmt.pending.enabled;
+}
+bool set_color_nightmode( const nightmode_t &nightmode )
+{
+	if ( g_ColorMgmt.pending.nightmode == nightmode )
+		return false;
+
+	g_ColorMgmt.pending.nightmode = nightmode;
+
+	return g_ColorMgmt.pending.enabled;
+}
+bool set_color_mgmt_enabled( bool bEnabled )
+{
+	if ( g_ColorMgmt.pending.enabled == bEnabled )
+		return false;
+
+	g_ColorMgmt.pending.enabled = bEnabled;
+
+	return true;
+}
+
+bool set_color_3dlut_override(const char *path)
+{
+	bool had_lut = !g_ColorMgmtLutsOverride[0].lut3d.empty();
+
+	g_ColorMgmtLutsOverride[0].lut3d.clear();
+	g_ColorMgmt.pending.hasOverrides = !g_ColorMgmtLutsOverride[0].lut1d.empty() && g_ColorMgmtLutsOverride[0].lut3d.empty();
+
+	FILE *f = fopen(path, "rb");
+	if (!f) {
+		return had_lut;
+	}
+
+	fseek(f, 0, SEEK_END);
+	long fsize = ftell(f);
+	fseek(f, 0, SEEK_SET);
+
+	size_t elems = fsize / sizeof(uint16_t);
+
+	if (elems == 0) {
+		return had_lut;
+	}
+
+	auto data = std::vector<uint16_t>(elems);
+	fread(data.data(), elems, sizeof(uint16_t), f);
+
+	g_ColorMgmtLutsOverride[0].lut3d = std::move(data);
+	g_ColorMgmt.pending.hasOverrides = !g_ColorMgmtLutsOverride[0].lut1d.empty() && g_ColorMgmtLutsOverride[0].lut3d.empty();
+
+	return true;
+}
+
+bool set_color_shaperlut_override(const char *path)
+{
+	bool had_lut = !g_ColorMgmtLutsOverride[0].lut1d.empty();
+
+	g_ColorMgmtLutsOverride[0].lut1d.clear();
+	g_ColorMgmt.pending.hasOverrides = !g_ColorMgmtLutsOverride[0].lut1d.empty() && g_ColorMgmtLutsOverride[0].lut3d.empty();
+
+	FILE *f = fopen(path, "rb");
+	if (!f) {
+		return had_lut;
+	}
+
+	fseek(f, 0, SEEK_END);
+	long fsize = ftell(f);
+	fseek(f, 0, SEEK_SET);
+
+	size_t elems = fsize / sizeof(uint16_t);
+
+	if (elems == 0) {
+		return had_lut;
+	}
+
+	auto data = std::vector<uint16_t>(elems);
+	fread(data.data(), elems, sizeof(uint16_t), f);
+
+	g_ColorMgmtLutsOverride[0].lut1d = std::move(data);
+	g_ColorMgmt.pending.hasOverrides = !g_ColorMgmtLutsOverride[0].lut1d.empty() && g_ColorMgmtLutsOverride[0].lut3d.empty();
+
+	return true;
+}
+
 extern float g_flLinearToNits;
 extern float g_flHDRItmSdrNits;
 extern float g_flHDRItmTargetNits;
+
+//
+//
+//
 
 const uint32_t WS_OVERLAPPED          		= 0x00000000u;
 const uint32_t WS_POPUP               		= 0x80000000u;
@@ -1728,6 +1890,8 @@ paint_all(bool async)
 	xwayland_ctx_t *root_ctx = root_server->ctx.get();
 
 	static long long int paintID = 0;
+
+	update_color_mgmt();
 
 	paintID++;
 	gpuvis_trace_begin_ctx_printf( paintID, "paint_all" );
@@ -4689,19 +4853,19 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 	if ( ev->atom == ctx->atoms.gamescopeColorLut3DOverride )
 	{
 		std::string path = get_string_prop( ctx, ctx->root, ctx->atoms.gamescopeColorLut3DOverride );
-		if ( drm_set_3dlut( &g_DRM, path.c_str() ) )
+		if ( set_color_3dlut_override( path.c_str() ) )
 			hasRepaint = true;
 	}
 	if ( ev->atom == ctx->atoms.gamescopeColorShaperLutOverride )
 	{
 		std::string path = get_string_prop( ctx, ctx->root, ctx->atoms.gamescopeColorShaperLutOverride );
-		if ( drm_set_shaperlut( &g_DRM, path.c_str() ) )
+		if ( set_color_shaperlut_override( path.c_str() ) )
 			hasRepaint = true;
 	}
 	if ( ev->atom == ctx->atoms.gamescopeColorSDRGamutWideness )
 	{
 		uint32_t val = get_prop(ctx, ctx->root, ctx->atoms.gamescopeColorSDRGamutWideness, 0);
-		if ( drm_set_color_sdr_gamut_wideness( &g_DRM, bit_cast<float>(val) ) )
+		if ( set_color_sdr_gamut_wideness( bit_cast<float>(val) ) )
 			hasRepaint = true;
 	}
 	if ( ev->atom == ctx->atoms.gamescopeColorNightMode )
@@ -4722,13 +4886,13 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 		nightmode.hue = vec[1];
 		nightmode.saturation = vec[2];
 
-		if ( drm_set_color_nightmode( &g_DRM, nightmode ) )
+		if ( set_color_nightmode( nightmode ) )
 			hasRepaint = true;
 	}
 	if ( ev->atom == ctx->atoms.gamescopeColorManagementDisable )
 	{
 		uint32_t val = get_prop(ctx, ctx->root, ctx->atoms.gamescopeColorManagementDisable, 0);
-		if ( drm_set_color_mgmt_enabled( &g_DRM, !val ) )
+		if ( set_color_mgmt_enabled( !val ) )
 			hasRepaint = true;
 	}
 	if (ev->atom == ctx->atoms.gamescopeCreateXWaylandServer)
@@ -6150,6 +6314,9 @@ steamcompmgr_main(int argc, char **argv)
 	{
 		alwaysComposite = true;
 	}
+
+	// Enable color mgmt by default.
+	g_ColorMgmt.pending.enabled = true;
 
 	currentOutputWidth = g_nPreferredOutputWidth;
 	currentOutputHeight = g_nPreferredOutputHeight;

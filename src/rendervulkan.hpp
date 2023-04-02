@@ -336,3 +336,38 @@ bool vulkan_supports_modifiers(void);
 struct wlr_renderer *vulkan_renderer_create( void );
 
 using mat3x4 = std::array<std::array<float, 4>, 3>;
+
+#include "color_helpers.h"
+
+struct gamescope_color_mgmt_t
+{
+	bool enabled;
+	bool hasOverrides;
+	nightmode_t nightmode;
+	float sdrGamutWideness; // user property to widen gamut
+	displaycolorimetry_t nativeDisplayColorimetry;
+
+	bool operator <=> (const gamescope_color_mgmt_t&) const = default;
+};
+
+struct gamescope_color_mgmt_luts
+{
+	std::vector<uint16_t> lut3d;
+    std::vector<uint16_t> lut1d;
+
+	void reset()
+	{
+		lut3d.clear();
+		lut1d.clear();
+	}
+};
+
+struct gamescope_color_mgmt_tracker_t
+{
+	gamescope_color_mgmt_t pending{};
+	gamescope_color_mgmt_t current{};
+	uint32_t serial{};
+};
+
+extern gamescope_color_mgmt_tracker_t g_ColorMgmt;
+extern gamescope_color_mgmt_luts g_ColorMgmtLuts[ ColorHelpers_EOTFCount ];

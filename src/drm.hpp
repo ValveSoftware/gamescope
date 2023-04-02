@@ -7,6 +7,7 @@
 #include <assert.h>
 #include <drm_fourcc.h>
 #include <drm_mode.h>
+
 #include "color_helpers.h"
 
 // Josh: Okay whatever, this header isn't
@@ -180,16 +181,6 @@ enum drm_valve1_transfer_function {
 	DRM_VALVE1_TRANSFER_FUNCTION_MAX,
 };
 
-struct gamescope_color_mgmt_t
-{
-	bool enabled;
-	nightmode_t nightmode;
-	float sdrGamutWideness; // user property to widen gamut
-	displaycolorimetry_t nativeDisplayColorimetry;
-
-	bool operator <=> (const gamescope_color_mgmt_t&) const = default;
-};
-
 struct drm_t {
 	int fd;
 
@@ -225,17 +216,11 @@ struct drm_t {
 
 	struct {
 		uint32_t mode_id;
-		uint32_t gamma_lut_id;
-		uint32_t degamma_lut_id;
-		uint32_t ctm_id;
+		uint32_t color_mgmt_serial;
 		uint32_t lut3d_id[ ColorHelpers_EOTFCount ];
 		uint32_t shaperlut_id[ ColorHelpers_EOTFCount ];
-		drm_valve1_transfer_function regamma_tf = DRM_VALVE1_TRANSFER_FUNCTION_DEFAULT;
 		enum drm_screen_type screen_type = DRM_SCREEN_TYPE_INTERNAL;
 		bool vrr_enabled = false;
-		std::shared_ptr<std::vector<drm_color_lut>> color_lut3d_override;
-		std::shared_ptr<std::vector<drm_color_lut>> color_shaperlut_override;
-		gamescope_color_mgmt_t color_mgmt{};
 	} current, pending;
 	bool wants_vrr_enabled = false;
 
@@ -312,8 +297,6 @@ bool drm_set_connector( struct drm_t *drm, struct connector *conn );
 bool drm_set_mode( struct drm_t *drm, const drmModeModeInfo *mode );
 bool drm_set_refresh( struct drm_t *drm, int refresh );
 bool drm_set_resolution( struct drm_t *drm, int width, int height );
-bool drm_update_lut3d_override(struct drm_t *drm);
-bool drm_update_shaperlut_override(struct drm_t *drm);
 bool drm_update_color_mgmt(struct drm_t *drm);
 bool drm_update_vrr_state(struct drm_t *drm);
 drm_screen_type drm_get_screen_type(struct drm_t *drm);
@@ -334,11 +317,7 @@ const char *drm_get_device_name(struct drm_t *drm);
 std::pair<uint32_t, uint32_t> drm_get_connector_identifier(struct drm_t *drm);
 void drm_set_hdr_state(struct drm_t *drm, bool enabled);
 
-bool drm_set_3dlut(struct drm_t *drm, const char *path);
-bool drm_set_shaperlut(struct drm_t *drm, const char *path);
-bool drm_set_color_sdr_gamut_wideness( struct drm_t *drm, float flVal );
-bool drm_set_color_nightmode( struct drm_t *drm, const nightmode_t &nightmode );
-bool drm_set_color_mgmt_enabled( struct drm_t *drm, bool bEnabled );
+const displaycolorimetry_t &drm_get_native_colorimetry(struct drm_t *drm);
 
 extern bool g_bSupportsAsyncFlips;
 
