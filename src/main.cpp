@@ -41,6 +41,7 @@ const char *g_pOriginalDisplay = nullptr;
 
 const struct option *gamescope_options = (struct option[]){
 	{ "help", no_argument, nullptr, 0 },
+	{ "version", no_argument, nullptr, 0 },
 	{ "nested-width", required_argument, nullptr, 'w' },
 	{ "nested-height", required_argument, nullptr, 'h' },
 	{ "nested-refresh", required_argument, nullptr, 'r' },
@@ -130,6 +131,7 @@ const char usage[] =
 	"\n"
 	"Options:\n"
 	"  --help                         show help message\n"
+	"  --version                      print version information\n"
 	"  -w, --nested-width             game width\n"
 	"  -h, --nested-height            game height\n"
 	"  -r, --nested-refresh           game refresh rate (frames per second)\n"
@@ -477,6 +479,9 @@ int main(int argc, char **argv)
 				opt_name = gamescope_options[opt_index].name;
 				if (strcmp(opt_name, "help") == 0) {
 					fprintf(stderr, "%s", usage);
+					return 0;
+				} else if (strcmp(opt_name, "version") == 0) {
+					fprintf(stderr, "%s", "gamescope 🐸\n");
 					return 0;
 				} else if (strcmp(opt_name, "disable-layers") == 0) {
 					g_bUseLayers = false;
