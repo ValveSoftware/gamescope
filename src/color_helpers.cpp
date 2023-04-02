@@ -238,7 +238,7 @@ void calcColorTransform( uint16_t * pRgbxData1d, int nLutSize1d,
                 if ( contentEOTF == EOTF::PQ )
                     flVal = pq_to_nits( flVal );
                 else if ( contentEOTF == EOTF::Gamma22 )
-                    flVal = std::pow( flVal * flSDRInputBrightness, 2.2f );
+                    flVal = std::pow( flVal, 2.2f ) * flSDRInputBrightness;
 
 
                 if ( dest.eotf == EOTF::PQ )
@@ -311,9 +311,21 @@ void calcColorTransform( uint16_t * pRgbxData1d, int nLutSize1d,
 
                     // Write LUT
                     int nLutIndex = nBlue * nLutEdgeSize3d * nLutEdgeSize3d + nGreen * nLutEdgeSize3d + nRed;
-                    pRgbxData3d[nLutIndex * 4 + 0] = drm_quantize_lut_value( destColor.x );
-                    pRgbxData3d[nLutIndex * 4 + 1] = drm_quantize_lut_value( destColor.y );
-                    pRgbxData3d[nLutIndex * 4 + 2] = drm_quantize_lut_value( destColor.z );
+                    if ( dest.eotf == EOTF::PQ )
+                    {
+                        // TODO!!!!
+                        // Use identity 3D LUT for now for outputting to external PQ display.
+                        // Right now it just becomes very broken due to the logic here assume 2.2 :-)
+                        pRgbxData3d[nLutIndex * 4 + 0] = drm_quantize_lut_value( sourceColor.x );
+                        pRgbxData3d[nLutIndex * 4 + 1] = drm_quantize_lut_value( sourceColor.y );
+                        pRgbxData3d[nLutIndex * 4 + 2] = drm_quantize_lut_value( sourceColor.z );
+                    }
+                    else
+                    {
+                        pRgbxData3d[nLutIndex * 4 + 0] = drm_quantize_lut_value( destColor.x );
+                        pRgbxData3d[nLutIndex * 4 + 1] = drm_quantize_lut_value( destColor.y );
+                        pRgbxData3d[nLutIndex * 4 + 2] = drm_quantize_lut_value( destColor.z );
+                    }
                     pRgbxData3d[nLutIndex * 4 + 3] = 0;
                 }
             }
