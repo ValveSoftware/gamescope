@@ -117,7 +117,10 @@ displaycolorimetry_t lerp( const displaycolorimetry_t & a, const displaycolorime
     result.primaries.b = uv_to_xy( result.primaries.b );
     result.white = uv_to_xy( result.white );
 
-    result.eotf = ( t > 0.5f ) ? b.eotf : a.eotf;
+    // Josh: Don't lerp EOTF, it doesn't make sense as the content
+    // EOTF this is meant to handle doesn't actually change.
+    // We just want to handle remapping primaries + whitepoint.
+    //result.eotf = ( t > 0.5f ) ? b.eotf : a.eotf;
     return result;
 }
 
