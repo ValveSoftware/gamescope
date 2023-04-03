@@ -342,7 +342,7 @@ using mat3x4 = std::array<std::array<float, 4>, 3>;
 struct gamescope_color_mgmt_t
 {
 	bool enabled;
-	bool hasOverrides;
+	uint32_t externalDirtyCtr;
 	nightmode_t nightmode;
 	float sdrGamutWideness; // user property to widen gamut
 	displaycolorimetry_t nativeDisplayColorimetry;

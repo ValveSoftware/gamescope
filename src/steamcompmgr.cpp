@@ -145,7 +145,7 @@ update_color_mgmt()
 			EOTF planeEOTF = static_cast<EOTF>( i );
 			calcColorTransform( &lut1d[0], nLutSize1d, &lut3d[0], nLutEdgeSize3d, syntheticInputColorimetry, nativeDisplayOutput, syntheticInputColorMapping, g_ColorMgmt.pending.nightmode, planeEOTF );
 
-			if ( g_ColorMgmt.pending.hasOverrides )
+			if ( !g_ColorMgmtLutsOverride[i].lut3d.empty() && !g_ColorMgmtLutsOverride[i].lut3d.empty() )
 				g_ColorMgmtLuts[i] = g_ColorMgmtLutsOverride[i];
 			else if ( !lut3d.empty() && !lut1d.empty() )
 				g_ColorMgmtLuts[i] = gamescope_color_mgmt_luts{ lut3d, lut1d };
@@ -195,14 +195,12 @@ bool set_color_mgmt_enabled( bool bEnabled )
 
 bool set_color_3dlut_override(const char *path)
 {
-	bool had_lut = !g_ColorMgmtLutsOverride[1].lut3d.empty();
-
 	g_ColorMgmtLutsOverride[1].lut3d.clear();
-	g_ColorMgmt.pending.hasOverrides = !g_ColorMgmtLutsOverride[1].lut1d.empty() && !g_ColorMgmtLutsOverride[1].lut3d.empty();
+	g_ColorMgmt.pending.externalDirtyCtr++;
 
 	FILE *f = fopen(path, "rb");
 	if (!f) {
-		return had_lut;
+		return true;
 	}
 
 	fseek(f, 0, SEEK_END);
@@ -212,28 +210,25 @@ bool set_color_3dlut_override(const char *path)
 	size_t elems = fsize / sizeof(uint16_t);
 
 	if (elems == 0) {
-		return had_lut;
+		return true;
 	}
 
 	auto data = std::vector<uint16_t>(elems);
 	fread(data.data(), elems, sizeof(uint16_t), f);
 
 	g_ColorMgmtLutsOverride[1].lut3d = std::move(data);
-	g_ColorMgmt.pending.hasOverrides = !g_ColorMgmtLutsOverride[1].lut1d.empty() && !g_ColorMgmtLutsOverride[1].lut3d.empty();
 
 	return true;
 }
 
 bool set_color_shaperlut_override(const char *path)
 {
-	bool had_lut = !g_ColorMgmtLutsOverride[1].lut1d.empty();
-
 	g_ColorMgmtLutsOverride[1].lut1d.clear();
-	g_ColorMgmt.pending.hasOverrides = !g_ColorMgmtLutsOverride[1].lut1d.empty() && !g_ColorMgmtLutsOverride[1].lut3d.empty();
+	g_ColorMgmt.pending.externalDirtyCtr++;
 
 	FILE *f = fopen(path, "rb");
 	if (!f) {
-		return had_lut;
+		return true;
 	}
 
 	fseek(f, 0, SEEK_END);
@@ -243,14 +238,13 @@ bool set_color_shaperlut_override(const char *path)
 	size_t elems = fsize / sizeof(uint16_t);
 
 	if (elems == 0) {
-		return had_lut;
+		return true;
 	}
 
 	auto data = std::vector<uint16_t>(elems);
 	fread(data.data(), elems, sizeof(uint16_t), f);
 
 	g_ColorMgmtLutsOverride[1].lut1d = std::move(data);
-	g_ColorMgmt.pending.hasOverrides = !g_ColorMgmtLutsOverride[1].lut1d.empty() && !g_ColorMgmtLutsOverride[1].lut3d.empty();
 
 	return true;
 }
