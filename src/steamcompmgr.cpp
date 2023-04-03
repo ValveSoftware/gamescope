@@ -164,7 +164,7 @@ update_color_mgmt()
 			calcColorTransform( &lut1d[0], nLutSize1d, &lut3d[0], nLutEdgeSize3d, inputColorimetry, outputEncodingColorimetry,
 				colorMapping, g_ColorMgmt.pending.nightmode, tonemapping );
 
-			if ( !g_ColorMgmtLutsOverride[i].lut3d.empty() && !g_ColorMgmtLutsOverride[i].lut3d.empty() )
+			if ( !g_ColorMgmtLutsOverride[i].lut3d.empty() && !g_ColorMgmtLutsOverride[i].lut1d.empty() )
 				g_ColorMgmtLuts[i] = g_ColorMgmtLutsOverride[i];
 			else if ( !lut3d.empty() && !lut1d.empty() )
 				g_ColorMgmtLuts[i] = gamescope_color_mgmt_luts{ lut3d, lut1d };
