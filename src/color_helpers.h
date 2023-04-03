@@ -249,7 +249,7 @@ static constexpr displaycolorimetry_t displaycolorimetry_widegamutgeneric_gamma2
 {
 	.primaries = { { 0.6825f, 0.3165f }, { 0.241f, 0.719f }, { 0.138f, 0.050f } },
 	.white = { 0.3127f, 0.3290f },  // D65
-	.eotf = EOTF::PQ,
+	.eotf = EOTF::Gamma22,
 };
 
 static constexpr displaycolorimetry_t displaycolorimetry_2020_pq
