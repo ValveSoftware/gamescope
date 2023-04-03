@@ -96,7 +96,9 @@ inline float positive_mod( float flX, float flPeriod )
 // Colorimetry functions related to color space conversions
 struct primaries_t
 {
+#ifndef NO_SPACESHIP
 	bool operator <=> (const primaries_t&) const = default;
+#endif
 
 	glm::vec2 r;
 	glm::vec2 g;
@@ -105,11 +107,11 @@ struct primaries_t
 
 enum class EOTF
 {
-	Linear = 0,
-	Gamma22 = 1,
-	PQ = 2,
+	Gamma22 = 0,
+	PQ = 1,
 };
-static constexpr uint32_t ColorHelpers_EOTFCount = 3;
+
+static constexpr uint32_t ColorHelpers_EOTFCount = 2;
 
 static constexpr uint32_t EOTFToIndex( EOTF eotf )
 {
@@ -118,8 +120,9 @@ static constexpr uint32_t EOTFToIndex( EOTF eotf )
 
 struct displaycolorimetry_t
 {
+#ifndef NO_SPACESHIP
 	bool operator <=> (const displaycolorimetry_t&) const = default;
-
+#endif
 	primaries_t primaries;
 	glm::vec2 white;
 	EOTF eotf;
@@ -127,7 +130,9 @@ struct displaycolorimetry_t
 
 struct nightmode_t
 {
+#ifndef NO_SPACESHIP
 	bool operator <=> (const nightmode_t&) const = default;
+#endif
 
     float amount; // [0 = disabled, 1.f = on]
     float hue; // [0,1]
@@ -136,7 +141,9 @@ struct nightmode_t
 
 struct colormapping_t
 {
+#ifndef NO_SPACESHIP
 	bool operator <=> (const colormapping_t&) const = default;
+#endif
 
     float blendEnableMinSat;
     float blendEnableMaxSat;
@@ -146,6 +153,13 @@ struct colormapping_t
 
 displaycolorimetry_t lerp( const displaycolorimetry_t & a, const displaycolorimetry_t & b, float t );
 colormapping_t lerp( const colormapping_t & a, const colormapping_t & b, float t );
+
+struct tonemapping_t
+{
+	bool bUseShaper = true;
+	float current_g22_display_current_luma = 100.f;  // when mapping to a current gamma 22 display, what's the current luma (relavent to PQ conversion)
+	float pq_sdr_peak_white = 100.f;  // when mapping SDR for PQ output, what peak white should be used?
+};
 
 // Generate a color transform from the source colorspace, to the dest colorspace,
 // nLutSize1d is the number of color entries in the shaper lut
@@ -158,12 +172,16 @@ colormapping_t lerp( const colormapping_t & a, const colormapping_t & b, float t
 void calcColorTransform( uint16_t * pRgbxData1d, int nLutSize1d,
 	uint16_t * pRgbxData3d, int nLutEdgeSize3d,
 	const displaycolorimetry_t & source, const displaycolorimetry_t & dest, const colormapping_t & mapping,
-	const nightmode_t & nightmode, EOTF contentEOTF );
+	const nightmode_t & nightmode, const tonemapping_t & tonemapping );
 
 int writeRawLut( const char * outputFilename, uint16_t * pData, size_t nSize );
 
-void generateSyntheticInputColorimetry( displaycolorimetry_t * pSynetheticInputColorimetry, colormapping_t *pSyntheticColorMapping,
+// Build colorimetry and a gamut mapping for the given SDR configuration
+void buildSDRColorimetry( displaycolorimetry_t * pColorimetry, colormapping_t *pMapping,
 	float flSDRGamutWideness, const displaycolorimetry_t & nativeDisplayOutput );
+
+// Build colorimetry and a gamut mapping for the given PQ configuration
+void buildPQColorimetry( displaycolorimetry_t * pColorimetry, colormapping_t *pMapping, const displaycolorimetry_t & nativeDisplayOutput );
 
 // Colormetry helper functions for DRM, kindly taken from Weston:
 // https://gitlab.freedesktop.org/wayland/weston/-/blob/main/libweston/backend-drm/kms-color.c
@@ -212,6 +230,13 @@ nits_to_u16_dark(float nits)
 	return (uint16_t)round(nits * 10000.0f);
 }
 
+static constexpr displaycolorimetry_t displaycolorimetry_steamdeck
+{
+	.primaries = { { 0.602f, 0.355f }, { 0.340f, 0.574f }, { 0.164f, 0.121f } },
+	.white = { 0.3070f, 0.3220f },  // not D65
+	.eotf = EOTF::Gamma22,
+};
+
 static constexpr displaycolorimetry_t displaycolorimetry_709_gamma22
 {
 	.primaries = { { 0.64f, 0.33f }, { 0.30f, 0.60f }, { 0.15f, 0.06f } },
@@ -219,18 +244,19 @@ static constexpr displaycolorimetry_t displaycolorimetry_709_gamma22
 	.eotf = EOTF::Gamma22,
 };
 
+// Our "saturated SDR target", per jeremys
+static constexpr displaycolorimetry_t displaycolorimetry_widegamutgeneric_gamma22
+{
+	.primaries = { { 0.6825f, 0.3165f }, { 0.241f, 0.719f }, { 0.138f, 0.050f } },
+	.white = { 0.3127f, 0.3290f },  // D65
+	.eotf = EOTF::PQ,
+};
+
 static constexpr displaycolorimetry_t displaycolorimetry_2020_pq
 {
 	.primaries = { { 0.708f, 0.292f }, { 0.170f, 0.797f }, { 0.131f, 0.046f } },
 	.white = { 0.3127f, 0.3290f },  // D65
 	.eotf = EOTF::PQ,
-};
-
-static constexpr displaycolorimetry_t displaycolorimetry_steamdeck
-{
-	.primaries = { { 0.602f, 0.355f }, { 0.340f, 0.574f }, { 0.164f, 0.121f } },
-	.white = { 0.3070f, 0.3220f },  // not D65
-	.eotf = EOTF::Gamma22,
 };
 
 int color_tests();

@@ -207,50 +207,84 @@ bool BOutOfGamut( const glm::vec3 & color )
     return ( color.x<0.f || color.x > 1.f || color.y<0.f || color.y > 1.f || color.z<0.f || color.z > 1.f );
 }
 
+glm::vec3 calcEOTFToLinear( const glm::vec3 & input, EOTF eotf, const tonemapping_t & tonemapping )
+{
+    if ( eotf == EOTF::Gamma22 )
+    {
+        return glm::pow( input, glm::vec3( 2.2f ) ) * tonemapping.pq_sdr_peak_white;
+    }
+    else if ( eotf == EOTF::PQ )
+    {
+        return glm::vec3( pq_to_nits( input.r ),  pq_to_nits( input.g ), pq_to_nits( input.b ) );
+    }
+
+    return glm::vec3(0);
+}
+
+glm::vec3 calcLinearToEOTF( const glm::vec3 & input, EOTF eotf, const tonemapping_t & tonemapping )
+{
+    if ( eotf == EOTF::Gamma22 )
+    {
+        glm::vec3 val = input;
+        if ( tonemapping.current_g22_display_current_luma > 0.f )
+        {
+            val = glm::clamp( input / tonemapping.current_g22_display_current_luma, glm::vec3( 0.f ), glm::vec3( 1.f ) );
+        }
+        return glm::pow( val, glm::vec3( 1.f/2.2f ) );
+    }
+    else if ( eotf == EOTF::PQ )
+    {
+        return glm::vec3( nits_to_pq( input.r ), nits_to_pq( input.g ), nits_to_pq( input.b ) );
+    }
+
+    return glm::vec3(0);
+}
+
+// input is from 0->1
+// TODO: use tone-mapping for white, black, contrast ratio
+glm::vec3 applyShaper( const glm::vec3 & input, EOTF source, EOTF dest, const tonemapping_t & tonemapping, bool bInvert )
+{
+    if ( source == dest || !tonemapping.bUseShaper )
+    {
+        return input;
+    }
+
+    if ( bInvert )
+    {
+        // (once we do tone mapping this gets more complicated
+        std::swap( source, dest );
+    }
+
+    return calcLinearToEOTF( calcEOTFToLinear( input, source, tonemapping ), dest, tonemapping );
+}
+
 void calcColorTransform( uint16_t * pRgbxData1d, int nLutSize1d,
     uint16_t * pRgbxData3d, int nLutEdgeSize3d,
     const displaycolorimetry_t & source, const displaycolorimetry_t & dest, const colormapping_t & mapping,
-    const nightmode_t & nightmode, EOTF contentEOTF )
+    const nightmode_t & nightmode, const tonemapping_t & tonemapping )
 {
     glm::mat3 xyz_from_dest = normalised_primary_matrix( dest.primaries, dest.white, 1.f );
     glm::mat3 dest_from_xyz = glm::inverse( xyz_from_dest );
     glm::mat3 xyz_from_source = normalised_primary_matrix( source.primaries, source.white, 1.f );
     glm::mat3 dest_from_source = dest_from_xyz * xyz_from_source; // Absolute colorimetric mapping
 
-    // Generate shaper lut (for now, identity)
-    // TODO: if source EOTF doest match dest EOTF, generate a proper shaper lut (and the inverse)
-    // and then compute a shaper-aware 3DLUT
+    // Generate shaper lut
+    // Note: while this is typically a 1D approximation of our end to end transform,
+    // it need not be! Conceptually this is just to determine the interpolation properties...
+    // The 3d lut should be considered a 'matched' pair where the transform is only complete
+    // when applying both.  I.e., you can put ANY transform in here, and it should work.
+
     if ( pRgbxData1d )
     {
         float flScale = 1.f / ( (float) nLutSize1d - 1.f );
 
         for ( int nVal=0; nVal<nLutSize1d; ++nVal )
         {
-            float flVal = nVal * flScale;
-
-            if ( contentEOTF != dest.eotf )
-            {
-                extern float g_flLinearToNits;
-                extern float g_flInternalDisplayNativeBrightness;
-
-                float flSDRInputBrightness = dest.eotf == EOTF::PQ ? g_flLinearToNits : g_flInternalDisplayNativeBrightness;
-
-                if ( contentEOTF == EOTF::PQ )
-                    flVal = pq_to_nits( flVal );
-                else if ( contentEOTF == EOTF::Gamma22 )
-                    flVal = std::pow( flVal, 2.2f ) * flSDRInputBrightness;
-
-
-                if ( dest.eotf == EOTF::PQ )
-                    flVal = nits_to_pq( flVal );
-                else if ( dest.eotf == EOTF::Gamma22 )
-                    flVal = std::pow( flVal / g_flInternalDisplayNativeBrightness, 1.0f / 2.2f );
-            }
-
-            uint16_t outputVal = drm_quantize_lut_value( flVal );
-            pRgbxData1d[nVal * 4 + 0] = outputVal;
-            pRgbxData1d[nVal * 4 + 1] = outputVal;
-            pRgbxData1d[nVal * 4 + 2] = outputVal;
+            glm::vec3 sourceColorEOTFEncoded = { nVal * flScale, nVal * flScale, nVal * flScale };
+            glm::vec3 shapedSourceColor = applyShaper( sourceColorEOTFEncoded, source.eotf, dest.eotf, tonemapping, false );
+            pRgbxData1d[nVal * 4 + 0] = drm_quantize_lut_value( shapedSourceColor.x );
+            pRgbxData1d[nVal * 4 + 1] = drm_quantize_lut_value( shapedSourceColor.y );
+            pRgbxData1d[nVal * 4 + 2] = drm_quantize_lut_value( shapedSourceColor.z );
             pRgbxData1d[nVal * 4 + 3] = 0;
         }
     }
@@ -271,18 +305,11 @@ void calcColorTransform( uint16_t * pRgbxData1d, int nLutSize1d,
             {
                 for ( int nRed=0; nRed<nLutEdgeSize3d; ++nRed )
                 {
-                    glm::vec3 sourceColor = { nRed * flScale, nGreen * flScale, nBlue * flScale };
+                    glm::vec3 shapedSourceColor = { nRed * flScale, nGreen * flScale, nBlue * flScale };
+                    glm::vec3 sourceColorEOTFEncoded = applyShaper( shapedSourceColor, source.eotf, dest.eotf, tonemapping, true );
 
                     // Convert to linearized display referred for source colorimetry
-                    glm::vec3 sourceColorLinear;
-                    if ( source.eotf == EOTF::Gamma22 )
-                    {
-                        sourceColorLinear = glm::pow( sourceColor, glm::vec3( 2.2f ) );
-                    }
-                    else
-                    {
-                        sourceColorLinear = sourceColor;
-                    }
+                    glm::vec3 sourceColorLinear = calcEOTFToLinear( sourceColorEOTFEncoded, source.eotf, tonemapping );
 
                     // Convert to dest colorimetry (linearized display referred)
                     glm::vec3 destColorLinear = dest_from_source * sourceColorLinear;
@@ -298,34 +325,13 @@ void calcColorTransform( uint16_t * pRgbxData1d, int nLutSize1d,
                     destColorLinear = vNightModeMultLinear * destColorLinear;
 
                     // Apply dest EOTF
-                    destColorLinear = glm::clamp( destColorLinear, glm::vec3( 0.f ), glm::vec3( 1.f ) );
-                    glm::vec3 destColor;
-                    if ( dest.eotf == EOTF::Gamma22 )
-                    {
-                        destColor = glm::pow( destColorLinear, glm::vec3( 1.f/2.2f ) );
-                    }
-                    else
-                    {
-                        destColor = destColorLinear;
-                    }
+                    glm::vec3 destColorEOTFEncoded = calcLinearToEOTF( destColorLinear, dest.eotf, tonemapping );
 
                     // Write LUT
                     int nLutIndex = nBlue * nLutEdgeSize3d * nLutEdgeSize3d + nGreen * nLutEdgeSize3d + nRed;
-                    if ( dest.eotf == EOTF::PQ )
-                    {
-                        // TODO!!!!
-                        // Use identity 3D LUT for now for outputting to external PQ display.
-                        // Right now it just becomes very broken due to the logic here assume 2.2 :-)
-                        pRgbxData3d[nLutIndex * 4 + 0] = drm_quantize_lut_value( sourceColor.x );
-                        pRgbxData3d[nLutIndex * 4 + 1] = drm_quantize_lut_value( sourceColor.y );
-                        pRgbxData3d[nLutIndex * 4 + 2] = drm_quantize_lut_value( sourceColor.z );
-                    }
-                    else
-                    {
-                        pRgbxData3d[nLutIndex * 4 + 0] = drm_quantize_lut_value( destColor.x );
-                        pRgbxData3d[nLutIndex * 4 + 1] = drm_quantize_lut_value( destColor.y );
-                        pRgbxData3d[nLutIndex * 4 + 2] = drm_quantize_lut_value( destColor.z );
-                    }
+                    pRgbxData3d[nLutIndex * 4 + 0] = drm_quantize_lut_value( destColorEOTFEncoded.x );
+                    pRgbxData3d[nLutIndex * 4 + 1] = drm_quantize_lut_value( destColorEOTFEncoded.y );
+                    pRgbxData3d[nLutIndex * 4 + 2] = drm_quantize_lut_value( destColorEOTFEncoded.z );
                     pRgbxData3d[nLutIndex * 4 + 3] = 0;
                 }
             }
@@ -333,43 +339,98 @@ void calcColorTransform( uint16_t * pRgbxData1d, int nLutSize1d,
     }
 }
 
-void generateSyntheticInputColorimetry( displaycolorimetry_t * pSynetheticInputColorimetry, colormapping_t *pSyntheticColorMapping,
+bool BIsWideGamut( const displaycolorimetry_t & nativeDisplayOutput )
+{
+    // Use red as a sentinal for a wide-gamut display
+    return ( nativeDisplayOutput.primaries.r.x > 0.650f && nativeDisplayOutput.primaries.r.y < 0.320f );
+}
+
+void buildSDRColorimetry( displaycolorimetry_t * pColorimetry, colormapping_t *pMapping,
 	float flSDRGamutWideness, const displaycolorimetry_t & nativeDisplayOutput  )
 {
-    // ASSUMES Low gamut display... Native at 0.0
-    // Generic narrow gamut display (709)   --> COLOR 0.5
-    // Generic wide gamut display   --> COLOR 1.0
-
-    displaycolorimetry_t wideGamutGeneric;
-    wideGamutGeneric.primaries = { { 0.6825f, 0.3165f }, { 0.241f, 0.719f }, { 0.138f, 0.050f } };
-    wideGamutGeneric.white = { 0.3127f, 0.3290f };  // D65
-    wideGamutGeneric.eotf = EOTF::Gamma22;
-
-    // Assume linear saturation computation
-    colormapping_t mapSmoothToCubeLinearSat;
-    mapSmoothToCubeLinearSat.blendEnableMinSat = 0.7f;
-    mapSmoothToCubeLinearSat.blendEnableMaxSat = 1.0f;
-    mapSmoothToCubeLinearSat.blendAmountMin = 0.0f;
-    mapSmoothToCubeLinearSat.blendAmountMax = 1.f;
-
-    // Assume linear saturation computation
-    colormapping_t mapPartialToCubeLinearSat;
-    mapPartialToCubeLinearSat.blendEnableMinSat = 0.7f;
-    mapPartialToCubeLinearSat.blendEnableMaxSat = 1.0f;
-    mapPartialToCubeLinearSat.blendAmountMin = 0.0f;
-    mapPartialToCubeLinearSat.blendAmountMax = 0.25;
-
-    if ( flSDRGamutWideness < 0.5f )
+    if ( BIsWideGamut( nativeDisplayOutput) )
     {
-        float t = cfit( flSDRGamutWideness, 0.f, 0.5f, 0.0f, 1.0f );
-        *pSynetheticInputColorimetry = lerp( nativeDisplayOutput, wideGamutGeneric, t );
-        *pSyntheticColorMapping = mapSmoothToCubeLinearSat;
+        // 0.0: 709
+        // 0.75: Generic wide gamut display
+        // 1.0: Native
+
+        colormapping_t noRemap;
+        noRemap.blendEnableMinSat = 0.7f;
+        noRemap.blendEnableMaxSat = 1.0f;
+        noRemap.blendAmountMin = 0.0f;
+        noRemap.blendAmountMax = 0.0f;
+        *pMapping = noRemap;
+
+        if ( flSDRGamutWideness < 0.75 )
+        {
+            float t = cfit( flSDRGamutWideness, 0.f, 0.75f, 0.0f, 1.0f );
+            *pColorimetry = lerp( displaycolorimetry_709_gamma22, displaycolorimetry_widegamutgeneric_gamma22, t );
+        }
+        else
+        {
+            float t = cfit( flSDRGamutWideness, 0.75f, 1.f, 0.0f, 1.0f );
+            *pColorimetry = lerp( displaycolorimetry_widegamutgeneric_gamma22, nativeDisplayOutput, t );
+        }
     }
     else
     {
-        float t = cfit( flSDRGamutWideness, 0.5f, 1.0f, 0.0f, 1.0f );
-        *pSynetheticInputColorimetry = wideGamutGeneric;
-        *pSyntheticColorMapping = lerp( mapSmoothToCubeLinearSat, mapPartialToCubeLinearSat, t );
+        // 0.0: Native
+        // 0.5: Generic wide gamut display w/smooth mapping
+        // 1.0: Generic wide gamut display w/harsh mapping
+
+        // This is a full blending to the unit cube, starting at 70% max sat
+        // Creates a smooth transition from in-gamut to out of gamut
+        colormapping_t smoothRemap;
+        smoothRemap.blendEnableMinSat = 0.7f;
+        smoothRemap.blendEnableMaxSat = 1.0f;
+        smoothRemap.blendAmountMin = 0.0f;
+        smoothRemap.blendAmountMax = 1.f;
+
+        // Assume linear saturation computation
+        // This is a partial (25%) blending to the unit cube
+        // Allows some (but not full) clipping
+        colormapping_t partialRemap;
+        partialRemap.blendEnableMinSat = 0.7f;
+        partialRemap.blendEnableMaxSat = 1.0f;
+        partialRemap.blendAmountMin = 0.0f;
+        partialRemap.blendAmountMax = 0.25;
+
+        if ( flSDRGamutWideness < 0.5f )
+        {
+            float t = cfit( flSDRGamutWideness, 0.f, 0.5f, 0.0f, 1.0f );
+            *pColorimetry = lerp( nativeDisplayOutput, displaycolorimetry_widegamutgeneric_gamma22, t );
+            *pMapping = smoothRemap;
+        }
+        else
+        {
+            float t = cfit( flSDRGamutWideness, 0.5f, 1.0f, 0.0f, 1.0f );
+            *pColorimetry = displaycolorimetry_widegamutgeneric_gamma22;
+            *pMapping = lerp( smoothRemap, partialRemap, t );
+        }
+    }
+}
+
+void buildPQColorimetry( displaycolorimetry_t * pColorimetry, colormapping_t *pMapping, const displaycolorimetry_t & nativeDisplayOutput )
+{
+    *pColorimetry = displaycolorimetry_2020_pq;
+
+    if ( BIsWideGamut( nativeDisplayOutput) )
+    {
+        colormapping_t smoothRemap;
+        smoothRemap.blendEnableMinSat = 0.7f;
+        smoothRemap.blendEnableMaxSat = 1.0f;
+        smoothRemap.blendAmountMin = 0.0f;
+        smoothRemap.blendAmountMax = 1.f;
+        *pMapping = smoothRemap;
+    }
+    else
+    {
+        colormapping_t noRemap;
+        noRemap.blendEnableMinSat = 0.7f;
+        noRemap.blendEnableMaxSat = 1.0f;
+        noRemap.blendAmountMin = 0.0f;
+        noRemap.blendAmountMax = 0.0f;
+        *pMapping = noRemap;
     }
 }
 

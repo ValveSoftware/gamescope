@@ -128,10 +128,6 @@ update_color_mgmt()
 		const displaycolorimetry_t& nativeDisplayOutput = g_ColorMgmt.pending.nativeDisplayColorimetry;
 		const float flSDRGamutWideness = g_ColorMgmt.pending.sdrGamutWideness;
 
-		displaycolorimetry_t syntheticInputColorimetry{};
-		colormapping_t syntheticInputColorMapping{};
-		generateSyntheticInputColorimetry( &syntheticInputColorimetry, &syntheticInputColorMapping, flSDRGamutWideness, nativeDisplayOutput );
-
 		std::vector<uint16_t> lut3d;
 		uint32_t nLutEdgeSize3d = 17;
 		lut3d.resize( nLutEdgeSize3d*nLutEdgeSize3d*nLutEdgeSize3d*4 );
@@ -140,10 +136,30 @@ update_color_mgmt()
 		uint32_t nLutSize1d = 4096;
 		lut1d.resize( nLutSize1d*4 );
 
+		extern float g_flLinearToNits;
+		extern float g_flInternalDisplayNativeBrightness;
+		tonemapping_t tonemapping;
+		tonemapping.current_g22_display_current_luma = g_flInternalDisplayNativeBrightness;
+		tonemapping.pq_sdr_peak_white = g_flLinearToNits;
+		tonemapping.bUseShaper = true;
+
 		for ( uint32_t i = 0; i < ColorHelpers_EOTFCount; i++ )
 		{
+			displaycolorimetry_t inputColorimetry{};
+			colormapping_t colorMapping{};
+
 			EOTF planeEOTF = static_cast<EOTF>( i );
-			calcColorTransform( &lut1d[0], nLutSize1d, &lut3d[0], nLutEdgeSize3d, syntheticInputColorimetry, nativeDisplayOutput, syntheticInputColorMapping, g_ColorMgmt.pending.nightmode, planeEOTF );
+			if ( planeEOTF == EOTF::Gamma22 )
+			{
+				buildSDRColorimetry( &inputColorimetry, &colorMapping, flSDRGamutWideness, nativeDisplayOutput );
+			}
+			else if ( planeEOTF == EOTF::PQ )
+			{
+				buildPQColorimetry( &inputColorimetry, &colorMapping, nativeDisplayOutput );
+			}
+
+			calcColorTransform( &lut1d[0], nLutSize1d, &lut3d[0], nLutEdgeSize3d, inputColorimetry, nativeDisplayOutput,
+				colorMapping, g_ColorMgmt.pending.nightmode, tonemapping );
 
 			if ( !g_ColorMgmtLutsOverride[i].lut3d.empty() && !g_ColorMgmtLutsOverride[i].lut3d.empty() )
 				g_ColorMgmtLuts[i] = g_ColorMgmtLutsOverride[i];
