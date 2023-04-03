@@ -96,7 +96,7 @@ inline float positive_mod( float flX, float flPeriod )
 // Colorimetry functions related to color space conversions
 struct primaries_t
 {
-#ifndef NO_SPACESHIP
+#if __cplusplus >= 202002L
 	bool operator <=> (const primaries_t&) const = default;
 #endif
 
@@ -120,7 +120,7 @@ static constexpr uint32_t EOTFToIndex( EOTF eotf )
 
 struct displaycolorimetry_t
 {
-#ifndef NO_SPACESHIP
+#if __cplusplus >= 202002L
 	bool operator <=> (const displaycolorimetry_t&) const = default;
 #endif
 	primaries_t primaries;
@@ -130,7 +130,7 @@ struct displaycolorimetry_t
 
 struct nightmode_t
 {
-#ifndef NO_SPACESHIP
+#if __cplusplus >= 202002L
 	bool operator <=> (const nightmode_t&) const = default;
 #endif
 
@@ -141,7 +141,7 @@ struct nightmode_t
 
 struct colormapping_t
 {
-#ifndef NO_SPACESHIP
+#if __cplusplus >= 202002L
 	bool operator <=> (const colormapping_t&) const = default;
 #endif
 
