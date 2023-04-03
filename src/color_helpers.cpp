@@ -121,6 +121,8 @@ displaycolorimetry_t lerp( const displaycolorimetry_t & a, const displaycolorime
     // EOTF this is meant to handle doesn't actually change.
     // We just want to handle remapping primaries + whitepoint.
     //result.eotf = ( t > 0.5f ) ? b.eotf : a.eotf;
+    result.eotf = a.eotf;
+
     return result;
 }
 
