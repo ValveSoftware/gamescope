@@ -1727,6 +1727,7 @@ static inline uint32_t ColorSpaceToEOTFIndex( GamescopeAppTextureColorspace colo
 	switch ( colorspace )
 	{
 		default:
+		case GAMESCOPE_APP_TEXTURE_COLORSPACE_LINEAR: // Not actually linear, just Linear vs sRGB image views in Vulkan. Still viewed as sRGB on the DRM side.
 		case GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB:
 			// SDR sRGB content treated as native Gamma 22 curve. No need to do sRGB -> 2.2 or whatever.
 			return EOTFToIndex( EOTF::Gamma22 );

@@ -195,10 +195,10 @@ bool set_color_mgmt_enabled( bool bEnabled )
 
 bool set_color_3dlut_override(const char *path)
 {
-	bool had_lut = !g_ColorMgmtLutsOverride[0].lut3d.empty();
+	bool had_lut = !g_ColorMgmtLutsOverride[1].lut3d.empty();
 
-	g_ColorMgmtLutsOverride[0].lut3d.clear();
-	g_ColorMgmt.pending.hasOverrides = !g_ColorMgmtLutsOverride[0].lut1d.empty() && g_ColorMgmtLutsOverride[0].lut3d.empty();
+	g_ColorMgmtLutsOverride[1].lut3d.clear();
+	g_ColorMgmt.pending.hasOverrides = !g_ColorMgmtLutsOverride[1].lut1d.empty() && !g_ColorMgmtLutsOverride[1].lut3d.empty();
 
 	FILE *f = fopen(path, "rb");
 	if (!f) {
@@ -218,18 +218,18 @@ bool set_color_3dlut_override(const char *path)
 	auto data = std::vector<uint16_t>(elems);
 	fread(data.data(), elems, sizeof(uint16_t), f);
 
-	g_ColorMgmtLutsOverride[0].lut3d = std::move(data);
-	g_ColorMgmt.pending.hasOverrides = !g_ColorMgmtLutsOverride[0].lut1d.empty() && g_ColorMgmtLutsOverride[0].lut3d.empty();
+	g_ColorMgmtLutsOverride[1].lut3d = std::move(data);
+	g_ColorMgmt.pending.hasOverrides = !g_ColorMgmtLutsOverride[1].lut1d.empty() && !g_ColorMgmtLutsOverride[1].lut3d.empty();
 
 	return true;
 }
 
 bool set_color_shaperlut_override(const char *path)
 {
-	bool had_lut = !g_ColorMgmtLutsOverride[0].lut1d.empty();
+	bool had_lut = !g_ColorMgmtLutsOverride[1].lut1d.empty();
 
-	g_ColorMgmtLutsOverride[0].lut1d.clear();
-	g_ColorMgmt.pending.hasOverrides = !g_ColorMgmtLutsOverride[0].lut1d.empty() && g_ColorMgmtLutsOverride[0].lut3d.empty();
+	g_ColorMgmtLutsOverride[1].lut1d.clear();
+	g_ColorMgmt.pending.hasOverrides = !g_ColorMgmtLutsOverride[1].lut1d.empty() && !g_ColorMgmtLutsOverride[1].lut3d.empty();
 
 	FILE *f = fopen(path, "rb");
 	if (!f) {
@@ -249,8 +249,8 @@ bool set_color_shaperlut_override(const char *path)
 	auto data = std::vector<uint16_t>(elems);
 	fread(data.data(), elems, sizeof(uint16_t), f);
 
-	g_ColorMgmtLutsOverride[0].lut1d = std::move(data);
-	g_ColorMgmt.pending.hasOverrides = !g_ColorMgmtLutsOverride[0].lut1d.empty() && g_ColorMgmtLutsOverride[0].lut3d.empty();
+	g_ColorMgmtLutsOverride[1].lut1d = std::move(data);
+	g_ColorMgmt.pending.hasOverrides = !g_ColorMgmtLutsOverride[1].lut1d.empty() && !g_ColorMgmtLutsOverride[1].lut3d.empty();
 
 	return true;
 }
