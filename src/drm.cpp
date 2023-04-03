@@ -1965,21 +1965,27 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 		{
 			if (drm->connector->has_hdr_output_metadata) {
 				auto hdr_output_metadata = get_default_hdr_metadata( drm, drm->connector );
-				if ( bConnectorHDR ) {
-					if ( drm->connector->metadata.hdr10_metadata_blob )
-						hdr_output_metadata = drm->connector->metadata.hdr10_metadata_blob;
 
-					auto feedback = steamcompmgr_get_base_layer_swapchain_feedback();
-					if (feedback && feedback->hdr_metadata_blob)
-						hdr_output_metadata = feedback->hdr_metadata_blob;
-				}
+				if ( drm->connector->metadata.hdr10_metadata_blob )
+					hdr_output_metadata = drm->connector->metadata.hdr10_metadata_blob;
+
+				auto feedback = steamcompmgr_get_base_layer_swapchain_feedback();
+				if (feedback && feedback->hdr_metadata_blob)
+					hdr_output_metadata = feedback->hdr_metadata_blob;
 
 				drm->connector->pending.hdr_output_metadata = hdr_output_metadata;
 			}
 		}
 		else
 		{
-			drm->connector->pending.hdr_output_metadata = nullptr;
+			if (drm->connector->has_hdr_output_metadata && bConnectorSupportsHDR)
+			{
+				drm->connector->pending.hdr_output_metadata = drm->sdr_static_metadata;
+			}
+			else
+			{
+				drm->connector->pending.hdr_output_metadata = nullptr;
+			}
 		}
 	}
 
@@ -2625,4 +2631,10 @@ void drm_get_native_colorimetry(struct drm_t *drm, displaycolorimetry_t *display
 		*outputEncodingColorimetry = displaycolorimetry_2020_pq;
 	else
 		*outputEncodingColorimetry = drm->connector->metadata.colorimetry;
+
+	if (!g_bOutputHDREnabled)
+	{
+		displayColorimetry->eotf = EOTF::Gamma22;
+		outputEncodingColorimetry->eotf = EOTF::Gamma22;
+	}
 }
