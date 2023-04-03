@@ -214,7 +214,8 @@ bool set_color_mgmt_enabled( bool bEnabled )
 
 bool set_color_3dlut_override(const char *path)
 {
-	g_ColorMgmtLutsOverride[0].lut3d.clear();
+	int nLutIndex = EOTFToIndex( EOTF::Gamma22 );
+	g_ColorMgmtLutsOverride[nLutIndex].lut3d.clear();
 	g_ColorMgmt.pending.externalDirtyCtr++;
 
 	FILE *f = fopen(path, "rb");
@@ -235,14 +236,15 @@ bool set_color_3dlut_override(const char *path)
 	auto data = std::vector<uint16_t>(elems);
 	fread(data.data(), elems, sizeof(uint16_t), f);
 
-	g_ColorMgmtLutsOverride[0].lut3d = std::move(data);
+	g_ColorMgmtLutsOverride[nLutIndex].lut3d = std::move(data);
 
 	return true;
 }
 
 bool set_color_shaperlut_override(const char *path)
 {
-	g_ColorMgmtLutsOverride[0].lut1d.clear();
+	int nLutIndex = EOTFToIndex( EOTF::Gamma22 );
+	g_ColorMgmtLutsOverride[nLutIndex].lut1d.clear();
 	g_ColorMgmt.pending.externalDirtyCtr++;
 
 	FILE *f = fopen(path, "rb");
@@ -263,7 +265,7 @@ bool set_color_shaperlut_override(const char *path)
 	auto data = std::vector<uint16_t>(elems);
 	fread(data.data(), elems, sizeof(uint16_t), f);
 
-	g_ColorMgmtLutsOverride[0].lut1d = std::move(data);
+	g_ColorMgmtLutsOverride[nLutIndex].lut1d = std::move(data);
 
 	return true;
 }
