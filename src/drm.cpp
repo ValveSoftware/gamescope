@@ -2611,10 +2611,18 @@ bool drm_supports_color_mgmt(struct drm_t *drm)
 	return true;
 }
 
-const displaycolorimetry_t &drm_get_native_colorimetry(struct drm_t *drm)
+void drm_get_native_colorimetry(struct drm_t *drm, displaycolorimetry_t *displayColorimetry, displaycolorimetry_t *outputEncodingColorimetry)
 {
 	if ( !drm || !drm->connector )
-		return displaycolorimetry_709_gamma22;
+	{
+		*displayColorimetry = displaycolorimetry_709_gamma22;
+		*outputEncodingColorimetry = displaycolorimetry_709_gamma22;
+	}
 
-	return drm->connector->metadata.colorimetry;
+	*displayColorimetry = drm->connector->metadata.colorimetry;
+	// For HDR output, expected content colorspace != native colorspace.
+	if (drm->connector->metadata.supportsST2084 && g_bOutputHDREnabled)
+		*outputEncodingColorimetry = displaycolorimetry_2020_pq;
+	else
+		*outputEncodingColorimetry = drm->connector->metadata.colorimetry;
 }

@@ -112,11 +112,12 @@ update_color_mgmt()
 	// update pending native display colorimetry
 	if ( !BIsNested() )
 	{
-		g_ColorMgmt.pending.nativeDisplayColorimetry = drm_get_native_colorimetry( &g_DRM );
+		 drm_get_native_colorimetry( &g_DRM, &g_ColorMgmt.pending.displayColorimetry, &g_ColorMgmt.pending.outputEncodingColorimetry );
 	}
 	else
 	{
-		g_ColorMgmt.pending.nativeDisplayColorimetry = displaycolorimetry_709_gamma22;
+		g_ColorMgmt.pending.displayColorimetry = displaycolorimetry_709_gamma22;
+		g_ColorMgmt.pending.outputEncodingColorimetry = displaycolorimetry_709_gamma22;
 	}
 
 	// check if any part of our color mgmt stack is dirty
@@ -125,7 +126,9 @@ update_color_mgmt()
 
 	if (g_ColorMgmt.pending.enabled)
 	{
-		const displaycolorimetry_t& nativeDisplayOutput = g_ColorMgmt.pending.nativeDisplayColorimetry;
+		const displaycolorimetry_t& displayColorimetry = g_ColorMgmt.pending.displayColorimetry;
+		const displaycolorimetry_t& outputEncodingColorimetry = g_ColorMgmt.pending.outputEncodingColorimetry;
+
 		const float flSDRGamutWideness = g_ColorMgmt.pending.sdrGamutWideness;
 
 		std::vector<uint16_t> lut3d;
@@ -151,14 +154,14 @@ update_color_mgmt()
 			EOTF planeEOTF = static_cast<EOTF>( i );
 			if ( planeEOTF == EOTF::Gamma22 )
 			{
-				buildSDRColorimetry( &inputColorimetry, &colorMapping, flSDRGamutWideness, nativeDisplayOutput );
+				buildSDRColorimetry( &inputColorimetry, &colorMapping, flSDRGamutWideness, displayColorimetry );
 			}
 			else if ( planeEOTF == EOTF::PQ )
 			{
-				buildPQColorimetry( &inputColorimetry, &colorMapping, nativeDisplayOutput );
+				buildPQColorimetry( &inputColorimetry, &colorMapping, displayColorimetry );
 			}
 
-			calcColorTransform( &lut1d[0], nLutSize1d, &lut3d[0], nLutEdgeSize3d, inputColorimetry, nativeDisplayOutput,
+			calcColorTransform( &lut1d[0], nLutSize1d, &lut3d[0], nLutEdgeSize3d, inputColorimetry, outputEncodingColorimetry,
 				colorMapping, g_ColorMgmt.pending.nightmode, tonemapping );
 
 			if ( !g_ColorMgmtLutsOverride[i].lut3d.empty() && !g_ColorMgmtLutsOverride[i].lut3d.empty() )

@@ -345,7 +345,13 @@ struct gamescope_color_mgmt_t
 	uint32_t externalDirtyCtr;
 	nightmode_t nightmode;
 	float sdrGamutWideness; // user property to widen gamut
-	displaycolorimetry_t nativeDisplayColorimetry;
+
+	// the native colorimetry capabilities of the display
+	displaycolorimetry_t displayColorimetry;
+	// the output encoding colorimetry
+	// ie. for HDR displays we send an explicit 2020 colorimetry packet.
+	// on SDR displays this is the same as displayColorimetry.
+	displaycolorimetry_t outputEncodingColorimetry;
 
 	bool operator <=> (const gamescope_color_mgmt_t&) const = default;
 };

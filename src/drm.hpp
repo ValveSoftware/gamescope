@@ -319,7 +319,7 @@ const char *drm_get_device_name(struct drm_t *drm);
 std::pair<uint32_t, uint32_t> drm_get_connector_identifier(struct drm_t *drm);
 void drm_set_hdr_state(struct drm_t *drm, bool enabled);
 
-const displaycolorimetry_t &drm_get_native_colorimetry(struct drm_t *drm);
+void drm_get_native_colorimetry(struct drm_t *drm, displaycolorimetry_t *displayColorimetry, displaycolorimetry_t *outputEncodingColorimetry);
 
 extern bool g_bSupportsAsyncFlips;
 
