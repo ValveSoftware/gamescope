@@ -351,26 +351,14 @@ void buildSDRColorimetry( displaycolorimetry_t * pColorimetry, colormapping_t *p
     if ( BIsWideGamut( nativeDisplayOutput) )
     {
         // 0.0: 709
-        // 0.75: Generic wide gamut display
         // 1.0: Native
-
         colormapping_t noRemap;
         noRemap.blendEnableMinSat = 0.7f;
         noRemap.blendEnableMaxSat = 1.0f;
         noRemap.blendAmountMin = 0.0f;
         noRemap.blendAmountMax = 0.0f;
         *pMapping = noRemap;
-
-        if ( flSDRGamutWideness < 0.75 )
-        {
-            float t = cfit( flSDRGamutWideness, 0.f, 0.75f, 0.0f, 1.0f );
-            *pColorimetry = lerp( displaycolorimetry_709, displaycolorimetry_widegamutgeneric, t );
-        }
-        else
-        {
-            float t = cfit( flSDRGamutWideness, 0.75f, 1.f, 0.0f, 1.0f );
-            *pColorimetry = lerp( displaycolorimetry_widegamutgeneric, nativeDisplayOutput, t );
-        }
+        *pColorimetry = lerp( displaycolorimetry_709, nativeDisplayOutput, flSDRGamutWideness );
     }
     else
     {
