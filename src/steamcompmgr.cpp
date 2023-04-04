@@ -141,23 +141,44 @@ update_color_mgmt()
 
 		extern float g_flLinearToNits;
 		extern float g_flInternalDisplayNativeBrightness;
-		tonemapping_t tonemapping;
-		tonemapping.current_g22_display_current_luma = g_flInternalDisplayNativeBrightness;
-		tonemapping.pq_sdr_peak_white = g_flLinearToNits;
-		tonemapping.bUseShaper = true;
 
 		for ( uint32_t i = 0; i < ColorHelpers_EOTFCount; i++ )
 		{
 			displaycolorimetry_t inputColorimetry{};
 			colormapping_t colorMapping{};
 
+			tonemapping_t tonemapping{};
+			tonemapping.bUseShaper = true;
+
 			EOTF planeEOTF = static_cast<EOTF>( i );
 			if ( planeEOTF == EOTF::Gamma22 )
 			{
+				if ( outputEncodingColorimetry.eotf == EOTF::Gamma22 )
+				{
+					// G22 -> G22. Does not matter what the g22 mult is
+					tonemapping.g22_luminance = 1.f;
+				}
+				else if ( outputEncodingColorimetry.eotf == EOTF::PQ )
+				{
+					// G22 -> PQ. SDR content going on an HDR output
+					tonemapping.g22_luminance = g_flLinearToNits;
+				}
+
 				buildSDRColorimetry( &inputColorimetry, &colorMapping, flSDRGamutWideness, displayColorimetry );
 			}
 			else if ( planeEOTF == EOTF::PQ )
 			{
+				if ( outputEncodingColorimetry.eotf == EOTF::Gamma22 )
+				{
+					// PQ -> G22  Leverage the display's native brightness
+					tonemapping.g22_luminance = g_flInternalDisplayNativeBrightness;
+				}
+				else if ( outputEncodingColorimetry.eotf == EOTF::PQ )
+				{
+					// PQ -> PQ. Better not matter what the g22 mult is
+					tonemapping.g22_luminance = 1.f;
+				}
+
 				buildPQColorimetry( &inputColorimetry, &colorMapping, displayColorimetry );
 			}
 

@@ -157,8 +157,7 @@ colormapping_t lerp( const colormapping_t & a, const colormapping_t & b, float t
 struct tonemapping_t
 {
 	bool bUseShaper = true;
-	float current_g22_display_current_luma = 100.f;  // when mapping to a current gamma 22 display, what's the current luma (relavent to PQ conversion)
-	float pq_sdr_peak_white = 100.f;  // when mapping SDR for PQ output, what peak white should be used?
+	float g22_luminance = 1.f; // what luminance should be applied for g22 EOTF conversions?
 };
 
 // Generate a color transform from the source colorspace, to the dest colorspace,
