@@ -117,12 +117,6 @@ displaycolorimetry_t lerp( const displaycolorimetry_t & a, const displaycolorime
     result.primaries.b = uv_to_xy( result.primaries.b );
     result.white = uv_to_xy( result.white );
 
-    // Josh: Don't lerp EOTF, it doesn't make sense as the content
-    // EOTF this is meant to handle doesn't actually change.
-    // We just want to handle remapping primaries + whitepoint.
-    //result.eotf = ( t > 0.5f ) ? b.eotf : a.eotf;
-    result.eotf = a.eotf;
-
     return result;
 }
 
@@ -265,8 +259,9 @@ glm::vec3 applyShaper( const glm::vec3 & input, EOTF source, EOTF dest, const to
 
 void calcColorTransform( uint16_t * pRgbxData1d, int nLutSize1d,
     uint16_t * pRgbxData3d, int nLutEdgeSize3d,
-    const displaycolorimetry_t & source, const displaycolorimetry_t & dest, const colormapping_t & mapping,
-    const nightmode_t & nightmode, const tonemapping_t & tonemapping )
+	const displaycolorimetry_t & source, EOTF sourceEOTF,
+	const displaycolorimetry_t & dest,  EOTF destEOTF,
+    const colormapping_t & mapping, const nightmode_t & nightmode, const tonemapping_t & tonemapping )
 {
     glm::mat3 xyz_from_dest = normalised_primary_matrix( dest.primaries, dest.white, 1.f );
     glm::mat3 dest_from_xyz = glm::inverse( xyz_from_dest );
@@ -286,7 +281,7 @@ void calcColorTransform( uint16_t * pRgbxData1d, int nLutSize1d,
         for ( int nVal=0; nVal<nLutSize1d; ++nVal )
         {
             glm::vec3 sourceColorEOTFEncoded = { nVal * flScale, nVal * flScale, nVal * flScale };
-            glm::vec3 shapedSourceColor = applyShaper( sourceColorEOTFEncoded, source.eotf, dest.eotf, tonemapping, false );
+            glm::vec3 shapedSourceColor = applyShaper( sourceColorEOTFEncoded, sourceEOTF, destEOTF, tonemapping, false );
             pRgbxData1d[nVal * 4 + 0] = drm_quantize_lut_value( shapedSourceColor.x );
             pRgbxData1d[nVal * 4 + 1] = drm_quantize_lut_value( shapedSourceColor.y );
             pRgbxData1d[nVal * 4 + 2] = drm_quantize_lut_value( shapedSourceColor.z );
@@ -311,10 +306,10 @@ void calcColorTransform( uint16_t * pRgbxData1d, int nLutSize1d,
                 for ( int nRed=0; nRed<nLutEdgeSize3d; ++nRed )
                 {
                     glm::vec3 shapedSourceColor = { nRed * flScale, nGreen * flScale, nBlue * flScale };
-                    glm::vec3 sourceColorEOTFEncoded = applyShaper( shapedSourceColor, source.eotf, dest.eotf, tonemapping, true );
+                    glm::vec3 sourceColorEOTFEncoded = applyShaper( shapedSourceColor, sourceEOTF, destEOTF, tonemapping, true );
 
                     // Convert to linearized display referred for source colorimetry
-                    glm::vec3 sourceColorLinear = calcEOTFToLinear( sourceColorEOTFEncoded, source.eotf, tonemapping );
+                    glm::vec3 sourceColorLinear = calcEOTFToLinear( sourceColorEOTFEncoded, sourceEOTF, tonemapping );
 
                     // Convert to dest colorimetry (linearized display referred)
                     glm::vec3 destColorLinear = dest_from_source * sourceColorLinear;
@@ -330,7 +325,7 @@ void calcColorTransform( uint16_t * pRgbxData1d, int nLutSize1d,
                     destColorLinear = vNightModeMultLinear * destColorLinear;
 
                     // Apply dest EOTF
-                    glm::vec3 destColorEOTFEncoded = calcLinearToEOTF( destColorLinear, dest.eotf, tonemapping );
+                    glm::vec3 destColorEOTFEncoded = calcLinearToEOTF( destColorLinear, destEOTF, tonemapping );
 
                     // Write LUT
                     int nLutIndex = nBlue * nLutEdgeSize3d * nLutEdgeSize3d + nGreen * nLutEdgeSize3d + nRed;
@@ -369,12 +364,12 @@ void buildSDRColorimetry( displaycolorimetry_t * pColorimetry, colormapping_t *p
         if ( flSDRGamutWideness < 0.75 )
         {
             float t = cfit( flSDRGamutWideness, 0.f, 0.75f, 0.0f, 1.0f );
-            *pColorimetry = lerp( displaycolorimetry_709_gamma22, displaycolorimetry_widegamutgeneric_gamma22, t );
+            *pColorimetry = lerp( displaycolorimetry_709, displaycolorimetry_widegamutgeneric, t );
         }
         else
         {
             float t = cfit( flSDRGamutWideness, 0.75f, 1.f, 0.0f, 1.0f );
-            *pColorimetry = lerp( displaycolorimetry_widegamutgeneric_gamma22, nativeDisplayOutput, t );
+            *pColorimetry = lerp( displaycolorimetry_widegamutgeneric, nativeDisplayOutput, t );
         }
     }
     else
@@ -403,13 +398,13 @@ void buildSDRColorimetry( displaycolorimetry_t * pColorimetry, colormapping_t *p
         if ( flSDRGamutWideness < 0.5f )
         {
             float t = cfit( flSDRGamutWideness, 0.f, 0.5f, 0.0f, 1.0f );
-            *pColorimetry = lerp( nativeDisplayOutput, displaycolorimetry_widegamutgeneric_gamma22, t );
+            *pColorimetry = lerp( nativeDisplayOutput, displaycolorimetry_widegamutgeneric, t );
             *pMapping = smoothRemap;
         }
         else
         {
             float t = cfit( flSDRGamutWideness, 0.5f, 1.0f, 0.0f, 1.0f );
-            *pColorimetry = displaycolorimetry_widegamutgeneric_gamma22;
+            *pColorimetry = displaycolorimetry_widegamutgeneric;
             *pMapping = lerp( smoothRemap, partialRemap, t );
         }
     }
@@ -417,7 +412,7 @@ void buildSDRColorimetry( displaycolorimetry_t * pColorimetry, colormapping_t *p
 
 void buildPQColorimetry( displaycolorimetry_t * pColorimetry, colormapping_t *pMapping, const displaycolorimetry_t & nativeDisplayOutput )
 {
-    *pColorimetry = displaycolorimetry_2020_pq;
+    *pColorimetry = displaycolorimetry_2020;
 
     if ( BIsWideGamut( nativeDisplayOutput) )
     {

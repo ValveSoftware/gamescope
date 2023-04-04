@@ -413,12 +413,13 @@ drm_hdr_parse_edid(drm_t *drm, struct connector *connector, const struct di_edid
 		// Hardcode Steam Deck display info to support
 		// BIOSes with missing info for this in EDID.
 		metadata->colorimetry = displaycolorimetry_steamdeck;
+		metadata->eotf = EOTF::Gamma22;
 	}
 	else if (chroma && chroma->red_x != 0.0f)
 	{
 		metadata->colorimetry.primaries = { { chroma->red_x, chroma->red_y }, { chroma->green_x, chroma->green_y }, { chroma->blue_x, chroma->blue_y } };
 		metadata->colorimetry.white = { chroma->white_x, chroma->white_y };
-		metadata->colorimetry.eotf = infoframe->eotf == HDMI_EOTF_ST2084 ? EOTF::PQ : EOTF::Gamma22;
+		metadata->eotf = infoframe->eotf == HDMI_EOTF_ST2084 ? EOTF::PQ : EOTF::Gamma22;
 	}
 	else
 	{
@@ -426,12 +427,14 @@ drm_hdr_parse_edid(drm_t *drm, struct connector *connector, const struct di_edid
 		if (infoframe->eotf == HDMI_EOTF_ST2084)
 		{
 			// Fallback to 2020 primaries for HDR
-			metadata->colorimetry = displaycolorimetry_709_gamma22;
+			metadata->colorimetry = displaycolorimetry_2020;
+			metadata->eotf = EOTF::PQ;
 		}
 		else
 		{
 			// Fallback to 709 primaries for SDR
-			metadata->colorimetry = displaycolorimetry_2020_pq;
+			metadata->colorimetry = displaycolorimetry_709;
+			metadata->eotf = EOTF::Gamma22;
 		}
 	}
 }
@@ -2617,24 +2620,36 @@ bool drm_supports_color_mgmt(struct drm_t *drm)
 	return true;
 }
 
-void drm_get_native_colorimetry(struct drm_t *drm, displaycolorimetry_t *displayColorimetry, displaycolorimetry_t *outputEncodingColorimetry)
+void drm_get_native_colorimetry( struct drm_t *drm,
+	displaycolorimetry_t *displayColorimetry, EOTF *displayEOTF,
+	displaycolorimetry_t *outputEncodingColorimetry, EOTF *outputEncodingEOTF )
 {
 	if ( !drm || !drm->connector )
 	{
-		*displayColorimetry = displaycolorimetry_709_gamma22;
-		*outputEncodingColorimetry = displaycolorimetry_709_gamma22;
+		*displayColorimetry = displaycolorimetry_709;
+		*displayEOTF = EOTF::Gamma22;
+		*outputEncodingColorimetry = displaycolorimetry_709;
+		*outputEncodingEOTF = EOTF::Gamma22;
 	}
 
 	*displayColorimetry = drm->connector->metadata.colorimetry;
+	*displayEOTF = drm->connector->metadata.eotf;
+
 	// For HDR output, expected content colorspace != native colorspace.
 	if (drm->connector->metadata.supportsST2084 && g_bOutputHDREnabled)
-		*outputEncodingColorimetry = displaycolorimetry_2020_pq;
+	{
+		*outputEncodingColorimetry = displaycolorimetry_2020;
+		*outputEncodingEOTF = EOTF::PQ;
+	}
 	else
+	{
 		*outputEncodingColorimetry = drm->connector->metadata.colorimetry;
+		*outputEncodingEOTF = drm->connector->metadata.eotf;
+	}
 
 	if (!g_bOutputHDREnabled)
 	{
-		displayColorimetry->eotf = EOTF::Gamma22;
-		outputEncodingColorimetry->eotf = EOTF::Gamma22;
+		*displayEOTF = EOTF::Gamma22;
+		*outputEncodingEOTF = EOTF::Gamma22;
 	}
 }

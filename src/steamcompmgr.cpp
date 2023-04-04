@@ -112,12 +112,16 @@ update_color_mgmt()
 	// update pending native display colorimetry
 	if ( !BIsNested() )
 	{
-		 drm_get_native_colorimetry( &g_DRM, &g_ColorMgmt.pending.displayColorimetry, &g_ColorMgmt.pending.outputEncodingColorimetry );
+		drm_get_native_colorimetry( &g_DRM,
+			&g_ColorMgmt.pending.displayColorimetry, &g_ColorMgmt.pending.displayEOTF,
+			&g_ColorMgmt.pending.outputEncodingColorimetry, &g_ColorMgmt.pending.outputEncodingEOTF );
 	}
 	else
 	{
-		g_ColorMgmt.pending.displayColorimetry = displaycolorimetry_709_gamma22;
-		g_ColorMgmt.pending.outputEncodingColorimetry = displaycolorimetry_709_gamma22;
+		g_ColorMgmt.pending.displayColorimetry = displaycolorimetry_709;
+		g_ColorMgmt.pending.displayEOTF = EOTF::Gamma22;
+		g_ColorMgmt.pending.outputEncodingColorimetry = displaycolorimetry_709;
+		g_ColorMgmt.pending.outputEncodingEOTF = EOTF::Gamma22;
 	}
 
 	// check if any part of our color mgmt stack is dirty
@@ -128,8 +132,6 @@ update_color_mgmt()
 	{
 		const displaycolorimetry_t& displayColorimetry = g_ColorMgmt.pending.displayColorimetry;
 		const displaycolorimetry_t& outputEncodingColorimetry = g_ColorMgmt.pending.outputEncodingColorimetry;
-
-		const float flSDRGamutWideness = g_ColorMgmt.pending.sdrGamutWideness;
 
 		std::vector<uint16_t> lut3d;
 		uint32_t nLutEdgeSize3d = 17;
@@ -142,7 +144,7 @@ update_color_mgmt()
 		extern float g_flLinearToNits;
 		extern float g_flInternalDisplayNativeBrightness;
 
-		for ( uint32_t i = 0; i < ColorHelpers_EOTFCount; i++ )
+		for ( uint32_t nInputEOTF = 0; nInputEOTF < ColorHelpers_EOTFCount; nInputEOTF++ )
 		{
 			displaycolorimetry_t inputColorimetry{};
 			colormapping_t colorMapping{};
@@ -150,30 +152,33 @@ update_color_mgmt()
 			tonemapping_t tonemapping{};
 			tonemapping.bUseShaper = true;
 
-			EOTF planeEOTF = static_cast<EOTF>( i );
-			if ( planeEOTF == EOTF::Gamma22 )
+			EOTF inputEOTF = static_cast<EOTF>( nInputEOTF );
+			if ( inputEOTF == EOTF::Gamma22 )
 			{
-				if ( outputEncodingColorimetry.eotf == EOTF::Gamma22 )
+				if ( g_ColorMgmt.pending.outputEncodingEOTF == EOTF::Gamma22 )
 				{
 					// G22 -> G22. Does not matter what the g22 mult is
 					tonemapping.g22_luminance = 1.f;
 				}
-				else if ( outputEncodingColorimetry.eotf == EOTF::PQ )
+				else if ( g_ColorMgmt.pending.outputEncodingEOTF == EOTF::PQ )
 				{
 					// G22 -> PQ. SDR content going on an HDR output
 					tonemapping.g22_luminance = g_flLinearToNits;
 				}
 
-				buildSDRColorimetry( &inputColorimetry, &colorMapping, flSDRGamutWideness, displayColorimetry );
+				// The final display colorimetry is used to build the output mapping, as we want a gamut-aware handling
+				// for sdrGamutWideness indepdendent of the output encoding (for SDR data), and when mapping SDR -> PQ output
+				// we only want to utilize a portion of the gamut the actual display can reproduce
+				buildSDRColorimetry( &inputColorimetry, &colorMapping, g_ColorMgmt.pending.sdrGamutWideness, displayColorimetry );
 			}
-			else if ( planeEOTF == EOTF::PQ )
+			else if ( inputEOTF == EOTF::PQ )
 			{
-				if ( outputEncodingColorimetry.eotf == EOTF::Gamma22 )
+				if ( g_ColorMgmt.pending.outputEncodingEOTF == EOTF::Gamma22 )
 				{
 					// PQ -> G22  Leverage the display's native brightness
 					tonemapping.g22_luminance = g_flInternalDisplayNativeBrightness;
 				}
-				else if ( outputEncodingColorimetry.eotf == EOTF::PQ )
+				else if ( g_ColorMgmt.pending.outputEncodingEOTF == EOTF::PQ )
 				{
 					// PQ -> PQ. Better not matter what the g22 mult is
 					tonemapping.g22_luminance = 1.f;
@@ -182,15 +187,22 @@ update_color_mgmt()
 				buildPQColorimetry( &inputColorimetry, &colorMapping, displayColorimetry );
 			}
 
-			calcColorTransform( &lut1d[0], nLutSize1d, &lut3d[0], nLutEdgeSize3d, inputColorimetry, outputEncodingColorimetry,
+			calcColorTransform( &lut1d[0], nLutSize1d, &lut3d[0], nLutEdgeSize3d, inputColorimetry, inputEOTF,
+				outputEncodingColorimetry, g_ColorMgmt.pending.outputEncodingEOTF,
 				colorMapping, g_ColorMgmt.pending.nightmode, tonemapping );
 
-			if ( !g_ColorMgmtLutsOverride[i].lut3d.empty() && !g_ColorMgmtLutsOverride[i].lut1d.empty() )
-				g_ColorMgmtLuts[i] = g_ColorMgmtLutsOverride[i];
+			if ( !g_ColorMgmtLutsOverride[nInputEOTF].lut3d.empty() && !g_ColorMgmtLutsOverride[nInputEOTF].lut1d.empty() )
+			{
+				g_ColorMgmtLuts[nInputEOTF] = g_ColorMgmtLutsOverride[nInputEOTF];
+			}
 			else if ( !lut3d.empty() && !lut1d.empty() )
-				g_ColorMgmtLuts[i] = gamescope_color_mgmt_luts{ lut3d, lut1d };
+			{
+				g_ColorMgmtLuts[nInputEOTF] = gamescope_color_mgmt_luts{ lut3d, lut1d };
+			}
 			else
-				g_ColorMgmtLuts[i].reset();
+			{
+				g_ColorMgmtLuts[nInputEOTF].reset();
+			}
 		}
 	}
 	else

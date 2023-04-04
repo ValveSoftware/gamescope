@@ -125,7 +125,6 @@ struct displaycolorimetry_t
 #endif
 	primaries_t primaries;
 	glm::vec2 white;
-	EOTF eotf;
 };
 
 struct nightmode_t
@@ -170,8 +169,9 @@ struct tonemapping_t
 
 void calcColorTransform( uint16_t * pRgbxData1d, int nLutSize1d,
 	uint16_t * pRgbxData3d, int nLutEdgeSize3d,
-	const displaycolorimetry_t & source, const displaycolorimetry_t & dest, const colormapping_t & mapping,
-	const nightmode_t & nightmode, const tonemapping_t & tonemapping );
+	const displaycolorimetry_t & source, EOTF sourceEOTF,
+	const displaycolorimetry_t & dest,  EOTF destEOTF,
+	const colormapping_t & mapping, const nightmode_t & nightmode, const tonemapping_t & tonemapping );
 
 int writeRawLut( const char * outputFilename, uint16_t * pData, size_t nSize );
 
@@ -233,29 +233,25 @@ static constexpr displaycolorimetry_t displaycolorimetry_steamdeck
 {
 	.primaries = { { 0.602f, 0.355f }, { 0.340f, 0.574f }, { 0.164f, 0.121f } },
 	.white = { 0.3070f, 0.3220f },  // not D65
-	.eotf = EOTF::Gamma22,
 };
 
-static constexpr displaycolorimetry_t displaycolorimetry_709_gamma22
+static constexpr displaycolorimetry_t displaycolorimetry_709
 {
 	.primaries = { { 0.64f, 0.33f }, { 0.30f, 0.60f }, { 0.15f, 0.06f } },
 	.white = { 0.3127f, 0.3290f },  // D65
-	.eotf = EOTF::Gamma22,
 };
 
 // Our "saturated SDR target", per jeremys
-static constexpr displaycolorimetry_t displaycolorimetry_widegamutgeneric_gamma22
+static constexpr displaycolorimetry_t displaycolorimetry_widegamutgeneric
 {
 	.primaries = { { 0.6825f, 0.3165f }, { 0.241f, 0.719f }, { 0.138f, 0.050f } },
 	.white = { 0.3127f, 0.3290f },  // D65
-	.eotf = EOTF::Gamma22,
 };
 
-static constexpr displaycolorimetry_t displaycolorimetry_2020_pq
+static constexpr displaycolorimetry_t displaycolorimetry_2020
 {
 	.primaries = { { 0.708f, 0.292f }, { 0.170f, 0.797f }, { 0.131f, 0.046f } },
 	.white = { 0.3127f, 0.3290f },  // D65
-	.eotf = EOTF::PQ,
 };
 
 int color_tests();

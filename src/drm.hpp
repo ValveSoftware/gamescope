@@ -123,6 +123,7 @@ struct connector_metadata_t {
    bool supportsST2084 = false;
 
    displaycolorimetry_t colorimetry = {};
+   EOTF eotf = EOTF::Gamma22;
 };
 
 struct connector {
@@ -319,7 +320,9 @@ const char *drm_get_device_name(struct drm_t *drm);
 std::pair<uint32_t, uint32_t> drm_get_connector_identifier(struct drm_t *drm);
 void drm_set_hdr_state(struct drm_t *drm, bool enabled);
 
-void drm_get_native_colorimetry(struct drm_t *drm, displaycolorimetry_t *displayColorimetry, displaycolorimetry_t *outputEncodingColorimetry);
+void drm_get_native_colorimetry( struct drm_t *drm,
+	displaycolorimetry_t *displayColorimetry, EOTF *displayEOTF,
+	displaycolorimetry_t *outputEncodingColorimetry, EOTF *outputEncodingEOTF );
 
 extern bool g_bSupportsAsyncFlips;
 
