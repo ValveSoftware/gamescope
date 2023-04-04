@@ -410,6 +410,7 @@ drm_hdr_parse_edid(drm_t *drm, struct connector *connector, const struct di_edid
 
 	if (connector->is_steam_deck_display)
 	{
+		drm_log.infof("[colorimetry]: Steam Deck display Detected. Overriding EDID colorimetry");
 		// Hardcode Steam Deck display info to support
 		// BIOSes with missing info for this in EDID.
 		metadata->colorimetry = displaycolorimetry_steamdeck;
@@ -417,6 +418,7 @@ drm_hdr_parse_edid(drm_t *drm, struct connector *connector, const struct di_edid
 	}
 	else if (chroma && chroma->red_x != 0.0f)
 	{
+		drm_log.infof("[colorimetry]: EDID with colorimetry detected. Using it");
 		metadata->colorimetry.primaries = { { chroma->red_x, chroma->red_y }, { chroma->green_x, chroma->green_y }, { chroma->blue_x, chroma->blue_y } };
 		metadata->colorimetry.white = { chroma->white_x, chroma->white_y };
 		metadata->eotf = infoframe->eotf == HDMI_EOTF_ST2084 ? EOTF::PQ : EOTF::Gamma22;
@@ -426,6 +428,7 @@ drm_hdr_parse_edid(drm_t *drm, struct connector *connector, const struct di_edid
 		// No valid chroma data in the EDID, fill it in ourselves.
 		if (infoframe->eotf == HDMI_EOTF_ST2084)
 		{
+			drm_log.infof("[colorimetry]: EDID does not define colorimetry. Assuming rec2020 based on HDMI_EOTF_ST2084 support");
 			// Fallback to 2020 primaries for HDR
 			metadata->colorimetry = displaycolorimetry_2020;
 			metadata->eotf = EOTF::PQ;
@@ -433,6 +436,7 @@ drm_hdr_parse_edid(drm_t *drm, struct connector *connector, const struct di_edid
 		else
 		{
 			// Fallback to 709 primaries for SDR
+			drm_log.infof("[colorimetry]: EDID does not define colorimetry. Assuming rec709 / gamma 2.2");
 			metadata->colorimetry = displaycolorimetry_709;
 			metadata->eotf = EOTF::Gamma22;
 		}
@@ -497,6 +501,8 @@ static void parse_edid( drm_t *drm, struct connector *conn)
 			conn->model = strdup(di_edid_display_descriptor_get_string(desc));
 		}
 	}
+
+	drm_log.infof("Connector make %s model %s", conn->make_pnp, conn->model );
 
 	conn->is_steam_deck_display =
 		(strcmp(conn->make_pnp, "WLC") == 0 && strcmp(conn->model, "ANX7530 U") == 0) ||
