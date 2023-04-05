@@ -141,7 +141,7 @@ update_color_mgmt()
 		uint32_t nLutSize1d = 4096;
 		lut1d.resize( nLutSize1d*4 );
 
-		extern float g_flLinearToNits;
+		extern float g_flSDROnHDRContentBrightnessNits;
 		extern float g_flInternalDisplayNativeBrightness;
 
 		for ( uint32_t nInputEOTF = 0; nInputEOTF < ColorHelpers_EOTFCount; nInputEOTF++ )
@@ -157,13 +157,23 @@ update_color_mgmt()
 			{
 				if ( g_ColorMgmt.pending.outputEncodingEOTF == EOTF::Gamma22 )
 				{
+					/*
+					// TODO: pass along the internal g22 linear gain for the
+					// forceHDR case on G22 -> G22
+					if ( g_bForceHDRSupportDebug )
+					{
+						float flGain = g_flSDROnHDRContentBrightnessNits / g_flInternalDisplayNativeBrightness;
+					}
+					*/
+
 					// G22 -> G22. Does not matter what the g22 mult is
 					tonemapping.g22_luminance = 1.f;
+
 				}
 				else if ( g_ColorMgmt.pending.outputEncodingEOTF == EOTF::PQ )
 				{
 					// G22 -> PQ. SDR content going on an HDR output
-					tonemapping.g22_luminance = g_flLinearToNits;
+					tonemapping.g22_luminance = g_flSDROnHDRContentBrightnessNits;
 				}
 
 				// The final display colorimetry is used to build the output mapping, as we want a gamut-aware handling
@@ -176,6 +186,7 @@ update_color_mgmt()
 				if ( g_ColorMgmt.pending.outputEncodingEOTF == EOTF::Gamma22 )
 				{
 					// PQ -> G22  Leverage the display's native brightness
+
 					tonemapping.g22_luminance = g_flInternalDisplayNativeBrightness;
 				}
 				else if ( g_ColorMgmt.pending.outputEncodingEOTF == EOTF::PQ )
@@ -303,7 +314,7 @@ bool set_color_shaperlut_override(const char *path)
 	return true;
 }
 
-extern float g_flLinearToNits;
+extern float g_flSDROnHDRContentBrightnessNits;
 extern float g_flHDRItmSdrNits;
 extern float g_flHDRItmTargetNits;
 
@@ -4863,11 +4874,11 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 			g_uCompositeDebug |= CompositeDebugFlag::Tonemap_Reinhard;
 		hasRepaint = true;
 	}
-	if ( ev->atom == ctx->atoms.gamescopeHDRSDRContentBrightness )
+	if ( ev->atom == ctx->atoms.gamescopeSDROnHDRContentBrightness )
 	{
-		g_flLinearToNits = get_prop( ctx, ctx->root, ctx->atoms.gamescopeHDRSDRContentBrightness, 0 );
-		if ( g_flLinearToNits < 1.0f )
-			g_flLinearToNits = 203.0f;
+		g_flSDROnHDRContentBrightnessNits = get_prop( ctx, ctx->root, ctx->atoms.gamescopeSDROnHDRContentBrightness, 0 );
+		if ( g_flSDROnHDRContentBrightnessNits < 1.0f )
+			g_flSDROnHDRContentBrightnessNits = 203.0f;
 		hasRepaint = true;
 	}
 	if ( ev->atom == ctx->atoms.gamescopeHDRItmEnable )
@@ -6088,7 +6099,7 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 	ctx->atoms.gamescopeDebugHDRHeatmap = XInternAtom( ctx->dpy, "GAMESCOPE_DEBUG_HDR_HEATMAP", false );
 	ctx->atoms.gamescopeHDROnSDRTonemapOperator = XInternAtom( ctx->dpy, "GAMESCOPE_HDR_ON_SDR_TONEMAP_OPERATOR", false );
 	ctx->atoms.gamescopeHDROutputFeedback = XInternAtom( ctx->dpy, "GAMESCOPE_HDR_OUTPUT_FEEDBACK", false );
-	ctx->atoms.gamescopeHDRSDRContentBrightness = XInternAtom( ctx->dpy, "GAMESCOPE_HDR_SDR_CONTENT_BRIGHTNESS", false );
+	ctx->atoms.gamescopeSDROnHDRContentBrightness = XInternAtom( ctx->dpy, "GAMESCOPE_SDR_ON_HDR_CONTENT_BRIGHTNESS", false );
 	ctx->atoms.gamescopeHDRItmEnable = XInternAtom( ctx->dpy, "GAMESCOPE_HDR_ITM_ENABLE", false );
 	ctx->atoms.gamescopeHDRItmSDRNits = XInternAtom( ctx->dpy, "GAMESCOPE_HDR_ITM_SDR_NITS", false );
 	ctx->atoms.gamescopeHDRItmTargetNits = XInternAtom( ctx->dpy, "GAMESCOPE_HDR_ITM_TARGET_NITS", false );
@@ -6326,7 +6337,7 @@ steamcompmgr_main(int argc, char **argv)
 				} else if (strcmp(opt_name, "hdr-enabled") == 0) {
 					g_bHDREnabled = true;
 				} else if (strcmp(opt_name, "hdr-sdr-content-nits") == 0) {
-					g_flLinearToNits = atof(optarg);
+					g_flSDROnHDRContentBrightnessNits = atof(optarg);
 				} else if (strcmp(opt_name, "hdr-debug-force-support") == 0) {
 					g_bForceHDRSupportDebug = true;
  				} else if (strcmp(opt_name, "hdr-debug-force-output") == 0) {

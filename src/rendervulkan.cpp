@@ -3170,7 +3170,7 @@ std::shared_ptr<CVulkanTexture> vulkan_acquire_screenshot_texture(uint32_t width
 }
 
 // SDR -> HDR - For external HDR displays
-float g_flLinearToNits = 203.0f;
+float g_flSDROnHDRContentBrightnessNits = 203.0f;
 
 // Internal display's native brightness.
 // We use this when doing tonemapping as a fallback when undocking from an external HDR display.
@@ -3188,10 +3188,9 @@ struct BlitPushData_t
 	uint32_t frameId;
 	uint32_t blurRadius;
 
-	float linearToNits;
-	float nitsToLinear;
-	float itmSdrNits;
-	float itmTargetNits;
+	//float nitsToLinear;
+	//float itmSdrNits;
+	//float itmTargetNits;
 
 	explicit BlitPushData_t(const struct FrameInfo_t *frameInfo)
 	{
@@ -3205,10 +3204,9 @@ struct BlitPushData_t
 		frameId = s_frameId++;
 		blurRadius = frameInfo->blurRadius ? ( frameInfo->blurRadius * 2 ) - 1 : 0;
 
-		linearToNits = g_flLinearToNits;
-		nitsToLinear = 1.0f / g_flInternalDisplayNativeBrightness;
-		itmSdrNits = g_flHDRItmSdrNits;
-		itmTargetNits = g_flHDRItmTargetNits;
+		//nitsToLinear = 1.0f / g_flInternalDisplayNativeBrightness;
+		//itmSdrNits = g_flHDRItmSdrNits;
+		//itmTargetNits = g_flHDRItmTargetNits;
 	}
 
 	explicit BlitPushData_t(float blit_scale) {
@@ -3218,10 +3216,9 @@ struct BlitPushData_t
 		borderMask = 0;
 		frameId = s_frameId;
 
-		linearToNits = g_flLinearToNits;
-		nitsToLinear = 1.0f / g_flInternalDisplayNativeBrightness;
-		itmSdrNits = g_flHDRItmSdrNits;
-		itmTargetNits = g_flHDRItmTargetNits;
+		//nitsToLinear = 1.0f / g_flInternalDisplayNativeBrightness;
+		//itmSdrNits = g_flHDRItmSdrNits;
+		//itmTargetNits = g_flHDRItmTargetNits;
 	}
 };
 
@@ -3279,10 +3276,9 @@ struct RcasPushData_t
 	uint32_t u_frameId;
 	uint32_t u_c1;
 
-    float linearToNits;
-    float nitsToLinear;
-    float itmSdrNits;
-    float itmTargetNits;
+    //float nitsToLinear;
+    //float itmSdrNits;
+    //float itmTargetNits;
 
 	RcasPushData_t(const struct FrameInfo_t *frameInfo, float sharpness)
 	{
@@ -3294,10 +3290,9 @@ struct RcasPushData_t
 		u_borderMask = frameInfo->borderMask() >> 1u;
 		u_frameId = s_frameId++;
 		u_c1 = tmp.x;
-		linearToNits = g_flLinearToNits;
-		nitsToLinear = 1.0f / g_flInternalDisplayNativeBrightness;
-		itmSdrNits = g_flHDRItmSdrNits;
-		itmTargetNits = g_flHDRItmTargetNits;
+		//nitsToLinear = 1.0f / g_flInternalDisplayNativeBrightness;
+		//itmSdrNits = g_flHDRItmSdrNits;
+		//itmTargetNits = g_flHDRItmTargetNits;
 		for (uint32_t i = 1; i < k_nMaxLayers; i++)
 		{
 			u_scale[i - 1] = frameInfo->layers[i].scale;
