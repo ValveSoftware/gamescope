@@ -42,6 +42,12 @@ enum GamescopeAppTextureColorspace {
 };
 const uint32_t GamescopeAppTextureColorspace_Bits = 2;
 
+inline bool ColorspaceIsHDR( GamescopeAppTextureColorspace colorspace )
+{
+	return colorspace == GAMESCOPE_APP_TEXTURE_COLORSPACE_SCRGB ||
+		   colorspace == GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ;
+}
+
 extern struct drm_t g_DRM;
 void drm_destroy_hdr_metadata_blob(struct drm_t *drm, uint32_t blob);
 
