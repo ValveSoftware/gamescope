@@ -345,6 +345,7 @@ struct gamescope_color_mgmt_t
 	uint32_t externalDirtyCtr;
 	nightmode_t nightmode;
 	float sdrGamutWideness; // user property to widen gamut
+	float flInternalDisplayBrightness = 500.f;
 
 	// the native colorimetry capabilities of the display
 	displaycolorimetry_t displayColorimetry;

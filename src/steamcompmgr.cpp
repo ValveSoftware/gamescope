@@ -97,6 +97,10 @@
 #define GPUVIS_TRACE_IMPLEMENTATION
 #include "gpuvis_trace_utils.h"
 
+
+static LogScope xwm_log("xwm");
+
+
 ///
 // Color Mgmt
 //
@@ -105,6 +109,11 @@ gamescope_color_mgmt_tracker_t g_ColorMgmt{};
 
 static gamescope_color_mgmt_luts g_ColorMgmtLutsOverride[ ColorHelpers_EOTFCount ];
 gamescope_color_mgmt_luts g_ColorMgmtLuts[ ColorHelpers_EOTFCount ];
+
+extern float g_flSDROnHDRContentBrightnessNits;
+extern float g_flInternalDisplayBrightnessNits;
+extern float g_flHDRItmSdrNits;
+extern float g_flHDRItmTargetNits;
 
 static void
 update_color_mgmt()
@@ -141,9 +150,6 @@ update_color_mgmt()
 		uint32_t nLutSize1d = 4096;
 		lut1d.resize( nLutSize1d*4 );
 
-		extern float g_flSDROnHDRContentBrightnessNits;
-		extern float g_flInternalDisplayBrightnessNits;
-
 		for ( uint32_t nInputEOTF = 0; nInputEOTF < ColorHelpers_EOTFCount; nInputEOTF++ )
 		{
 			displaycolorimetry_t inputColorimetry{};
@@ -157,12 +163,13 @@ update_color_mgmt()
 			{
 				if ( g_ColorMgmt.pending.outputEncodingEOTF == EOTF::Gamma22 )
 				{
+					// xwm_log.infof("G22 -> G22");
 					/*
 					// TODO: pass along the internal g22 linear gain for the
 					// forceHDR case on G22 -> G22
 					if ( g_bForceHDRSupportDebug )
 					{
-						float flGain = g_flSDROnHDRContentBrightnessNits / g_flInternalDisplayBrightnessNits;
+						float flGain = g_flSDROnHDRContentBrightnessNits / g_ColorMgmt.pending.flInternalDisplayBrightness;
 					}
 					*/
 
@@ -174,6 +181,7 @@ update_color_mgmt()
 				{
 					// G22 -> PQ. SDR content going on an HDR output
 					tonemapping.g22_luminance = g_flSDROnHDRContentBrightnessNits;
+					// xwm_log.infof("G22 -> PQ");
 				}
 
 				// The final display colorimetry is used to build the output mapping, as we want a gamut-aware handling
@@ -186,12 +194,13 @@ update_color_mgmt()
 				if ( g_ColorMgmt.pending.outputEncodingEOTF == EOTF::Gamma22 )
 				{
 					// PQ -> G22  Leverage the display's native brightness
-
-					tonemapping.g22_luminance = g_flInternalDisplayBrightnessNits;
+					tonemapping.g22_luminance = g_ColorMgmt.pending.flInternalDisplayBrightness;
+					// xwm_log.infof("PQ -> 2.2  -   tonemapping.g22_luminance %f", tonemapping.g22_luminance);
 				}
 				else if ( g_ColorMgmt.pending.outputEncodingEOTF == EOTF::PQ )
 				{
 					// PQ -> PQ. Better not matter what the g22 mult is
+					// xwm_log.infof("PQ -> PQ");
 					tonemapping.g22_luminance = 1.f;
 				}
 
@@ -237,6 +246,23 @@ bool set_color_sdr_gamut_wideness( float flVal )
 
 	return g_ColorMgmt.pending.enabled;
 }
+
+bool set_internal_display_brightness( float flVal )
+{
+	if ( flVal < 1.f )
+	{
+		flVal = 500.f;
+	}
+
+	if ( g_ColorMgmt.pending.flInternalDisplayBrightness == flVal )
+		return false;
+
+	g_ColorMgmt.pending.flInternalDisplayBrightness = flVal;
+	g_flInternalDisplayBrightnessNits = flVal;
+
+	return g_ColorMgmt.pending.enabled;
+}
+
 bool set_color_nightmode( const nightmode_t &nightmode )
 {
 	if ( g_ColorMgmt.pending.nightmode == nightmode )
@@ -313,11 +339,6 @@ bool set_color_shaperlut_override(const char *path)
 
 	return true;
 }
-
-extern float g_flSDROnHDRContentBrightnessNits;
-extern float g_flInternalDisplayBrightnessNits;
-extern float g_flHDRItmSdrNits;
-extern float g_flHDRItmTargetNits;
 
 //
 //
@@ -633,8 +654,6 @@ static bool g_bPropertyRequestedScreenshot;
 static std::atomic<bool> g_bForceRepaint{false};
 
 static int g_nudgePipe[2] = {-1, -1};
-
-static LogScope xwm_log("xwm");
 
 static int g_nCursorScaleHeight = -1;
 
@@ -4903,10 +4922,8 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 	if ( ev->atom == ctx->atoms.gamescopeInternalDisplayBrightness )
 	{
 		uint32_t val = get_prop( ctx, ctx->root, ctx->atoms.gamescopeInternalDisplayBrightness, 0 );
-		g_flInternalDisplayBrightnessNits = bit_cast<float>(val);
-		if ( g_flInternalDisplayBrightnessNits < 1.0f )
-			g_flInternalDisplayBrightnessNits = 500.0f;
-		hasRepaint = true;
+		if ( set_internal_display_brightness( bit_cast<float>(val) ) )
+			hasRepaint = true;
 	}
 	if ( ev->atom == ctx->atoms.gamescopeForceWindowsFullscreen )
 	{
