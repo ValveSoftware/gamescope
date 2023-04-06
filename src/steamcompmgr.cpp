@@ -6620,26 +6620,6 @@ steamcompmgr_main(int argc, char **argv)
 				}
 			}
 
-			{
-				GamescopeAppTextureColorspace current_app_colorspace = GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB;
-				if ( g_HeldCommits[HELD_COMMIT_BASE] )
-					current_app_colorspace = g_HeldCommits[HELD_COMMIT_BASE]->colorspace();
-
-				bool app_wants_hdr = ColorspaceIsHDR( current_app_colorspace );
-
-				static bool s_bAppWantsHDRCached = false;
-
-				if ( app_wants_hdr != s_bAppWantsHDRCached )
-				{
-					uint32_t app_wants_hdr_prop = app_wants_hdr ? 1 : 0;
-
-					XChangeProperty(root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeColorAppWantsHDRFeedback, XA_CARDINAL, 32, PropModeReplace,
-							(unsigned char *)&app_wants_hdr_prop, 1 );
-
-					s_bAppWantsHDRCached = app_wants_hdr;
-				}
-			}
-
 			currentOutputWidth = g_nOutputWidth;
 			currentOutputHeight = g_nOutputHeight;
 			currentHDROutput = g_bOutputHDREnabled;
@@ -6660,6 +6640,27 @@ steamcompmgr_main(int argc, char **argv)
 			gamescope_xwayland_server_t *server = NULL;
 			for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
 				check_new_xwayland_res(server->ctx.get());
+		}
+
+
+		{
+			GamescopeAppTextureColorspace current_app_colorspace = GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB;
+			if ( g_HeldCommits[HELD_COMMIT_BASE] )
+				current_app_colorspace = g_HeldCommits[HELD_COMMIT_BASE]->colorspace();
+
+			bool app_wants_hdr = ColorspaceIsHDR( current_app_colorspace );
+
+			static bool s_bAppWantsHDRCached = false;
+
+			if ( app_wants_hdr != s_bAppWantsHDRCached )
+			{
+				uint32_t app_wants_hdr_prop = app_wants_hdr ? 1 : 0;
+
+				XChangeProperty(root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeColorAppWantsHDRFeedback, XA_CARDINAL, 32, PropModeReplace,
+						(unsigned char *)&app_wants_hdr_prop, 1 );
+
+				s_bAppWantsHDRCached = app_wants_hdr;
+			}
 		}
 
 		steamcompmgr_check_xdg();
