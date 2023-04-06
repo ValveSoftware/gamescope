@@ -3169,12 +3169,11 @@ std::shared_ptr<CVulkanTexture> vulkan_acquire_screenshot_texture(uint32_t width
 	return nullptr;
 }
 
-// SDR -> HDR - For external HDR displays
+// When encoding SDR content to HDR (PQ) encodings, use this luminance
 float g_flSDROnHDRContentBrightnessNits = 203.0f;
 
 // Internal display's native brightness.
-// We use this when doing tonemapping as a fallback when undocking from an external HDR display.
-float g_flInternalDisplayNativeBrightness = 500.0f;
+float g_flInternalDisplayBrightnessNits = 500.0f;
 
 float g_flHDRItmSdrNits = 100.f;
 float g_flHDRItmTargetNits = 1000.f;
@@ -3188,9 +3187,10 @@ struct BlitPushData_t
 	uint32_t frameId;
 	uint32_t blurRadius;
 
-	//float nitsToLinear;
-	//float itmSdrNits;
-	//float itmTargetNits;
+    float u_linearToNits; // unset
+    float u_nitsToLinear; // unset
+    float u_itmSdrNits; // unset
+    float u_itmTargetNits; // unset
 
 	explicit BlitPushData_t(const struct FrameInfo_t *frameInfo)
 	{
@@ -3204,9 +3204,10 @@ struct BlitPushData_t
 		frameId = s_frameId++;
 		blurRadius = frameInfo->blurRadius ? ( frameInfo->blurRadius * 2 ) - 1 : 0;
 
-		//nitsToLinear = 1.0f / g_flInternalDisplayNativeBrightness;
-		//itmSdrNits = g_flHDRItmSdrNits;
-		//itmTargetNits = g_flHDRItmTargetNits;
+		u_linearToNits = g_flInternalDisplayBrightnessNits;
+		u_nitsToLinear = 1.0f / g_flInternalDisplayBrightnessNits;
+		u_itmSdrNits = g_flHDRItmSdrNits;
+		u_itmTargetNits = g_flHDRItmTargetNits;
 	}
 
 	explicit BlitPushData_t(float blit_scale) {
@@ -3216,9 +3217,10 @@ struct BlitPushData_t
 		borderMask = 0;
 		frameId = s_frameId;
 
-		//nitsToLinear = 1.0f / g_flInternalDisplayNativeBrightness;
-		//itmSdrNits = g_flHDRItmSdrNits;
-		//itmTargetNits = g_flHDRItmTargetNits;
+		u_linearToNits = g_flInternalDisplayBrightnessNits;
+		u_nitsToLinear = 1.0f / g_flInternalDisplayBrightnessNits;
+		u_itmSdrNits = g_flHDRItmSdrNits;
+		u_itmTargetNits = g_flHDRItmTargetNits;
 	}
 };
 
@@ -3276,9 +3278,10 @@ struct RcasPushData_t
 	uint32_t u_frameId;
 	uint32_t u_c1;
 
-    //float nitsToLinear;
-    //float itmSdrNits;
-    //float itmTargetNits;
+    float u_linearToNits; // unset
+    float u_nitsToLinear; // unset
+    float u_itmSdrNits; // unset
+    float u_itmTargetNits; // unset
 
 	RcasPushData_t(const struct FrameInfo_t *frameInfo, float sharpness)
 	{
@@ -3290,9 +3293,12 @@ struct RcasPushData_t
 		u_borderMask = frameInfo->borderMask() >> 1u;
 		u_frameId = s_frameId++;
 		u_c1 = tmp.x;
-		//nitsToLinear = 1.0f / g_flInternalDisplayNativeBrightness;
-		//itmSdrNits = g_flHDRItmSdrNits;
-		//itmTargetNits = g_flHDRItmTargetNits;
+		
+		u_linearToNits = g_flInternalDisplayBrightnessNits;
+		u_nitsToLinear = 1.0f / g_flInternalDisplayBrightnessNits;
+		u_itmSdrNits = g_flHDRItmSdrNits;
+		u_itmTargetNits = g_flHDRItmTargetNits;
+
 		for (uint32_t i = 1; i < k_nMaxLayers; i++)
 		{
 			u_scale[i - 1] = frameInfo->layers[i].scale;

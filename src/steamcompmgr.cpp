@@ -142,7 +142,7 @@ update_color_mgmt()
 		lut1d.resize( nLutSize1d*4 );
 
 		extern float g_flSDROnHDRContentBrightnessNits;
-		extern float g_flInternalDisplayNativeBrightness;
+		extern float g_flInternalDisplayBrightnessNits;
 
 		for ( uint32_t nInputEOTF = 0; nInputEOTF < ColorHelpers_EOTFCount; nInputEOTF++ )
 		{
@@ -162,7 +162,7 @@ update_color_mgmt()
 					// forceHDR case on G22 -> G22
 					if ( g_bForceHDRSupportDebug )
 					{
-						float flGain = g_flSDROnHDRContentBrightnessNits / g_flInternalDisplayNativeBrightness;
+						float flGain = g_flSDROnHDRContentBrightnessNits / g_flInternalDisplayBrightnessNits;
 					}
 					*/
 
@@ -187,7 +187,7 @@ update_color_mgmt()
 				{
 					// PQ -> G22  Leverage the display's native brightness
 
-					tonemapping.g22_luminance = g_flInternalDisplayNativeBrightness;
+					tonemapping.g22_luminance = g_flInternalDisplayBrightnessNits;
 				}
 				else if ( g_ColorMgmt.pending.outputEncodingEOTF == EOTF::PQ )
 				{
@@ -315,6 +315,7 @@ bool set_color_shaperlut_override(const char *path)
 }
 
 extern float g_flSDROnHDRContentBrightnessNits;
+extern float g_flInternalDisplayBrightnessNits;
 extern float g_flHDRItmSdrNits;
 extern float g_flHDRItmTargetNits;
 
@@ -4899,6 +4900,14 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 			g_flHDRItmTargetNits = 10000.f;
 		hasRepaint = true;
 	}
+	if ( ev->atom == ctx->atoms.gamescopeInternalDisplayBrightness )
+	{
+		uint32_t val = get_prop( ctx, ctx->root, ctx->atoms.gamescopeInternalDisplayBrightness, 0 );
+		g_flInternalDisplayBrightnessNits = bit_cast<float>(val);
+		if ( g_flInternalDisplayBrightnessNits < 1.0f )
+			g_flInternalDisplayBrightnessNits = 500.0f;
+		hasRepaint = true;
+	}
 	if ( ev->atom == ctx->atoms.gamescopeForceWindowsFullscreen )
 	{
 		ctx->force_windows_fullscreen = !!get_prop( ctx, ctx->root, ctx->atoms.gamescopeForceWindowsFullscreen, 0 );
@@ -6094,6 +6103,7 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 	ctx->atoms.gamescopeHDROnSDRTonemapOperator = XInternAtom( ctx->dpy, "GAMESCOPE_HDR_ON_SDR_TONEMAP_OPERATOR", false );
 	ctx->atoms.gamescopeHDROutputFeedback = XInternAtom( ctx->dpy, "GAMESCOPE_HDR_OUTPUT_FEEDBACK", false );
 	ctx->atoms.gamescopeSDROnHDRContentBrightness = XInternAtom( ctx->dpy, "GAMESCOPE_SDR_ON_HDR_CONTENT_BRIGHTNESS", false );
+	ctx->atoms.gamescopeInternalDisplayBrightness = XInternAtom( ctx->dpy, "GAMESCOPE_INTERNAL_DISPLAY_BRIGHTNESS", false );
 	ctx->atoms.gamescopeHDRItmEnable = XInternAtom( ctx->dpy, "GAMESCOPE_HDR_ITM_ENABLE", false );
 	ctx->atoms.gamescopeHDRItmSDRNits = XInternAtom( ctx->dpy, "GAMESCOPE_HDR_ITM_SDR_NITS", false );
 	ctx->atoms.gamescopeHDRItmTargetNits = XInternAtom( ctx->dpy, "GAMESCOPE_HDR_ITM_TARGET_NITS", false );
