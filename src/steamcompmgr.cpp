@@ -472,7 +472,6 @@ bool g_bSupportsST2084_CachedValue = false;
 bool g_bForceHDR10OutputDebug = false;
 bool g_bForceHDRSupportDebug = false;
 bool g_bHDREnabled = false;
-bool g_bHDRForceWideGammutForSDR = false;
 bool g_bHDRItmEnable = false;
 std::pair<uint32_t, uint32_t> g_LastConnectorIdentifier = { 0u, 0u };
 
@@ -4837,11 +4836,6 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 		g_bHDREnabled = !!get_prop( ctx, ctx->root, ctx->atoms.gamescopeDisplayHDREnabled, 0 );
 		hasRepaint = true;
 	}
-	if ( ev->atom == ctx->atoms.gamescopeDisplayHDRForceWideGammutForSDR )
-	{
-		g_bHDRForceWideGammutForSDR = !!get_prop( ctx, ctx->root, ctx->atoms.gamescopeDisplayHDRForceWideGammutForSDR, 0 );
-		hasRepaint = true;
-	}
 	if ( ev->atom == ctx->atoms.gamescopeDebugForceHDR10Output )
 	{
 		g_bForceHDR10OutputDebug = !!get_prop( ctx, ctx->root, ctx->atoms.gamescopeDebugForceHDR10Output, 0 );
@@ -6094,7 +6088,6 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 
 	ctx->atoms.gamescopeDisplaySupportsHDR = XInternAtom( ctx->dpy, "GAMESCOPE_DISPLAY_SUPPORTS_HDR", false );
 	ctx->atoms.gamescopeDisplayHDREnabled = XInternAtom( ctx->dpy, "GAMESCOPE_DISPLAY_HDR_ENABLED", false );
-	ctx->atoms.gamescopeDisplayHDRForceWideGammutForSDR = XInternAtom( ctx->dpy, "GAMESCOPE_DISPLAY_HDR_FORCE_WIDE_GAMMUT_FOR_SDR", false );
 	ctx->atoms.gamescopeDebugForceHDR10Output = XInternAtom( ctx->dpy, "GAMESCOPE_DEBUG_FORCE_HDR10_PQ_OUTPUT", false );
 	ctx->atoms.gamescopeDebugForceHDRSupport = XInternAtom( ctx->dpy, "GAMESCOPE_DEBUG_FORCE_HDR_SUPPORT", false );
 	ctx->atoms.gamescopeDebugHDRHeatmap = XInternAtom( ctx->dpy, "GAMESCOPE_DEBUG_HDR_HEATMAP", false );
@@ -6343,8 +6336,6 @@ steamcompmgr_main(int argc, char **argv)
 					g_bForceHDRSupportDebug = true;
  				} else if (strcmp(opt_name, "hdr-debug-force-output") == 0) {
 					g_bForceHDR10OutputDebug = true;
-				} else if (strcmp(opt_name, "hdr-wide-gammut-for-sdr") == 0) {
-					g_bHDRForceWideGammutForSDR = true;
 				} else if (strcmp(opt_name, "hdr-itm-enable") == 0) {
 					g_bHDRItmEnable = true;
 				} else if (strcmp(opt_name, "hdr-itm-sdr-nits") == 0) {

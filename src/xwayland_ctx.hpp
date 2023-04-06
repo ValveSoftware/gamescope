@@ -171,7 +171,6 @@ struct xwayland_ctx_t
 
 		Atom gamescopeDisplaySupportsHDR;
 		Atom gamescopeDisplayHDREnabled;
-		Atom gamescopeDisplayHDRForceWideGammutForSDR;
 		Atom gamescopeDebugForceHDR10Output;
 		Atom gamescopeDebugForceHDRSupport;
 		Atom gamescopeDebugHDRHeatmap;

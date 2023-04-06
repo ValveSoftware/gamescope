@@ -3437,7 +3437,7 @@ bool vulkan_composite( const struct FrameInfo_t *frameInfo, std::shared_ptr<CVul
 		if (frameInfo->layerCount >= 2 && frameInfo->layers[1].zpos == g_zposOverride)
 			blur_layer_count++;
 
-		cmdBuffer->bindPipeline(g_device.pipeline(type, blur_layer_count, frameInfo->ycbcrMask() & 0x3u, 0, frameInfo->colorspaceMask(), g_bOutputHDREnabled, g_bHDRForceWideGammutForSDR, false));
+		cmdBuffer->bindPipeline(g_device.pipeline(type, blur_layer_count, frameInfo->ycbcrMask() & 0x3u, 0, frameInfo->colorspaceMask(), g_bOutputHDREnabled, false, false));
 		cmdBuffer->bindTarget(g_output.tmpOutput);
 		for (uint32_t i = 0; i < blur_layer_count; i++)
 		{
@@ -3453,7 +3453,7 @@ bool vulkan_composite( const struct FrameInfo_t *frameInfo, std::shared_ptr<CVul
 		cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup));
 
 		type = frameInfo->blurLayer0 == BLUR_MODE_COND ? SHADER_TYPE_BLUR_COND : SHADER_TYPE_BLUR;
-		cmdBuffer->bindPipeline(g_device.pipeline(type, frameInfo->layerCount, frameInfo->ycbcrMask(), blur_layer_count, frameInfo->colorspaceMask(), g_bOutputHDREnabled, g_bHDRForceWideGammutForSDR, false));
+		cmdBuffer->bindPipeline(g_device.pipeline(type, frameInfo->layerCount, frameInfo->ycbcrMask(), blur_layer_count, frameInfo->colorspaceMask(), g_bOutputHDREnabled, false, false));
 		bind_all_layers(cmdBuffer.get(), frameInfo);
 		cmdBuffer->bindTarget(compositeImage);
 		cmdBuffer->bindTexture(VKR_BLUR_EXTRA_SLOT, g_output.tmpOutput);
@@ -3465,7 +3465,7 @@ bool vulkan_composite( const struct FrameInfo_t *frameInfo, std::shared_ptr<CVul
 	}
 	else
 	{
-		cmdBuffer->bindPipeline( g_device.pipeline(SHADER_TYPE_BLIT, frameInfo->layerCount, frameInfo->ycbcrMask(), 0u, frameInfo->colorspaceMask(), g_bOutputHDREnabled, g_bHDRForceWideGammutForSDR, g_bOutputHDREnabled ? g_bHDRItmEnable : false));
+		cmdBuffer->bindPipeline( g_device.pipeline(SHADER_TYPE_BLIT, frameInfo->layerCount, frameInfo->ycbcrMask(), 0u, frameInfo->colorspaceMask(), g_bOutputHDREnabled, false, g_bOutputHDREnabled ? g_bHDRItmEnable : false));
 		bind_all_layers(cmdBuffer.get(), frameInfo);
 		cmdBuffer->bindTarget(compositeImage);
 		cmdBuffer->pushConstants<BlitPushData_t>(frameInfo);
