@@ -23,6 +23,9 @@ static bool g_bWindowShown = false;
 static int g_nOldNestedRefresh = 0;
 static bool g_bWindowFocused = true;
 
+static int g_nOutputWidthPts = 0;
+static int g_nOutputHeightPts = 0;
+
 
 extern bool steamMode;
 extern bool g_bFirstFrame;
@@ -176,8 +179,8 @@ void inputSDLThreadRun( void )
 				{
 					wlserver_lock();
 					wlserver_touchmotion(
-						event.motion.x / float(g_nOutputWidth),
-						event.motion.y / float(g_nOutputHeight),
+						event.motion.x / float(g_nOutputWidthPts),
+						event.motion.y / float(g_nOutputHeightPts),
 						0,
 						fake_timestamp );
 					wlserver_unlock();
@@ -289,6 +292,10 @@ void inputSDLThreadRun( void )
 					case SDL_WINDOWEVENT_SIZE_CHANGED:
 						int width, height;
 						SDL_GetWindowSize( g_SDLWindow, &width, &height );
+						g_nOutputWidthPts = width;
+						g_nOutputHeightPts = height;
+
+						SDL_GetWindowSizeInPixels( g_SDLWindow, &width, &height );
 						g_nOutputWidth = width;
 						g_nOutputHeight = height;
 
