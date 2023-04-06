@@ -4876,7 +4876,8 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 	}
 	if ( ev->atom == ctx->atoms.gamescopeSDROnHDRContentBrightness )
 	{
-		g_flSDROnHDRContentBrightnessNits = get_prop( ctx, ctx->root, ctx->atoms.gamescopeSDROnHDRContentBrightness, 0 );
+		uint32_t val = get_prop( ctx, ctx->root, ctx->atoms.gamescopeSDROnHDRContentBrightness, 0 );
+		g_flSDROnHDRContentBrightnessNits = bit_cast<float>(val);
 		if ( g_flSDROnHDRContentBrightnessNits < 1.0f )
 			g_flSDROnHDRContentBrightnessNits = 203.0f;
 		hasRepaint = true;
