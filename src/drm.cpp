@@ -1,6 +1,7 @@
 // DRM output stuff
 
 #include <limits.h>
+#include <linux/limits.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
@@ -472,6 +473,117 @@ drm_hdr_parse_edid(drm_t *drm, struct connector *connector, const struct di_edid
 	drm_log.infof("[colorimetry]: w %f %f", metadata->colorimetry.white.x, metadata->colorimetry.white.y);
 }
 
+static constexpr uint32_t EDID_MAX_BLOCK_COUNT = 256;
+static constexpr uint32_t EDID_BLOCK_SIZE = 128;
+static constexpr uint32_t EDID_MAX_STANDARD_TIMING_COUNT = 8;
+static constexpr uint32_t EDID_BYTE_DESCRIPTOR_COUNT = 4;
+static constexpr uint32_t EDID_BYTE_DESCRIPTOR_SIZE = 18;
+static constexpr uint32_t EDID_MAX_DESCRIPTOR_STANDARD_TIMING_COUNT = 6;
+static constexpr uint32_t EDID_MAX_DESCRIPTOR_COLOR_POINT_COUNT = 2;
+static constexpr uint32_t EDID_MAX_DESCRIPTOR_ESTABLISHED_TIMING_III_COUNT = 44;
+static constexpr uint32_t EDID_MAX_DESCRIPTOR_CVT_TIMING_CODES_COUNT = 4;
+
+static inline uint8_t get_bit_range(uint8_t val, size_t high, size_t low)
+{
+	size_t n;
+	uint8_t bitmask;
+
+	assert(high <= 7 && high >= low);
+
+	n = high - low + 1;
+	bitmask = (uint8_t) ((1 << n) - 1);
+	return (uint8_t) (val >> low) & bitmask;
+}
+
+static inline void patch_edid_checksum(uint8_t* block)
+{
+	uint8_t sum = 0;
+	for (uint32_t i = 0; i < EDID_BLOCK_SIZE - 1; i++)
+		sum += block[i];
+
+	uint8_t checksum = uint32_t(256) - uint32_t(sum);
+
+	block[127] = checksum;
+}
+
+static bool validate_block_checksum(const uint8_t* data)
+{
+	uint8_t sum = 0;
+	size_t i;
+
+	for (i = 0; i < EDID_BLOCK_SIZE; i++) {
+		sum += data[i];
+	}
+
+	return sum == 0;
+}
+
+const char *drm_get_patched_edid_path()
+{
+	return getenv("GAMESCOPE_PATCHED_EDID_FILE");
+}
+
+static void create_patched_edid( const uint8_t *orig_data, size_t orig_size, drm_t *drm, struct connector *conn )
+{
+	std::vector<uint8_t> edid(orig_data, orig_data + orig_size);
+
+	if ( g_bRotated )
+	{
+		for (uint32_t i = 0; i < EDID_BYTE_DESCRIPTOR_COUNT; i++)
+		{
+			uint8_t *byte_desc_data = &edid[0x36 + i * EDID_BYTE_DESCRIPTOR_SIZE];
+			if (byte_desc_data[0] || byte_desc_data[1])
+			{
+				uint32_t horiz = (get_bit_range(byte_desc_data[4], 7, 4) << 8) | byte_desc_data[2];
+				uint32_t vert  = (get_bit_range(byte_desc_data[7], 7, 4) << 8) | byte_desc_data[5];
+				drm_log.infof("[josh edid] Patching %ux%u -> %ux%u", horiz, vert, vert, horiz);
+				std::swap(byte_desc_data[4], byte_desc_data[7]);
+				std::swap(byte_desc_data[2], byte_desc_data[5]);
+				break;
+			}
+		}
+
+		patch_edid_checksum(&edid[0]);
+	}
+
+	bool sum_valid = validate_block_checksum(&edid[0]);
+	drm_log.infof("[josh edid] Checksum valid? %s", sum_valid ? "Y" : "N");
+
+	// Write it out then flip it over atomically.
+
+	const char *filename = drm_get_patched_edid_path();
+	if (!filename)
+	{
+		drm_log.errorf("[josh edid] Couldn't write patched edid. No Path.");
+		return;
+	}
+
+	char filename_tmp[PATH_MAX];
+	snprintf(filename_tmp, sizeof(filename_tmp), "%s.tmp", filename);
+
+	FILE *file = fopen(filename_tmp, "wb");
+	if (!file)
+	{
+		drm_log.errorf("[josh edid] Couldn't open file: %s", filename_tmp);
+		return;
+	}
+
+	fwrite(edid.data(), 1, edid.size(), file);
+	fflush(file);
+	fclose(file);
+
+	rename(filename_tmp, filename);
+	drm_log.infof("[josh edid] Wrote new edid to: %s", filename);
+}
+
+void drm_update_patched_edid( drm_t *drm )
+{
+	if (!drm || !drm->connector)
+		return;
+
+	create_patched_edid(drm->connector->edid_data.data(), drm->connector->edid_data.size(), drm, drm->connector);
+}
+
 static void parse_edid( drm_t *drm, struct connector *conn)
 {
 	memset(conn->make_pnp, 0, sizeof(conn->make_pnp));
@@ -500,6 +612,8 @@ static void parse_edid( drm_t *drm, struct connector *conn)
 		drm_log.errorf("Failed to parse edid");
 		return;
 	}
+
+	conn->edid_data = std::vector<uint8_t>((const uint8_t*)blob->data, ((const uint8_t*)(blob->data)) + blob->length);
 
 	drmModeFreePropertyBlob(blob);
 
@@ -844,7 +958,7 @@ static bool get_saved_mode(const char *description, saved_mode &mode_info)
 	return false;
 }
 
-static bool setup_best_connector(struct drm_t *drm, bool force)
+static bool setup_best_connector(struct drm_t *drm, bool force, bool initial)
 {
 	if (drm->connector && drm->connector->connector->connection != DRM_MODE_CONNECTED) {
 		drm_log.infof("current connector '%s' disconnected", drm->connector->name);
@@ -935,6 +1049,9 @@ static bool setup_best_connector(struct drm_t *drm, bool force)
 		.phys_height = (int) best->connector->mmHeight,
 	};
 	wlserver_set_output_info(&wlserver_output_info);
+
+	if (!initial)
+		create_patched_edid(best->edid_data.data(), best->edid_data.size(), drm, best);
 
 	return true;
 }
@@ -1048,7 +1165,7 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh, bool wants_
 
 	drm->connector_priorities = parse_connector_priorities( g_sOutputName );
 
-	if (!setup_best_connector(drm, true)) {
+	if (!setup_best_connector(drm, true, true)) {
 		return false;
 	}
 
@@ -2281,7 +2398,7 @@ bool drm_poll_state( struct drm_t *drm )
 
 	refresh_state( drm );
 
-	setup_best_connector(drm, out_of_date >= 2);
+	setup_best_connector(drm, out_of_date >= 2, false);
 
 	return true;
 }

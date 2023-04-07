@@ -495,7 +495,6 @@ bool g_bForceHDR10OutputDebug = false;
 bool g_bForceHDRSupportDebug = false;
 bool g_bHDREnabled = false;
 bool g_bHDRItmEnable = false;
-std::pair<uint32_t, uint32_t> g_LastConnectorIdentifier = { 0u, 0u };
 
 Window x11_win(steamcompmgr_win_t *w) {
 	if (w == nullptr)
@@ -6294,6 +6293,30 @@ void steamcompmgr_check_xdg()
 	check_new_xdg_res();
 }
 
+void update_edid_prop()
+{
+	if ( !BIsNested() )
+	{
+		const char *filename = drm_get_patched_edid_path();
+		if (!filename)
+			return;
+
+		gamescope_xwayland_server_t *server = NULL;
+		for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
+		{
+			XTextProperty text_property =
+			{
+				.value = (unsigned char *)filename,
+				.encoding = server->ctx->atoms.utf8StringAtom,
+				.format = 8,
+				.nitems = strlen(filename),
+			};
+
+			XSetTextProperty( server->ctx->dpy, server->ctx->root, &text_property, server->ctx->atoms.gamescopeDisplayEdidPath );
+		}
+	}
+}
+
 void
 steamcompmgr_main(int argc, char **argv)
 {
@@ -6470,6 +6493,11 @@ steamcompmgr_main(int argc, char **argv)
 
 	update_vrr_atoms(root_ctx, true);
 	update_mode_atoms(root_ctx);
+	if ( !BIsNested() )
+	{
+		drm_update_patched_edid(&g_DRM);
+		update_edid_prop();
+	}
 
 	for (;;)
 	{
@@ -6554,37 +6582,6 @@ steamcompmgr_main(int argc, char **argv)
 				hasRepaint = true;
 
 				update_mode_atoms(root_ctx);
-			}
-		}
-
-		if ( !BIsNested() )
-		{
-			auto connector_id = drm_get_connector_identifier( &g_DRM );
-			if ( g_LastConnectorIdentifier != connector_id )
-			{
-				const char *currentConnectorName = drm_get_connector_name( &g_DRM );
-				const char *device_name = drm_get_device_name( &g_DRM );
-				int id = 0;
-				if (sscanf(device_name, "/dev/dri/card%d", &id) != -1)
-				{
-					char connectorEdidPath[ 128 ];
-					snprintf( connectorEdidPath, sizeof( connectorEdidPath ), "/sys/class/drm/card%d/card%d-%s/edid", id, id, currentConnectorName );
-
-					XTextProperty text_property =
-					{
-						.value = (unsigned char *)connectorEdidPath,
-						.encoding = root_ctx->atoms.utf8StringAtom,
-						.format = 8,
-						.nitems = strlen(connectorEdidPath),
-					};
-					gamescope_xwayland_server_t *server = NULL;
-					for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
-					{
-						XSetTextProperty( server->ctx->dpy, server->ctx->root, &text_property, server->ctx->atoms.gamescopeDisplayEdidPath );
-					}
-				}
-
-				g_LastConnectorIdentifier = connector_id;
 			}
 		}
 

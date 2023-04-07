@@ -157,6 +157,8 @@ struct connector {
 		std::shared_ptr<wlserver_hdr_metadata> hdr_output_metadata;
 	} current, pending;
 
+	std::vector<uint8_t> edid_data;
+
 	bool has_colorspace;
 	bool has_content_type;
 	bool has_hdr_output_metadata;
@@ -367,3 +369,6 @@ extern bool g_bSupportsAsyncFlips;
 #define DRM_MODE_CONTENT_TYPE_PHOTO		2
 #define DRM_MODE_CONTENT_TYPE_CINEMA		3
 #define DRM_MODE_CONTENT_TYPE_GAME		4
+
+const char* drm_get_patched_edid_path();
+void drm_update_patched_edid(drm_t *drm);
