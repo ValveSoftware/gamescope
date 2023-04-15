@@ -142,16 +142,22 @@ update_color_mgmt()
 		const displaycolorimetry_t& displayColorimetry = g_ColorMgmt.pending.displayColorimetry;
 		const displaycolorimetry_t& outputEncodingColorimetry = g_ColorMgmt.pending.outputEncodingColorimetry;
 
-		std::vector<uint16_t> lut3d;
-		uint32_t nLutEdgeSize3d = 17;
-		lut3d.resize( nLutEdgeSize3d*nLutEdgeSize3d*nLutEdgeSize3d*4 );
-
-		std::vector<uint16_t> lut1d;
-		uint32_t nLutSize1d = 4096;
-		lut1d.resize( nLutSize1d*4 );
-
 		for ( uint32_t nInputEOTF = 0; nInputEOTF < EOTF_Count; nInputEOTF++ )
 		{
+			std::vector<uint16_t> lut3d;
+			uint32_t nLutEdgeSize3d = 17;
+			lut3d.resize( nLutEdgeSize3d*nLutEdgeSize3d*nLutEdgeSize3d*4 );
+
+			std::vector<uint16_t> lut1d;
+			uint32_t nLutSize1d = 4096;
+			lut1d.resize( nLutSize1d*4 );
+
+			if (!g_ColorMgmtLuts[nInputEOTF].vk_lut1d)
+				g_ColorMgmtLuts[nInputEOTF].vk_lut1d = vulkan_create_1d_lut(4096);
+
+			if (!g_ColorMgmtLuts[nInputEOTF].vk_lut3d)
+				g_ColorMgmtLuts[nInputEOTF].vk_lut3d = vulkan_create_3d_lut(17, 17, 17);
+
 			displaycolorimetry_t inputColorimetry{};
 			colormapping_t colorMapping{};
 
@@ -217,12 +223,16 @@ update_color_mgmt()
 			}
 			else if ( !lut3d.empty() && !lut1d.empty() )
 			{
-				g_ColorMgmtLuts[nInputEOTF] = gamescope_color_mgmt_luts{ lut3d, lut1d };
+				g_ColorMgmtLuts[nInputEOTF].lut3d = std::move(lut3d);
+				g_ColorMgmtLuts[nInputEOTF].lut1d = std::move(lut1d);
 			}
 			else
 			{
 				g_ColorMgmtLuts[nInputEOTF].reset();
 			}
+
+			if (!g_ColorMgmtLuts[nInputEOTF].lut3d.empty() && !g_ColorMgmtLuts[nInputEOTF].lut1d.empty())
+				vulkan_update_luts(g_ColorMgmtLuts[nInputEOTF].vk_lut1d, g_ColorMgmtLuts[nInputEOTF].vk_lut3d, g_ColorMgmtLuts[nInputEOTF].lut1d.data(), g_ColorMgmtLuts[nInputEOTF].lut3d.data());
 		}
 	}
 	else
@@ -2225,12 +2235,10 @@ paint_all(bool async)
 	bNeedsComposite |= bNeedsNearest;
 	bNeedsComposite |= bDrewCursor;
 
-	// Disable FSR if outputting HDR or not SDR colorspace game.
-	// We can fix the former at some point, but the latter is much harder.
-	if ( g_bOutputHDREnabled || !( frameInfo.layers[0].colorspace == GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB || frameInfo.layers[0].colorspace == GAMESCOPE_APP_TEXTURE_COLORSPACE_LINEAR ) )
+	for (uint32_t i = 0; i < EOTF_Count; i++)
 	{
-		frameInfo.useFSRLayer0 = false;
-		frameInfo.useNISLayer0 = false;
+		frameInfo.shaperLut[i] = g_ColorMgmtLuts[i].vk_lut1d;
+		frameInfo.lut3D[i] = g_ColorMgmtLuts[i].vk_lut3d;
 	}
 
 	if ( !BIsNested() && g_bOutputHDREnabled )

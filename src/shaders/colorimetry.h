@@ -61,6 +61,18 @@ vec3 pqToNits(vec3 pq) {
     return 10000.0 * pow(num / den, vec3(oo_m1));
 }
 
+// does NOT change primaries, just
+// the pq value in nits / 80.0f!
+vec3 pqToScRGBEncoding(vec3 pq)
+{
+    return pqToNits(pq) / 80.0f;
+}
+
+vec3 scRGBEncodingToPQ(vec3 scRGBEncodedValue)
+{
+    return pqToNits(scRGBEncodedValue * 80.0f);
+}
+
 // This is apparently defined at 80 nits...
 // May want to take liberties with this when displaying
 // on SDR though... 100 may be a better fit for most content
@@ -132,39 +144,6 @@ const PrimaryInfo rec2020_primaries = {
 
 vec3 convert_primaries(vec3 color, mat3 src_to_xyz, mat3 xyz_to_dst) {
     return color * mat3(src_to_xyz * xyz_to_dst);
-}
-
-const float A = 0.15f;
-const float B = 0.50f;
-const float C = 0.10f;
-const float D = 0.20f;
-const float E = 0.02f;
-const float F = 0.30f;
-const float W = 11.2f;
-
-vec3 Uncharted2Tonemap(vec3 x) {
-    return ((x * (A * x + C * B) + D * E) / (x * (A * x + B) + D * F)) - E / F;
-}
-
-float Uncharted2Tonemap(float x) {
-    return ((x * (A * x + C * B) + D * E) / (x * (A * x + B) + D * F)) - E / F;
-}
-
-vec3 tonemap_filmic(vec3 color) {
-    vec3 curr = Uncharted2Tonemap(color);
-    float white_scale = 1.0 / Uncharted2Tonemap(W);
-    return curr * white_scale;
-}
-
-vec3 tonemap_reinhard(vec3 color) {
-    color = color / (1.0 + color);
-    return color;
-}
-
-vec3 tonemap(vec3 color) {
-     if (checkDebugFlag(compositedebug_Tonemap_Reinhard))
-        return tonemap_reinhard(color);
-    return tonemap_filmic(color);
 }
 
 // Rep. ITU-R BT.2446-1 Table 2-4 (inversed)
@@ -327,70 +306,117 @@ vec3 bt2446a_inverse_tonemapping(
 
 // Generic helper
 
-vec4 convert_to_dst_colorspace(vec4 color, uint colorspace)
-{
-    if (colorspace == colorspace_pq) {
-        color.rgb = pqToNits(color.rgb);
+vec3 colorspace_plane_degamma_tf(vec3 color, uint colorspace) {
+    // matches with colorspace_to_plane_degamma_tf in drm.cpp
 
-        if (checkDebugFlag(compositedebug_Heatmap)) {
-            color.rgb = hdr_heatmap(color.rgb, true, true, c_st2084Output);
-        } else {
-            if (!c_st2084Output) {
-                // HDR10 ST2084 is rec2020.
-                color.rgb = convert_primaries(color.rgb, rec2020_to_xyz, xyz_to_rec709);
-                color.rgb = nitsToLinear(color.rgb);
-                color.rgb = tonemap(color.rgb);
-            }
-        }
-    } else if (colorspace == colorspace_scRGB) {
-        color.rgb = scrgbToNits(color.rgb);
+    switch (colorspace) {
+        default: return vec3(1, 1, 0); // should never happen
 
-        if (checkDebugFlag(compositedebug_Heatmap)) {
-            color.rgb = hdr_heatmap(color.rgb, false, true, c_st2084Output);
-        } else {
-            if (!c_st2084Output) {
-                // scRGB is rec709.
-                color.rgb = nitsToLinear(color.rgb);
-                color.rgb = tonemap(color.rgb);
-            } else {
-                // scRGB is rec709.
-                // ST2084 output needs rec2020.
-                color.rgb = convert_primaries(color.rgb, rec709_to_xyz, xyz_to_rec2020);
-            }
-        }
-    } else if (colorspace == colorspace_sRGB) {
-        color.rgb = srgbToLinear(color.rgb);
-
-        if(c_itmEnable) {
-            if (!c_forceWideGammut)
-                color.rgb = convert_primaries(color.rgb, rec709_to_xyz, xyz_to_rec2020);
-            color.rgb = bt2446a_inverse_tonemapping(color.rgb, u_itmSdrNits, u_itmTargetNits);
-        }
-        if (checkDebugFlag(compositedebug_Heatmap)) {
-            color.rgb = hdr_heatmap(color.rgb, c_itmEnable, c_itmEnable, c_st2084Output);
-        } else {
-            if (!c_itmEnable && c_st2084Output) {
-                color.rgb = linearToNits(color.rgb);
-                if (!c_forceWideGammut)
-                    color.rgb = convert_primaries(color.rgb, rec709_to_xyz, xyz_to_rec2020);
-            }
-        }
-    } else if (colorspace == colorspace_linear) {
-        if(c_itmEnable) {
-            if (!c_forceWideGammut)
-                color.rgb = convert_primaries(color.rgb, rec709_to_xyz, xyz_to_rec2020);
-            color.rgb = bt2446a_inverse_tonemapping(color.rgb, u_itmSdrNits, u_itmTargetNits);
-        }
-        if (checkDebugFlag(compositedebug_Heatmap)) {
-            color.rgb = hdr_heatmap(color.rgb, c_itmEnable, c_itmEnable, c_st2084Output);
-        } else {
-            if (!c_itmEnable && c_st2084Output) {
-                color.rgb = linearToNits(color.rgb);
-                if (!c_forceWideGammut)
-                    color.rgb = convert_primaries(color.rgb, rec709_to_xyz, xyz_to_rec2020);
-            }
-        }
+        case colorspace_linear: // Using sRGB image view. Unlike DRM which doesn't get that liberty for scanout.
+		case colorspace_scRGB:
+            return color;
+		case colorspace_sRGB:
+			return srgbToLinear(color);
+		case colorspace_pq:
+			return pqToScRGBEncoding(color);
     }
-
-    return color;
 }
+
+vec3 colorspace_plane_shaper_tf(vec3 color, uint colorspace) {
+    // matches with colorspace_to_plane_regamma_tf in drm.cpp
+
+    switch (colorspace) {
+        default: return vec3(0, 1, 1); // should never happen
+
+        case colorspace_linear:
+		case colorspace_sRGB:
+            return linearToSrgb(color);
+		case colorspace_scRGB:
+		case colorspace_pq:
+			return scRGBEncodingToPQ(color);
+    }
+}
+
+// pre-blend doing display EOTF -> display linearized
+vec3 colorspace_blend_tf(vec3 color, uint eotf) {
+    switch (eotf) {
+        default: return vec3(1, 0, 0); // should never happen
+
+        // Note from Josh:
+        //
+        // We are kinda halfway between output space and not at this point
+        // the color primaries, gamut remapping has already been performed
+        // in display output 2.2 space, but that doesn't change the fact
+        // that we haven't displayed it yet!
+        //
+        // Perform the alpha blending with sRGB linearization (like the CONTENT specifies) here
+        // the primaries and gamut remapping transformations we performed in output 2.2 space do NOT matter.
+        // This is more correct than using gamma 2.2 for that here.
+		case EOTF_Gamma22:
+            return srgbToLinear(color);
+		case EOTF_PQ:
+			return pqToScRGBEncoding(color);
+    }
+}
+
+// post blend doing display linearized -> display EOTF
+vec3 colorspace_output_tf(vec3 color, uint eotf) {
+    switch (eotf) {
+        default: return vec3(0, 1, 0); // should never happen
+
+        // see comment in colorspace_blend_tf
+		case EOTF_Gamma22:
+            return linearToSrgb(color);
+		case EOTF_PQ:
+			return scRGBEncodingToPQ(color);
+    }
+}
+
+// matches how we treat content here :)
+uint colorspace_to_eotf(uint colorspace)
+{
+    // matches with ColorSpaceToEOTFIndex in drm.cpp
+	switch ( colorspace )
+	{
+		default:
+		case colorspace_linear: // Not actually linear, just Linear vs sRGB image views in Vulkan. Still viewed as sRGB on the DRM side.
+		case colorspace_sRGB:
+			// SDR sRGB content treated as native Gamma 22 curve. No need to do sRGB -> 2.2 or whatever.
+			return EOTF_Gamma22;
+		case colorspace_scRGB:
+			// Okay, so this is WEIRD right? OKAY Let me explain it to you.
+			// The plan for scRGB content is to go from scRGB -> PQ in a SHAPER_TF
+            // before indexing into the shaper.
+			return EOTF_PQ;
+		case colorspace_pq:
+			return EOTF_PQ;
+	}
+}
+
+float half_texel_scale(float x, float half_texel)
+{
+    return mix(0.0f + half_texel, 1.0f - half_texel, x);
+}
+
+vec3 half_texel_scale(vec3 x, vec3 half_texel)
+{
+    return mix(vec3(0.0f) + half_texel, vec3(1.0f) - half_texel, x);
+}
+
+vec3 perform_1dlut(vec3 color, sampler1D shaperLUT) {
+    int size = textureSize(shaperLUT, 0);
+    float offset = 0.5f / float(size);
+
+    return vec3(
+        textureLod(shaperLUT, half_texel_scale(color.r, offset), 0.0f).r,
+        textureLod(shaperLUT, half_texel_scale(color.g, offset), 0.0f).g,
+        textureLod(shaperLUT, half_texel_scale(color.b, offset), 0.0f).b);
+}
+
+vec3 perform_3dlut(vec3 color, sampler3D lut3D) {
+    ivec3 size = textureSize(lut3D, 0);
+    vec3 offset = 0.5f / vec3(float(size.x), float(size.y), float(size.z));
+
+    return textureLod(lut3D, half_texel_scale(color.rgb, offset), 0.0f).rgb;
+}
+

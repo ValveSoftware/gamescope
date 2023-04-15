@@ -1866,11 +1866,11 @@ struct LiftoffStateCacheEntryKasher
 
 std::unordered_set<LiftoffStateCacheEntry, LiftoffStateCacheEntryKasher> g_LiftoffStateCache;
 
-static inline drm_valve1_transfer_function colorspace_to_degamma_tf(GamescopeAppTextureColorspace colorspace)
+static inline drm_valve1_transfer_function colorspace_to_plane_degamma_tf(GamescopeAppTextureColorspace colorspace)
 {
 	switch ( colorspace )
 	{
-		default:
+		default: // Linear in this sense is SRGB. Linear = sRGB image view doing automatic sRGB -> Linear which doesn't happen on DRM side.
 		case GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB:
 			return DRM_VALVE1_TRANSFER_FUNCTION_SRGB;
 		case GAMESCOPE_APP_TEXTURE_COLORSPACE_SCRGB:
@@ -1884,7 +1884,7 @@ static inline drm_valve1_transfer_function colorspace_to_degamma_tf(GamescopeApp
 	}
 }
 
-static inline drm_valve1_transfer_function colorspace_to_regamma_tf(GamescopeAppTextureColorspace colorspace)
+static inline drm_valve1_transfer_function colorspace_to_plane_shaper_tf(GamescopeAppTextureColorspace colorspace)
 {
 	switch ( colorspace )
 	{
@@ -1908,10 +1908,8 @@ static inline uint32_t ColorSpaceToEOTFIndex( GamescopeAppTextureColorspace colo
 			return EOTF_Gamma22;
 		case GAMESCOPE_APP_TEXTURE_COLORSPACE_SCRGB:
 			// Okay, so this is WEIRD right? OKAY Let me explain it to you.
-			// The plan for scRGB content is to go from scRGB -> PQ in a DEGAMMA_LUT
-			// I know I know this sounds crazy, but this then goes into the same shaper + 3D LUT
-			// path as everything else does.
-			// TODO(Josh): Hook up DEGAMMA_LUT + DEGAMMA_TF to actually do re-gamma.
+			// The plan for scRGB content is to go from scRGB -> PQ in a SHAPER_TF
+			// before indexing into the shaper. (input from colorspace_to_plane_regamma_tf!)
 			return EOTF_PQ;
 		case GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ:
 			return EOTF_PQ;
@@ -2048,12 +2046,13 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 				liftoff_layer_unset_property( drm->lo_layers[ i ], "COLOR_RANGE" );
 				if ( drm_supports_color_mgmt( drm ) )
 				{
-					drm_valve1_transfer_function degamma_tf = colorspace_to_degamma_tf( entry.layerState[i].colorspace );
-					drm_valve1_transfer_function regamma_tf = colorspace_to_regamma_tf( entry.layerState[i].colorspace );
+					drm_valve1_transfer_function degamma_tf = colorspace_to_plane_degamma_tf( entry.layerState[i].colorspace );
+					drm_valve1_transfer_function shaper_tf = colorspace_to_plane_shaper_tf( entry.layerState[i].colorspace );
 					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_DEGAMMA_TF", degamma_tf );
 					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_SHAPER_LUT", drm->pending.shaperlut_id[ ColorSpaceToEOTFIndex( entry.layerState[i].colorspace ) ] );
-					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_SHAPER_TF", regamma_tf );
+					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_SHAPER_TF", shaper_tf );
 					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_LUT3D", drm->pending.lut3d_id[ ColorSpaceToEOTFIndex( entry.layerState[i].colorspace ) ] );
+					// Josh: See shaders/colorimetry.h colorspace_blend_tf if you have questions as to why we start doing sRGB for BLEND_TF despite potentially working in Gamma 2.2 space prior.
 					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_BLEND_TF", drm->pending.output_tf );
 				}
 			}

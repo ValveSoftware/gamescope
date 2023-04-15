@@ -159,15 +159,19 @@ vec3 hdr_heatmap_lilium_impl(float Y) {
   return outColor;
 }
 
-vec3 hdr_heatmap(vec3 inputColor, bool in_2020, bool in_nits, bool out_nits) {
+bool colorspace_is_2020(uint colorspace)
+{
+  return colorspace == colorspace_pq;
+}
+
+vec3 hdr_heatmap(vec3 inputColor, uint colorspace)
+{
   vec3 xyz;
 
-  // If the input is SDR, then just multiply by 100 (typical sRGB mastering)
-  // don't multiply by our typical SDR scale.
-  if (!in_nits)
-    inputColor *= 100.0f;
+  // scRGB encoding (linear / 80.0f) -> nits;
+  inputColor *= 80.0f;
 
-  if (in_2020)
+  if (colorspace_is_2020(colorspace))
     xyz = inputColor * rec2020_to_xyz;
   else
     xyz = inputColor * rec709_to_xyz;
@@ -178,11 +182,10 @@ vec3 hdr_heatmap(vec3 inputColor, bool in_2020, bool in_nits, bool out_nits) {
   else
     outputColor = hdr_heatmap_lilium_impl(xyz.y); // Lilium Heatmap
 
-  if (c_st2084Output)
-    outputColor = convert_primaries(outputColor, rec709_to_xyz, xyz_to_rec2020);
-
-  if (out_nits)
-    outputColor *= u_linearToNits;
+  // Brighten the heatmap up to something reasonable.
+  // If we care enough we could use some setting here someday.
+  if (c_output_eotf == EOTF_PQ)
+    outputColor *= 400.0f / 80.0f; // 400 nit as scRGB TF for blend space. 
 
   return outputColor;
 }

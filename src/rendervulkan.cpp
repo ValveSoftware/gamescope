@@ -175,8 +175,7 @@ struct PipelineInfo_t
 	uint32_t compositeDebug;
 
 	uint32_t colorspaceMask;
-	bool st2084Output;
-	bool forceWideGammut;
+	uint32_t outputEOTF;
 	bool itmEnable;
 
 	bool operator==(const PipelineInfo_t& o) const {
@@ -187,8 +186,7 @@ struct PipelineInfo_t
 		blurLayerCount == o.blurLayerCount &&
 		compositeDebug == o.compositeDebug &&
 		colorspaceMask == o.colorspaceMask &&
-		st2084Output == o.st2084Output &&
-		forceWideGammut == o.forceWideGammut &&
+		outputEOTF == o.outputEOTF &&
 		itmEnable == o.itmEnable;
 	}
 };
@@ -211,8 +209,7 @@ namespace std
 			hash = hash_combine(hash, k.blurLayerCount);
 			hash = hash_combine(hash, k.compositeDebug);
 			hash = hash_combine(hash, k.colorspaceMask);
-			hash = hash_combine(hash, k.st2084Output);
-			hash = hash_combine(hash, k.forceWideGammut);
+			hash = hash_combine(hash, k.outputEOTF);
 			hash = hash_combine(hash, k.itmEnable);
 			return hash;
 		}
@@ -382,6 +379,7 @@ public:
 	void begin();
 	void end();
 	void bindTexture(uint32_t slot, std::shared_ptr<CVulkanTexture> texture);
+	void bindColorMgmtLuts(uint32_t slot, const std::shared_ptr<CVulkanTexture>& lut1d, const std::shared_ptr<CVulkanTexture>& lut3d);
 	void setTextureStorage(bool storage);
 	void setTextureSrgb(uint32_t slot, bool srgb);
 	void setSamplerNearest(uint32_t slot, bool nearest);
@@ -414,6 +412,9 @@ private:
 	std::bitset<VKR_SAMPLER_SLOTS> m_useSrgb;
 	std::array<SamplerState, VKR_SAMPLER_SLOTS> m_samplerState;
 	CVulkanTexture *m_target;
+
+	std::array<CVulkanTexture *, VKR_LUT3D_COUNT> m_shaperLut;
+	std::array<CVulkanTexture *, VKR_LUT3D_COUNT> m_lut3D;
 };
 
 #define VULKAN_INSTANCE_FUNCTIONS \
@@ -495,7 +496,7 @@ public:
 	bool BInit();
 
 	VkSampler sampler(SamplerState key);
-	VkPipeline pipeline(ShaderType type, uint32_t layerCount = 1, uint32_t ycbcrMask = 0, uint32_t blur_layers = 0, uint32_t colorspace_mask = 0, bool st2084_output = false, bool force_wide_gammut = false, bool itm_enable = false);
+	VkPipeline pipeline(ShaderType type, uint32_t layerCount = 1, uint32_t ycbcrMask = 0, uint32_t blur_layers = 0, uint32_t colorspace_mask = 0, uint32_t output_eotf = EOTF_Gamma22, bool itm_enable = false);
 	int32_t findMemoryType( VkMemoryPropertyFlags properties, uint32_t requiredTypeBits );
 	std::unique_ptr<CVulkanCmdBuffer> commandBuffer();
 	uint64_t submit( std::unique_ptr<CVulkanCmdBuffer> cmdBuf);
@@ -541,7 +542,7 @@ private:
 	bool createPools();
 	bool createShaders();
 	bool createScratchResources();
-	VkPipeline compilePipeline(uint32_t layerCount, uint32_t ycbcrMask, ShaderType type, uint32_t blur_layer_count, uint32_t composite_debug, uint32_t colorspace_mask, bool st2084_output, bool force_wide_gammut, bool itm_enable);
+	VkPipeline compilePipeline(uint32_t layerCount, uint32_t ycbcrMask, ShaderType type, uint32_t blur_layer_count, uint32_t composite_debug, uint32_t colorspace_mask, uint32_t output_eotf, bool itm_enable);
 	void compileAllPipelines();
 	void resetCmdBuffers(uint64_t sequence);
 
@@ -1003,7 +1004,7 @@ bool CVulkanDevice::createLayouts()
 	for (auto& sampler : ycbcrSamplers)
 		sampler = m_ycbcrSampler;
 
-	std::array<VkDescriptorSetLayoutBinding, 4> layoutBindings = {
+	std::array<VkDescriptorSetLayoutBinding, 6 > layoutBindings = {
 		VkDescriptorSetLayoutBinding {
 			.binding = 0,
 			.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
@@ -1028,6 +1029,18 @@ bool CVulkanDevice::createLayouts()
 			.descriptorCount = VKR_SAMPLER_SLOTS,
 			.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
 			.pImmutableSamplers = ycbcrSamplers.data(),
+		},
+		VkDescriptorSetLayoutBinding {
+			.binding = 4,
+			.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+			.descriptorCount = VKR_LUT3D_COUNT,
+			.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+		},
+		VkDescriptorSetLayoutBinding {
+			.binding = 5,
+			.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+			.descriptorCount = VKR_LUT3D_COUNT,
+			.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
 		},
 	};
 
@@ -1091,7 +1104,7 @@ bool CVulkanDevice::createPools()
 		},
 		{
 			VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-			uint32_t(m_descriptorSets.size()) * 2 * VKR_SAMPLER_SLOTS,
+			uint32_t(m_descriptorSets.size()) * ((2 * VKR_SAMPLER_SLOTS) + (2 * VKR_LUT3D_COUNT)),
 		},
 	};
 	
@@ -1264,9 +1277,9 @@ VkSampler CVulkanDevice::sampler( SamplerState key )
 	return ret;
 }
 
-VkPipeline CVulkanDevice::compilePipeline(uint32_t layerCount, uint32_t ycbcrMask, ShaderType type, uint32_t blur_layer_count, uint32_t composite_debug, uint32_t colorspace_mask, bool st2084_output, bool force_wide_gammut, bool itm_enable)
+VkPipeline CVulkanDevice::compilePipeline(uint32_t layerCount, uint32_t ycbcrMask, ShaderType type, uint32_t blur_layer_count, uint32_t composite_debug, uint32_t colorspace_mask, uint32_t output_eotf, bool itm_enable)
 {
-	const std::array<VkSpecializationMapEntry, 8> specializationEntries = {{
+	const std::array<VkSpecializationMapEntry, 7> specializationEntries = {{
 		{
 			.constantID = 0,
 			.offset     = sizeof(uint32_t) * 0,
@@ -1304,12 +1317,6 @@ VkPipeline CVulkanDevice::compilePipeline(uint32_t layerCount, uint32_t ycbcrMas
 			.offset     = sizeof(uint32_t) * 6,
 			.size       = sizeof(uint32_t)
 		},
-
-		{
-			.constantID = 7,
-			.offset     = sizeof(uint32_t) * 7,
-			.size       = sizeof(uint32_t)
-		},
 	}};
 
 	struct {
@@ -1318,8 +1325,7 @@ VkPipeline CVulkanDevice::compilePipeline(uint32_t layerCount, uint32_t ycbcrMas
 		uint32_t debug;
 		uint32_t blur_layer_count;
 		uint32_t colorspace_mask;
-		uint32_t st2084_output;
-		uint32_t force_wide_gammut;
+		uint32_t output_eotf;
 		uint32_t itm_enable;
 	} specializationData = {
 		.layerCount   = layerCount,
@@ -1327,8 +1333,7 @@ VkPipeline CVulkanDevice::compilePipeline(uint32_t layerCount, uint32_t ycbcrMas
 		.debug        = composite_debug,
 		.blur_layer_count = blur_layer_count,
 		.colorspace_mask = colorspace_mask,
-		.st2084_output = st2084_output,
-		.force_wide_gammut = force_wide_gammut,
+		.output_eotf = output_eotf,
 		.itm_enable = itm_enable,
 	};
 
@@ -1367,7 +1372,7 @@ void CVulkanDevice::compileAllPipelines()
 	pthread_setname_np( pthread_self(), "gamescope-shdr" );
 
 	std::array<PipelineInfo_t, SHADER_TYPE_COUNT> pipelineInfos;
-#define SHADER(type, layer_count, max_ycbcr, blur_layers) pipelineInfos[SHADER_TYPE_##type] = {SHADER_TYPE_##type, layer_count, max_ycbcr, blur_layers, false}
+#define SHADER(type, layer_count, max_ycbcr, blur_layers) pipelineInfos[SHADER_TYPE_##type] = {SHADER_TYPE_##type, layer_count, max_ycbcr, blur_layers}
 	SHADER(BLIT, k_nMaxLayers, k_nMaxYcbcrMask_ToPreCompile, 1);
 	SHADER(BLUR, k_nMaxLayers, k_nMaxYcbcrMask_ToPreCompile, k_nMaxBlurLayers);
 	SHADER(BLUR_COND, k_nMaxLayers, k_nMaxYcbcrMask_ToPreCompile, k_nMaxBlurLayers);
@@ -1387,7 +1392,7 @@ void CVulkanDevice::compileAllPipelines()
 					if (blur_layers > layerCount)
 						continue;
 
-					VkPipeline newPipeline = compilePipeline(layerCount, ycbcrMask, info.shaderType, blur_layers, info.compositeDebug, info.colorspaceMask, info.st2084Output, info.forceWideGammut, info.itmEnable);
+					VkPipeline newPipeline = compilePipeline(layerCount, ycbcrMask, info.shaderType, blur_layers, info.compositeDebug, info.colorspaceMask, info.outputEOTF, info.itmEnable);
 					{
 						std::lock_guard<std::mutex> lock(m_pipelineMutex);
 						PipelineInfo_t key = {info.shaderType, layerCount, ycbcrMask, blur_layers, info.compositeDebug};
@@ -1401,14 +1406,14 @@ void CVulkanDevice::compileAllPipelines()
 	}
 }
 
-VkPipeline CVulkanDevice::pipeline(ShaderType type, uint32_t layerCount, uint32_t ycbcrMask, uint32_t blur_layers, uint32_t colorspace_mask, bool st2084_output, bool force_wide_gammut, bool itm_enable)
+VkPipeline CVulkanDevice::pipeline(ShaderType type, uint32_t layerCount, uint32_t ycbcrMask, uint32_t blur_layers, uint32_t colorspace_mask, uint32_t output_eotf, bool itm_enable)
 {
 	std::lock_guard<std::mutex> lock(m_pipelineMutex);
-	PipelineInfo_t key = {type, layerCount, ycbcrMask, blur_layers, g_uCompositeDebug, colorspace_mask, st2084_output, force_wide_gammut, itm_enable};
+	PipelineInfo_t key = {type, layerCount, ycbcrMask, blur_layers, g_uCompositeDebug, colorspace_mask, output_eotf, itm_enable};
 	auto search = m_pipelineMap.find(key);
 	if (search == m_pipelineMap.end())
 	{
-		VkPipeline result = compilePipeline(layerCount, ycbcrMask, type, blur_layers, g_uCompositeDebug, colorspace_mask, st2084_output, force_wide_gammut, itm_enable);
+		VkPipeline result = compilePipeline(layerCount, ycbcrMask, type, blur_layers, g_uCompositeDebug, colorspace_mask, output_eotf, itm_enable);
 		m_pipelineMap[key] = result;
 		return result;
 	}
@@ -1600,6 +1605,17 @@ void CVulkanCmdBuffer::bindTexture(uint32_t slot, std::shared_ptr<CVulkanTexture
 		m_textureRefs.emplace(texture.get(), texture);
 }
 
+void CVulkanCmdBuffer::bindColorMgmtLuts(uint32_t slot, const std::shared_ptr<CVulkanTexture>& lut1d, const std::shared_ptr<CVulkanTexture>& lut3d)
+{
+	m_shaperLut[slot] = lut1d.get();
+	m_lut3D[slot] = lut3d.get();
+
+	if (lut1d != nullptr)
+		m_textureRefs.emplace(lut1d.get(), lut1d);
+	if (lut3d != nullptr)
+		m_textureRefs.emplace(lut3d.get(), lut3d);
+}
+
 void CVulkanCmdBuffer::setTextureSrgb(uint32_t slot, bool srgb)
 {
 	m_useSrgb[slot] = srgb;
@@ -1660,10 +1676,12 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z)
 
 	VkDescriptorSet descriptorSet = m_device->descriptorSet();
 
-	std::array<VkWriteDescriptorSet, 4> writeDescriptorSets;
+	std::array<VkWriteDescriptorSet, 6> writeDescriptorSets;
 	std::array<VkDescriptorImageInfo, VKR_SAMPLER_SLOTS> imageDescriptors = {};
 	std::array<VkDescriptorImageInfo, VKR_SAMPLER_SLOTS> ycbcrImageDescriptors = {};
 	std::array<VkDescriptorImageInfo, VKR_TARGET_SLOTS> targetDescriptors = {};
+	std::array<VkDescriptorImageInfo, VKR_LUT3D_COUNT> shaperLutDescriptor = {};
+	std::array<VkDescriptorImageInfo, VKR_LUT3D_COUNT> lut3DDescriptor = {};
 
 	writeDescriptorSets[0] = {
 		.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
@@ -1705,6 +1723,26 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z)
 		.pImageInfo = ycbcrImageDescriptors.data(),
 	};
 
+	writeDescriptorSets[4] = {
+		.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+		.dstSet = descriptorSet,
+		.dstBinding = 4,
+		.dstArrayElement = 0,
+		.descriptorCount = shaperLutDescriptor.size(),
+		.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+		.pImageInfo = shaperLutDescriptor.data(),
+	};
+
+	writeDescriptorSets[5] = {
+		.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+		.dstSet = descriptorSet,
+		.dstBinding = 5,
+		.dstArrayElement = 0,
+		.descriptorCount = lut3DDescriptor.size(),
+		.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+		.pImageInfo = lut3DDescriptor.data(),
+	};
+
 	for (uint32_t i = 0; i < VKR_SAMPLER_SLOTS; i++)
 	{
 		imageDescriptors[i].sampler = m_device->sampler(m_samplerState[i]);
@@ -1719,6 +1757,26 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z)
 			ycbcrImageDescriptors[i].imageView = view;
 		else
 			imageDescriptors[i].imageView = view;
+	}
+
+	for (uint32_t i = 0; i < VKR_LUT3D_COUNT; i++)
+	{
+		SamplerState linearState;
+		linearState.bNearest = false;
+		linearState.bUnnormalized = false;
+		SamplerState nearestState; // TODO(Josh): Probably want to do this when I bring in tetrahedral interpolation.
+		nearestState.bNearest = true;
+		nearestState.bUnnormalized = false;
+
+		shaperLutDescriptor[i].sampler = m_device->sampler(linearState);
+		shaperLutDescriptor[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+		// TODO(Josh): I hate the fact that srgbView = view *as* raw srgb and treat as linear.
+		// I need to change this, it's so utterly stupid and confusing.
+		shaperLutDescriptor[i].imageView = m_shaperLut[i] ? m_shaperLut[i]->srgbView() : nullptr;
+
+		lut3DDescriptor[i].sampler = m_device->sampler(linearState);
+		lut3DDescriptor[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+		lut3DDescriptor[i].imageView = m_lut3D[i] ? m_lut3D[i]->srgbView() : nullptr;
 	}
 
 	if (!m_target->isYcbcr())
@@ -1790,7 +1848,7 @@ void CVulkanCmdBuffer::copyBufferToImage(VkBuffer buffer, VkDeviceSize offset, u
 		.imageExtent = {
 			.width = dst->width(),
 			.height = dst->height(),
-			.depth = 1,
+			.depth = dst->depth(),
 		},
 	};
 
@@ -1954,7 +2012,18 @@ static VkResult getModifierProps( const VkImageCreateInfo *imageInfo, uint64_t m
 	return g_device.vk.GetPhysicalDeviceImageFormatProperties2(g_device.physDev(), &imageFormatInfo, &imageProps);
 }
 
-bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t drmFormat, createFlags flags, wlr_dmabuf_attributes *pDMA /* = nullptr */,  uint32_t contentWidth /* = 0 */, uint32_t contentHeight /* =  0 */)
+static VkImageViewType VulkanImageTypeToViewType(VkImageType type)
+{
+	switch (type)
+	{
+		case VK_IMAGE_TYPE_1D: return VK_IMAGE_VIEW_TYPE_1D;
+		case VK_IMAGE_TYPE_2D: return VK_IMAGE_VIEW_TYPE_2D;
+		case VK_IMAGE_TYPE_3D: return VK_IMAGE_VIEW_TYPE_3D;
+		default: abort();
+	}
+}
+
+bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uint32_t drmFormat, createFlags flags, wlr_dmabuf_attributes *pDMA /* = nullptr */,  uint32_t contentWidth /* = 0 */, uint32_t contentHeight /* =  0 */)
 {
 	VkResult res = VK_ERROR_INITIALIZATION_FAILED;
 
@@ -2012,12 +2081,12 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t drmFormat,
 	
 	VkImageCreateInfo imageInfo = {
 		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-		.imageType = VK_IMAGE_TYPE_2D,
+		.imageType = flags.imageType,
 		.format = DRMFormatToVulkan(drmFormat, false),
 		.extent = {
 			.width = width,
 			.height = height,
-			.depth = 1,
+			.depth = depth,
 		},
 		.mipLevels = 1,
 		.arrayLayers = 1,
@@ -2160,6 +2229,7 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t drmFormat,
 
 	m_width = width;
 	m_height = height;
+	m_depth = depth;
 
 	if (contentWidth && contentHeight)
 	{
@@ -2407,7 +2477,7 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t drmFormat,
 		VkImageViewCreateInfo createInfo = {
 			.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
 			.image = m_vkImage,
-			.viewType = VK_IMAGE_VIEW_TYPE_2D,
+			.viewType = VulkanImageTypeToViewType(flags.imageType),
 			.format = DRMFormatToVulkan(drmFormat, false),
 			.components = {
 				.r = VK_COMPONENT_SWIZZLE_IDENTITY,
@@ -2492,6 +2562,7 @@ bool CVulkanTexture::BInitFromSwapchain( VkImage image, uint32_t width, uint32_t
 	m_vkImageMemory = VK_NULL_HANDLE;
 	m_width = width;
 	m_height = height;
+	m_depth = 1;
 	m_format = format;
 	m_contentWidth = width;
 	m_contentHeight = height;
@@ -2750,6 +2821,52 @@ void vulkan_present_to_window( void )
 		vulkan_remake_swapchain();
 }
 
+std::shared_ptr<CVulkanTexture> vulkan_create_1d_lut(uint32_t size)
+{
+	CVulkanTexture::createFlags flags;
+	flags.bSampled = true;
+	flags.bTransferDst = true;
+	flags.imageType = VK_IMAGE_TYPE_1D;
+
+	auto texture = std::make_shared<CVulkanTexture>();
+	auto drmFormat = VulkanFormatToDRM( VK_FORMAT_R16G16B16A16_UNORM );
+	assert( texture->BInit( size, 1u, 1u, drmFormat, flags ) );
+
+	return texture;
+}
+
+std::shared_ptr<CVulkanTexture> vulkan_create_3d_lut(uint32_t width, uint32_t height, uint32_t depth)
+{
+	CVulkanTexture::createFlags flags;
+	flags.bSampled = true;
+	flags.bTransferDst = true;
+	flags.imageType = VK_IMAGE_TYPE_3D;
+
+	auto texture = std::make_shared<CVulkanTexture>();
+	auto drmFormat = VulkanFormatToDRM( VK_FORMAT_R16G16B16A16_UNORM );
+	assert( texture->BInit( width, height, depth, drmFormat, flags ) );
+
+	return texture;
+}
+
+void vulkan_update_luts(const std::shared_ptr<CVulkanTexture>& lut1d, const std::shared_ptr<CVulkanTexture>& lut3d, void* lut1d_data, void* lut3d_data)
+{
+	void* base_dst = g_device.uploadBufferData();
+
+	size_t lut1d_size = lut1d->width() * sizeof(uint16_t) * 4;
+	size_t lut3d_size = lut3d->width() * lut3d->height() * lut3d->depth() * sizeof(uint16_t) * 4;
+
+	void* lut1d_dst = base_dst;
+	void *lut3d_dst = ((uint8_t*)base_dst) + lut1d_size;
+	memcpy(lut1d_dst, lut1d_data, lut1d_size);
+	memcpy(lut3d_dst, lut3d_data, lut3d_size);
+
+	auto cmdBuffer = g_device.commandBuffer();
+	cmdBuffer->copyBufferToImage(g_device.uploadBuffer(), 0, 0, lut1d);
+	cmdBuffer->copyBufferToImage(g_device.uploadBuffer(), lut1d_size, 0, lut3d);
+	g_device.submit(std::move(cmdBuffer));
+}
+
 #if HAVE_OPENVR
 std::shared_ptr<CVulkanTexture> vulkan_create_debug_white_texture()
 {
@@ -2760,7 +2877,7 @@ std::shared_ptr<CVulkanTexture> vulkan_create_debug_white_texture()
 	flags.bLinear = true;
 
 	auto texture = std::make_shared<CVulkanTexture>();
-	assert( texture->BInit( g_nOutputWidth, g_nOutputHeight, VulkanFormatToDRM( VK_FORMAT_B8G8R8A8_UNORM ), flags ) );
+	assert( texture->BInit( g_nOutputWidth, g_nOutputHeight, 1u, VulkanFormatToDRM( VK_FORMAT_B8G8R8A8_UNORM ), flags ) );
 
 	memset( texture->mappedData(), 0xFF, texture->width() * texture->height() * 4 );
 
@@ -2901,7 +3018,7 @@ static bool vulkan_make_output_images( VulkanOutput_t *pOutput )
 	VkFormat format = g_bOutputHDREnabled ? pOutput->outputFormatHDR : pOutput->outputFormat;
 
 	pOutput->outputImages[0] = std::make_shared<CVulkanTexture>();
-	bool bSuccess = pOutput->outputImages[0]->BInit( g_nOutputWidth, g_nOutputHeight, VulkanFormatToDRM(format), outputImageflags );
+	bool bSuccess = pOutput->outputImages[0]->BInit( g_nOutputWidth, g_nOutputHeight, 1u, VulkanFormatToDRM(format), outputImageflags );
 	if ( bSuccess != true )
 	{
 		vk_log.errorf( "failed to allocate buffer for KMS" );
@@ -2909,7 +3026,7 @@ static bool vulkan_make_output_images( VulkanOutput_t *pOutput )
 	}
 
 	pOutput->outputImages[1] = std::make_shared<CVulkanTexture>();
-	bSuccess = pOutput->outputImages[1]->BInit( g_nOutputWidth, g_nOutputHeight, VulkanFormatToDRM(format), outputImageflags );
+	bSuccess = pOutput->outputImages[1]->BInit( g_nOutputWidth, g_nOutputHeight, 1u, VulkanFormatToDRM(format), outputImageflags );
 	if ( bSuccess != true )
 	{
 		vk_log.errorf( "failed to allocate buffer for KMS" );
@@ -3044,7 +3161,7 @@ static void update_tmp_images( uint32_t width, uint32_t height )
 	createFlags.bStorage = true;
 
 	g_output.tmpOutput = std::make_shared<CVulkanTexture>();
-	bool bSuccess = g_output.tmpOutput->BInit( width, height, DRM_FORMAT_ARGB8888, createFlags, nullptr );
+	bool bSuccess = g_output.tmpOutput->BInit( width, height, 1u, DRM_FORMAT_ARGB8888, createFlags, nullptr );
 
 	if ( !bSuccess )
 	{
@@ -3097,7 +3214,7 @@ std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_dmabuf( struct wlr_dm
 	//fprintf(stderr, "pDMA->width: %d pDMA->height: %d pDMA->format: 0x%x pDMA->modifier: 0x%lx pDMA->n_planes: %d\n",
 	//	pDMA->width, pDMA->height, pDMA->format, pDMA->modifier, pDMA->n_planes);
 	
-	if ( pTex->BInit( pDMA->width, pDMA->height, pDMA->format, texCreateFlags, pDMA ) == false )
+	if ( pTex->BInit( pDMA->width, pDMA->height, 1u, pDMA->format, texCreateFlags, pDMA ) == false )
 		return nullptr;
 	
 	return pTex;
@@ -3110,7 +3227,7 @@ std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_bits( uint32_t width,
 	texCreateFlags.bSampled = true;
 	texCreateFlags.bTransferDst = true;
 
-	if ( pTex->BInit( width, height, drmFormat, texCreateFlags, nullptr,  contentWidth, contentHeight) == false )
+	if ( pTex->BInit( width, height, 1u, drmFormat, texCreateFlags, nullptr,  contentWidth, contentHeight) == false )
 		return nullptr;
 
 	memcpy( g_device.uploadBufferData(), bits, width * height * DRMFormatGetBPP(drmFormat) );
@@ -3153,7 +3270,7 @@ std::shared_ptr<CVulkanTexture> vulkan_acquire_screenshot_texture(uint32_t width
 				screenshotImageFlags.bStorage = true;
 			}
 
-			bool bSuccess = pScreenshotImage->BInit( width, height, drmFormat, screenshotImageFlags );
+			bool bSuccess = pScreenshotImage->BInit( width, height, 1u, drmFormat, screenshotImageFlags );
 			pScreenshotImage->setStreamColorspace(colorspace);
 
 			assert( bSuccess );
@@ -3354,6 +3471,9 @@ bool vulkan_composite( const struct FrameInfo_t *frameInfo, std::shared_ptr<CVul
 
 	auto cmdBuffer = g_device.commandBuffer();
 
+	for (uint32_t i = 0; i < EOTF_Count; i++)
+		cmdBuffer->bindColorMgmtLuts(i, frameInfo->shaperLut[i], frameInfo->lut3D[i]);
+
 	if ( frameInfo->useFSRLayer0 )
 	{
 		uint32_t inputX = frameInfo->layers[0].tex->width();
@@ -3443,7 +3563,7 @@ bool vulkan_composite( const struct FrameInfo_t *frameInfo, std::shared_ptr<CVul
 		if (frameInfo->layerCount >= 2 && frameInfo->layers[1].zpos == g_zposOverride)
 			blur_layer_count++;
 
-		cmdBuffer->bindPipeline(g_device.pipeline(type, blur_layer_count, frameInfo->ycbcrMask() & 0x3u, 0, frameInfo->colorspaceMask(), g_bOutputHDREnabled, false, false));
+		cmdBuffer->bindPipeline(g_device.pipeline(type, blur_layer_count, frameInfo->ycbcrMask() & 0x3u, 0, frameInfo->colorspaceMask(), g_ColorMgmt.current.outputEncodingEOTF ));
 		cmdBuffer->bindTarget(g_output.tmpOutput);
 		for (uint32_t i = 0; i < blur_layer_count; i++)
 		{
@@ -3459,7 +3579,7 @@ bool vulkan_composite( const struct FrameInfo_t *frameInfo, std::shared_ptr<CVul
 		cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup));
 
 		type = frameInfo->blurLayer0 == BLUR_MODE_COND ? SHADER_TYPE_BLUR_COND : SHADER_TYPE_BLUR;
-		cmdBuffer->bindPipeline(g_device.pipeline(type, frameInfo->layerCount, frameInfo->ycbcrMask(), blur_layer_count, frameInfo->colorspaceMask(), g_bOutputHDREnabled, false, false));
+		cmdBuffer->bindPipeline(g_device.pipeline(type, frameInfo->layerCount, frameInfo->ycbcrMask(), blur_layer_count, frameInfo->colorspaceMask(), g_ColorMgmt.current.outputEncodingEOTF ));
 		bind_all_layers(cmdBuffer.get(), frameInfo);
 		cmdBuffer->bindTarget(compositeImage);
 		cmdBuffer->bindTexture(VKR_BLUR_EXTRA_SLOT, g_output.tmpOutput);
@@ -3471,7 +3591,7 @@ bool vulkan_composite( const struct FrameInfo_t *frameInfo, std::shared_ptr<CVul
 	}
 	else
 	{
-		cmdBuffer->bindPipeline( g_device.pipeline(SHADER_TYPE_BLIT, frameInfo->layerCount, frameInfo->ycbcrMask(), 0u, frameInfo->colorspaceMask(), g_bOutputHDREnabled, false, g_bOutputHDREnabled ? g_bHDRItmEnable : false));
+		cmdBuffer->bindPipeline( g_device.pipeline(SHADER_TYPE_BLIT, frameInfo->layerCount, frameInfo->ycbcrMask(), 0u, frameInfo->colorspaceMask(), g_ColorMgmt.current.outputEncodingEOTF ));
 		bind_all_layers(cmdBuffer.get(), frameInfo);
 		cmdBuffer->bindTarget(compositeImage);
 		cmdBuffer->pushConstants<BlitPushData_t>(frameInfo);
@@ -3729,7 +3849,7 @@ std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struct wl
 	CVulkanTexture::createFlags texCreateFlags;
 	texCreateFlags.bSampled = true;
 	texCreateFlags.bTransferDst = true;
-	if ( pTex->BInit( width, height, drmFormat, texCreateFlags ) == false )
+	if ( pTex->BInit( width, height, 1u, drmFormat, texCreateFlags ) == false )
 		return nullptr;
 
 	auto cmdBuffer = g_device.commandBuffer();

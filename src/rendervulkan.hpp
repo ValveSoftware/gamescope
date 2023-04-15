@@ -129,6 +129,7 @@ public:
 			bLinear = false;
 			bExportable = false;
 			bSwapchain = false;
+			imageType = VK_IMAGE_TYPE_2D;
 		}
 
 		bool bFlippable : 1;
@@ -140,9 +141,10 @@ public:
 		bool bLinear : 1;
 		bool bExportable : 1;
 		bool bSwapchain : 1;
+		VkImageType imageType;
 	};
 
-	bool BInit( uint32_t width, uint32_t height, uint32_t drmFormat, createFlags flags, wlr_dmabuf_attributes *pDMA = nullptr, uint32_t contentWidth = 0, uint32_t contentHeight = 0 );
+	bool BInit( uint32_t width, uint32_t height, uint32_t depth, uint32_t drmFormat, createFlags flags, wlr_dmabuf_attributes *pDMA = nullptr, uint32_t contentWidth = 0, uint32_t contentHeight = 0 );
 	bool BInitFromSwapchain( VkImage image, uint32_t width, uint32_t height, VkFormat format );
 
 	inline VkImageView view( bool linear ) { return linear ? m_linearView : m_srgbView; }
@@ -152,6 +154,7 @@ public:
 	inline VkImageView chromaView() { return m_chromaView; }
 	inline uint32_t width() { return m_width; }
 	inline uint32_t height() { return m_height; }
+	inline uint32_t depth() { return m_depth; }
 	inline uint32_t contentWidth() {return m_contentWidth; }
 	inline uint32_t contentHeight() {return m_contentHeight; }
 	inline uint32_t rowPitch() { return m_unRowPitch; }
@@ -198,6 +201,7 @@ private:
 
 	uint32_t m_width = 0;
 	uint32_t m_height = 0;
+	uint32_t m_depth = 0;
 
 	uint32_t m_contentWidth = 0;
 	uint32_t m_contentHeight = 0;
@@ -233,6 +237,8 @@ struct FrameInfo_t
 	BlurMode blurLayer0;
 	int blurRadius;
 
+	std::shared_ptr<CVulkanTexture> shaperLut[EOTF_Count];
+	std::shared_ptr<CVulkanTexture> lut3D[EOTF_Count];
 
 	int layerCount;
 	struct Layer_t
@@ -333,6 +339,10 @@ bool acquire_next_image( void );
 bool vulkan_primary_dev_id(dev_t *id);
 bool vulkan_supports_modifiers(void);
 
+std::shared_ptr<CVulkanTexture> vulkan_create_1d_lut(uint32_t size);
+std::shared_ptr<CVulkanTexture> vulkan_create_3d_lut(uint32_t width, uint32_t height, uint32_t depth);
+void vulkan_update_luts(const std::shared_ptr<CVulkanTexture>& lut1d, const std::shared_ptr<CVulkanTexture>& lut3d, void* lut1d_data, void* lut3d_data);
+
 struct wlr_renderer *vulkan_renderer_create( void );
 
 using mat3x4 = std::array<std::array<float, 4>, 3>;
@@ -364,6 +374,9 @@ struct gamescope_color_mgmt_luts
 {
 	std::vector<uint16_t> lut3d;
     std::vector<uint16_t> lut1d;
+
+	std::shared_ptr<CVulkanTexture> vk_lut3d;
+	std::shared_ptr<CVulkanTexture> vk_lut1d;
 
 	void reset()
 	{

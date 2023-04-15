@@ -24,6 +24,45 @@ void compositing_debug(uvec2 coord) {
     }
 }
 
+vec3 layerColorFromColorspaceToScRGB(vec3 color, uint layerIdx) {
+    uint colorspace = get_layer_colorspace(layerIdx);
+
+    color = colorspace_plane_degamma_tf(color, colorspace);
+
+    if (c_itm_enable)
+    {
+        color = bt2446a_inverse_tonemapping(color, u_itmSdrNits, u_itmTargetNits);
+        colorspace = colorspace_pq;
+    }
+
+    if (checkDebugFlag(compositedebug_Heatmap))
+    {
+        // Debug HDR heatmap.
+        color = hdr_heatmap(color, colorspace);
+    }
+    else
+    {
+        // Shaper + 3D LUT path to match DRM.
+
+        uint plane_eotf = colorspace_to_eotf(colorspace);
+
+        color = colorspace_plane_shaper_tf(color, colorspace);
+        // The shaper TF is basically just a regamma to get into something the shaper LUT can handle.
+        //
+        // Despite naming, degamma + shaper TF are NOT necessarily the inverse of each other. ^^^
+        // This gets the color ready to go into the shaper LUT.
+        // ie. scRGB -> PQ
+        //
+        // We also need to do degamma here for non-linear views to blend in linear space.
+        // ie. PQ -> PQ would need us to manually do bilinear here.
+        color = perform_1dlut(color, s_shaperLut[plane_eotf]);
+        color = perform_3dlut(color, s_lut3D[plane_eotf]);
+        color = colorspace_blend_tf(color, c_output_eotf);
+    }
+
+    return color;
+}
+
 vec4 sampleLayer(sampler2D layerSampler, uint layerIdx, vec2 uv, bool unnormalized) {
     vec2 coord = ((uv + u_offset[layerIdx]) * u_scale[layerIdx]);
     vec2 texSize = textureSize(layerSampler, 0);
@@ -43,15 +82,14 @@ vec4 sampleLayer(sampler2D layerSampler, uint layerIdx, vec2 uv, bool unnormaliz
 
     vec4 color = textureLod(layerSampler, coord, 0.0f);
 
-    return convert_to_dst_colorspace(color, get_layer_colorspace(layerIdx));
+    // TODO(Josh): If colorspace != linear, emulate bilinear ourselves to blend
+    // in linear space!
+    // Split this into two parts!
+    color.rgb = layerColorFromColorspaceToScRGB(color.rgb, layerIdx);
+
+    return color;
 }
 
-vec3 encodeOutputColor(vec3 linearOrNits) {
-    if (!c_st2084Output) {
-        // linearOrNits -> linear
-        return linearToSrgb(linearOrNits.rgb);
-    } else {
-        // linearOrNits -> nits
-        return nitsToPq(linearOrNits.rgb);
-    }
+vec3 encodeOutputColor(vec3 value) {
+    return colorspace_output_tf(value, c_output_eotf);
 }

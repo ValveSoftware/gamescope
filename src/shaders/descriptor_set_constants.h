@@ -9,4 +9,6 @@
 #define VKR_NIS_COEF_SCALER_SLOT (VKR_BLUR_EXTRA_SLOT + 1u)
 #define VKR_NIS_COEF_USM_SLOT    (VKR_NIS_COEF_SCALER_SLOT + 1u)
 
+#define VKR_LUT3D_COUNT 2 // Must match EOTF_Count
+
 #endif
