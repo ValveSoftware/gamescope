@@ -2035,8 +2035,7 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 				liftoff_layer_unset_property( drm->lo_layers[ i ], "COLOR_RANGE" );
 				if ( drm_supports_color_mgmt( drm ) )
 				{
-					bool needs_scaling = frameInfo->layers[ i ].scale.x != 1.0f && frameInfo->layers[ i ].scale.y != 1.0f;
-					drm_valve1_transfer_function scale_tf = needs_scaling ? convert_colorspace_to_valve1_drm( entry.layerState[i].colorspace ) : DRM_VALVE1_TRANSFER_FUNCTION_DEFAULT;
+					drm_valve1_transfer_function scale_tf = convert_colorspace_to_valve1_drm( entry.layerState[i].colorspace );
 					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_DEGAMMA_TF", scale_tf );
 					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_SHAPER_LUT", drm->pending.shaperlut_id[ ColorSpaceToEOTFIndex( entry.layerState[i].colorspace ) ] );
 					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_SHAPER_TF", scale_tf );
