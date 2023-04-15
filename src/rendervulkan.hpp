@@ -380,4 +380,4 @@ struct gamescope_color_mgmt_tracker_t
 };
 
 extern gamescope_color_mgmt_tracker_t g_ColorMgmt;
-extern gamescope_color_mgmt_luts g_ColorMgmtLuts[ ColorHelpers_EOTFCount ];
+extern gamescope_color_mgmt_luts g_ColorMgmtLuts[ EOTF_Count ];

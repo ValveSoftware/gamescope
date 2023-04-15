@@ -107,8 +107,8 @@ static LogScope xwm_log("xwm");
 
 gamescope_color_mgmt_tracker_t g_ColorMgmt{};
 
-static gamescope_color_mgmt_luts g_ColorMgmtLutsOverride[ ColorHelpers_EOTFCount ];
-gamescope_color_mgmt_luts g_ColorMgmtLuts[ ColorHelpers_EOTFCount ];
+static gamescope_color_mgmt_luts g_ColorMgmtLutsOverride[ EOTF_Count ];
+gamescope_color_mgmt_luts g_ColorMgmtLuts[ EOTF_Count ];
 
 extern float g_flSDROnHDRContentBrightnessNits;
 extern float g_flInternalDisplayBrightnessNits;
@@ -128,9 +128,9 @@ update_color_mgmt()
 	else
 	{
 		g_ColorMgmt.pending.displayColorimetry = displaycolorimetry_709;
-		g_ColorMgmt.pending.displayEOTF = EOTF::Gamma22;
+		g_ColorMgmt.pending.displayEOTF = EOTF_Gamma22;
 		g_ColorMgmt.pending.outputEncodingColorimetry = displaycolorimetry_709;
-		g_ColorMgmt.pending.outputEncodingEOTF = EOTF::Gamma22;
+		g_ColorMgmt.pending.outputEncodingEOTF = EOTF_Gamma22;
 	}
 
 	// check if any part of our color mgmt stack is dirty
@@ -150,7 +150,7 @@ update_color_mgmt()
 		uint32_t nLutSize1d = 4096;
 		lut1d.resize( nLutSize1d*4 );
 
-		for ( uint32_t nInputEOTF = 0; nInputEOTF < ColorHelpers_EOTFCount; nInputEOTF++ )
+		for ( uint32_t nInputEOTF = 0; nInputEOTF < EOTF_Count; nInputEOTF++ )
 		{
 			displaycolorimetry_t inputColorimetry{};
 			colormapping_t colorMapping{};
@@ -159,9 +159,9 @@ update_color_mgmt()
 			tonemapping.bUseShaper = true;
 
 			EOTF inputEOTF = static_cast<EOTF>( nInputEOTF );
-			if ( inputEOTF == EOTF::Gamma22 )
+			if ( inputEOTF == EOTF_Gamma22 )
 			{
-				if ( g_ColorMgmt.pending.outputEncodingEOTF == EOTF::Gamma22 )
+				if ( g_ColorMgmt.pending.outputEncodingEOTF == EOTF_Gamma22 )
 				{
 					// xwm_log.infof("G22 -> G22");
 					/*
@@ -177,7 +177,7 @@ update_color_mgmt()
 					tonemapping.g22_luminance = 1.f;
 
 				}
-				else if ( g_ColorMgmt.pending.outputEncodingEOTF == EOTF::PQ )
+				else if ( g_ColorMgmt.pending.outputEncodingEOTF == EOTF_PQ )
 				{
 					// G22 -> PQ. SDR content going on an HDR output
 					tonemapping.g22_luminance = g_flSDROnHDRContentBrightnessNits;
@@ -189,15 +189,15 @@ update_color_mgmt()
 				// we only want to utilize a portion of the gamut the actual display can reproduce
 				buildSDRColorimetry( &inputColorimetry, &colorMapping, g_ColorMgmt.pending.sdrGamutWideness, displayColorimetry );
 			}
-			else if ( inputEOTF == EOTF::PQ )
+			else if ( inputEOTF == EOTF_PQ )
 			{
-				if ( g_ColorMgmt.pending.outputEncodingEOTF == EOTF::Gamma22 )
+				if ( g_ColorMgmt.pending.outputEncodingEOTF == EOTF_Gamma22 )
 				{
 					// PQ -> G22  Leverage the display's native brightness
 					tonemapping.g22_luminance = g_ColorMgmt.pending.flInternalDisplayBrightness;
 					// xwm_log.infof("PQ -> 2.2  -   tonemapping.g22_luminance %f", tonemapping.g22_luminance);
 				}
-				else if ( g_ColorMgmt.pending.outputEncodingEOTF == EOTF::PQ )
+				else if ( g_ColorMgmt.pending.outputEncodingEOTF == EOTF_PQ )
 				{
 					// PQ -> PQ. Better not matter what the g22 mult is
 					// xwm_log.infof("PQ -> PQ");
@@ -227,7 +227,7 @@ update_color_mgmt()
 	}
 	else
 	{
-		for ( uint32_t i = 0; i < ColorHelpers_EOTFCount; i++ )
+		for ( uint32_t i = 0; i < EOTF_Count; i++ )
 			g_ColorMgmtLuts[i].reset();
 	}
 
@@ -284,7 +284,7 @@ bool set_color_mgmt_enabled( bool bEnabled )
 
 bool set_color_3dlut_override(const char *path)
 {
-	int nLutIndex = EOTFToIndex( EOTF::Gamma22 );
+	int nLutIndex = EOTF_Gamma22;
 	g_ColorMgmtLutsOverride[nLutIndex].lut3d.clear();
 	g_ColorMgmt.pending.externalDirtyCtr++;
 
@@ -313,7 +313,7 @@ bool set_color_3dlut_override(const char *path)
 
 bool set_color_shaperlut_override(const char *path)
 {
-	int nLutIndex = EOTFToIndex( EOTF::Gamma22 );
+	int nLutIndex = EOTF_Gamma22;
 	g_ColorMgmtLutsOverride[nLutIndex].lut1d.clear();
 	g_ColorMgmt.pending.externalDirtyCtr++;
 

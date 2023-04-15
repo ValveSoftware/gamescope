@@ -105,18 +105,13 @@ struct primaries_t
 	glm::vec2 b;
 };
 
-enum class EOTF
+enum EOTF
 {
-	Gamma22 = 0,
-	PQ = 1,
+	EOTF_Gamma22 = 0,
+	EOTF_PQ = 1,
+
+	EOTF_Count = 2,
 };
-
-static constexpr uint32_t ColorHelpers_EOTFCount = 2;
-
-static constexpr uint32_t EOTFToIndex( EOTF eotf )
-{
-	return static_cast<uint32_t>( eotf );
-}
 
 struct displaycolorimetry_t
 {

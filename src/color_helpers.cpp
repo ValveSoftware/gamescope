@@ -208,11 +208,11 @@ bool BOutOfGamut( const glm::vec3 & color )
 
 glm::vec3 calcEOTFToLinear( const glm::vec3 & input, EOTF eotf, const tonemapping_t & tonemapping )
 {
-    if ( eotf == EOTF::Gamma22 )
+    if ( eotf == EOTF_Gamma22 )
     {
         return glm::pow( input, glm::vec3( 2.2f ) ) * tonemapping.g22_luminance;
     }
-    else if ( eotf == EOTF::PQ )
+    else if ( eotf == EOTF_PQ )
     {
         return glm::vec3( pq_to_nits( input.r ),  pq_to_nits( input.g ), pq_to_nits( input.b ) );
     }
@@ -222,7 +222,7 @@ glm::vec3 calcEOTFToLinear( const glm::vec3 & input, EOTF eotf, const tonemappin
 
 glm::vec3 calcLinearToEOTF( const glm::vec3 & input, EOTF eotf, const tonemapping_t & tonemapping )
 {
-    if ( eotf == EOTF::Gamma22 )
+    if ( eotf == EOTF_Gamma22 )
     {
         glm::vec3 val = input;
         if ( tonemapping.g22_luminance > 0.f )
@@ -231,7 +231,7 @@ glm::vec3 calcLinearToEOTF( const glm::vec3 & input, EOTF eotf, const tonemappin
         }
         return glm::pow( val, glm::vec3( 1.f/2.2f ) );
     }
-    else if ( eotf == EOTF::PQ )
+    else if ( eotf == EOTF_PQ )
     {
         return glm::vec3( nits_to_pq( input.r ), nits_to_pq( input.g ), nits_to_pq( input.b ) );
     }

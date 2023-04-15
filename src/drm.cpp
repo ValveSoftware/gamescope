@@ -438,7 +438,7 @@ drm_hdr_parse_edid(drm_t *drm, struct connector *connector, const struct di_edid
 			// BIOSes with missing info for this in EDID.
 			drm_log.infof("[colorimetry]: using default steamdeck colorimetry");
 			metadata->colorimetry = displaycolorimetry_steamdeck;
-			metadata->eotf = EOTF::Gamma22;
+			metadata->eotf = EOTF_Gamma22;
 		}
 	}
 	else if (chroma && chroma->red_x != 0.0f)
@@ -446,7 +446,7 @@ drm_hdr_parse_edid(drm_t *drm, struct connector *connector, const struct di_edid
 		drm_log.infof("[colorimetry]: EDID with colorimetry detected. Using it");
 		metadata->colorimetry.primaries = { { chroma->red_x, chroma->red_y }, { chroma->green_x, chroma->green_y }, { chroma->blue_x, chroma->blue_y } };
 		metadata->colorimetry.white = { chroma->white_x, chroma->white_y };
-		metadata->eotf = infoframe->eotf == HDMI_EOTF_ST2084 ? EOTF::PQ : EOTF::Gamma22;
+		metadata->eotf = infoframe->eotf == HDMI_EOTF_ST2084 ? EOTF_PQ : EOTF_Gamma22;
 	}
 	else
 	{
@@ -456,14 +456,14 @@ drm_hdr_parse_edid(drm_t *drm, struct connector *connector, const struct di_edid
 			drm_log.infof("[colorimetry]: EDID does not define colorimetry. Assuming rec2020 based on HDMI_EOTF_ST2084 support");
 			// Fallback to 2020 primaries for HDR
 			metadata->colorimetry = displaycolorimetry_2020;
-			metadata->eotf = EOTF::PQ;
+			metadata->eotf = EOTF_PQ;
 		}
 		else
 		{
 			// Fallback to 709 primaries for SDR
 			drm_log.infof("[colorimetry]: EDID does not define colorimetry. Assuming rec709 / gamma 2.2");
 			metadata->colorimetry = displaycolorimetry_709;
-			metadata->eotf = EOTF::Gamma22;
+			metadata->eotf = EOTF_Gamma22;
 		}
 	}
 
@@ -1436,7 +1436,7 @@ int drm_commit(struct drm_t *drm, const struct FrameInfo_t *frameInfo )
 		{
 			if ( drm->pending.mode_id != drm->current.mode_id )
 				drmModeDestroyPropertyBlob(drm->fd, drm->current.mode_id);
-			for ( uint32_t i = 0; i < ColorHelpers_EOTFCount; i++ )
+			for ( uint32_t i = 0; i < EOTF_Count; i++ )
 			{
 				if ( drm->pending.lut3d_id[i] != drm->current.lut3d_id[i] )
 					drmModeDestroyPropertyBlob(drm->fd, drm->current.lut3d_id[i]);
@@ -1905,16 +1905,16 @@ static inline uint32_t ColorSpaceToEOTFIndex( GamescopeAppTextureColorspace colo
 		case GAMESCOPE_APP_TEXTURE_COLORSPACE_LINEAR: // Not actually linear, just Linear vs sRGB image views in Vulkan. Still viewed as sRGB on the DRM side.
 		case GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB:
 			// SDR sRGB content treated as native Gamma 22 curve. No need to do sRGB -> 2.2 or whatever.
-			return EOTFToIndex( EOTF::Gamma22 );
+			return EOTF_Gamma22;
 		case GAMESCOPE_APP_TEXTURE_COLORSPACE_SCRGB:
 			// Okay, so this is WEIRD right? OKAY Let me explain it to you.
 			// The plan for scRGB content is to go from scRGB -> PQ in a DEGAMMA_LUT
 			// I know I know this sounds crazy, but this then goes into the same shaper + 3D LUT
 			// path as everything else does.
 			// TODO(Josh): Hook up DEGAMMA_LUT + DEGAMMA_TF to actually do re-gamma.
-			return EOTFToIndex( EOTF::PQ );
+			return EOTF_PQ;
 		case GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ:
-			return EOTFToIndex( EOTF::PQ );
+			return EOTF_PQ;
 	}
 }
 
@@ -2528,13 +2528,13 @@ bool drm_update_color_mgmt(struct drm_t *drm)
 
 	drm->pending.color_mgmt_serial = g_ColorMgmt.serial;
 
-	for ( uint32_t i = 0; i < ColorHelpers_EOTFCount; i++ )
+	for ( uint32_t i = 0; i < EOTF_Count; i++ )
 	{
 		drm->pending.shaperlut_id[ i ] = 0;
 		drm->pending.lut3d_id[ i ] = 0;
 	}
 
-	for ( uint32_t i = 0; i < ColorHelpers_EOTFCount; i++ )
+	for ( uint32_t i = 0; i < EOTF_Count; i++ )
 	{
 		if ( g_ColorMgmtLuts[i].lut1d.empty() || g_ColorMgmtLuts[i].lut3d.empty() )
 			continue;
@@ -2792,9 +2792,9 @@ void drm_get_native_colorimetry( struct drm_t *drm,
 	if ( !drm || !drm->connector )
 	{
 		*displayColorimetry = displaycolorimetry_709;
-		*displayEOTF = EOTF::Gamma22;
+		*displayEOTF = EOTF_Gamma22;
 		*outputEncodingColorimetry = displaycolorimetry_709;
-		*outputEncodingEOTF = EOTF::Gamma22;
+		*outputEncodingEOTF = EOTF_Gamma22;
 	}
 
 	*displayColorimetry = drm->connector->metadata.colorimetry;
@@ -2804,7 +2804,7 @@ void drm_get_native_colorimetry( struct drm_t *drm,
 	if (drm->connector->metadata.supportsST2084 && g_bOutputHDREnabled)
 	{
 		*outputEncodingColorimetry = displaycolorimetry_2020;
-		*outputEncodingEOTF = EOTF::PQ;
+		*outputEncodingEOTF = EOTF_PQ;
 	}
 	else
 	{
@@ -2814,7 +2814,7 @@ void drm_get_native_colorimetry( struct drm_t *drm,
 
 	if (!g_bOutputHDREnabled)
 	{
-		*displayEOTF = EOTF::Gamma22;
-		*outputEncodingEOTF = EOTF::Gamma22;
+		*displayEOTF = EOTF_Gamma22;
+		*outputEncodingEOTF = EOTF_Gamma22;
 	}
 }
