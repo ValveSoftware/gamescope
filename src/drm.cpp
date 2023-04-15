@@ -1866,7 +1866,7 @@ struct LiftoffStateCacheEntryKasher
 
 std::unordered_set<LiftoffStateCacheEntry, LiftoffStateCacheEntryKasher> g_LiftoffStateCache;
 
-static inline drm_valve1_transfer_function convert_colorspace_to_valve1_drm(GamescopeAppTextureColorspace colorspace)
+static inline drm_valve1_transfer_function colorspace_to_degamma_tf(GamescopeAppTextureColorspace colorspace)
 {
 	switch ( colorspace )
 	{
@@ -1879,6 +1879,19 @@ static inline drm_valve1_transfer_function convert_colorspace_to_valve1_drm(Game
 			// AMD internal format is FP16, and generally expected for 1.0 -> 80 nit.
 			// which just so happens to match scRGB.
 			return DRM_VALVE1_TRANSFER_FUNCTION_LINEAR;
+		case GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ:
+			return DRM_VALVE1_TRANSFER_FUNCTION_PQ;
+	}
+}
+
+static inline drm_valve1_transfer_function colorspace_to_regamma_tf(GamescopeAppTextureColorspace colorspace)
+{
+	switch ( colorspace )
+	{
+		default:
+		case GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB:
+			return DRM_VALVE1_TRANSFER_FUNCTION_SRGB;
+		case GAMESCOPE_APP_TEXTURE_COLORSPACE_SCRGB: // scRGB Linear -> PQ for shaper + 3D LUT
 		case GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ:
 			return DRM_VALVE1_TRANSFER_FUNCTION_PQ;
 	}
@@ -2035,10 +2048,11 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 				liftoff_layer_unset_property( drm->lo_layers[ i ], "COLOR_RANGE" );
 				if ( drm_supports_color_mgmt( drm ) )
 				{
-					drm_valve1_transfer_function scale_tf = convert_colorspace_to_valve1_drm( entry.layerState[i].colorspace );
-					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_DEGAMMA_TF", scale_tf );
+					drm_valve1_transfer_function degamma_tf = colorspace_to_degamma_tf( entry.layerState[i].colorspace );
+					drm_valve1_transfer_function regamma_tf = colorspace_to_regamma_tf( entry.layerState[i].colorspace );
+					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_DEGAMMA_TF", degamma_tf );
 					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_SHAPER_LUT", drm->pending.shaperlut_id[ ColorSpaceToEOTFIndex( entry.layerState[i].colorspace ) ] );
-					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_SHAPER_TF", scale_tf );
+					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_SHAPER_TF", regamma_tf );
 					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_LUT3D", drm->pending.lut3d_id[ ColorSpaceToEOTFIndex( entry.layerState[i].colorspace ) ] );
 					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_BLEND_TF", drm->pending.output_tf );
 				}
