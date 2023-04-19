@@ -2865,6 +2865,7 @@ void vulkan_update_luts(const std::shared_ptr<CVulkanTexture>& lut1d, const std:
 	cmdBuffer->copyBufferToImage(g_device.uploadBuffer(), 0, 0, lut1d);
 	cmdBuffer->copyBufferToImage(g_device.uploadBuffer(), lut1d_size, 0, lut3d);
 	g_device.submit(std::move(cmdBuffer));
+	g_device.waitIdle(); // TODO: Sync this better
 }
 
 #if HAVE_OPENVR
@@ -3235,6 +3236,7 @@ std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_bits( uint32_t width,
 	auto cmdBuffer = g_device.commandBuffer();
 
 	cmdBuffer->copyBufferToImage(g_device.uploadBuffer(), 0, 0, pTex);
+	// TODO: Sync this copyBufferToImage.
 
 	g_device.submit(std::move(cmdBuffer));
 
@@ -3855,6 +3857,7 @@ std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struct wl
 	auto cmdBuffer = g_device.commandBuffer();
 
 	cmdBuffer->copyBufferToImage( buffer, 0, stride / DRMFormatGetBPP(drmFormat), pTex);
+	// TODO: Sync this copyBufferToImage
 
 	uint64_t sequence = g_device.submit(std::move(cmdBuffer));
 
