@@ -24,11 +24,12 @@ void compositing_debug(uvec2 coord) {
     }
 }
 
-vec3 layerColorFromColorspaceToScRGB(vec3 color, uint layerIdx) {
-    uint colorspace = get_layer_colorspace(layerIdx);
-
-    color = colorspace_plane_degamma_tf(color, colorspace);
-
+// Takes in a scRGB/Linear encoded value and applies color management
+// based on the input colorspace.
+//
+// ie. call colorspace_plane_degamma_tf(color.rgb, colorspace) before
+// input to this function.
+vec3 apply_layer_color_mgmt(vec3 color, uint colorspace) {
     if (c_itm_enable)
     {
         color = bt2446a_inverse_tonemapping(color, u_itmSdrNits, u_itmTargetNits);
@@ -63,6 +64,7 @@ vec3 layerColorFromColorspaceToScRGB(vec3 color, uint layerIdx) {
     return color;
 }
 
+
 vec4 sampleLayerEx(sampler2D layerSampler, uint offsetLayerIdx, uint colorspaceLayerIdx, vec2 uv, bool unnormalized) {
     vec2 coord = ((uv + u_offset[offsetLayerIdx]) * u_scale[offsetLayerIdx]);
     vec2 texSize = textureSize(layerSampler, 0);
@@ -85,7 +87,9 @@ vec4 sampleLayerEx(sampler2D layerSampler, uint offsetLayerIdx, uint colorspaceL
     // TODO(Josh): If colorspace != linear, emulate bilinear ourselves to blend
     // in linear space!
     // Split this into two parts!
-    color.rgb = layerColorFromColorspaceToScRGB(color.rgb, colorspaceLayerIdx);
+    uint colorspace = get_layer_colorspace(colorspaceLayerIdx);
+    color.rgb = colorspace_plane_degamma_tf(color.rgb, colorspace);
+    color.rgb = apply_layer_color_mgmt(color.rgb, colorspace);
 
     return color;
 }

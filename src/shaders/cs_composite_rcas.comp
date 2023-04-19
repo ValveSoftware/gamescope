@@ -59,7 +59,9 @@ void rcasComposite(uvec2 pos)
         if (all(lessThan(rcasPos, layer0Extent))) {
             FsrRcasF(outputValue.r, outputValue.g, outputValue.b, rcasPos, u_c1.xxxx);
 
-            outputValue.rgb = layerColorFromColorspaceToScRGB(outputValue.rgb, 0);
+            uint colorspace = get_layer_colorspace(0);
+            outputValue.rgb = colorspace_plane_degamma_tf(outputValue.rgb, colorspace);
+            outputValue.rgb = apply_layer_color_mgmt(outputValue.rgb, 0);
             outputValue *= u_opacity[0];
         }
     }

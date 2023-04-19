@@ -482,6 +482,8 @@ vec4 gaussian_blur(sampler2D layerSampler, uint layerIdx, vec2 pos, uint radius,
 
     vec4 color = vec4(0);
 
+    uint colorspace = get_layer_colorspace(layerIdx);
+
     for (int i = 0; i < steps; i++) {
         vec2 posOffset;
         if (vertical)
@@ -489,28 +491,18 @@ vec4 gaussian_blur(sampler2D layerSampler, uint layerIdx, vec2 pos, uint radius,
         else
             posOffset = vec2(offsets[i], 0);
 
-
-        vec4 tmp0 = textureCond(layerSampler, layerIdx, pos - posOffset, unnormalized) * weights[i];
-        if (vertical)
-        {
-            tmp0.rgb = colorspace_blend_tf(tmp0.rgb, c_output_eotf);
-        }
-        else
-        {
-            tmp0.rgb = colorspace_output_tf(tmp0.rgb, get_layer_colorspace(layerIdx));
-        }
+        vec4 tmp0 = textureCond(layerSampler, layerIdx, pos - posOffset, unnormalized);
+        tmp0.rgb = colorspace_plane_degamma_tf(tmp0.rgb, colorspace) * weights[i];
         color += tmp0;
 
-        vec4 tmp1 = textureCond(layerSampler, layerIdx, pos + posOffset, unnormalized) * weights[i];
-        if (vertical)
-        {
-            tmp1.rgb = colorspace_blend_tf(tmp1.rgb, c_output_eotf);
-        }
-        else
-        {
-            tmp1.rgb = colorspace_output_tf(tmp1.rgb, get_layer_colorspace(layerIdx));
-        }
+        vec4 tmp1 = textureCond(layerSampler, layerIdx, pos + posOffset, unnormalized);
+        tmp1.rgb = colorspace_plane_degamma_tf(tmp1.rgb, colorspace) * weights[i];
         color += tmp1;
+    }
+
+    if (vertical)
+    {
+        color.rgb = apply_layer_color_mgmt(color.rgb, colorspace);
     }
 
     return color;

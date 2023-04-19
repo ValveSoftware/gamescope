@@ -55,7 +55,8 @@ void main()
         outputValue = layerColor.rgb * opacity + outputValue * (1.0f - layerAlpha);
     }
 
-    outputValue = linearToSrgb(outputValue);
+    uint colorspace = get_layer_colorspace(0);
+    outputValue = colorspace_plane_regamma_tf(outputValue, 0);
     imageStore(dst, ivec2(coord), vec4(outputValue, 0));
 }
 

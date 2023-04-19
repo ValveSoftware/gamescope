@@ -322,6 +322,20 @@ vec3 colorspace_plane_degamma_tf(vec3 color, uint colorspace) {
     }
 }
 
+vec3 colorspace_plane_regamma_tf(vec3 color, uint colorspace) {
+    switch (colorspace) {
+        default: return vec3(1, 1, 0); // should never happen
+
+		case colorspace_scRGB:
+            return color;
+        case colorspace_linear: // Using sRGB image view. Unlike DRM which doesn't get that liberty for scanout.
+		case colorspace_sRGB:
+			return linearToSrgb(color);
+		case colorspace_pq:
+			return scRGBEncodingToPQ(color);
+    }
+}
+
 vec3 colorspace_plane_shaper_tf(vec3 color, uint colorspace) {
     // matches with colorspace_to_plane_regamma_tf in drm.cpp
 
