@@ -151,8 +151,7 @@ colormapping_t lerp( const colormapping_t & a, const colormapping_t & b, float t
 struct tonemapping_t
 {
 	bool bUseShaper = true;
-	float g22_luminance_tolinear = 1.f; // what luminance should be applied for g22 EOTF conversions?
-	float g22_luminance_fromlinear = 1.f; // what luminance should be applied for g22 EOTF conversions?
+	float g22_luminance = 1.f; // what luminance should be applied for g22 EOTF conversions?
 };
 
 // Generate a color transform from the source colorspace, to the dest colorspace,
@@ -167,7 +166,8 @@ void calcColorTransform( uint16_t * pRgbxData1d, int nLutSize1d,
 	uint16_t * pRgbxData3d, int nLutEdgeSize3d,
 	const displaycolorimetry_t & source, EOTF sourceEOTF,
 	const displaycolorimetry_t & dest,  EOTF destEOTF,
-	const colormapping_t & mapping, const nightmode_t & nightmode, const tonemapping_t & tonemapping );
+	const colormapping_t & mapping, const nightmode_t & nightmode, const tonemapping_t & tonemapping,
+	float flGain );
 
 int writeRawLut( const char * outputFilename, uint16_t * pData, size_t nSize );
 

@@ -210,7 +210,7 @@ glm::vec3 calcEOTFToLinear( const glm::vec3 & input, EOTF eotf, const tonemappin
 {
     if ( eotf == EOTF_Gamma22 )
     {
-        return glm::pow( input, glm::vec3( 2.2f ) ) * tonemapping.g22_luminance_tolinear;
+        return glm::pow( input, glm::vec3( 2.2f ) ) * tonemapping.g22_luminance;
     }
     else if ( eotf == EOTF_PQ )
     {
@@ -225,9 +225,9 @@ glm::vec3 calcLinearToEOTF( const glm::vec3 & input, EOTF eotf, const tonemappin
     if ( eotf == EOTF_Gamma22 )
     {
         glm::vec3 val = input;
-        if ( tonemapping.g22_luminance_fromlinear > 0.f )
+        if ( tonemapping.g22_luminance > 0.f )
         {
-            val = glm::clamp( input / tonemapping.g22_luminance_fromlinear, glm::vec3( 0.f ), glm::vec3( 1.f ) );
+            val = glm::clamp( input / tonemapping.g22_luminance, glm::vec3( 0.f ), glm::vec3( 1.f ) );
         }
         return glm::pow( val, glm::vec3( 1.f/2.2f ) );
     }
@@ -241,7 +241,7 @@ glm::vec3 calcLinearToEOTF( const glm::vec3 & input, EOTF eotf, const tonemappin
 
 // input is from 0->1
 // TODO: use tone-mapping for white, black, contrast ratio
-glm::vec3 applyShaper( const glm::vec3 & input, EOTF source, EOTF dest, const tonemapping_t & tonemapping, bool bInvert )
+glm::vec3 applyShaper( const glm::vec3 & input, EOTF source, EOTF dest, const tonemapping_t & tonemapping, float flGain, bool bInvert )
 {
     if ( source == dest || !tonemapping.bUseShaper )
     {
@@ -252,16 +252,17 @@ glm::vec3 applyShaper( const glm::vec3 & input, EOTF source, EOTF dest, const to
     {
         // (once we do tone mapping this gets more complicated
         std::swap( source, dest );
+        flGain = 1.f / flGain;
     }
 
-    return calcLinearToEOTF( calcEOTFToLinear( input, source, tonemapping ), dest, tonemapping );
+    return calcLinearToEOTF( flGain * calcEOTFToLinear( input, source, tonemapping ), dest, tonemapping );
 }
 
 void calcColorTransform( uint16_t * pRgbxData1d, int nLutSize1d,
     uint16_t * pRgbxData3d, int nLutEdgeSize3d,
 	const displaycolorimetry_t & source, EOTF sourceEOTF,
 	const displaycolorimetry_t & dest,  EOTF destEOTF,
-    const colormapping_t & mapping, const nightmode_t & nightmode, const tonemapping_t & tonemapping )
+    const colormapping_t & mapping, const nightmode_t & nightmode, const tonemapping_t & tonemapping, float flGain )
 {
     glm::mat3 xyz_from_dest = normalised_primary_matrix( dest.primaries, dest.white, 1.f );
     glm::mat3 dest_from_xyz = glm::inverse( xyz_from_dest );
@@ -281,7 +282,7 @@ void calcColorTransform( uint16_t * pRgbxData1d, int nLutSize1d,
         for ( int nVal=0; nVal<nLutSize1d; ++nVal )
         {
             glm::vec3 sourceColorEOTFEncoded = { nVal * flScale, nVal * flScale, nVal * flScale };
-            glm::vec3 shapedSourceColor = applyShaper( sourceColorEOTFEncoded, sourceEOTF, destEOTF, tonemapping, false );
+            glm::vec3 shapedSourceColor = applyShaper( sourceColorEOTFEncoded, sourceEOTF, destEOTF, tonemapping, flGain, false );
             pRgbxData1d[nVal * 4 + 0] = drm_quantize_lut_value( shapedSourceColor.x );
             pRgbxData1d[nVal * 4 + 1] = drm_quantize_lut_value( shapedSourceColor.y );
             pRgbxData1d[nVal * 4 + 2] = drm_quantize_lut_value( shapedSourceColor.z );
@@ -306,7 +307,7 @@ void calcColorTransform( uint16_t * pRgbxData1d, int nLutSize1d,
                 for ( int nRed=0; nRed<nLutEdgeSize3d; ++nRed )
                 {
                     glm::vec3 shapedSourceColor = { nRed * flScale, nGreen * flScale, nBlue * flScale };
-                    glm::vec3 sourceColorEOTFEncoded = applyShaper( shapedSourceColor, sourceEOTF, destEOTF, tonemapping, true );
+                    glm::vec3 sourceColorEOTFEncoded = applyShaper( shapedSourceColor, sourceEOTF, destEOTF, tonemapping, flGain, true );
 
                     // Convert to linearized display referred for source colorimetry
                     glm::vec3 sourceColorLinear = calcEOTFToLinear( sourceColorEOTFEncoded, sourceEOTF, tonemapping );
@@ -322,7 +323,7 @@ void calcColorTransform( uint16_t * pRgbxData1d, int nLutSize1d,
                     destColorLinear = glm::mix( destColorLinear, sourceColorLinear, amount );
 
                     // Apply night mode
-                    destColorLinear = vNightModeMultLinear * destColorLinear;
+                    destColorLinear = vNightModeMultLinear * destColorLinear * glm::vec3( flGain );
 
                     // Apply dest EOTF
                     glm::vec3 destColorEOTFEncoded = calcLinearToEOTF( destColorLinear, destEOTF, tonemapping );

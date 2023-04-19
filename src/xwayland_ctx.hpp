@@ -179,6 +179,8 @@ struct xwayland_ctx_t
 		Atom gamescopeHDROutputFeedback;
 		Atom gamescopeSDROnHDRContentBrightness;
 		Atom gamescopeInternalDisplayBrightness;
+		Atom gamescopeHDRInputGain;
+		Atom gamescopeSDRInputGain;
 		Atom gamescopeHDRItmEnable;
 		Atom gamescopeHDRItmSDRNits;
 		Atom gamescopeHDRItmTargetNits;

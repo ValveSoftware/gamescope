@@ -360,6 +360,8 @@ struct gamescope_color_mgmt_t
 	float sdrGamutWideness; // user property to widen gamut
 	float flInternalDisplayBrightness = 500.f;
 	float flSDROnHDRBrightness = 203.f;
+	float flHDRInputGain = 1.f;
+	float flSDRInputGain = 1.f;
 
 	// the native colorimetry capabilities of the display
 	displaycolorimetry_t displayColorimetry;
