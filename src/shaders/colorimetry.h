@@ -70,7 +70,7 @@ vec3 pqToScRGBEncoding(vec3 pq)
 
 vec3 scRGBEncodingToPQ(vec3 scRGBEncodedValue)
 {
-    return pqToNits(scRGBEncodedValue * 80.0f);
+    return nitsToPq(scRGBEncodedValue * 80.0f);
 }
 
 // This is apparently defined at 80 nits...
