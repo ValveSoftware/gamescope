@@ -56,7 +56,7 @@ void main()
     }
 
     uint colorspace = get_layer_colorspace(0);
-    outputValue = colorspace_plane_regamma_tf(outputValue, 0);
+    outputValue = colorspace_plane_regamma_tf(outputValue, colorspace);
     imageStore(dst, ivec2(coord), vec4(outputValue, 0));
 }
 
