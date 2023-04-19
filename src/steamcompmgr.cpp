@@ -219,7 +219,8 @@ update_color_mgmt()
 
 			if ( !g_ColorMgmtLutsOverride[nInputEOTF].lut3d.empty() && !g_ColorMgmtLutsOverride[nInputEOTF].lut1d.empty() )
 			{
-				g_ColorMgmtLuts[nInputEOTF] = g_ColorMgmtLutsOverride[nInputEOTF];
+				g_ColorMgmtLuts[nInputEOTF].lut1d = g_ColorMgmtLutsOverride[nInputEOTF].lut1d;
+				g_ColorMgmtLuts[nInputEOTF].lut3d = g_ColorMgmtLutsOverride[nInputEOTF].lut3d;
 			}
 			else if ( !lut3d.empty() && !lut1d.empty() )
 			{
