@@ -3288,9 +3288,6 @@ std::shared_ptr<CVulkanTexture> vulkan_acquire_screenshot_texture(uint32_t width
 	return nullptr;
 }
 
-// When encoding SDR content to HDR (PQ) encodings, use this luminance
-float g_flSDROnHDRContentBrightnessNits = 203.0f;
-
 // Internal display's native brightness.
 float g_flInternalDisplayBrightnessNits = 500.0f;
 

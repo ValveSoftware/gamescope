@@ -210,7 +210,7 @@ glm::vec3 calcEOTFToLinear( const glm::vec3 & input, EOTF eotf, const tonemappin
 {
     if ( eotf == EOTF_Gamma22 )
     {
-        return glm::pow( input, glm::vec3( 2.2f ) ) * tonemapping.g22_luminance;
+        return glm::pow( input, glm::vec3( 2.2f ) ) * tonemapping.g22_luminance_tolinear;
     }
     else if ( eotf == EOTF_PQ )
     {
@@ -225,9 +225,9 @@ glm::vec3 calcLinearToEOTF( const glm::vec3 & input, EOTF eotf, const tonemappin
     if ( eotf == EOTF_Gamma22 )
     {
         glm::vec3 val = input;
-        if ( tonemapping.g22_luminance > 0.f )
+        if ( tonemapping.g22_luminance_fromlinear > 0.f )
         {
-            val = glm::clamp( input / tonemapping.g22_luminance, glm::vec3( 0.f ), glm::vec3( 1.f ) );
+            val = glm::clamp( input / tonemapping.g22_luminance_fromlinear, glm::vec3( 0.f ), glm::vec3( 1.f ) );
         }
         return glm::pow( val, glm::vec3( 1.f/2.2f ) );
     }

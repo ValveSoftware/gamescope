@@ -151,7 +151,8 @@ colormapping_t lerp( const colormapping_t & a, const colormapping_t & b, float t
 struct tonemapping_t
 {
 	bool bUseShaper = true;
-	float g22_luminance = 1.f; // what luminance should be applied for g22 EOTF conversions?
+	float g22_luminance_tolinear = 1.f; // what luminance should be applied for g22 EOTF conversions?
+	float g22_luminance_fromlinear = 1.f; // what luminance should be applied for g22 EOTF conversions?
 };
 
 // Generate a color transform from the source colorspace, to the dest colorspace,

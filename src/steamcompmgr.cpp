@@ -110,7 +110,7 @@ gamescope_color_mgmt_tracker_t g_ColorMgmt{};
 static gamescope_color_mgmt_luts g_ColorMgmtLutsOverride[ EOTF_Count ];
 gamescope_color_mgmt_luts g_ColorMgmtLuts[ EOTF_Count ];
 
-extern float g_flSDROnHDRContentBrightnessNits;
+bool g_bForceHDRSupportDebug = false;
 extern float g_flInternalDisplayBrightnessNits;
 extern float g_flHDRItmSdrNits;
 extern float g_flHDRItmTargetNits;
@@ -169,24 +169,26 @@ update_color_mgmt()
 			{
 				if ( g_ColorMgmt.pending.outputEncodingEOTF == EOTF_Gamma22 )
 				{
-					// xwm_log.infof("G22 -> G22");
-					/*
-					// TODO: pass along the internal g22 linear gain for the
-					// forceHDR case on G22 -> G22
 					if ( g_bForceHDRSupportDebug )
 					{
-						float flGain = g_flSDROnHDRContentBrightnessNits / g_ColorMgmt.pending.flInternalDisplayBrightness;
+						tonemapping.g22_luminance_tolinear = g_ColorMgmt.pending.flSDROnHDRBrightness;
+						tonemapping.g22_luminance_fromlinear = g_ColorMgmt.pending.flInternalDisplayBrightness;
+						// xwm_log.infof("G22 -> G22 (force HDR) %f %f", tonemapping.g22_luminance_tolinear, tonemapping.g22_luminance_fromlinear );
 					}
-					*/
-
-					// G22 -> G22. Does not matter what the g22 mult is
-					tonemapping.g22_luminance = 1.f;
+					else
+					{
+						// G22 -> G22. Does not matter what the g22 mult is
+						tonemapping.g22_luminance_tolinear = 1.f;
+						tonemapping.g22_luminance_fromlinear = 1.f;
+						// xwm_log.infof("G22 -> G22");
+					}
 
 				}
 				else if ( g_ColorMgmt.pending.outputEncodingEOTF == EOTF_PQ )
 				{
 					// G22 -> PQ. SDR content going on an HDR output
-					tonemapping.g22_luminance = g_flSDROnHDRContentBrightnessNits;
+					tonemapping.g22_luminance_tolinear = g_ColorMgmt.pending.flSDROnHDRBrightness;
+					tonemapping.g22_luminance_fromlinear = g_ColorMgmt.pending.flSDROnHDRBrightness;
 					// xwm_log.infof("G22 -> PQ");
 				}
 
@@ -200,14 +202,16 @@ update_color_mgmt()
 				if ( g_ColorMgmt.pending.outputEncodingEOTF == EOTF_Gamma22 )
 				{
 					// PQ -> G22  Leverage the display's native brightness
-					tonemapping.g22_luminance = g_ColorMgmt.pending.flInternalDisplayBrightness;
-					// xwm_log.infof("PQ -> 2.2  -   tonemapping.g22_luminance %f", tonemapping.g22_luminance);
+					tonemapping.g22_luminance_tolinear = g_ColorMgmt.pending.flInternalDisplayBrightness;
+					tonemapping.g22_luminance_fromlinear = g_ColorMgmt.pending.flInternalDisplayBrightness;
+					// xwm_log.infof("PQ -> 2.2  -   tonemapping.g22_luminance %f", tonemapping.g22_luminance_tolinear );
 				}
 				else if ( g_ColorMgmt.pending.outputEncodingEOTF == EOTF_PQ )
 				{
 					// PQ -> PQ. Better not matter what the g22 mult is
+					tonemapping.g22_luminance_tolinear = 1.f;
+					tonemapping.g22_luminance_fromlinear = 1.f;
 					// xwm_log.infof("PQ -> PQ");
-					tonemapping.g22_luminance = 1.f;
 				}
 
 				buildPQColorimetry( &inputColorimetry, &colorMapping, displayColorimetry );
@@ -270,6 +274,21 @@ bool set_internal_display_brightness( float flVal )
 
 	g_ColorMgmt.pending.flInternalDisplayBrightness = flVal;
 	g_flInternalDisplayBrightnessNits = flVal;
+
+	return g_ColorMgmt.pending.enabled;
+}
+
+bool set_sdr_on_hdr_brightness( float flVal )
+{
+	if ( flVal < 1.f )
+	{
+		flVal = 203.f;
+	}
+
+	if ( g_ColorMgmt.pending.flSDROnHDRBrightness == flVal )
+		return false;
+
+	g_ColorMgmt.pending.flSDROnHDRBrightness = flVal;
 
 	return g_ColorMgmt.pending.enabled;
 }
@@ -503,7 +522,6 @@ bool g_bVRRCapable_CachedValue = false;
 bool g_bVRRInUse_CachedValue = false;
 bool g_bSupportsST2084_CachedValue = false;
 bool g_bForceHDR10OutputDebug = false;
-bool g_bForceHDRSupportDebug = false;
 bool g_bHDREnabled = false;
 bool g_bHDRItmEnable = false;
 
@@ -4903,10 +4921,8 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 	if ( ev->atom == ctx->atoms.gamescopeSDROnHDRContentBrightness )
 	{
 		uint32_t val = get_prop( ctx, ctx->root, ctx->atoms.gamescopeSDROnHDRContentBrightness, 0 );
-		g_flSDROnHDRContentBrightnessNits = bit_cast<float>(val);
-		if ( g_flSDROnHDRContentBrightnessNits < 1.0f )
-			g_flSDROnHDRContentBrightnessNits = 203.0f;
-		hasRepaint = true;
+		if ( set_sdr_on_hdr_brightness( bit_cast<float>(val) ) )
+			hasRepaint = true;
 	}
 	if ( ev->atom == ctx->atoms.gamescopeHDRItmEnable )
 	{
@@ -6393,8 +6409,6 @@ steamcompmgr_main(int argc, char **argv)
 					g_nCursorScaleHeight = atoi(optarg);
 				} else if (strcmp(opt_name, "hdr-enabled") == 0) {
 					g_bHDREnabled = true;
-				} else if (strcmp(opt_name, "hdr-sdr-content-nits") == 0) {
-					g_flSDROnHDRContentBrightnessNits = atof(optarg);
 				} else if (strcmp(opt_name, "hdr-debug-force-support") == 0) {
 					g_bForceHDRSupportDebug = true;
  				} else if (strcmp(opt_name, "hdr-debug-force-output") == 0) {
