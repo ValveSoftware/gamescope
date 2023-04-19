@@ -75,6 +75,9 @@ public:
 
 	xwayland_ctx_t *getCtx() const { return m_ctx; }
 
+	bool needs_server_flush() const { return m_needs_server_flush; }
+	void inform_flush() { m_needs_server_flush = false; }
+
 private:
 	void warp(int x, int y);
 	void checkSuspension();
@@ -105,6 +108,7 @@ private:
 	int m_lastY = 0;
 
 	bool m_bCursorVisibleFeedback = false;
+	bool m_needs_server_flush = false;
 };
 
 extern std::vector< wlr_surface * > wayland_surfaces_deleted;

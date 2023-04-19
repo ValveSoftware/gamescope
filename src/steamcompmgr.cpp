@@ -1748,6 +1748,7 @@ void MouseCursor::updateCursorFeedback( bool bForce )
 		(unsigned char *)&value, 1 );
 
 	m_bCursorVisibleFeedback = bVisible;
+	m_needs_server_flush = true;
 }
 
 struct BaseLayerInfo_t
@@ -3438,6 +3439,8 @@ determine_and_apply_focus()
 
 	XChangeProperty( root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeKeyboardFocusDisplay, XA_CARDINAL, 32, PropModeReplace,
 					 (unsigned char *)focused_keyboard_display, strlen(focused_keyboard_display) + 1 );
+
+	XFlush( root_ctx->dpy );
 
 	// Sort out fading.
 	if (previous_focus.focusWindow != global_focus.focusWindow)
@@ -6265,9 +6268,11 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 				xwm_log.errorf("Failed to load mouse cursor: left_ptr");
 		}
 	}
+
+	XFlush(ctx->dpy);
 }
 
-void update_vrr_atoms(xwayland_ctx_t *root_ctx, bool force)
+void update_vrr_atoms(xwayland_ctx_t *root_ctx, bool force, bool* needs_flush = nullptr)
 {
 	bool capable = drm_get_vrr_capable( &g_DRM );
 	if ( capable != g_bVRRCapable_CachedValue || force )
@@ -6276,6 +6281,8 @@ void update_vrr_atoms(xwayland_ctx_t *root_ctx, bool force)
 		XChangeProperty(root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeVRRCapable, XA_CARDINAL, 32, PropModeReplace,
 			(unsigned char *)&capable_value, 1 );
 		g_bVRRCapable_CachedValue = capable;
+		if (needs_flush)
+			*needs_flush = true;
 	}
 
 	bool st2084 = drm_supports_st2084( &g_DRM );
@@ -6285,6 +6292,8 @@ void update_vrr_atoms(xwayland_ctx_t *root_ctx, bool force)
 		XChangeProperty(root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeDisplaySupportsHDR, XA_CARDINAL, 32, PropModeReplace,
 			(unsigned char *)&hdr_value, 1 );
 		g_bSupportsST2084_CachedValue = st2084;
+		if (needs_flush)
+			*needs_flush = true;
 	}
 
 	bool in_use = drm_get_vrr_in_use( &g_DRM );
@@ -6294,6 +6303,8 @@ void update_vrr_atoms(xwayland_ctx_t *root_ctx, bool force)
 		XChangeProperty(root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeVRRInUse, XA_CARDINAL, 32, PropModeReplace,
 			(unsigned char *)&in_use_value, 1 );
 		g_bVRRInUse_CachedValue = in_use;
+		if (needs_flush)
+			*needs_flush = true;
 	}
 
 	// Don't update this in-sync with DRM vrr usage.
@@ -6303,11 +6314,16 @@ void update_vrr_atoms(xwayland_ctx_t *root_ctx, bool force)
 		uint32_t enabled_value = 0;
 		XChangeProperty(root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeVRREnabled, XA_CARDINAL, 32, PropModeReplace,
 			(unsigned char *)&enabled_value, 1 );
+		if (needs_flush)
+			*needs_flush = true;
 	}
 }
 
-void update_mode_atoms(xwayland_ctx_t *root_ctx)
+void update_mode_atoms(xwayland_ctx_t *root_ctx, bool* needs_flush = nullptr)
 {
+	if (needs_flush)
+		*needs_flush = true;
+
 	if ( drm_get_screen_type(&g_DRM) == DRM_SCREEN_TYPE_INTERNAL )
 	{
 		XDeleteProperty(root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeDisplayModeListExternal);
@@ -6555,6 +6571,8 @@ steamcompmgr_main(int argc, char **argv)
 
 	update_vrr_atoms(root_ctx, true);
 	update_mode_atoms(root_ctx);
+	XFlush(root_ctx->dpy);
+
 	if ( !BIsNested() )
 	{
 		drm_update_patched_edid(&g_DRM);
@@ -6647,7 +6665,7 @@ steamcompmgr_main(int argc, char **argv)
 			{
 				hasRepaint = true;
 
-				update_mode_atoms(root_ctx);
+				update_mode_atoms(root_ctx, &flush_root);
 			}
 		}
 
@@ -6780,11 +6798,6 @@ steamcompmgr_main(int argc, char **argv)
 			}
 		}
 
-		if (flush_root)
-		{
-			XFlush(root_ctx->dpy);
-		}
-
 		steamcompmgr_check_xdg();
 
 		// Handles if we got a commit for the window we want to focus
@@ -6865,7 +6878,7 @@ steamcompmgr_main(int argc, char **argv)
 			}
 		}
 
-		update_vrr_atoms(root_ctx, false);
+		update_vrr_atoms(root_ctx, false, &flush_root);
 
 		// TODO: Look into making this _RAW
 		// wlroots, seems to just use normal MONOTONIC
@@ -6874,7 +6887,20 @@ steamcompmgr_main(int argc, char **argv)
 		clock_gettime(CLOCK_MONOTONIC, &now);
 
 		if (global_focus.cursor)
+		{
 			global_focus.cursor->updatePosition();
+
+			if (global_focus.cursor->needs_server_flush())
+			{
+				flush_root = true;
+				global_focus.cursor->inform_flush();
+			}
+		}
+
+		if (flush_root)
+		{
+			XFlush(root_ctx->dpy);
+		}
 
 		// Ask for a new surface every vblank
 		if ( vblank == true )
