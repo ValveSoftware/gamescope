@@ -1682,6 +1682,7 @@ void MouseCursor::paint(steamcompmgr_win_t *window, steamcompmgr_win_t *fit, str
 	layer->offset.y = -scaledY;
 
 	layer->zpos = g_zposCursor; // cursor, on top of both bottom layers
+	layer->applyColorMgmt = false;
 
 	layer->tex = m_texture;
 	layer->fbid = BIsNested() ? 0 : m_texture->fbid();
@@ -1915,6 +1916,7 @@ paint_window(steamcompmgr_win_t *w, steamcompmgr_win_t *scaleW, struct FrameInfo
 
 	layer->blackBorder = flags & PaintWindowFlag::DrawBorders;
 
+	layer->applyColorMgmt = true;
 	layer->zpos = g_zposBase;
 
 	if ( w != scaleW )
@@ -2018,6 +2020,7 @@ paint_all(bool async)
 	}
 
 	struct FrameInfo_t frameInfo = {};
+	frameInfo.applyOutputColorMgmt = true;
 
 	// If the window we'd paint as the base layer is the streaming client,
 	// find the video underlay and put it up first in the scenegraph
@@ -2308,7 +2311,7 @@ paint_all(bool async)
 		else
 		{
 			frameInfo = {};
-
+			frameInfo.applyOutputColorMgmt = false;
 			frameInfo.layerCount = 1;
 			FrameInfo_t::Layer_t *layer = &frameInfo.layers[ 0 ];
 			layer->scale.x = 1.0;
@@ -2317,6 +2320,7 @@ paint_all(bool async)
 
 			layer->tex = vulkan_get_last_output_image();
 			layer->fbid = layer->tex->fbid();
+			layer->applyColorMgmt = false;
 
 			layer->linearFilter = false;
 			layer->colorspace = g_bOutputHDREnabled ? GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ : GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB;

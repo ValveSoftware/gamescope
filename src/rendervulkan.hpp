@@ -240,6 +240,8 @@ struct FrameInfo_t
 	std::shared_ptr<CVulkanTexture> shaperLut[EOTF_Count];
 	std::shared_ptr<CVulkanTexture> lut3D[EOTF_Count];
 
+	bool applyOutputColorMgmt;
+
 	int layerCount;
 	struct Layer_t
 	{
@@ -254,6 +256,7 @@ struct FrameInfo_t
 
 		bool blackBorder;
 		bool linearFilter;
+		bool applyColorMgmt;
 
 		GamescopeAppTextureColorspace colorspace;
 

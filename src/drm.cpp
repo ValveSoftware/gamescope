@@ -2040,7 +2040,7 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_BLEND_TF", DRM_VALVE1_TRANSFER_FUNCTION_DEFAULT );
 				}
 			}
-			else
+			else if ( frameInfo->layers[i].applyColorMgmt )
 			{
 				liftoff_layer_unset_property( drm->lo_layers[ i ], "COLOR_ENCODING" );
 				liftoff_layer_unset_property( drm->lo_layers[ i ], "COLOR_RANGE" );
@@ -2056,6 +2056,14 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_BLEND_TF", drm->pending.output_tf );
 				}
 			}
+			else
+			{
+				liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_DEGAMMA_TF", DRM_VALVE1_TRANSFER_FUNCTION_DEFAULT );
+				liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_SHAPER_LUT", 0 );
+				liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_SHAPER_TF", 0 );
+				liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_LUT3D", 0 );
+				liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_BLEND_TF", DRM_VALVE1_TRANSFER_FUNCTION_DEFAULT );
+			}
 		}
 		else
 		{
@@ -2068,6 +2076,7 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 			{
 				liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_DEGAMMA_TF", DRM_VALVE1_TRANSFER_FUNCTION_DEFAULT );
 				liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_SHAPER_LUT", 0 );
+				liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_SHAPER_TF", 0 );
 				liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_LUT3D", 0 );
 				liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_BLEND_TF", DRM_VALVE1_TRANSFER_FUNCTION_DEFAULT );
 			}
@@ -2156,7 +2165,7 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 		}
 	}
 
-	if ( drm_supports_color_mgmt( &g_DRM ) )
+	if ( drm_supports_color_mgmt( &g_DRM ) && frameInfo->applyOutputColorMgmt )
 	{
 		drm->pending.output_tf = g_bOutputHDREnabled
 			? DRM_VALVE1_TRANSFER_FUNCTION_PQ
