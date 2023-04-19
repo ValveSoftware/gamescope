@@ -31,6 +31,7 @@
 
 #include <X11/Xlib.h>
 #include <cstdint>
+#include <drm_mode.h>
 #include <memory>
 #include <thread>
 #include <condition_variable>
@@ -6194,6 +6195,7 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 	ctx->atoms.gamescopeColorNightMode = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_NIGHT_MODE", false );
 	ctx->atoms.gamescopeColorManagementDisable = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_MANAGEMENT_DISABLE", false );
 	ctx->atoms.gamescopeColorAppWantsHDRFeedback = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_APP_WANTS_HDR_FEEDBACK", false );
+	ctx->atoms.gamescopeColorAppHDRMetadataFeedback = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_APP_HDR_METADATA_FEEDBACK", false );
 
 	ctx->atoms.gamescopeCreateXWaylandServer = XInternAtom( ctx->dpy, "GAMESCOPE_CREATE_XWAYLAND_SERVER", false );
 	ctx->atoms.gamescopeCreateXWaylandServerFeedback = XInternAtom( ctx->dpy, "GAMESCOPE_CREATE_XWAYLAND_SERVER_FEEDBACK", false );
@@ -6613,12 +6615,15 @@ steamcompmgr_main(int argc, char **argv)
 			break;
 		}
 
+		bool flush_root = false;
+
 		if ( inputCounter != lastPublishedInputCounter )
 		{
 			XChangeProperty( root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeInputCounterAtom, XA_CARDINAL, 32, PropModeReplace,
 							 (unsigned char *)&inputCounter, 1 );
 
 			lastPublishedInputCounter = inputCounter;
+			flush_root = true;
 		}
 
 		if ( g_bFSRActive != g_bWasFSRActive )
@@ -6628,6 +6633,7 @@ steamcompmgr_main(int argc, char **argv)
 					(unsigned char *)&active, 1 );
 
 			g_bWasFSRActive = g_bFSRActive;
+			flush_root = true;
 		}
 
 		if (focusDirty)
@@ -6691,6 +6697,15 @@ steamcompmgr_main(int argc, char **argv)
 					uint32_t hdr_value = ( g_bOutputHDREnabled || g_bForceHDRSupportDebug ) ? 1 : 0;
 					XChangeProperty(server->ctx->dpy, server->ctx->root, server->ctx->atoms.gamescopeHDROutputFeedback, XA_CARDINAL, 32, PropModeReplace,
 						(unsigned char *)&hdr_value, 1 );
+
+					if (server->ctx.get() == root_ctx)
+					{
+						flush_root = true;
+					}
+					else
+					{
+						XFlush(server->ctx->dpy);
+					}
 				}
 			}
 
@@ -6719,12 +6734,18 @@ steamcompmgr_main(int argc, char **argv)
 
 		{
 			GamescopeAppTextureColorspace current_app_colorspace = GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB;
+			std::shared_ptr<wlserver_hdr_metadata> app_hdr_metadata = nullptr;
 			if ( g_HeldCommits[HELD_COMMIT_BASE] )
+			{
 				current_app_colorspace = g_HeldCommits[HELD_COMMIT_BASE]->colorspace();
+				if (g_HeldCommits[HELD_COMMIT_BASE]->feedback)
+					app_hdr_metadata = g_HeldCommits[HELD_COMMIT_BASE]->feedback->hdr_metadata_blob;
+			}
 
 			bool app_wants_hdr = ColorspaceIsHDR( current_app_colorspace );
 
 			static bool s_bAppWantsHDRCached = false;
+			static std::shared_ptr<wlserver_hdr_metadata> s_AppHDRMetadata = nullptr;
 
 			if ( app_wants_hdr != s_bAppWantsHDRCached )
 			{
@@ -6734,7 +6755,34 @@ steamcompmgr_main(int argc, char **argv)
 						(unsigned char *)&app_wants_hdr_prop, 1 );
 
 				s_bAppWantsHDRCached = app_wants_hdr;
+				flush_root = true;
 			}
+
+			if ( app_hdr_metadata != s_AppHDRMetadata )
+			{
+				if (app_hdr_metadata)
+				{
+					std::vector<uint32_t> app_hdr_metadata_blob;
+					app_hdr_metadata_blob.resize((sizeof(hdr_metadata_infoframe) + (sizeof(uint32_t) - 1)) / sizeof(uint32_t));
+					memset(app_hdr_metadata_blob.data(), 0, sizeof(uint32_t) * app_hdr_metadata_blob.size());
+					memcpy(app_hdr_metadata_blob.data(), &app_hdr_metadata->metadata, sizeof(hdr_metadata_infoframe));
+
+					XChangeProperty(root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeColorAppHDRMetadataFeedback, XA_CARDINAL, 32, PropModeReplace,
+							(unsigned char *)app_hdr_metadata_blob.data(), (int)app_hdr_metadata_blob.size() );
+				}
+				else
+				{
+					XDeleteProperty(root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeColorAppHDRMetadataFeedback);
+				}
+
+				s_AppHDRMetadata = app_hdr_metadata;
+				flush_root = true;
+			}
+		}
+
+		if (flush_root)
+		{
+			XFlush(root_ctx->dpy);
 		}
 
 		steamcompmgr_check_xdg();

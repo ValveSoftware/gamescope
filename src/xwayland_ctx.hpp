@@ -194,6 +194,7 @@ struct xwayland_ctx_t
 		Atom gamescopeColorNightMode; // amount, hue, saturation
 		Atom gamescopeColorManagementDisable;
 		Atom gamescopeColorAppWantsHDRFeedback;
+		Atom gamescopeColorAppHDRMetadataFeedback;
 
 		Atom gamescopeCreateXWaylandServer;
 		Atom gamescopeCreateXWaylandServerFeedback;

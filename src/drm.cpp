@@ -756,7 +756,7 @@ static bool refresh_state( drm_t *drm )
 		if (conn->has_colorspace)
 			conn->current.colorspace = conn->initial_prop_values["Colorspace"];
 		if (conn->has_hdr_output_metadata)
-			conn->current.hdr_output_metadata = std::make_shared<wlserver_hdr_metadata>(conn->initial_prop_values["HDR_OUTPUT_METADATA"], false);
+			conn->current.hdr_output_metadata = std::make_shared<wlserver_hdr_metadata>(nullptr, conn->initial_prop_values["HDR_OUTPUT_METADATA"], false);
 		if (conn->has_content_type)
 			conn->current.content_type = conn->initial_prop_values["content type"];
 
@@ -2774,7 +2774,7 @@ std::shared_ptr<wlserver_hdr_metadata> drm_create_hdr_metadata_blob(struct drm_t
 	if (!blob)
 		return nullptr;
 
-	return std::make_shared<wlserver_hdr_metadata>(blob);
+	return std::make_shared<wlserver_hdr_metadata>(metadata, blob);
 }
 void drm_destroy_hdr_metadata_blob(struct drm_t *drm, uint32_t blob)
 {

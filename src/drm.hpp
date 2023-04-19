@@ -58,10 +58,11 @@ struct wlserver_hdr_metadata
 
 	}
 
-	wlserver_hdr_metadata(uint32_t blob, bool owned = true)
+	wlserver_hdr_metadata(hdr_output_metadata* _metadata, uint32_t blob, bool owned = true)
 		: blob(blob)
 	{
-
+		if (_metadata)
+			this->metadata = *_metadata;
 	}
 
 	~wlserver_hdr_metadata()
@@ -70,6 +71,7 @@ struct wlserver_hdr_metadata
 			drm_destroy_hdr_metadata_blob( &g_DRM, blob );
 	}
 
+	hdr_output_metadata metadata = {};
 	uint32_t blob = 0;
 	bool owned = true;
 };
