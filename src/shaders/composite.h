@@ -63,13 +63,13 @@ vec3 layerColorFromColorspaceToScRGB(vec3 color, uint layerIdx) {
     return color;
 }
 
-vec4 sampleLayer(sampler2D layerSampler, uint layerIdx, vec2 uv, bool unnormalized) {
-    vec2 coord = ((uv + u_offset[layerIdx]) * u_scale[layerIdx]);
+vec4 sampleLayerEx(sampler2D layerSampler, uint offsetLayerIdx, uint colorspaceLayerIdx, vec2 uv, bool unnormalized) {
+    vec2 coord = ((uv + u_offset[offsetLayerIdx]) * u_scale[offsetLayerIdx]);
     vec2 texSize = textureSize(layerSampler, 0);
 
     if (coord.x < 0.0f       || coord.y < 0.0f ||
         coord.x >= texSize.x || coord.y >= texSize.y) {
-        float border = (u_borderMask & (1u << layerIdx)) != 0 ? 1.0f : 0.0f;
+        float border = (u_borderMask & (1u << offsetLayerIdx)) != 0 ? 1.0f : 0.0f;
 
         if (checkDebugFlag(compositedebug_PlaneBorders))
             return vec4(vec3(1.0f, 0.0f, 1.0f) * border, border);
@@ -85,9 +85,13 @@ vec4 sampleLayer(sampler2D layerSampler, uint layerIdx, vec2 uv, bool unnormaliz
     // TODO(Josh): If colorspace != linear, emulate bilinear ourselves to blend
     // in linear space!
     // Split this into two parts!
-    color.rgb = layerColorFromColorspaceToScRGB(color.rgb, layerIdx);
+    color.rgb = layerColorFromColorspaceToScRGB(color.rgb, colorspaceLayerIdx);
 
     return color;
+}
+
+vec4 sampleLayer(sampler2D layerSampler, uint layerIdx, vec2 uv, bool unnormalized) {
+    return sampleLayerEx(layerSampler, layerIdx, layerIdx, uv, unnormalized);
 }
 
 vec3 encodeOutputColor(vec3 value) {
