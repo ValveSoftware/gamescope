@@ -26,6 +26,8 @@ add_project_arguments(cppc.get_supported_arguments([
   '-Wno-c99-designator',
   '-Wno-invalid-offsetof',
   '-Wno-unused-const-variable',
+  '-Wno-volatile', # glm warning
+  '-Wno-deprecated-volatile',
 ]), language: 'cpp')
 
 pipewire_dep = dependency('libpipewire-0.3', required: get_option('pipewire'))
