@@ -96,9 +96,8 @@ inline float positive_mod( float flX, float flPeriod )
 // Colorimetry functions related to color space conversions
 struct primaries_t
 {
-#if __cplusplus >= 202002L
-	bool operator <=> (const primaries_t&) const = default;
-#endif
+	bool operator == (const primaries_t&) const = default;
+	bool operator != (const primaries_t&) const = default;
 
 	glm::vec2 r;
 	glm::vec2 g;
@@ -115,18 +114,16 @@ enum EOTF
 
 struct displaycolorimetry_t
 {
-#if __cplusplus >= 202002L
-	bool operator <=> (const displaycolorimetry_t&) const = default;
-#endif
+	bool operator == (const displaycolorimetry_t&) const = default;
+	bool operator != (const displaycolorimetry_t&) const = default;
 	primaries_t primaries;
 	glm::vec2 white;
 };
 
 struct nightmode_t
 {
-#if __cplusplus >= 202002L
-	bool operator <=> (const nightmode_t&) const = default;
-#endif
+	bool operator == (const nightmode_t&) const = default;
+	bool operator != (const nightmode_t&) const = default;
 
     float amount; // [0 = disabled, 1.f = on]
     float hue; // [0,1]
@@ -135,9 +132,8 @@ struct nightmode_t
 
 struct colormapping_t
 {
-#if __cplusplus >= 202002L
-	bool operator <=> (const colormapping_t&) const = default;
-#endif
+	bool operator == (const colormapping_t&) const = default;
+	bool operator != (const colormapping_t&) const = default;
 
     float blendEnableMinSat;
     float blendEnableMaxSat;
