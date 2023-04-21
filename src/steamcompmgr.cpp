@@ -4026,6 +4026,7 @@ add_win(xwayland_ctx_t *ctx, Window id, Window prev, unsigned long sequence)
 	new_win->ignoreOverrideRedirect = false;
 
 	new_win->mouseMoved = 0;
+        new_win->ignoreNextClickForVisibility = 0;
 
 	wlserver_x11_surface_info_init( &new_win->xwayland().surface, ctx->xwayland_server, id );
 
