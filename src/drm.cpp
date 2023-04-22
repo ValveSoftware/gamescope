@@ -2824,8 +2824,10 @@ bool drm_supports_color_mgmt(struct drm_t *drm)
 	if (!drm->crtc)
 		return false;
 
-	// TODO: hook up
-	return true;
+	return (drm->crtc->has_valve1_regamma_tf &&
+			drm->crtc->has_degamma_lut &&
+			drm->crtc->has_gamma_lut &&
+			drm->crtc->has_ctm);
 }
 
 void drm_get_native_colorimetry( struct drm_t *drm,
