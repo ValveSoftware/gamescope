@@ -2082,7 +2082,7 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 						liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_BLEND_TF", 0 );
 				}
 			}
-			else
+			else if ( drm_supports_color_mgmt( drm ) )
 			{
 				liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_DEGAMMA_TF", DRM_VALVE1_TRANSFER_FUNCTION_DEFAULT );
 				liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_SHAPER_LUT", 0 );
