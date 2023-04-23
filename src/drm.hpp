@@ -296,6 +296,8 @@ extern enum g_panel_orientation g_drmModeOrientation;
 
 extern std::atomic<uint64_t> g_drmEffectiveOrientation; // DRM_MODE_ROTATE_*
 
+extern bool g_bForceDisableColorMgmt;
+
 bool init_drm(struct drm_t *drm, int width, int height, int refresh, bool wants_adaptive_sync);
 void finish_drm(struct drm_t *drm);
 int drm_commit(struct drm_t *drm, const struct FrameInfo_t *frameInfo );
