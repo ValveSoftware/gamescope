@@ -603,6 +603,18 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
+	if ( BIsNested() )
+	{
+		if ( SDL_Init( SDL_INIT_VIDEO | SDL_INIT_EVENTS ) != 0 )
+		{
+			fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
+			return 1;
+		}
+	}
+
+	VkInstance instance = vulkan_create_instance();
+	VkSurfaceKHR surface = nullptr;
+
 	if ( !BIsNested() )
 	{
 		g_bForceRelativeMouse = false;
@@ -619,26 +631,27 @@ int main(int argc, char **argv)
 	}
 	else
 #endif
+
+	if ( !initOutput( g_nPreferredOutputWidth, g_nPreferredOutputHeight, g_nNestedRefresh ) )
+	{
+		fprintf( stderr, "Failed to initialize output\n" );
+		return 1;
+	}
+
 	if ( BIsNested() )
 	{
-		if ( SDL_Init( SDL_INIT_VIDEO | SDL_INIT_EVENTS ) != 0 )
+		if ( !SDL_Vulkan_CreateSurface( g_SDLWindow, instance, &surface ) )
 		{
-			fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
+			fprintf(stderr, "SDL_Vulkan_CreateSurface failed: %s", SDL_GetError() );
 			return 1;
 		}
 	}
 
 	g_ForcedNV12ColorSpace = parse_colorspace_string( getenv( "GAMESCOPE_NV12_COLORSPACE" ) );
 
-	if ( !vulkan_init() )
+	if ( !vulkan_init(instance, surface) )
 	{
 		fprintf( stderr, "Failed to initialize Vulkan\n" );
-		return 1;
-	}
-
-	if ( !initOutput( g_nPreferredOutputWidth, g_nPreferredOutputHeight, g_nNestedRefresh ) )
-	{
-		fprintf( stderr, "Failed to initialize output\n" );
 		return 1;
 	}
 
@@ -648,7 +661,7 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
-	if ( !vulkan_make_output() )
+	if ( !vulkan_make_output(surface) )
 	{
 		fprintf( stderr, "vulkan_make_output failed\n" );
 		return 1;

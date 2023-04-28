@@ -493,7 +493,7 @@ private:
 class CVulkanDevice
 {
 public:
-	bool BInit();
+	bool BInit(VkInstance instance, VkSurfaceKHR surface);
 
 	VkSampler sampler(SamplerState key);
 	VkPipeline pipeline(ShaderType type, uint32_t layerCount = 1, uint32_t ycbcrMask = 0, uint32_t blur_layers = 0, uint32_t colorspace_mask = 0, uint32_t output_eotf = EOTF_Gamma22, bool itm_enable = false);
@@ -535,8 +535,7 @@ public:
 
 
 private:
-	bool createInstance();
-	bool selectPhysDev();
+	bool selectPhysDev(VkSurfaceKHR surface);
 	bool createDevice();
 	bool createLayouts();
 	bool createPools();
@@ -592,13 +591,17 @@ private:
 	std::map<uint64_t, std::unique_ptr<CVulkanCmdBuffer>> m_pendingCmdBufs;
 };
 
-bool CVulkanDevice::BInit()
+bool CVulkanDevice::BInit(VkInstance instance, VkSurfaceKHR surface)
 {
+	assert(instance);
 	assert(!m_bInitialized);
 
-	if (!createInstance())
-		return false;
-	if (!selectPhysDev())
+	m_instance = instance;
+	#define VK_FUNC(x) vk.x = (PFN_vk##x) vkGetInstanceProcAddr(instance, "vk"#x);
+	VULKAN_INSTANCE_FUNCTIONS
+	#undef VK_FUNC
+
+	if (!selectPhysDev(surface))
 		return false;
 	if (!createDevice())
 		return false;
@@ -619,62 +622,7 @@ bool CVulkanDevice::BInit()
 	return true;
 }
 
-bool CVulkanDevice::createInstance()
-{
-	VkResult result = VK_ERROR_INITIALIZATION_FAILED;
-
-	std::vector< const char * > sdlExtensions;
-	if ( BIsVRSession() )
-	{
-#if HAVE_OPENVR
-		vrsession_append_instance_exts( sdlExtensions );
-#endif
-	}
-	else if ( BIsNested() )
-	{
-		if ( SDL_Vulkan_LoadLibrary( nullptr ) != 0 )
-		{
-			fprintf(stderr, "SDL_Vulkan_LoadLibrary failed: %s\n", SDL_GetError());
-			return false;
-		}
-
-		unsigned int extCount = 0;
-		SDL_Vulkan_GetInstanceExtensions( nullptr, &extCount, nullptr );
-		sdlExtensions.resize( extCount );
-		SDL_Vulkan_GetInstanceExtensions( nullptr, &extCount, sdlExtensions.data() );
-	}
-
-	const VkApplicationInfo appInfo = {
-		.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
-		.pApplicationName = "gamescope",
-		.applicationVersion = VK_MAKE_VERSION(1, 0, 0),
-		.pEngineName = "hopefully not just some code",
-		.engineVersion = VK_MAKE_VERSION(1, 0, 0),
-		.apiVersion = VK_API_VERSION_1_2,
-	};
-
-	const VkInstanceCreateInfo createInfo = {
-		.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
-		.pApplicationInfo = &appInfo,
-		.enabledExtensionCount = (uint32_t)sdlExtensions.size(),
-		.ppEnabledExtensionNames = sdlExtensions.data(),
-	};
-
-	result = vkCreateInstance(&createInfo, 0, &m_instance);
-	if ( result != VK_SUCCESS )
-	{
-		vk_errorf( result, "vkCreateInstance failed" );
-		return false;
-	}
-
-	#define VK_FUNC(x) vk.x = (PFN_vk##x) vkGetInstanceProcAddr(instance(), "vk"#x);
-	VULKAN_INSTANCE_FUNCTIONS
-	#undef VK_FUNC
-
-	return true;
-}
-
-bool CVulkanDevice::selectPhysDev()
+bool CVulkanDevice::selectPhysDev(VkSurfaceKHR surface)
 {
 	uint32_t deviceCount = 0;
 	vk.EnumeratePhysicalDevices(instance(), &deviceCount, nullptr);
@@ -721,6 +669,23 @@ bool CVulkanDevice::selectPhysDev()
 			if (!m_physDev ||
 			    (g_preferVendorID == deviceProperties.vendorID && g_preferDeviceID == deviceProperties.deviceID))
 			{
+				// if we have a surface, check that the queue family can actually present on it
+				if (surface) {
+					VkBool32 canPresent = false;
+					vk.GetPhysicalDeviceSurfaceSupportKHR( cphysDev, generalIndex, surface, &canPresent );
+					if ( !canPresent )
+					{
+						vk_log.infof( "physical device %04x:%04x queue doesn't support presenting on our surface, testing next one..", deviceProperties.vendorID, deviceProperties.deviceID );
+						continue;
+					}
+					vk.GetPhysicalDeviceSurfaceSupportKHR( cphysDev, computeOnlyIndex, surface, &canPresent );
+					if ( !canPresent )
+					{
+						vk_log.debugf( "physical device %04x:%04x compute queue doesn't support presenting on our surface, using graphics queue", deviceProperties.vendorID, deviceProperties.deviceID );
+						computeOnlyIndex = 0;
+					}
+				}
+
 				m_queueFamily = computeOnlyIndex == ~0u ? generalIndex : computeOnlyIndex;
 				m_physDev = cphysDev;
 			}
@@ -3053,7 +3018,7 @@ bool vulkan_remake_output_images()
 	return bRet;
 }
 
-bool vulkan_make_output( void )
+bool vulkan_make_output( VkSurfaceKHR surface )
 {
 	VulkanOutput_t *pOutput = &g_output;
 
@@ -3066,20 +3031,8 @@ bool vulkan_make_output( void )
 	}
 	else if ( BIsNested() == true )
 	{
-		if ( !SDL_Vulkan_CreateSurface( g_SDLWindow, g_device.instance(), &pOutput->surface ) )
-		{
-			vk_log.errorf( "SDL_Vulkan_CreateSurface failed: %s", SDL_GetError() );
-			return false;
-		}
-
-		// TODO: check this when selecting the physical device and queue family
-		VkBool32 canPresent = false;
-		g_device.vk.GetPhysicalDeviceSurfaceSupportKHR( g_device.physDev(), g_device.queueFamily(), pOutput->surface, &canPresent );
-		if ( !canPresent )
-		{
-			vk_log.errorf( "physical device queue doesn't support presenting on our surface" );
-			return false;
-		}
+		assert(surface);
+		pOutput->surface = surface;
 
 		result = g_device.vk.GetPhysicalDeviceSurfaceCapabilitiesKHR( g_device.physDev(), pOutput->surface, &pOutput->surfaceCaps );
 		if ( result != VK_SUCCESS )
@@ -3194,9 +3147,60 @@ static bool init_nis_data()
 	return true;
 }
 
-bool vulkan_init( void )
+VkInstance vulkan_create_instance( void )
 {
-	if (!g_device.BInit())
+	VkResult result = VK_ERROR_INITIALIZATION_FAILED;
+
+	std::vector< const char * > sdlExtensions;
+	if ( BIsVRSession() )
+	{
+#if HAVE_OPENVR
+		vrsession_append_instance_exts( sdlExtensions );
+#endif
+	}
+	else if ( BIsNested() )
+	{
+		if ( SDL_Vulkan_LoadLibrary( nullptr ) != 0 )
+		{
+			fprintf(stderr, "SDL_Vulkan_LoadLibrary failed: %s\n", SDL_GetError());
+			return nullptr;
+		}
+
+		unsigned int extCount = 0;
+		SDL_Vulkan_GetInstanceExtensions( nullptr, &extCount, nullptr );
+		sdlExtensions.resize( extCount );
+		SDL_Vulkan_GetInstanceExtensions( nullptr, &extCount, sdlExtensions.data() );
+	}
+
+	const VkApplicationInfo appInfo = {
+		.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
+		.pApplicationName = "gamescope",
+		.applicationVersion = VK_MAKE_VERSION(1, 0, 0),
+		.pEngineName = "hopefully not just some code",
+		.engineVersion = VK_MAKE_VERSION(1, 0, 0),
+		.apiVersion = VK_API_VERSION_1_2,
+	};
+
+	const VkInstanceCreateInfo createInfo = {
+		.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
+		.pApplicationInfo = &appInfo,
+		.enabledExtensionCount = (uint32_t)sdlExtensions.size(),
+		.ppEnabledExtensionNames = sdlExtensions.data(),
+	};
+
+	VkInstance instance = nullptr;
+	result = vkCreateInstance(&createInfo, 0, &instance);
+	if ( result != VK_SUCCESS )
+	{
+		vk_errorf( result, "vkCreateInstance failed" );
+	}
+
+	return instance;
+}
+
+bool vulkan_init( VkInstance instance, VkSurfaceKHR surface )
+{
+	if (!g_device.BInit(instance, surface))
 		return false;
 
 	if (!init_nis_data())
