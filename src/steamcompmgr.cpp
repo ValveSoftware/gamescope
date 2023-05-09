@@ -4525,24 +4525,21 @@ init_runtime_info()
 }
 
 static void
-steamcompmgr_send_done( steamcompmgr_win_t *w, uint64_t vblank_idx, struct timespec& now )
+steamcompmgr_flush_frame_done( steamcompmgr_win_t *w )
 {
-	wlr_surface *main_surface = w->main_surface();
 	wlr_surface *current_surface = w->current_surface();
-	bool bSendCallback = current_surface != nullptr;
-
-	int nRefresh = g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh;
-	int nTargetFPS = g_nSteamCompMgrTargetFPS;
-	if ( g_nSteamCompMgrTargetFPS && steamcompmgr_window_should_limit_fps( w ) && nRefresh > nTargetFPS )
+	if ( current_surface && w->unlockedForFrameCallback && w->receivedDoneCommit )
 	{
-		int nVblankDivisor = nRefresh / nTargetFPS;
+		// TODO: Look into making this _RAW
+		// wlroots, seems to just use normal MONOTONIC
+		// all over so this may be problematic to just change.
+		struct timespec now;
+		clock_gettime(CLOCK_MONOTONIC, &now);
 
-		if ( vblank_idx % nVblankDivisor != 0 )
-			bSendCallback = false;
-	}
+		wlr_surface *main_surface = w->main_surface();
+		w->unlockedForFrameCallback = false;
+		w->receivedDoneCommit = false;
 
-	if ( bSendCallback )
-	{
 		// Acknowledge commit once.
 		wlserver_lock();
 
@@ -4557,6 +4554,27 @@ steamcompmgr_send_done( steamcompmgr_win_t *w, uint64_t vblank_idx, struct times
 		}
 
 		wlserver_unlock();
+	}
+}
+
+static void
+steamcompmgr_latch_frame_done( steamcompmgr_win_t *w, uint64_t vblank_idx )
+{
+	bool bSendCallback = true;
+
+	int nRefresh = g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh;
+	int nTargetFPS = g_nSteamCompMgrTargetFPS;
+	if ( g_nSteamCompMgrTargetFPS && steamcompmgr_window_should_limit_fps( w ) && nRefresh > nTargetFPS )
+	{
+		int nVblankDivisor = nRefresh / nTargetFPS;
+
+		if ( vblank_idx % nVblankDivisor != 0 )
+			bSendCallback = false;
+	}
+
+	if ( bSendCallback )
+	{
+		w->unlockedForFrameCallback = true;
 	}
 }
 
@@ -5510,6 +5528,7 @@ bool handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint64_t co
 			// we can release all commits prior to done ones
 			w->commit_queue.erase( w->commit_queue.begin(), w->commit_queue.begin() + j );
 		}
+		w->receivedDoneCommit = true;
 		return true;
 	}
 
@@ -6497,7 +6516,7 @@ static bool g_bWasFSRActive = false;
 
 extern std::atomic<uint64_t> g_nCompletedPageFlipCount;
 
-void steamcompmgr_check_xdg()
+void steamcompmgr_check_xdg(bool vblank)
 {
 	if (wlserver_xdg_dirty())
 	{
@@ -6506,6 +6525,16 @@ void steamcompmgr_check_xdg()
 	}
 
 	handle_done_commits_xdg();
+
+	// When we have observed both a complete commit and a VBlank, we should request a new frame.
+	if (vblank)
+	{
+		for ( const auto& xdg_win : g_steamcompmgr_xdg_wins )
+		{
+			steamcompmgr_flush_frame_done(xdg_win.get());
+		}
+	}
+
 	check_new_xdg_res();
 }
 
@@ -6879,13 +6908,11 @@ steamcompmgr_main(int argc, char **argv)
 #endif
 		}
 
-		// TODO: Look into making this _RAW
-		// wlroots, seems to just use normal MONOTONIC
-		// all over so this may be problematic to just change.
-		struct timespec now;
-		clock_gettime(CLOCK_MONOTONIC, &now);
-
 		// Ask for a new surface every vblank
+		// When we observe a new commit being complete for a surface, we ask for a new frame.
+		// This ensures that FIFO works properly, since otherwise we might ask for a new frame
+		// application can commit a new frame that completes before we ever displayed
+		// the current pending commit.
 		if ( vblank == true )
 		{
 			static int vblank_idx = 0;
@@ -6895,13 +6922,13 @@ steamcompmgr_main(int argc, char **argv)
 				{
 					for (steamcompmgr_win_t *w = server->ctx->list; w; w = w->xwayland().next)
 					{
-						steamcompmgr_send_done( w, vblank_idx, now );
+						steamcompmgr_latch_frame_done( w, vblank_idx );
 					}
 				}
 
 				for ( const auto& xdg_win : g_steamcompmgr_xdg_wins )
 				{
-					steamcompmgr_send_done( xdg_win.get(), vblank_idx, now );
+					steamcompmgr_latch_frame_done( xdg_win.get(), vblank_idx );
 				}
 			}
 			vblank_idx++;
@@ -6910,7 +6937,18 @@ steamcompmgr_main(int argc, char **argv)
 		{
 			gamescope_xwayland_server_t *server = NULL;
 			for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
+			{
 				handle_done_commits_xwayland(server->ctx.get());
+
+				// When we have observed both a complete commit and a VBlank, we should request a new frame.
+				if (vblank)
+				{
+					for (steamcompmgr_win_t *w = server->ctx->list; w; w = w->xwayland().next)
+					{
+						steamcompmgr_flush_frame_done(w);
+					}
+				}
+			}
 		}
 
 		// Handle presentation-time stuff
@@ -6999,7 +7037,7 @@ steamcompmgr_main(int argc, char **argv)
 			}
 		}
 
-		steamcompmgr_check_xdg();
+		steamcompmgr_check_xdg(vblank);
 
 		// Handles if we got a commit for the window we want to focus
 		// to switch to it for painting (outdatedInteractiveFocus)

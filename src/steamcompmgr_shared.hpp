@@ -122,6 +122,9 @@ struct steamcompmgr_win_t {
 	bool nudged;
 	bool ignoreOverrideRedirect;
 
+	bool unlockedForFrameCallback;
+	bool receivedDoneCommit;
+
 	unsigned int mouseMoved;
 
 	std::vector< std::shared_ptr<commit_t> > commit_queue;
