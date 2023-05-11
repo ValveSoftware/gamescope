@@ -144,12 +144,11 @@ void wlserver_xdg_commit(struct wlr_surface *surf, struct wlr_buffer *buf)
 }
 
 void xwayland_surface_commit(struct wlr_surface *wlr_surface) {
-	uint32_t committed = wlr_surface->current.committed;
 	wlr_surface->current.committed = 0;
 
-	if (!(committed & WLR_SURFACE_STATE_BUFFER)) {
-		return;
-	}
+	// Committing without buffer state is valid and commits the same buffer again.
+	// Mutter and Weston have forward progress on the frame callback in this situation,
+	// so let the commit go through. It will be duplication-eliminated later.
 
 	VulkanWlrTexture_t *tex = (VulkanWlrTexture_t *) wlr_surface_get_texture( wlr_surface );
 	if ( tex == NULL )
