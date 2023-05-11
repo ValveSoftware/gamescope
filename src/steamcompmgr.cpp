@@ -5642,7 +5642,7 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 			already_exists = true;
 	}
 
-	if ( already_exists )
+	if ( already_exists && !reslistentry.feedback && reslistentry.presentation_feedbacks.empty() )
 	{
 		wlserver_lock();
 		wlr_buffer_unlock( buf );
