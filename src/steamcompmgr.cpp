@@ -6533,6 +6533,8 @@ void steamcompmgr_check_xdg(bool vblank)
 		{
 			steamcompmgr_flush_frame_done(xdg_win.get());
 		}
+
+		handle_presented_xdg();
 	}
 
 	check_new_xdg_res();
@@ -6976,8 +6978,6 @@ steamcompmgr_main(int argc, char **argv)
 			gamescope_xwayland_server_t *server = NULL;
 			for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
 				handle_presented_xwayland( server->ctx.get() );
-
-			handle_presented_xdg();
 		}
 
 		//
