@@ -5648,6 +5648,11 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 		wlr_buffer_unlock( buf );
 		wlserver_unlock();
 		xwm_log.errorf( "got the same buffer commited twice, ignoring." );
+
+		// If we have a duplicated commit + frame callback, ensure that is signalled.
+		// This matches Mutter and Weston behavior, so it's plausible that some application relies on forward progress.
+		// We're essentially discarding the commit here, so consider it complete right away.
+		w->receivedDoneCommit = true;
 		return;
 	}
 
