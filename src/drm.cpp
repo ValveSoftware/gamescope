@@ -1791,107 +1791,57 @@ void drm_unlock_fbid( struct drm_t *drm, uint32_t fbid )
 	drm_unlock_fb_internal( drm, &fb );
 }
 
-static uint64_t determine_drm_orientation(struct drm_t *drm, struct connector *conn, const drmModeModeInfo *mode)
-{
-	drm_screen_type screenType = drm_get_connector_type(conn->connector);
-
-	if (conn && conn->props.count("panel orientation") > 0)
-	{
-		const char *orientation = get_enum_name(conn->props["panel orientation"], conn->initial_prop_values["panel orientation"]);
-
-		if (strcmp(orientation, "Normal") == 0)
-		{
-			return DRM_MODE_ROTATE_0;
-		}
-		else if (strcmp(orientation, "Left Side Up") == 0)
-		{
-			return DRM_MODE_ROTATE_90;
-		}
-		else if (strcmp(orientation, "Upside Down") == 0)
-		{
-			return DRM_MODE_ROTATE_180;
-		}
-		else if (strcmp(orientation, "Right Side Up") == 0)
-		{
-			return DRM_MODE_ROTATE_270;
-		}
-	}
-	else
-	{
-		if (screenType == DRM_SCREEN_TYPE_INTERNAL && mode)
-		{
-			// Auto-detect portait mode for internal displays
-			return mode->hdisplay < mode->vdisplay ? DRM_MODE_ROTATE_270 : DRM_MODE_ROTATE_0;
-		}
-		else
-		{
-			return DRM_MODE_ROTATE_0;
-		}
-	}
-
-	return DRM_MODE_ROTATE_0;
-}
-
 /* Handle the orientation of the display */
 static void update_drm_effective_orientation(struct drm_t *drm, struct connector *conn, const drmModeModeInfo *mode)
 {
-	drm_screen_type screenType = drm_get_connector_type(conn->connector);
-
-	if (screenType == DRM_SCREEN_TYPE_INTERNAL)
+	drm_screen_type screenType = drm_get_screen_type(drm);
+	if ( screenType == DRM_SCREEN_TYPE_EXTERNAL )
 	{
-		switch ( g_drmModeOrientation )
-		{
-			case PANEL_ORIENTATION_0:
-				g_drmEffectiveOrientation[screenType] = DRM_MODE_ROTATE_0;
-				break;
-			case PANEL_ORIENTATION_90:
-				g_drmEffectiveOrientation[screenType] = DRM_MODE_ROTATE_90;
-				break;
-			case PANEL_ORIENTATION_180:
-				g_drmEffectiveOrientation[screenType] = DRM_MODE_ROTATE_180;
-				break;
-			case PANEL_ORIENTATION_270:
-				g_drmEffectiveOrientation[screenType] = DRM_MODE_ROTATE_270;
-				break;
-			case PANEL_ORIENTATION_AUTO:
-				g_drmEffectiveOrientation[screenType] = determine_drm_orientation(drm, conn, mode);
-				break;
-		}
-	}
-	else
-	{
-		g_drmEffectiveOrientation[screenType] = determine_drm_orientation(drm, conn, mode);
-	}
-}
-
-static void update_drm_effective_orientations(struct drm_t *drm, struct connector *conn, const drmModeModeInfo *mode)
-{
-	drm_screen_type screenType = drm_get_connector_type(conn->connector);
-	if (screenType == DRM_SCREEN_TYPE_INTERNAL)
-	{
-		update_drm_effective_orientation(drm, conn, mode);
+		g_drmEffectiveOrientation[screenType] = DRM_MODE_ROTATE_0;
 		return;
 	}
-	else if (screenType == DRM_SCREEN_TYPE_EXTERNAL)
+	switch ( g_drmModeOrientation )
 	{
-		update_drm_effective_orientation(drm, conn, mode);
-
-		struct connector *internal_conn = nullptr;
-		for ( auto &kv : drm->connectors ) {
-			struct connector *kv_con = &kv.second;
-			if (kv_con->connector)
+		case PANEL_ORIENTATION_0:
+			g_drmEffectiveOrientation[screenType] = DRM_MODE_ROTATE_0;
+			break;
+		case PANEL_ORIENTATION_90:
+			g_drmEffectiveOrientation[screenType] = DRM_MODE_ROTATE_90;
+			break;
+		case PANEL_ORIENTATION_180:
+			g_drmEffectiveOrientation[screenType] = DRM_MODE_ROTATE_180;
+			break;
+		case PANEL_ORIENTATION_270:
+			g_drmEffectiveOrientation[screenType] = DRM_MODE_ROTATE_270;
+			break;
+		case PANEL_ORIENTATION_AUTO:
+			if (conn && conn->props.count("panel orientation") > 0)
 			{
-				drm_screen_type kv_screentype = drm_get_connector_type(kv_con->connector);
-				if (kv_screentype == DRM_SCREEN_TYPE_INTERNAL)
+				const char *orientation = get_enum_name(conn->props["panel orientation"], conn->initial_prop_values["panel orientation"]);
+
+				if (strcmp(orientation, "Normal") == 0)
 				{
-					internal_conn = kv_con;
-					break;
+					g_drmEffectiveOrientation[screenType] = DRM_MODE_ROTATE_0;
+				}
+				else if (strcmp(orientation, "Left Side Up") == 0)
+				{
+					g_drmEffectiveOrientation[screenType] = DRM_MODE_ROTATE_90;
+				}
+				else if (strcmp(orientation, "Upside Down") == 0)
+				{
+					g_drmEffectiveOrientation[screenType] = DRM_MODE_ROTATE_180;
+				}
+				else if (strcmp(orientation, "Right Side Up") == 0)
+				{
+					g_drmEffectiveOrientation[screenType] = DRM_MODE_ROTATE_270;
 				}
 			}
-		}
-
-		const drmModeModeInfo *default_internal_mode = find_mode(internal_conn->connector, 0, 0, 0);
-		update_drm_effective_orientation(drm, internal_conn, default_internal_mode);
+			else
+			{
+				// Auto-detect portait mode
+				g_drmEffectiveOrientation[screenType] = mode->hdisplay < mode->vdisplay ? DRM_MODE_ROTATE_270 : DRM_MODE_ROTATE_0;
+			}
+			break;
 	}
 }
 
@@ -2869,7 +2819,7 @@ bool drm_set_mode( struct drm_t *drm, const drmModeModeInfo *mode )
 
 	g_nOutputRefresh = mode->vrefresh;
 
-	update_drm_effective_orientations(drm, drm->connector, mode);
+	update_drm_effective_orientation(drm, drm->connector, mode);
 
 	switch ( g_drmEffectiveOrientation[screenType] )
 	{

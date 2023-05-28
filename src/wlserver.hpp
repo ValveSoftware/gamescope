@@ -16,7 +16,7 @@
 #include "drm.hpp"
 #include "steamcompmgr_shared.hpp"
 
-#define WLSERVER_BUTTON_COUNT 7
+#define WLSERVER_BUTTON_COUNT 4
 
 struct _XDisplay;
 struct xwayland_ctx_t;
@@ -113,8 +113,8 @@ struct wlserver_t {
 	
 	struct wlr_surface *mouse_focus_surface;
 	struct wlr_surface *kb_focus_surface;
-	double mouse_surface_cursorx = 0.0f;
-	double mouse_surface_cursory = 0.0f;
+	double mouse_surface_cursorx;
+	double mouse_surface_cursory;
 	
 	bool button_held[ WLSERVER_BUTTON_COUNT ];
 	std::set <uint32_t> touch_down_ids;
@@ -169,7 +169,6 @@ enum wlserver_touch_click_mode {
 	WLSERVER_TOUCH_CLICK_MIDDLE = 3,
 	WLSERVER_TOUCH_CLICK_PASSTHROUGH = 4,
 	WLSERVER_TOUCH_CLICK_DISABLED = 5,
-	WLSERVER_TOUCH_CLICK_TRACKPAD = 6,
 };
 
 extern enum wlserver_touch_click_mode g_nDefaultTouchClickMode;

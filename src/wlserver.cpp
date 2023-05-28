@@ -248,13 +248,16 @@ static void wlserver_handle_key(struct wl_listener *listener, void *data)
 	bump_input_counter();
 }
 
-static void wlserver_perform_rel_pointer_motion(double unaccel_dx, double unaccel_dy)
+static void wlserver_handle_pointer_motion(struct wl_listener *listener, void *data)
 {
+	struct wlr_pointer_motion_event *event = (struct wlr_pointer_motion_event *) data;
+
+	// TODO: Pick the xwayland_server with active focus
 	auto server = steamcompmgr_get_focused_server();
 	if ( server != NULL )
 	{
-		server->ctx->accum_x += unaccel_dx;
-		server->ctx->accum_y += unaccel_dy;
+		server->ctx->accum_x += event->unaccel_dx;
+		server->ctx->accum_y += event->unaccel_dy;
 
 		float dx, dy;
 		server->ctx->accum_x = modf(server->ctx->accum_x, &dx);
@@ -263,13 +266,6 @@ static void wlserver_perform_rel_pointer_motion(double unaccel_dx, double unacce
 		XTestFakeRelativeMotionEvent( server->get_xdisplay(), int(dx), int(dy), CurrentTime );
 		XFlush( server->get_xdisplay() );
 	}
-}
-
-static void wlserver_handle_pointer_motion(struct wl_listener *listener, void *data)
-{
-	struct wlr_pointer_motion_event *event = (struct wlr_pointer_motion_event *) data;
-
-	wlserver_perform_rel_pointer_motion(event->unaccel_dx, event->unaccel_dy);
 }
 
 void wlserver_open_steam_menu( bool qam )
@@ -317,7 +313,6 @@ static inline uint32_t steamcompmgr_button_to_wlserver_button( int button )
 		default:
 		case WLSERVER_TOUCH_CLICK_HOVER:
 			return 0;
-		case WLSERVER_TOUCH_CLICK_TRACKPAD:
 		case WLSERVER_TOUCH_CLICK_LEFT:
 			return BTN_LEFT;
 		case WLSERVER_TOUCH_CLICK_RIGHT:
@@ -1428,7 +1423,6 @@ void wlserver_mousefocus( struct wlr_surface *wlrsurface, int x /* = 0 */, int y
 		wlserver.mouse_surface_cursorx = wlrsurface->current.width / 2.0;
 		wlserver.mouse_surface_cursory = wlrsurface->current.height / 2.0;
 	}
-
 	wlr_seat_pointer_notify_enter( wlserver.wlr.seat, wlrsurface, wlserver.mouse_surface_cursorx, wlserver.mouse_surface_cursory );
 }
 
@@ -1550,20 +1544,6 @@ static void apply_touchscreen_orientation(double *x, double *y )
 	*y = ty;
 }
 
-bool g_bTrackpadTouchExternalDisplay = false;
-
-int get_effective_touch_mode()
-{
-	if (!BIsNested() && g_bTrackpadTouchExternalDisplay)
-	{
-		drm_screen_type screenType = drm_get_screen_type(&g_DRM);
-		if ( screenType == DRM_SCREEN_TYPE_EXTERNAL && g_nTouchClickMode == WLSERVER_TOUCH_CLICK_PASSTHROUGH )
-			return WLSERVER_TOUCH_CLICK_TRACKPAD;
-	}
-
-	return g_nTouchClickMode;
-}
-
 void wlserver_touchmotion( double x, double y, int touch_id, uint32_t time )
 {
 	assert( wlserver_is_lock_held() );
@@ -1581,26 +1561,16 @@ void wlserver_touchmotion( double x, double y, int touch_id, uint32_t time )
 		ty += focusedWindowOffsetY;
 		tx *= focusedWindowScaleX;
 		ty *= focusedWindowScaleY;
-
-		double trackpad_dx, trackpad_dy;
-
-		trackpad_dx = tx - wlserver.mouse_surface_cursorx;
-		trackpad_dy = ty - wlserver.mouse_surface_cursory;
-
 		wlserver.mouse_surface_cursorx = tx;
 		wlserver.mouse_surface_cursory = ty;
 
-		if ( get_effective_touch_mode() == WLSERVER_TOUCH_CLICK_PASSTHROUGH )
+		if ( g_nTouchClickMode == WLSERVER_TOUCH_CLICK_PASSTHROUGH )
 		{
 			wlr_seat_touch_notify_motion( wlserver.wlr.seat, time, touch_id, wlserver.mouse_surface_cursorx, wlserver.mouse_surface_cursory );
 		}
-		else if ( get_effective_touch_mode() == WLSERVER_TOUCH_CLICK_DISABLED )
+		else if ( g_nTouchClickMode == WLSERVER_TOUCH_CLICK_DISABLED )
 		{
 			return;
-		}
-		else if ( get_effective_touch_mode() == WLSERVER_TOUCH_CLICK_TRACKPAD )
-		{
-			wlserver_perform_rel_pointer_motion(trackpad_dx, trackpad_dy);
 		}
 		else
 		{
@@ -1631,18 +1601,17 @@ void wlserver_touchdown( double x, double y, int touch_id, uint32_t time )
 		ty += focusedWindowOffsetY;
 		tx *= focusedWindowScaleX;
 		ty *= focusedWindowScaleY;
-
 		wlserver.mouse_surface_cursorx = tx;
 		wlserver.mouse_surface_cursory = ty;
 
-		if ( get_effective_touch_mode() == WLSERVER_TOUCH_CLICK_PASSTHROUGH )
+		if ( g_nTouchClickMode == WLSERVER_TOUCH_CLICK_PASSTHROUGH )
 		{
 			wlr_seat_touch_notify_down( wlserver.wlr.seat, wlserver.mouse_focus_surface, time, touch_id,
 										wlserver.mouse_surface_cursorx, wlserver.mouse_surface_cursory );
 
 			wlserver.touch_down_ids.insert( touch_id );
 		}
-		else if ( get_effective_touch_mode() == WLSERVER_TOUCH_CLICK_DISABLED )
+		else if ( g_nTouchClickMode == WLSERVER_TOUCH_CLICK_DISABLED )
 		{
 			return;
 		}
@@ -1650,20 +1619,17 @@ void wlserver_touchdown( double x, double y, int touch_id, uint32_t time )
 		{
 			g_bPendingTouchMovement = true;
 
-			if ( get_effective_touch_mode() != WLSERVER_TOUCH_CLICK_TRACKPAD )
-			{
-				wlr_seat_pointer_notify_motion( wlserver.wlr.seat, time, wlserver.mouse_surface_cursorx, wlserver.mouse_surface_cursory );
-				wlr_seat_pointer_notify_frame( wlserver.wlr.seat );
-			}
+			wlr_seat_pointer_notify_motion( wlserver.wlr.seat, time, wlserver.mouse_surface_cursorx, wlserver.mouse_surface_cursory );
+			wlr_seat_pointer_notify_frame( wlserver.wlr.seat );
 
-			uint32_t button = steamcompmgr_button_to_wlserver_button( get_effective_touch_mode() );
+			uint32_t button = steamcompmgr_button_to_wlserver_button( g_nTouchClickMode );
 
-			if ( button != 0 && get_effective_touch_mode() < WLSERVER_BUTTON_COUNT )
+			if ( button != 0 && g_nTouchClickMode < WLSERVER_BUTTON_COUNT )
 			{
 				wlr_seat_pointer_notify_button( wlserver.wlr.seat, time, button, WLR_BUTTON_PRESSED );
 				wlr_seat_pointer_notify_frame( wlserver.wlr.seat );
 
-				wlserver.button_held[ get_effective_touch_mode() ] = true;
+				wlserver.button_held[ g_nTouchClickMode ] = true;
 			}
 		}
 	}
