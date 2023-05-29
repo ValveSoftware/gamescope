@@ -16,13 +16,15 @@ struct mangoapp_msg_header {
 
 struct mangoapp_msg_v1 {
     struct mangoapp_msg_header hdr;
-    
+
     uint32_t pid;
     uint64_t visible_frametime_ns;
     uint8_t fsrUpscale;
     uint8_t fsrSharpness;
     uint64_t app_frametime_ns;
     uint64_t latency_ns;
+    uint32_t outputWidth;
+    uint32_t outputHeight;
     // WARNING: Always ADD fields, never remove or repurpose fields
 } __attribute__((packed)) mangoapp_msg_v1;
 
@@ -46,5 +48,7 @@ void mangoapp_update( uint64_t visible_frametime, uint64_t app_frametime_ns, uin
     mangoapp_msg_v1.app_frametime_ns = app_frametime_ns;
     mangoapp_msg_v1.latency_ns = latency_ns;
     mangoapp_msg_v1.pid = focusWindow_pid;
+    mangoapp_msg_v1.outputWidth = g_nOutputWidth;
+    mangoapp_msg_v1.outputHeight = g_nOutputHeight;
     msgsnd(msgid, &mangoapp_msg_v1, sizeof(mangoapp_msg_v1) - sizeof(mangoapp_msg_v1.hdr.msg_type), IPC_NOWAIT);
 }
