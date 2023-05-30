@@ -10,6 +10,7 @@
 #include <bitset>
 #include <thread>
 #include <vulkan/vulkan_core.h>
+#include <linux/dma-buf.h>
 
 // Used to remove the config struct alignment specified by the NIS header
 #define NIS_ALIGNED(x)
@@ -489,7 +490,8 @@ private:
 	VK_FUNC(UnmapMemory) \
 	VK_FUNC(UpdateDescriptorSets) \
 	VK_FUNC(WaitForFences) \
-	VK_FUNC(WaitSemaphores)
+	VK_FUNC(WaitSemaphores) \
+	VK_FUNC(GetSemaphoreFdKHR)
 
 class CVulkanDevice
 {
@@ -502,6 +504,7 @@ public:
 	std::unique_ptr<CVulkanCmdBuffer> commandBuffer();
 	uint64_t submit( std::unique_ptr<CVulkanCmdBuffer> cmdBuf);
 	void wait(uint64_t sequence);
+	int exportTimelineSemaphore();
 	void waitIdle();
 	void garbageCollect();
 	inline VkDescriptorSet descriptorSet()
@@ -830,6 +833,9 @@ bool CVulkanDevice::createDevice()
 
 	enabledExtensions.push_back( VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME );
 	enabledExtensions.push_back( VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME );
+
+	enabledExtensions.push_back( VK_KHR_EXTERNAL_SEMAPHORE_EXTENSION_NAME );
+	enabledExtensions.push_back( VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME );
 
 	enabledExtensions.push_back( VK_EXT_ROBUSTNESS_2_EXTENSION_NAME );
 
@@ -1509,6 +1515,22 @@ void CVulkanDevice::wait(uint64_t sequence)
 	if (res != VK_SUCCESS)
 		assert( 0 );
 	resetCmdBuffers(sequence);
+}
+
+int CVulkanDevice::exportTimelineSemaphore()
+{
+	/* Sadly there's no VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_DRM_SYNCOBJ_FD_BIT
+	 * and jekstrand isn't sure we should add it... */
+	VkSemaphoreGetFdInfoKHR getFdInfo = {
+		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_GET_FD_INFO_KHR,
+		.semaphore = m_scratchTimelineSemaphore,
+		.handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT,
+	};
+	int fd = -1;
+	VkResult res = vk.GetSemaphoreFdKHR(device(), &getFdInfo, &fd);
+	if (res != VK_SUCCESS)
+		vk_errorf(res, "vkGetSemaphoreFdKHR() failed");
+	return fd;
 }
 
 void CVulkanDevice::waitIdle()
@@ -3475,6 +3497,80 @@ void bind_all_layers(CVulkanCmdBuffer* cmdBuffer, const struct FrameInfo_t *fram
 	}
 }
 
+#ifndef DMA_BUF_IOCTL_IMPORT_SYNC_FILE
+
+#define DMA_BUF_IOCTL_IMPORT_SYNC_FILE	_IOW(DMA_BUF_BASE, 3, struct dma_buf_import_sync_file)
+
+struct dma_buf_import_sync_file {
+	__u32 flags;
+	__s32 fd;
+};
+
+#endif
+
+static bool import_dmabuf_timeline_semaphore(std::shared_ptr<CVulkanTexture> texture, uint64_t sequence)
+{
+	static bool ioctlSupported = true;
+
+	if (!ioctlSupported)
+		return false;
+	if (g_device.drmRenderFd() < 0)
+		return false;
+	if (texture->dmabuf().n_planes == 0)
+		return false;
+
+	int drmSyncObjFd = g_device.exportTimelineSemaphore();
+	if (drmSyncObjFd < 0)
+		return false;
+
+	uint32_t timelineSyncobjHandle = 0;
+	int ret = drmSyncobjFDToHandle(g_device.drmRenderFd(), drmSyncObjFd, &timelineSyncobjHandle);
+	close(drmSyncObjFd);
+	if (ret != 0) {
+		vk_log.errorf_errno("drmSyncobjFDToHandle() failed");
+		return false;
+	}
+
+	uint32_t binarySyncobjHandle = 0;
+	if (drmSyncobjCreate(g_device.drmRenderFd(), 0, &binarySyncobjHandle) != 0) {
+		vk_log.errorf_errno("drmSyncobjCreate() failed");
+		return false;
+	}
+
+	if (drmSyncobjTransfer(g_device.drmRenderFd(), binarySyncobjHandle, 0, timelineSyncobjHandle, sequence, 0) != 0) {
+		vk_log.errorf_errno("drmSyncobjTransfer() failed");
+		return false;
+	}
+
+	int syncFileFd = -1;
+	if (drmSyncobjExportSyncFile(g_device.drmRenderFd(), binarySyncobjHandle, &syncFileFd) != 0) {
+		vk_log.errorf_errno("drmSyncobjExportSyncFile() failed");
+		return false;
+	}
+	drmSyncobjDestroy(g_device.drmRenderFd(), binarySyncobjHandle);
+
+	for (int i = 0; i < texture->dmabuf().n_planes; i++) {
+		struct dma_buf_import_sync_file ioctlData = {
+			.flags = DMA_BUF_SYNC_WRITE,
+			.fd = syncFileFd,
+		};
+		ret = drmIoctl(texture->dmabuf().fd[i], DMA_BUF_IOCTL_IMPORT_SYNC_FILE, &ioctlData);
+		if (ret != 0) {
+			if (ret == -ENOTTY) {
+				vk_log.debugf("Kernel does not support drmIoctl(EXPORT_SYNC_FILE)");
+				ioctlSupported = false;
+			} else {
+				vk_log.errorf_errno("drmIoctl(EXPORT_SYNC_FILE) failed");
+			}
+			close(syncFileFd);
+			return false;
+		}
+	}
+	close(syncFileFd);
+
+	return true;
+}
+
 bool vulkan_composite( const struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTexture> pScreenshotTexture )
 {
 	auto compositeImage = g_output.outputImages[ g_output.nOutImage ];
@@ -3657,7 +3753,12 @@ bool vulkan_composite( const struct FrameInfo_t *frameInfo, std::shared_ptr<CVul
 	}
 
 	uint64_t sequence = g_device.submit(std::move(cmdBuffer));
-	g_device.wait(sequence);
+
+	/* If possible, import the timeline semaphore into the DMA-BUF's implicit
+	 * fence. If not, fall back to a wait. */
+	if (!import_dmabuf_timeline_semaphore(compositeImage, sequence)) {
+		g_device.wait(sequence);
+	}
 
 	if ( BIsNested() == false || BIsVRSession() == true )
 	{
