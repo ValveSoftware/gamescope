@@ -45,7 +45,7 @@ const struct option *gamescope_options = (struct option[]){
 	{ "nested-height", required_argument, nullptr, 'h' },
 	{ "nested-refresh", required_argument, nullptr, 'r' },
 	{ "max-scale", required_argument, nullptr, 'm' },
-	{ "integer-scale", no_argument, nullptr, 'i' },
+	{ "scaler", required_argument, nullptr, 's' },
 	{ "output-width", required_argument, nullptr, 'W' },
 	{ "output-height", required_argument, nullptr, 'H' },
 	{ "nearest-neighbor-filter", no_argument, nullptr, 'n' },
@@ -137,7 +137,7 @@ const char usage[] =
 	"  -h, --nested-height            game height\n"
 	"  -r, --nested-refresh           game refresh rate (frames per second)\n"
 	"  -m, --max-scale                maximum scale factor\n"
-	"  -i, --integer-scale            force scale factor to integer\n"
+	"  -s, --scaler                   force scaler type (auto, integer, fit, fill, stretch)\n"
 	"  -W, --output-width             output width\n"
 	"  -H, --output-height            output height\n"
 	"  -n, --nearest-neighbor-filter  use nearest neighbor filtering\n"
@@ -337,6 +337,24 @@ static enum g_panel_orientation force_orientation(const char *str)
 	}
 }
 
+static enum GamescopeUpscaleScaler parse_upscaler_scaler(const char *str)
+{
+	if (strcmp(str, "auto") == 0) {
+		return GamescopeUpscaleScaler::AUTO;
+	} else if (strcmp(str, "integer") == 0) {
+		return GamescopeUpscaleScaler::INTEGER;
+	} else if (strcmp(str, "fit") == 0) {
+		return GamescopeUpscaleScaler::FIT;
+	} else if (strcmp(str, "fill") == 0) {
+		return GamescopeUpscaleScaler::FILL;
+	} else if (strcmp(str, "stretch") == 0) {
+		return GamescopeUpscaleScaler::STRETCH;
+	} else {
+		fprintf( stderr, "gamescope: invalid value for --scaler\n" );
+		exit(1);
+	}
+}
+
 static void handle_signal( int sig )
 {
 	switch ( sig ) {
@@ -455,8 +473,8 @@ int main(int argc, char **argv)
 			case 'm':
 				g_flMaxWindowScale = atof( optarg );
 				break;
-			case 'i':
-				g_wantedUpscaleScaler = GamescopeUpscaleScaler::INTEGER;
+			case 's':
+				g_wantedUpscaleScaler = parse_upscaler_scaler(optarg);
 				break;
 			case 'n':
 				g_wantedUpscaleFilter = GamescopeUpscaleFilter::NEAREST;
