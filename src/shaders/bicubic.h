@@ -17,10 +17,10 @@
 A_STATIC void BicubicCon(
 outAU4 con0,
 outAU4 con1,
-outAF2 con2,
+outAU4 con2,
 // This are the bicubic configurable parameters
-AF1 B,
-AF1 C,
+AU1 B,
+AU1 C,
 // This the rendered image resolution
 AF1 inputViewportInPixelsX,
 AF1 inputViewportInPixelsY,
@@ -44,6 +44,6 @@ AF1 outputSizeInPixelsY)
  con1[3]=AU1_AF1(AF1_(-1.0)*ARcpF1(inputSizeInPixelsY));
 
  // Bicubic parameters
- con2[0]=AF1_(B);
- con2[1]=AF1_(C);
+ con2[0]=AU1_AF1(B);
+ con2[1]=AU1_AF1(C);
 }

@@ -64,9 +64,11 @@ vec4 textureBicubic(sampler2D splr, vec2 texCoords)
 
     vec2 fxy = fract(texCoords);
     texCoords -= fxy;
-
-    vec4 xcubic = catMullRom(AF1_(c2.x), AF1_(c2.y), fxy.x);
-    vec4 ycubic = catMullRom(AF1_(c2.x), AF1_(c2.y), fxy.y);
+		
+    float B = AF1_AU1(c2.x)/AF1_(100);
+    float C = AF1_AU1(c2.y)/AF1_(100);
+    vec4 xcubic = catMullRom(B, C, fxy.x);
+    vec4 ycubic = catMullRom(B, C, fxy.y);
 
     vec4 c = texCoords.xxyy + vec2 (-0.5, +1.5).xyxy;
 

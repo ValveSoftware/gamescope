@@ -3387,11 +3387,6 @@ struct uvec2_t
 	uint32_t x;
 	uint32_t y;
 };
-struct fvec2_t
-{
-	float x;
-	float y;
-};
 
 struct EasuPushData_t
 {
@@ -3410,9 +3405,9 @@ struct BicubicPushData_t
 {
 	uvec4_t Const0;
 	uvec4_t Const1;
-	fvec2_t Const2;
+	uvec4_t Const2;
 
-	BicubicPushData_t(float B, float C, uint32_t inputX, uint32_t inputY, uint32_t tempX, uint32_t tempY)
+	BicubicPushData_t(uint32_t B, uint32_t C, uint32_t inputX, uint32_t inputY, uint32_t tempX, uint32_t tempY)
 	{
 		BicubicCon(&Const0.x, &Const1.x, &Const2.x, B, C, inputX, inputY, inputX, inputY, tempX, tempY);
 	}
@@ -3542,7 +3537,9 @@ bool vulkan_composite( const struct FrameInfo_t *frameInfo, std::shared_ptr<CVul
 			cmdBuffer->setTextureSrgb(0, true);
 			cmdBuffer->setSamplerUnnormalized(0, false);
 			cmdBuffer->setSamplerNearest(0, false);
-			cmdBuffer->pushConstants<BicubicPushData_t>(.2, .3, inputX, inputY, tempX, tempY);
+			// fprintf(stderr, "B: %d\n", g_bicubicParams.b);
+			// fprintf(stderr, "C: %d\n", g_bicubicParams.c);
+			cmdBuffer->pushConstants<BicubicPushData_t>(g_bicubicParams.b, g_bicubicParams.c, inputX, inputY, tempX, tempY);
 		} // else
 
 		int pixelsPerGroup = 16;
