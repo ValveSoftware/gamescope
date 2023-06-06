@@ -46,7 +46,7 @@ On any X11 or Wayland desktop, you can set the Steam launch arguments of your ga
 
 ```sh
 # Upscale a 720p game to 1440p with integer scaling
-gamescope -h 720 -H 1440 -s integer -- %command%
+gamescope -h 720 -H 1440 -S integer -- %command%
 
 # Limit a vsynced game to 30 FPS
 gamescope -r 30 -- %command%
@@ -63,9 +63,9 @@ See `gamescope --help` for a full list of options.
 * `-w`, `-h`: set the resolution used by the game. If `-h` is specified but `-w` isn't, a 16:9 aspect ratio is assumed. Defaults to the values specified in `-W` and `-H`.
 * `-r`: set a frame-rate limit for the game. Specified in frames per second. Defaults to unlimited.
 * `-o`: set a frame-rate limit for the game when unfocused. Specified in frames per second. Defaults to unlimited.
-* `-U`: use AMD FidelityFX™ Super Resolution 1.0 for upscaling
-* `-Y`: use NVIDIA Image Scaling v1.0.3 for upscaling
-* `-s integer`: use integer scaling.
-* `-s stretch`: use stretch scaling, the game will fill the window. (e.g. 4:3 to 16:9)
+* `-F fsr`: use AMD FidelityFX™ Super Resolution 1.0 for upscaling
+* `-F nis`: use NVIDIA Image Scaling v1.0.3 for upscaling
+* `-S integer`: use integer scaling.
+* `-S stretch`: use stretch scaling, the game will fill the window. (e.g. 4:3 to 16:9)
 * `-b`: create a border-less window.
 * `-f`: create a full-screen window.

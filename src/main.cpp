@@ -45,12 +45,10 @@ const struct option *gamescope_options = (struct option[]){
 	{ "nested-height", required_argument, nullptr, 'h' },
 	{ "nested-refresh", required_argument, nullptr, 'r' },
 	{ "max-scale", required_argument, nullptr, 'm' },
-	{ "scaler", required_argument, nullptr, 's' },
+	{ "scaler", required_argument, nullptr, 'S' },
+	{ "filter", required_argument, nullptr, 'F' },
 	{ "output-width", required_argument, nullptr, 'W' },
 	{ "output-height", required_argument, nullptr, 'H' },
-	{ "nearest-neighbor-filter", no_argument, nullptr, 'n' },
-	{ "fsr-upscaling", no_argument, nullptr, 'U' },
-	{ "nis-upscaling", no_argument, nullptr, 'Y' },
 	{ "sharpness", required_argument, nullptr, 0 },
 	{ "fsr-sharpness", required_argument, nullptr, 0 },
 	{ "rt", no_argument, nullptr, 0 },
@@ -133,16 +131,16 @@ const char usage[] =
 	"\n"
 	"Options:\n"
 	"  --help                         show help message\n"
+	"  -W, --output-width             output width\n"
+	"  -H, --output-height            output height\n"
 	"  -w, --nested-width             game width\n"
 	"  -h, --nested-height            game height\n"
 	"  -r, --nested-refresh           game refresh rate (frames per second)\n"
 	"  -m, --max-scale                maximum scale factor\n"
-	"  -s, --scaler                   force scaler type (auto, integer, fit, fill, stretch)\n"
-	"  -W, --output-width             output width\n"
-	"  -H, --output-height            output height\n"
-	"  -n, --nearest-neighbor-filter  use nearest neighbor filtering\n"
-	"  -U, --fsr-upscaling            use AMD FidelityFX™ Super Resolution 1.0 for upscaling\n"
-	"  -Y, --nis-upscaling            use NVIDIA Image Scaling v1.0.3 for upscaling\n"
+	"  -S, --scaler                   upscaler type (auto, integer, fit, fill, stretch)\n"
+	"  -F, --filter                   upscaler filter (linear, nearest, fsr, nis)\n"
+	"                                     fsr => AMD FidelityFX™ Super Resolution 1.0\n"
+	"                                     nis => NVIDIA Image Scaling v1.0.3\n"
 	"  --sharpness, --fsr-sharpness   upscaler sharpness from 0 (max) to 20 (min)\n"
 	"  --expose-wayland               support wayland clients using xdg-shell\n"
 	"  --cursor                       path to default cursor image\n"
@@ -355,6 +353,22 @@ static enum GamescopeUpscaleScaler parse_upscaler_scaler(const char *str)
 	}
 }
 
+static enum GamescopeUpscaleFilter parse_upscaler_filter(const char *str)
+{
+	if (strcmp(str, "linear") == 0) {
+		return GamescopeUpscaleFilter::LINEAR;
+	} else if (strcmp(str, "nearest") == 0) {
+		return GamescopeUpscaleFilter::NEAREST;
+	} else if (strcmp(str, "fsr") == 0) {
+		return GamescopeUpscaleFilter::FSR;
+	} else if (strcmp(str, "nis") == 0) {
+		return GamescopeUpscaleFilter::NIS;
+	} else {
+		fprintf( stderr, "gamescope: invalid value for --filter\n" );
+		exit(1);
+	}
+}
+
 static void handle_signal( int sig )
 {
 	switch ( sig ) {
@@ -473,11 +487,11 @@ int main(int argc, char **argv)
 			case 'm':
 				g_flMaxWindowScale = atof( optarg );
 				break;
-			case 's':
+			case 'S':
 				g_wantedUpscaleScaler = parse_upscaler_scaler(optarg);
 				break;
-			case 'n':
-				g_wantedUpscaleFilter = GamescopeUpscaleFilter::NEAREST;
+			case 'F':
+				g_wantedUpscaleFilter = parse_upscaler_filter(optarg);
 				break;
 			case 'b':
 				g_bBorderlessOutputWindow = true;
@@ -487,12 +501,6 @@ int main(int argc, char **argv)
 				break;
 			case 'O':
 				g_sOutputName = optarg;
-				break;
-			case 'U':
-				g_wantedUpscaleFilter = GamescopeUpscaleFilter::FSR;
-				break;
-			case 'Y':
-				g_wantedUpscaleFilter = GamescopeUpscaleFilter::NIS;
 				break;
 			case 'g':
 				g_bGrabbed = true;
