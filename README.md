@@ -40,6 +40,9 @@ meson install -C build/ --skip-subprojects
 * **Super + O** : Decrease FSR sharpness by 1
 * **Super + S** : Take screenshot (currently goes to `/tmp/gamescope_$DATE.png`)
 
+* **Super + X** : Cycle upscalers (Auto, Integer, Fit, Fill, Stretch)
+* **Super + Z** : Cycle upscaling filters (Linear, Nearest, FSR, NIS)
+
 ## Examples
 
 On any X11 or Wayland desktop, you can set the Steam launch arguments of your game as follows:

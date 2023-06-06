@@ -28,7 +28,10 @@ enum class GamescopeUpscaleFilter : uint32_t
     LINEAR = 0,
     NEAREST,
     FSR,
-    NIS
+    NIS,
+
+    _FIRST = LINEAR,
+    _LAST = NIS
 };
 
 enum class GamescopeUpscaleScaler : uint32_t
@@ -38,6 +41,9 @@ enum class GamescopeUpscaleScaler : uint32_t
     FIT,
     FILL,
     STRETCH,
+
+    _FIRST = AUTO,
+    _LAST = STRETCH
 };
 
 extern GamescopeUpscaleFilter g_upscaleFilter;
