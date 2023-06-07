@@ -1,5 +1,7 @@
 #include <X11/Xlib.h>
 
+#include <string>
+#include <sstream>
 #include <cstdio>
 #include <thread>
 #include <mutex>
@@ -51,6 +53,7 @@ const struct option *gamescope_options = (struct option[]){
 	{ "nearest-neighbor-filter", no_argument, nullptr, 'n' },
 	{ "fsr-upscaling", no_argument, nullptr, 'U' },
 	{ "nis-upscaling", no_argument, nullptr, 'Y' },
+	{ "bicubic", optional_argument, nullptr, 'D' },
 	{ "sharpness", required_argument, nullptr, 0 },
 	{ "fsr-sharpness", required_argument, nullptr, 0 },
 	{ "rt", no_argument, nullptr, 0 },
@@ -249,6 +252,7 @@ GamescopeUpscaleScaler g_upscaleScaler = GamescopeUpscaleScaler::AUTO;
 
 GamescopeUpscaleFilter g_wantedUpscaleFilter = GamescopeUpscaleFilter::LINEAR;
 GamescopeUpscaleScaler g_wantedUpscaleScaler = GamescopeUpscaleScaler::AUTO;
+GamescopeBicubicParams g_bicubicParams;
 int g_upscaleFilterSharpness = 2;
 
 bool g_bBorderlessOutputWindow = false;
@@ -460,6 +464,27 @@ int main(int argc, char **argv)
 				break;
 			case 'n':
 				g_wantedUpscaleFilter = GamescopeUpscaleFilter::NEAREST;
+				break;
+			case 'D':
+				g_wantedUpscaleFilter = GamescopeUpscaleFilter::BICUBIC;
+				if (optarg)
+				{
+					std::stringstream ss{optarg};
+					
+					float b, c;
+					char comma;
+					if ((ss >> b >> comma >> c) && (comma == ','))
+					{
+						g_wantedUpscaleFilter = GamescopeUpscaleFilter::BICUBIC;
+						g_bicubicParams.b = b*100;
+						g_bicubicParams.c = c*100;
+						fprintf(stderr, "B: %f, C: %f\n", b, c);
+					}
+					else
+					{
+						fprintf(stderr, "Invalid parameter for --bicubic option\n");
+					}
+				}
 				break;
 			case 'b':
 				g_bBorderlessOutputWindow = true;

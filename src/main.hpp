@@ -27,6 +27,7 @@ enum class GamescopeUpscaleFilter : uint32_t
 {
     LINEAR = 0,
     NEAREST,
+    BICUBIC,
     FSR,
     NIS
 };
@@ -40,10 +41,17 @@ enum class GamescopeUpscaleScaler : uint32_t
     STRETCH,
 };
 
+struct GamescopeBicubicParams
+{
+	int b = 33;
+	int c = 33;
+};
+
 extern GamescopeUpscaleFilter g_upscaleFilter;
 extern GamescopeUpscaleScaler g_upscaleScaler;
 extern GamescopeUpscaleFilter g_wantedUpscaleFilter;
 extern GamescopeUpscaleScaler g_wantedUpscaleScaler;
+extern GamescopeBicubicParams g_bicubicParams;
 extern int g_upscaleFilterSharpness;
 
 extern bool g_bBorderlessOutputWindow;

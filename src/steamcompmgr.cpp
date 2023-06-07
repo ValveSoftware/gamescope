@@ -2261,7 +2261,8 @@ paint_all(bool async)
 				paint_window(w, w, &frameInfo, global_focus.cursor, PaintWindowFlag::BasePlane | PaintWindowFlag::DrawBorders, 1.0f, override);
 
 				bool needsScaling = frameInfo.layers[0].scale.x < 0.999f && frameInfo.layers[0].scale.y < 0.999f;
-				frameInfo.useFSRLayer0 = g_upscaleFilter == GamescopeUpscaleFilter::FSR && needsScaling;
+				frameInfo.useBICUBICLayer0 = g_upscaleFilter == GamescopeUpscaleFilter::BICUBIC;
+				frameInfo.useFSRLayer0 = g_upscaleFilter == GamescopeUpscaleFilter::FSR;
 				frameInfo.useNISLayer0 = g_upscaleFilter == GamescopeUpscaleFilter::NIS && needsScaling;
 			}
 			update_touch_scaling( &frameInfo );
@@ -2364,6 +2365,7 @@ paint_all(bool async)
 			frameInfo.blurRadius = ratio * g_BlurRadius;
 		}
 
+		frameInfo.useBICUBICLayer0 = false;
 		frameInfo.useFSRLayer0 = false;
 		frameInfo.useNISLayer0 = false;
 	}
@@ -2406,6 +2408,7 @@ paint_all(bool async)
 	bNeedsComposite |= alwaysComposite;
 	bNeedsComposite |= pw_buffer != nullptr;
 	bNeedsComposite |= bWasFirstFrame;
+	bNeedsComposite |= frameInfo.useBICUBICLayer0;
 	bNeedsComposite |= frameInfo.useFSRLayer0;
 	bNeedsComposite |= frameInfo.useNISLayer0;
 	bNeedsComposite |= frameInfo.blurLayer0;

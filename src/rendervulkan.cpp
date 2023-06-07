@@ -31,6 +31,7 @@
 #include "cs_composite_rcas.h"
 #include "cs_easu.h"
 #include "cs_easu_fp16.h"
+#include "cs_bicubic.h"
 #include "cs_gaussian_blur_horizontal.h"
 #include "cs_nis.h"
 #include "cs_nis_fp16.h"
@@ -39,6 +40,7 @@
 #define A_CPU
 #include "shaders/ffx_a.h"
 #include "shaders/ffx_fsr1.h"
+#include "shaders/bicubic.h"
 #include "shaders/descriptor_set_constants.h"
 
 
@@ -127,6 +129,7 @@ enum ShaderType {
 	SHADER_TYPE_RCAS,
 	SHADER_TYPE_NIS,
 	SHADER_TYPE_RGB_TO_NV12,
+	SHADER_TYPE_BICUBIC,
 
 	SHADER_TYPE_COUNT
 };
@@ -1116,11 +1119,13 @@ bool CVulkanDevice::createShaders()
 	if (m_bSupportsFp16)
 	{
 		SHADER(EASU, cs_easu_fp16);
+		SHADER(BICUBIC, cs_bicubic);
 		SHADER(NIS, cs_nis_fp16);
 	}
 	else
 	{
 		SHADER(EASU, cs_easu);
+		SHADER(BICUBIC, cs_bicubic);
 		SHADER(NIS, cs_nis);
 	}
 	SHADER(RGB_TO_NV12, cs_rgb_to_nv12);
@@ -1352,6 +1357,7 @@ void CVulkanDevice::compileAllPipelines()
 	SHADER(BLUR_FIRST_PASS, 1, 2, 1);
 	SHADER(RCAS, k_nMaxLayers, k_nMaxYcbcrMask_ToPreCompile, 1);
 	SHADER(EASU, 1, 1, 1);
+	SHADER(BICUBIC, 1, 1, 1);
 	SHADER(NIS, 1, 1, 1);
 	SHADER(RGB_TO_NV12, 1, 1, 1);
 #undef SHADER
@@ -3395,6 +3401,18 @@ struct EasuPushData_t
 	}
 };
 
+struct BicubicPushData_t
+{
+	uvec4_t Const0;
+	uvec4_t Const1;
+	uvec4_t Const2;
+
+	BicubicPushData_t(uint32_t B, uint32_t C, uint32_t inputX, uint32_t inputY, uint32_t tempX, uint32_t tempY)
+	{
+		BicubicCon(&Const0.x, &Const1.x, &Const2.x, B, C, inputX, inputY, inputX, inputY, tempX, tempY);
+	}
+};
+
 struct RcasPushData_t
 {
 	uvec2_t u_layer0Offset;
@@ -3506,7 +3524,62 @@ bool vulkan_composite( const struct FrameInfo_t *frameInfo, std::shared_ptr<CVul
 	for (uint32_t i = 0; i < EOTF_Count; i++)
 		cmdBuffer->bindColorMgmtLuts(i, frameInfo->shaperLut[i], frameInfo->lut3D[i]);
 
-	if ( frameInfo->useFSRLayer0 )
+	auto fsrBind = [&]( uint32_t inputX, uint32_t inputY, uint32_t tempX, uint32_t tempY )
+	{
+			cmdBuffer->bindPipeline(g_device.pipeline(SHADER_TYPE_EASU));
+			cmdBuffer->bindTarget(g_output.tmpOutput);
+			cmdBuffer->bindTexture(0, frameInfo->layers[0].tex);
+			cmdBuffer->setTextureSrgb(0, true);
+			cmdBuffer->setSamplerUnnormalized(0, false);
+			cmdBuffer->setSamplerNearest(0, false);
+			cmdBuffer->pushConstants<EasuPushData_t>(inputX, inputY, tempX, tempY);
+	};
+
+	if ( frameInfo->useBICUBICLayer0 )
+	{
+		uint32_t inputX = frameInfo->layers[0].tex->width();
+		uint32_t inputY = frameInfo->layers[0].tex->height();
+
+		uint32_t tempX = frameInfo->layers[0].integerWidth();
+		uint32_t tempY = frameInfo->layers[0].integerHeight();
+
+		update_tmp_images(tempX, tempY);
+
+		if ( (inputY / tempY) < 2 )
+		{
+			// Use fsr as a bilinear filter
+			fsrBind(inputX, inputY, tempX, tempY);
+		}
+		else
+		{
+			// Use bicubic filter
+			cmdBuffer->bindPipeline(g_device.pipeline(SHADER_TYPE_BICUBIC));
+			cmdBuffer->bindTarget(g_output.tmpOutput);
+			cmdBuffer->bindTexture(0, frameInfo->layers[0].tex);
+			cmdBuffer->setTextureSrgb(0, true);
+			cmdBuffer->setSamplerUnnormalized(0, false);
+			cmdBuffer->setSamplerNearest(0, false);
+			// fprintf(stderr, "B: %d\n", g_bicubicParams.b);
+			// fprintf(stderr, "C: %d\n", g_bicubicParams.c);
+			cmdBuffer->pushConstants<BicubicPushData_t>(g_bicubicParams.b, g_bicubicParams.c, inputX, inputY, tempX, tempY);
+		} // else
+
+		int pixelsPerGroup = 16;
+
+		cmdBuffer->dispatch(div_roundup(tempX, pixelsPerGroup), div_roundup(tempY, pixelsPerGroup));
+
+		cmdBuffer->bindPipeline(g_device.pipeline(SHADER_TYPE_RCAS, frameInfo->layerCount, frameInfo->ycbcrMask() & ~1));
+		bind_all_layers(cmdBuffer.get(), frameInfo);
+		cmdBuffer->bindTexture(0, g_output.tmpOutput);
+		cmdBuffer->setTextureSrgb(0, true);
+		cmdBuffer->setSamplerUnnormalized(0, false);
+		cmdBuffer->setSamplerNearest(0, false);
+		cmdBuffer->bindTarget(compositeImage);
+		cmdBuffer->pushConstants<RcasPushData_t>(frameInfo, g_upscaleFilterSharpness / 10.0f);
+
+		cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup));
+	}
+	else if ( frameInfo->useFSRLayer0 )
 	{
 		uint32_t inputX = frameInfo->layers[0].tex->width();
 		uint32_t inputY = frameInfo->layers[0].tex->height();
