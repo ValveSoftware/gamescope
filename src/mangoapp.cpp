@@ -25,6 +25,7 @@ struct mangoapp_msg_v1 {
     uint64_t latency_ns;
     uint32_t outputWidth;
     uint32_t outputHeight;
+    uint8_t scaler;
     // WARNING: Always ADD fields, never remove or repurpose fields
 } __attribute__((packed)) mangoapp_msg_v1;
 
@@ -50,5 +51,6 @@ void mangoapp_update( uint64_t visible_frametime, uint64_t app_frametime_ns, uin
     mangoapp_msg_v1.pid = focusWindow_pid;
     mangoapp_msg_v1.outputWidth = g_nOutputWidth;
     mangoapp_msg_v1.outputHeight = g_nOutputHeight;
+    mangoapp_msg_v1.scaler = (uint8_t)g_upscaleScaler;
     msgsnd(msgid, &mangoapp_msg_v1, sizeof(mangoapp_msg_v1) - sizeof(mangoapp_msg_v1.hdr.msg_type), IPC_NOWAIT);
 }
