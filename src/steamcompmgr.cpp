@@ -29,7 +29,10 @@
  *   says above. Not that I can really do anything about it
  */
 
+#include "xwayland_ctx.hpp"
+#include <X11/X.h>
 #include <X11/Xlib.h>
+#include <X11/extensions/xfixeswire.h>
 #include <cstdint>
 #include <drm_mode.h>
 #include <memory>
@@ -4581,6 +4584,127 @@ handle_client_message(xwayland_ctx_t *ctx, XClientMessageEvent *ev)
 	}
 }
 
+void x11_set_selection(xwayland_ctx_t *ctx, std::string contents, int selectionTarget)
+{
+	if (!BIsNested())
+	{
+		return;
+	}
+
+	Atom target;
+	if (selectionTarget == CLIPBOARD)
+	{
+		target = ctx->atoms.clipboard;
+	}
+	else if (selectionTarget == PRIMARYSELECTION)
+	{
+		target = ctx->atoms.primarySelection;
+	}
+	else
+	{
+		return;
+	}
+
+	XSetSelectionOwner(ctx->dpy, target, ctx->ourWindow, CurrentTime);
+	XChangeProperty(ctx->dpy, ctx->ourWindow, target, ctx->atoms.utf8StringAtom, 8, PropModeReplace,
+			(unsigned char *)contents.c_str(), contents.length());
+	XFlush(ctx->dpy);
+}
+
+static void
+handle_selection_request(xwayland_ctx_t *ctx, XSelectionRequestEvent *ev)
+{
+	if (!BIsNested())
+	{
+		return;
+	}
+
+	std::string *selection = ev->selection == ctx->atoms.primarySelection ? &primarySelection : &clipboard;
+
+	const char *targetString = XGetAtomName(ctx->dpy, ev->target);
+
+	XEvent response;
+	response.xselection.type = SelectionNotify;
+	response.xselection.selection = ev->selection;
+	response.xselection.requestor = ev->requestor;
+	response.xselection.time = ev->time;
+	response.xselection.property = None;
+	response.xselection.target = None;
+
+	if (ev->requestor == ctx->ourWindow)
+	{
+		return;
+	}
+
+	if (ev->target == ctx->atoms.targets)
+	{
+		Atom targetList[] = {
+			ctx->atoms.targets,
+			XA_STRING,
+		};
+
+		XChangeProperty(ctx->dpy, ev->requestor, ev->property, XA_ATOM, 32, PropModeReplace,
+				(unsigned char *)&targetList, 2);
+		response.xselection.property = ev->property;
+		response.xselection.target = ev->target;
+	}
+	else if (!strcmp(targetString, "text/plain;charset=utf-8") ||
+		!strcmp(targetString, "text/plain") ||
+		!strcmp(targetString, "TEXT") ||
+		!strcmp(targetString, "UTF8_STRING") ||
+		!strcmp(targetString, "STRING"))
+	{
+		XChangeProperty(ctx->dpy, ev->requestor, ev->property, ev->target, 8, PropModeReplace,
+				(unsigned char *)selection->c_str(), selection->length());
+		response.xselection.property = ev->property;
+		response.xselection.target = ev->target;
+	}
+	else
+	{
+		xwm_log.debugf("Unsupported clipboard type: %s.  Ignoring", targetString);
+	}
+
+	XSendEvent(ctx->dpy, ev->requestor, False, NoEventMask, &response);
+	XFlush(ctx->dpy);
+}
+
+static void
+handle_selection_notify(xwayland_ctx_t *ctx, XSelectionEvent *ev)
+{
+	if (!BIsNested())
+	{
+		return;
+	}
+
+	Atom actual_type;
+	int actual_format;
+	unsigned long nitems;
+	unsigned long bytes_after;
+	unsigned char *data = NULL;
+
+	XGetWindowProperty(ctx->dpy, ev->requestor, ev->property, 0, 0, False, AnyPropertyType,
+			&actual_type, &actual_format, &nitems, &bytes_after, &data);
+	if (data) {
+		XFree(data);
+	}
+
+	if (actual_type == ctx->atoms.utf8StringAtom && actual_format == 8) {
+		XGetWindowProperty(ctx->dpy, ev->requestor, ev->property, 0, bytes_after, False, AnyPropertyType,
+				&actual_type, &actual_format, &nitems, &bytes_after, &data);
+		if (data) {
+			const char *contents = (const char *) data;
+			if (ev->selection == ctx->atoms.clipboard)
+			{
+				sdlwindow_set_selection(contents, CLIPBOARD);
+			}
+			else if (ev->selection == ctx->atoms.primarySelection)
+			{
+				sdlwindow_set_selection(contents, PRIMARYSELECTION);
+			}
+			XFree(data);
+		}
+	}
+}
 
 template<typename T, typename J>
 T bit_cast(const J& src) {
@@ -5975,6 +6099,13 @@ spawn_client( char **argv )
 }
 
 static void
+handle_xfixes_selection_notify( xwayland_ctx_t *ctx, XFixesSelectionNotifyEvent *event )
+{
+	XConvertSelection(ctx->dpy, event->selection, ctx->atoms.utf8StringAtom, event->selection, ctx->ourWindow, CurrentTime);
+	XFlush(ctx->dpy);
+}
+
+static void
 dispatch_x11( xwayland_ctx_t *ctx )
 {
 	MouseCursor *cursor = ctx->cursor.get();
@@ -6113,6 +6244,12 @@ dispatch_x11( xwayland_ctx_t *ctx )
 					bShouldResetCursor = true;
 				}
 				break;
+			case SelectionNotify:
+				handle_selection_notify(ctx, &ev.xselection);
+				break;
+			case SelectionRequest:
+				handle_selection_request(ctx, &ev.xselectionrequest);
+				break;
 			default:
 				if (ev.type == ctx->damage_event + XDamageNotify)
 				{
@@ -6121,6 +6258,10 @@ dispatch_x11( xwayland_ctx_t *ctx )
 				else if (ev.type == ctx->xfixes_event + XFixesCursorNotify)
 				{
 					cursor->setDirty();
+				}
+				else if (ev.type == ctx->xfixes_event + XFixesSelectionNotify)
+				{
+					handle_xfixes_selection_notify(ctx, (XFixesSelectionNotifyEvent *) &ev);
 				}
 				break;
 		}
@@ -6491,6 +6632,10 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 	ctx->atoms.wineHwndStyle = XInternAtom( ctx->dpy, "_WINE_HWND_STYLE", false );
 	ctx->atoms.wineHwndStyleEx = XInternAtom( ctx->dpy, "_WINE_HWND_EXSTYLE", false );
 
+	ctx->atoms.clipboard = XInternAtom(ctx->dpy, "CLIPBOARD", false);
+	ctx->atoms.primarySelection = XInternAtom(ctx->dpy, "PRIMARY", false);
+	ctx->atoms.targets = XInternAtom(ctx->dpy, "TARGETS", false);
+
 	ctx->root_width = DisplayWidth(ctx->dpy, ctx->scr);
 	ctx->root_height = DisplayHeight(ctx->dpy, ctx->scr);
 
@@ -6519,6 +6664,8 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 				  PropertyChangeMask);
 	XShapeSelectInput(ctx->dpy, ctx->root, ShapeNotifyMask);
 	XFixesSelectCursorInput(ctx->dpy, ctx->root, XFixesDisplayCursorNotifyMask);
+	XFixesSelectSelectionInput(ctx->dpy, ctx->root, ctx->atoms.clipboard, XFixesSetSelectionOwnerNotifyMask);
+	XFixesSelectSelectionInput(ctx->dpy, ctx->root, ctx->atoms.primarySelection, XFixesSetSelectionOwnerNotifyMask);
 	XQueryTree(ctx->dpy, ctx->root, &root_return, &parent_return, &children, &nchildren);
 	for (uint32_t i = 0; i < nchildren; i++)
 		add_win(ctx, children[i], i ? children[i-1] : None, 0);

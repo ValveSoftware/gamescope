@@ -1,10 +1,13 @@
 // For the nested case, reads input from the SDL window and send to wayland
 
+#include <X11/Xlib.h>
 #include <thread>
 #include <mutex>
 
 #include <linux/input-event-codes.h>
 
+#include "SDL_clipboard.h"
+#include "SDL_events.h"
 #include "main.hpp"
 #include "wlserver.hpp"
 #include "sdlwindow.hpp"
@@ -32,6 +35,9 @@ extern bool g_bFirstFrame;
 
 SDL_Window *g_SDLWindow;
 
+std::string clipboard;
+std::string primarySelection;
+
 enum UserEvents
 {
 	USER_EVENT_TITLE,
@@ -58,6 +64,8 @@ struct SDLPendingCursor
 static std::mutex g_SDLCursorLock;
 static SDLPendingCursor g_SDLPendingCursorData;
 static bool g_bUpdateSDLCursor = false;
+
+static void set_gamescope_selections();
 
 //-----------------------------------------------------------------------------
 // Purpose: Convert from the remote scancode to a Linux event keycode
@@ -165,6 +173,9 @@ void inputSDLThreadRun( void )
 
 		switch( event.type )
 		{
+			case SDL_CLIPBOARDUPDATE:
+				set_gamescope_selections();
+				break;
 			case SDL_MOUSEMOTION:
 				if ( bRelativeMouse )
 				{
@@ -259,6 +270,9 @@ void inputSDLThreadRun( void )
 							event.type = g_unSDLUserEventID + USER_EVENT_TITLE;
 							SDL_PushEvent( &event );
 							break;
+						case KEY_C:
+							 set_gamescope_selections();
+							 break;
 						default:
 							handled = false;
 					}
@@ -466,6 +480,41 @@ void sdlwindow_title( std::shared_ptr<std::string> title, std::shared_ptr<std::v
 			event.type = g_unSDLUserEventID + USER_EVENT_TITLE;
 			SDL_PushEvent( &event );
 		}
+	}
+}
+
+void sdlwindow_set_selection(std::string contents, int selection)
+{
+	if (selection == CLIPBOARD)
+	{
+		clipboard = contents;
+		SDL_SetClipboardText(contents.c_str());
+	}
+	else if (selection == PRIMARYSELECTION)
+	{
+		primarySelection = contents;
+		SDL_SetPrimarySelectionText(contents.c_str());
+	}
+}
+
+static void set_gamescope_selections()
+{
+	char *text;
+
+	text = SDL_GetClipboardText();
+	clipboard = text;
+	SDL_free(text);
+
+	text = SDL_GetPrimarySelectionText();
+	primarySelection = text;
+	SDL_free(text);
+
+	for (int i = 0; i < g_nXWaylandCount; i++)
+	{
+		gamescope_xwayland_server_t *server = wlserver_get_xwayland_server(0);
+		xwayland_ctx_t *ctx = server->ctx.get();
+		x11_set_selection(ctx, clipboard, CLIPBOARD);
+		x11_set_selection(ctx, primarySelection, PRIMARYSELECTION);
 	}
 }
 

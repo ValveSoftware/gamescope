@@ -48,6 +48,7 @@ extern "C" {
 #include "log.hpp"
 #include "ime.hpp"
 #include "xwayland_ctx.hpp"
+#include "sdlwindow.hpp"
 
 #if HAVE_PIPEWIRE
 #include "pipewire.hpp"

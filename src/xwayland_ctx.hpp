@@ -207,5 +207,9 @@ struct xwayland_ctx_t
 
 		Atom wineHwndStyle;
 		Atom wineHwndStyleEx;
+
+		Atom clipboard;
+		Atom primarySelection;
+		Atom targets;
 	} atoms;
 };
