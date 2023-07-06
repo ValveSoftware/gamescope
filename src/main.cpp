@@ -224,6 +224,7 @@ const char usage[] =
 	"  Super + O                      decrease FSR sharpness by 1\n"
 	"  Super + S                      take a screenshot\n"
 	"  Super + G                      toggle keyboard grab\n"
+	"  Super + C                      update clipboard\n"
 	"";
 
 std::atomic< bool > g_bRun{true};
