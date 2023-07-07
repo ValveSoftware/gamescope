@@ -847,13 +847,7 @@ static bool initOutput( int preferredWidth, int preferredHeight, int preferredRe
 		{
 			return sdlwindow_init();
 		}
-		else
-		{
-			return true;
-		}
+		return true;
 	}
-	else
-	{
-		return init_drm( &g_DRM, preferredWidth, preferredHeight, preferredRefresh, s_bInitialWantsVRREnabled );
-	}
+	return init_drm( &g_DRM, preferredWidth, preferredHeight, preferredRefresh, s_bInitialWantsVRREnabled );
 }
