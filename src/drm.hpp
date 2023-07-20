@@ -93,6 +93,7 @@ extern "C" {
 #include <unordered_map>
 #include <mutex>
 #include <vector>
+#include <string>
 
 struct saved_mode {
 	int width;

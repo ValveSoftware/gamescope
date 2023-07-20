@@ -2,6 +2,7 @@
 
 #include <thread>
 #include <mutex>
+#include <string>
 
 #include <linux/input-event-codes.h>
 

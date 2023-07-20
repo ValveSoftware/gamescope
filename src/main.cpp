@@ -5,6 +5,7 @@
 #include <mutex>
 #include <vector>
 #include <cstring>
+#include <string>
 #if defined(__linux__)
 #include <sys/capability.h>
 #endif
