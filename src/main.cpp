@@ -662,7 +662,7 @@ int main(int argc, char **argv)
 	}
 
 	VkInstance instance = vulkan_create_instance();
-	VkSurfaceKHR surface = nullptr;
+	VkSurfaceKHR surface = VK_NULL_HANDLE;
 
 	if ( !BIsNested() )
 	{
