@@ -586,6 +586,7 @@ bool g_bSupportsSyncObjs = false;
 
 extern gamescope::GamescopeModeGeneration g_eGamescopeModeGeneration;
 extern GamescopePanelOrientation g_DesiredInternalOrientation;
+extern GamescopePanelOrientation g_DesiredExternalOrientation;
 
 extern bool g_bForceDisableColorMgmt;
 
@@ -2246,6 +2247,10 @@ namespace gamescope
 		if ( this->GetScreenType() == GAMESCOPE_SCREEN_TYPE_INTERNAL && g_DesiredInternalOrientation != GAMESCOPE_PANEL_ORIENTATION_AUTO )
 		{
 			m_ChosenOrientation = g_DesiredInternalOrientation;
+		}
+		else if ( this->GetScreenType() == GAMESCOPE_SCREEN_TYPE_EXTERNAL && g_DesiredExternalOrientation != GAMESCOPE_PANEL_ORIENTATION_AUTO )
+		{
+			m_ChosenOrientation = g_DesiredExternalOrientation;
 		}
 		else
 		{
