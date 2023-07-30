@@ -270,9 +270,6 @@ void inputSDLThreadRun( void )
 							event.type = g_unSDLUserEventID + USER_EVENT_TITLE;
 							SDL_PushEvent( &event );
 							break;
-						case KEY_C:
-							 set_gamescope_selections();
-							 break;
 						default:
 							handled = false;
 					}
