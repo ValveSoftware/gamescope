@@ -129,6 +129,9 @@ extern float g_flHDRItmTargetNits;
 
 extern std::atomic<uint64_t> g_lastVblank;
 
+std::string clipboard;
+std::string primarySelection;
+
 uint64_t timespec_to_nanos(struct timespec& spec)
 {
 	return spec.tv_sec * 1'000'000'000ul + spec.tv_nsec;
@@ -4584,13 +4587,8 @@ handle_client_message(xwayland_ctx_t *ctx, XClientMessageEvent *ev)
 	}
 }
 
-void x11_set_selection(xwayland_ctx_t *ctx, std::string contents, int selectionTarget)
+static void x11_set_selection(xwayland_ctx_t *ctx, std::string contents, int selectionTarget)
 {
-	if (!BIsNested())
-	{
-		return;
-	}
-
 	Atom target;
 	if (selectionTarget == CLIPBOARD)
 	{
@@ -4611,14 +4609,28 @@ void x11_set_selection(xwayland_ctx_t *ctx, std::string contents, int selectionT
 	XFlush(ctx->dpy);
 }
 
+void gamescope_set_selection(std::string contents, int selection)
+{
+	if (selection == CLIPBOARD)
+	{
+		clipboard = contents;
+	}
+	else if (selection == PRIMARYSELECTION)
+	{
+		primarySelection = contents;
+	}
+
+	for (int i = 0; i < g_nXWaylandCount; i++)
+	{
+		gamescope_xwayland_server_t *server = wlserver_get_xwayland_server(i);
+		xwayland_ctx_t *ctx = server->ctx.get();
+		x11_set_selection(ctx, contents, selection);
+	}
+}
+
 static void
 handle_selection_request(xwayland_ctx_t *ctx, XSelectionRequestEvent *ev)
 {
-	if (!BIsNested())
-	{
-		return;
-	}
-
 	std::string *selection = ev->selection == ctx->atoms.primarySelection ? &primarySelection : &clipboard;
 
 	const char *targetString = XGetAtomName(ctx->dpy, ev->target);
@@ -4654,6 +4666,7 @@ handle_selection_request(xwayland_ctx_t *ctx, XSelectionRequestEvent *ev)
 		!strcmp(targetString, "UTF8_STRING") ||
 		!strcmp(targetString, "STRING"))
 	{
+
 		XChangeProperty(ctx->dpy, ev->requestor, ev->property, ev->target, 8, PropModeReplace,
 				(unsigned char *)selection->c_str(), selection->length());
 		response.xselection.property = ev->property;
@@ -4671,10 +4684,7 @@ handle_selection_request(xwayland_ctx_t *ctx, XSelectionRequestEvent *ev)
 static void
 handle_selection_notify(xwayland_ctx_t *ctx, XSelectionEvent *ev)
 {
-	if (!BIsNested())
-	{
-		return;
-	}
+	int selection;
 
 	Atom actual_type;
 	int actual_format;
@@ -4693,14 +4703,36 @@ handle_selection_notify(xwayland_ctx_t *ctx, XSelectionEvent *ev)
 				&actual_type, &actual_format, &nitems, &bytes_after, &data);
 		if (data) {
 			const char *contents = (const char *) data;
+
 			if (ev->selection == ctx->atoms.clipboard)
 			{
-				sdlwindow_set_selection(contents, CLIPBOARD);
+				selection = CLIPBOARD;
 			}
 			else if (ev->selection == ctx->atoms.primarySelection)
 			{
-				sdlwindow_set_selection(contents, PRIMARYSELECTION);
+				selection = PRIMARYSELECTION;
 			}
+			else
+			{
+				xwm_log.errorf( "Selection '%s' not supported.  Ignoring", XGetAtomName(ctx->dpy, ev->selection) );
+				goto done;
+			}
+
+			if (BIsNested())
+			{
+				/*
+				 * gamescope_set_selection() doesn't need to be called here.
+				 * sdlwindow_set_selection triggers a clipboard update, which
+				 * then indirectly ccalls gamescope_set_selection()
+				*/
+				sdlwindow_set_selection(contents, selection);
+			}
+			else
+			{
+				gamescope_set_selection(contents, selection);
+			}
+
+done:
 			XFree(data);
 		}
 	}
@@ -6101,6 +6133,11 @@ spawn_client( char **argv )
 static void
 handle_xfixes_selection_notify( xwayland_ctx_t *ctx, XFixesSelectionNotifyEvent *event )
 {
+	if (event->owner == ctx->ourWindow)
+	{
+		return;
+	}
+
 	XConvertSelection(ctx->dpy, event->selection, ctx->atoms.utf8StringAtom, event->selection, ctx->ourWindow, CurrentTime);
 	XFlush(ctx->dpy);
 }

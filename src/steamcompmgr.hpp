@@ -141,6 +141,6 @@ extern uint64_t g_SteamCompMgrVBlankTime;
 extern pid_t focusWindow_pid;
 
 void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_server);
-void x11_set_selection(xwayland_ctx_t *ctx, std::string contents, int selectionTarget);
+void gamescope_set_selection(std::string contents, int selection);
 
 extern int g_nAsyncFlipsEnabled;

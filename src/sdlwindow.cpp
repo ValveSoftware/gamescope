@@ -35,9 +35,6 @@ extern bool g_bFirstFrame;
 
 SDL_Window *g_SDLWindow;
 
-std::string clipboard;
-std::string primarySelection;
-
 enum UserEvents
 {
 	USER_EVENT_TITLE,
@@ -484,35 +481,25 @@ void sdlwindow_set_selection(std::string contents, int selection)
 {
 	if (selection == CLIPBOARD)
 	{
-		clipboard = contents;
 		SDL_SetClipboardText(contents.c_str());
 	}
 	else if (selection == PRIMARYSELECTION)
 	{
-		primarySelection = contents;
 		SDL_SetPrimarySelectionText(contents.c_str());
 	}
 }
 
 static void set_gamescope_selections()
 {
-	char *text;
+	char *_clipboard = SDL_GetClipboardText();
 
-	text = SDL_GetClipboardText();
-	clipboard = text;
-	SDL_free(text);
+	char *_primarySelection = SDL_GetPrimarySelectionText();
 
-	text = SDL_GetPrimarySelectionText();
-	primarySelection = text;
-	SDL_free(text);
+	gamescope_set_selection(_clipboard, CLIPBOARD);
+	gamescope_set_selection(_primarySelection, PRIMARYSELECTION);
 
-	for (int i = 0; i < g_nXWaylandCount; i++)
-	{
-		gamescope_xwayland_server_t *server = wlserver_get_xwayland_server(0);
-		xwayland_ctx_t *ctx = server->ctx.get();
-		x11_set_selection(ctx, clipboard, CLIPBOARD);
-		x11_set_selection(ctx, primarySelection, PRIMARYSELECTION);
-	}
+	SDL_free(_clipboard);
+	SDL_free(_primarySelection);
 }
 
 void sdlwindow_visible( bool bVisible )
