@@ -4587,7 +4587,7 @@ handle_client_message(xwayland_ctx_t *ctx, XClientMessageEvent *ev)
 	}
 }
 
-static void x11_set_selection(xwayland_ctx_t *ctx, std::string contents, int selectionTarget)
+static void x11_set_selection_owner(xwayland_ctx_t *ctx, std::string contents, int selectionTarget)
 {
 	Atom target;
 	if (selectionTarget == CLIPBOARD)
@@ -4604,9 +4604,6 @@ static void x11_set_selection(xwayland_ctx_t *ctx, std::string contents, int sel
 	}
 
 	XSetSelectionOwner(ctx->dpy, target, ctx->ourWindow, CurrentTime);
-	XChangeProperty(ctx->dpy, ctx->ourWindow, target, ctx->atoms.utf8StringAtom, 8, PropModeReplace,
-			(unsigned char *)contents.c_str(), contents.length());
-	XFlush(ctx->dpy);
 }
 
 void gamescope_set_selection(std::string contents, int selection)
@@ -4620,11 +4617,10 @@ void gamescope_set_selection(std::string contents, int selection)
 		primarySelection = contents;
 	}
 
-	for (int i = 0; i < g_nXWaylandCount; i++)
+	gamescope_xwayland_server_t *server = NULL;
+	for (int i = 0; (server = wlserver_get_xwayland_server(i)); i++)
 	{
-		gamescope_xwayland_server_t *server = wlserver_get_xwayland_server(i);
-		xwayland_ctx_t *ctx = server->ctx.get();
-		x11_set_selection(ctx, contents, selection);
+		x11_set_selection_owner(server->ctx.get(), contents, selection);
 	}
 }
 
