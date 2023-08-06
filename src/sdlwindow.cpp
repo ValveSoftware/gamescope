@@ -216,6 +216,18 @@ void inputSDLThreadRun( void )
 				wlserver_unlock();
 				break;
 			case SDL_KEYDOWN:
+				// If this keydown event is super + one of the shortcut keys, consume the keydown event, since the corresponding keyup
+				// event will be consumed by the next case statement when the user releases the key
+				if ( event.key.keysym.mod & KMOD_LGUI )
+				{
+					key = SDLScancodeToLinuxKey( event.key.keysym.scancode );
+					const uint32_t shortcutKeys[] = {KEY_F, KEY_N, KEY_B, KEY_U, KEY_Y, KEY_I, KEY_O, KEY_S, KEY_G};
+					const bool isShortcutKey = std::find(std::begin(shortcutKeys), std::end(shortcutKeys), key) != std::end(shortcutKeys);
+					if ( isShortcutKey )
+					{
+						break;
+					}
+				}
 			case SDL_KEYUP:
 				key = SDLScancodeToLinuxKey( event.key.keysym.scancode );
 
