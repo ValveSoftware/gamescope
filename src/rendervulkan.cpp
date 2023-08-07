@@ -846,6 +846,25 @@ bool CVulkanDevice::createPools()
 		return false;
 	}
 
+	VkPhysicalDeviceImageFormatInfo2 imageFormatInfo = {
+		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2,
+		.format = VK_FORMAT_G8_B8R8_2PLANE_420_UNORM,
+		.type = VK_IMAGE_TYPE_2D,
+		.tiling = VK_IMAGE_TILING_OPTIMAL,
+		.usage = VK_IMAGE_USAGE_SAMPLED_BIT,
+	};
+
+	VkSamplerYcbcrConversionImageFormatProperties ycbcrProps = {
+		.sType = VK_STRUCTURE_TYPE_SAMPLER_YCBCR_CONVERSION_IMAGE_FORMAT_PROPERTIES,
+	};
+
+	VkImageFormatProperties2 imageFormatProps = {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2,
+		.pNext = &ycbcrProps,
+	};
+
+	res = vk.GetPhysicalDeviceImageFormatProperties2( physDev(), &imageFormatInfo, &imageFormatProps );
+
 	VkDescriptorPoolSize poolSizes[3] {
 		{
 			VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
@@ -857,7 +876,7 @@ bool CVulkanDevice::createPools()
 		},
 		{
 			VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-			uint32_t(m_descriptorSets.size()) * ((2 * VKR_SAMPLER_SLOTS) + (2 * VKR_LUT3D_COUNT)),
+			uint32_t(m_descriptorSets.size()) * (((ycbcrProps.combinedImageSamplerDescriptorCount + 1) * VKR_SAMPLER_SLOTS) + (2 * VKR_LUT3D_COUNT)),
 		},
 	};
 	
