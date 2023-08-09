@@ -40,7 +40,7 @@ foreach feat : required_wlroots_features
   endif
 endforeach
 
-glsl_compiler = find_program('glslangValidator', native: true)
+glsl_compiler = find_program('glslang', 'glslangValidator', native: true)
 
 # Use --depfile to rebuild shaders when included files have changed. Sadly debian based
 # distros don't have up-to-date glslang so we need to check for support first.
