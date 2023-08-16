@@ -15,6 +15,7 @@
 
 // For limiter file.
 #include <fcntl.h>
+#include <unistd.h>
 
 using namespace std::literals;
 
