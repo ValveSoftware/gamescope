@@ -488,6 +488,7 @@ private:
 	VK_FUNC(MapMemory) \
 	VK_FUNC(QueuePresentKHR) \
 	VK_FUNC(QueueSubmit) \
+	VK_FUNC(QueueWaitIdle) \
 	VK_FUNC(ResetCommandBuffer) \
 	VK_FUNC(ResetFences) \
 	VK_FUNC(UnmapMemory) \
@@ -2988,7 +2989,7 @@ bool vulkan_make_swapchain( VulkanOutput_t *pOutput )
 bool vulkan_remake_swapchain( void )
 {
 	VulkanOutput_t *pOutput = &g_output;
-	g_device.waitIdle();
+	g_device.vk.QueueWaitIdle( g_device.queue() );
 
 	pOutput->outputImages.clear();
 
