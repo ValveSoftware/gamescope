@@ -41,6 +41,7 @@ librt_dep = cppc.find_library('rt', required : get_option('pipewire'))
 hwdata_dep = dependency('hwdata')
 
 dep_x11 = dependency('x11')
+dep_wayland = dependency('wayland-client')
 vulkan_dep = dependency('vulkan')
 
 if get_option('enable_openvr_support')
