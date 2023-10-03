@@ -494,7 +494,7 @@ static std::vector<std::shared_ptr<ReshadeUniform>> createReshadeUniforms(const 
         auto sourceAnnotation = std::find_if(uniform.annotations.begin(), uniform.annotations.end(), [](const auto& a) { return a.name == "source"; });
         if (sourceAnnotation == uniform.annotations.end())
         {
-            uniforms.push_back(std::shared_ptr<ReshadeUniform>(new DataUniform(uniform)));
+            uniforms.push_back(std::make_shared<DataUniform>(uniform));
             continue;
         }
         else
@@ -502,47 +502,47 @@ static std::vector<std::shared_ptr<ReshadeUniform>> createReshadeUniforms(const 
             auto& source = sourceAnnotation->value.string_data;
             if (source == "frametime")
             {
-                uniforms.push_back(std::shared_ptr<ReshadeUniform>(new FrameTimeUniform(uniform)));
+                uniforms.push_back(std::make_shared<FrameTimeUniform>(uniform));
             }
             else if (source == "framecount")
             {
-                uniforms.push_back(std::shared_ptr<ReshadeUniform>(new FrameCountUniform(uniform)));
+                uniforms.push_back(std::make_shared<FrameCountUniform>(uniform));
             }
             else if (source == "date")
             {
-                uniforms.push_back(std::shared_ptr<ReshadeUniform>(new DateUniform(uniform)));
+                uniforms.push_back(std::make_shared<DateUniform>(uniform));
             }
             else if (source == "timer")
             {
-                uniforms.push_back(std::shared_ptr<ReshadeUniform>(new TimerUniform(uniform)));
+                uniforms.push_back(std::make_shared<TimerUniform>(uniform));
             }
             else if (source == "pingpong")
             {
-                uniforms.push_back(std::shared_ptr<ReshadeUniform>(new PingPongUniform(uniform)));
+                uniforms.push_back(std::make_shared<PingPongUniform>(uniform));
             }
             else if (source == "random")
             {
-                uniforms.push_back(std::shared_ptr<ReshadeUniform>(new RandomUniform(uniform)));
+                uniforms.push_back(std::make_shared<RandomUniform>(uniform));
             }
             else if (source == "key")
             {
-                uniforms.push_back(std::shared_ptr<ReshadeUniform>(new KeyUniform(uniform)));
+                uniforms.push_back(std::make_shared<KeyUniform>(uniform));
             }
             else if (source == "mousebutton")
             {
-                uniforms.push_back(std::shared_ptr<ReshadeUniform>(new MouseButtonUniform(uniform)));
+                uniforms.push_back(std::make_shared<MouseButtonUniform>(uniform));
             }
             else if (source == "mousepoint")
             {
-                uniforms.push_back(std::shared_ptr<ReshadeUniform>(new MousePointUniform(uniform)));
+                uniforms.push_back(std::make_shared<MousePointUniform>(uniform));
             }
             else if (source == "mousedelta")
             {
-                uniforms.push_back(std::shared_ptr<ReshadeUniform>(new MouseDeltaUniform(uniform)));
+                uniforms.push_back(std::make_shared<MouseDeltaUniform>(uniform));
             }
             else if (source == "bufready_depth")
             {
-                uniforms.push_back(std::shared_ptr<ReshadeUniform>(new DepthUniform(uniform)));
+                uniforms.push_back(std::make_shared<DepthUniform>(uniform));
             }
             else
             {
