@@ -42,6 +42,9 @@ meson install -C build/ --skip-subprojects
 * **Super + G** : Toggle keyboard grab
 * **Super + C** : Update clipboard
 
+* **Super + X** : Cycle upscalers (Auto, Integer, Fit, Fill, Stretch)
+* **Super + Z** : Cycle upscaling filters (Linear, Nearest, FSR, NIS)
+
 ## Examples
 
 On any X11 or Wayland desktop, you can set the Steam launch arguments of your game as follows:

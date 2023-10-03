@@ -264,7 +264,7 @@ GamescopeUpscaleScaler g_upscaleScaler = GamescopeUpscaleScaler::AUTO;
 
 GamescopeUpscaleFilter g_wantedUpscaleFilter = GamescopeUpscaleFilter::LINEAR;
 GamescopeUpscaleScaler g_wantedUpscaleScaler = GamescopeUpscaleScaler::AUTO;
-int g_upscaleFilterSharpness = 2;
+uint8_t g_upscaleFilterSharpness = 2;
 
 bool g_bBorderlessOutputWindow = false;
 
