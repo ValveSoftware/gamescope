@@ -3407,9 +3407,9 @@ struct BicubicPushData_t
 	uvec4_t Const1;
 	uvec4_t Const2;
 
-	BicubicPushData_t(uint32_t B, uint32_t C, uint32_t inputX, uint32_t inputY, uint32_t tempX, uint32_t tempY)
+	BicubicPushData_t(uint32_t B, uint32_t C, uint32_t inputX, uint32_t inputY, uint32_t tempX, uint32_t tempY, uint32_t winX, uint32_t winY)
 	{
-		BicubicCon(&Const0.x, &Const1.x, &Const2.x, B, C, inputX, inputY, inputX, inputY, tempX, tempY);
+		BicubicCon(&Const0.x, &Const1.x, &Const2.x, B, C, inputX, inputY, tempX, tempY, winX, winY);
 	}
 };
 
@@ -3502,17 +3502,6 @@ bool vulkan_composite( const struct FrameInfo_t *frameInfo, std::shared_ptr<CVul
 	for (uint32_t i = 0; i < EOTF_Count; i++)
 		cmdBuffer->bindColorMgmtLuts(i, frameInfo->shaperLut[i], frameInfo->lut3D[i]);
 
-	auto fsrBind = [&]( uint32_t inputX, uint32_t inputY, uint32_t tempX, uint32_t tempY )
-	{
-			cmdBuffer->bindPipeline(g_device.pipeline(SHADER_TYPE_EASU));
-			cmdBuffer->bindTarget(g_output.tmpOutput);
-			cmdBuffer->bindTexture(0, frameInfo->layers[0].tex);
-			cmdBuffer->setTextureSrgb(0, true);
-			cmdBuffer->setSamplerUnnormalized(0, false);
-			cmdBuffer->setSamplerNearest(0, false);
-			cmdBuffer->pushConstants<EasuPushData_t>(inputX, inputY, tempX, tempY);
-	};
-
 	if ( frameInfo->useBICUBICLayer0 )
 	{
 		uint32_t inputX = frameInfo->layers[0].tex->width();
@@ -3523,37 +3512,38 @@ bool vulkan_composite( const struct FrameInfo_t *frameInfo, std::shared_ptr<CVul
 
 		update_tmp_images(tempX, tempY);
 
-		if ( (inputY / tempY) < 2 )
-		{
-			// Use fsr as a bilinear filter
-			fsrBind(inputX, inputY, tempX, tempY);
-		}
-		else
-		{
-			// Use bicubic filter
-			cmdBuffer->bindPipeline(g_device.pipeline(SHADER_TYPE_BICUBIC));
-			cmdBuffer->bindTarget(g_output.tmpOutput);
-			cmdBuffer->bindTexture(0, frameInfo->layers[0].tex);
-			cmdBuffer->setTextureSrgb(0, true);
-			cmdBuffer->setSamplerUnnormalized(0, false);
-			cmdBuffer->setSamplerNearest(0, false);
-			// fprintf(stderr, "B: %d\n", g_bicubicParams.b);
-			// fprintf(stderr, "C: %d\n", g_bicubicParams.c);
-			cmdBuffer->pushConstants<BicubicPushData_t>(g_bicubicParams.b, g_bicubicParams.c, inputX, inputY, tempX, tempY);
-		} // else
-
 		int pixelsPerGroup = 16;
 
-		cmdBuffer->dispatch(div_roundup(tempX, pixelsPerGroup), div_roundup(tempY, pixelsPerGroup));
-
-		cmdBuffer->bindPipeline(g_device.pipeline(SHADER_TYPE_RCAS, frameInfo->layerCount, frameInfo->ycbcrMask() & ~1));
-		bind_all_layers(cmdBuffer.get(), frameInfo);
-		cmdBuffer->bindTexture(0, g_output.tmpOutput);
+		cmdBuffer->bindPipeline( g_device.pipeline(SHADER_TYPE_BICUBIC, frameInfo->layerCount, frameInfo->ycbcrMask()));
+		// cmdBuffer->bindTarget(compositeImage);
+		cmdBuffer->bindTarget(g_output.tmpOutput);
+		cmdBuffer->bindTexture(0, frameInfo->layers[0].tex);
 		cmdBuffer->setTextureSrgb(0, true);
 		cmdBuffer->setSamplerUnnormalized(0, false);
 		cmdBuffer->setSamplerNearest(0, false);
+		cmdBuffer->pushConstants<BicubicPushData_t>(g_bicubicParams.b
+				, g_bicubicParams.c
+				, inputX
+				, inputY
+				, tempX
+				, tempY
+				, currentOutputWidth
+				, currentOutputHeight
+		);
+
+		cmdBuffer->dispatch(div_roundup(tempX, pixelsPerGroup), div_roundup(tempY, pixelsPerGroup));
+
+		struct FrameInfo_t bicFrameInfo = *frameInfo;
+		bicFrameInfo.layers[0].tex = g_output.tmpOutput;
+		bicFrameInfo.layers[0].scale.x = 1.0f;
+		bicFrameInfo.layers[0].scale.y = 1.0f;
+
+		cmdBuffer->bindPipeline( g_device.pipeline(SHADER_TYPE_BLIT, bicFrameInfo.layerCount, bicFrameInfo.ycbcrMask()));
+		bind_all_layers(cmdBuffer.get(), &bicFrameInfo);
 		cmdBuffer->bindTarget(compositeImage);
-		cmdBuffer->pushConstants<RcasPushData_t>(frameInfo, g_upscaleFilterSharpness / 10.0f);
+		cmdBuffer->pushConstants<BlitPushData_t>(&bicFrameInfo);
+
+		pixelsPerGroup = 8;
 
 		cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup));
 	}

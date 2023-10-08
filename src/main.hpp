@@ -43,8 +43,8 @@ enum class GamescopeUpscaleScaler : uint32_t
 
 struct GamescopeBicubicParams
 {
-	int b = 33;
-	int c = 33;
+	int b = 0;
+	int c = 50;
 };
 
 extern GamescopeUpscaleFilter g_upscaleFilter;

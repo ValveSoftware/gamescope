@@ -1,6 +1,8 @@
 // References
 // https://www.codeproject.com/Articles/236394/Bi-Cubic-and-Bi-Linear-Interpolation-with-GLSL
 // https://stackoverflow.com/questions/13501081/efficient-bicubic-filtering-code-in-glsl
+// https://web.archive.org/web/20180927181721/http://www.java-gaming.org/index.php?topic=35123.0
+// https://gist.github.com/TheRealMJP/c83b8c0f46b63f3a88a5986f4fa982b1
 
 #version 460
 
@@ -25,50 +27,33 @@ uniform layers_t {
 #include "ffx_a.h"
 #include "bicubic.h"
 
-vec4 catMullRom( const float B, const float C, const float x )
+vec4 catMullRomWeights( float f )
 {
-    vec4 n = vec4(1.0, 2.0, 3.0, 4.0) - x;
-    float f = x;
-    if( f < 0.0 )
-    {
-        f = -f;
-    }
-    if( f < 1.0 )
-    {
-        return n * ( ( 12 - 9 * B - 6 * C ) * ( f * f * f ) +
-            ( -18 + 12 * B + 6 *C ) * ( f * f ) +
-            ( 6 - 2 * B ) ) / 6.0;
-    }
-    else if( f >= 1.0 && f < 2.0 )
-    {
-        return n * ( ( -B - 6 * C ) * ( f * f * f )
-            + ( 6 * B + 30 * C ) * ( f *f ) +
-            ( - ( 12 * B ) - 48 * C  ) * f +
-            8 * B + 24 * C)/ 6.0;
-    }
-    else
-    {
-        return n * 0.0;
-    }
+    AF1 w0 = f * (-0.5f + f * (1.0f - 0.5f * f));
+    AF1 w1 = 1.0f + f * f * (-2.5f + 1.5f * f);
+    AF1 w2 = f * (0.5f + f * (2.0f - 1.5f * f));
+    AF1 w3 = f * f * (-0.5f + 0.5f * f);
+
+    return vec4(w0, w1, w2, w3);
 }
 
-
-vec4 textureBicubic(sampler2D splr, vec2 texCoords)
+// https://stackoverflow.com/questions/13501081/efficient-bicubic-filtering-code-in-glsl
+// https://web.archive.org/web/20180927181721/http://www.java-gaming.org/index.php?topic=35123.0
+// This is an efficient method to implement bicubic filtering, it takes
+// advantage of the fact that the bilinear approach gives the weighted average
+// of a 2x2 area.
+vec4 textureBicubicApprox(sampler2D splr, vec2 texCoords)
 {
+    vec2 texSize = textureSize(splr, 0);
+    vec2 invTexSize = 1.0 / texSize;
 
-   vec2 texSize = textureSize(splr, 0);
-   vec2 invTexSize = 1.0 / texSize;
-
-   texCoords = texCoords * texSize - 0.5;
-
+    texCoords = texCoords * texSize - 0.5;
 
     vec2 fxy = fract(texCoords);
     texCoords -= fxy;
-		
-    float B = AF1_AU1(c2.x)/AF1_(100);
-    float C = AF1_AU1(c2.y)/AF1_(100);
-    vec4 xcubic = catMullRom(B, C, fxy.x);
-    vec4 ycubic = catMullRom(B, C, fxy.y);
+
+    vec4 xcubic = catMullRomWeights(fxy.x);
+    vec4 ycubic = catMullRomWeights(fxy.y);
 
     vec4 c = texCoords.xxyy + vec2 (-0.5, +1.5).xyxy;
 
@@ -86,149 +71,50 @@ vec4 textureBicubic(sampler2D splr, vec2 texCoords)
     float sy = s.z / (s.z + s.w);
 
     return mix(
-       mix(sample3, sample2, sx), mix(sample1, sample0, sx)
+      mix(sample3, sample2, sx), mix(sample1, sample0, sx)
     , sy);
 }
 
 void bicPass(uvec2 pos)
 {
-    AF3 color;
+    AF2 pp=AF2(pos)*AF2_AU2(c0.xy)+AF2_AU2(c2.zw);
 
-    AF2 pp=AF2(pos)*AF2_AU2(c0.xy)+AF2_AU2(c0.zw);
     AF2 fp=floor(pp);
+
     pp-=fp;
+
     // Base point
     AF2 p0=fp*AF2_AU2(c1.xy)+AF2_AU2(c1.zw);
-    // Row 1
-    AF2 p1  = p0+AF2(AF1_(-2.0)*AF1_AU1(c1.x), AF1_(0.0)*AF1_AU1(c1.y));
-    AF2 p2  = p0+AF2(AF1_( 2.0)*AF1_AU1(c1.x), AF1_(0.0)*AF1_AU1(c1.y));
-    AF2 p3  = p0+AF2(AF1_( 4.0)*AF1_AU1(c1.x), AF1_(0.0)*AF1_AU1(c1.y));
-    AF2 p4  = p0+AF2(AF1_( 6.0)*AF1_AU1(c1.x), AF1_(0.0)*AF1_AU1(c1.y));
-    // Row 2
-    AF2 p5  = p0+AF2(AF1_(-2.0)*AF1_AU1(c1.x), AF1_(2.0)*AF1_AU1(c1.y));
-    AF2 p6  = p0+AF2(AF1_( 0.0)*AF1_AU1(c1.x), AF1_(2.0)*AF1_AU1(c1.y));
-    AF2 p7  = p0+AF2(AF1_( 2.0)*AF1_AU1(c1.x), AF1_(2.0)*AF1_AU1(c1.y));
-    AF2 p8  = p0+AF2(AF1_( 4.0)*AF1_AU1(c1.x), AF1_(2.0)*AF1_AU1(c1.y));
-    AF2 p9  = p0+AF2(AF1_( 6.0)*AF1_AU1(c1.x), AF1_(2.0)*AF1_AU1(c1.y));
-    // Row 3
-    AF2 p10 = p0+AF2(AF1_(-2.0)*AF1_AU1(c1.x), AF1_(4.0)*AF1_AU1(c1.y));
-    AF2 p11 = p0+AF2(AF1_( 0.0)*AF1_AU1(c1.x), AF1_(4.0)*AF1_AU1(c1.y));
-    AF2 p12 = p0+AF2(AF1_( 2.0)*AF1_AU1(c1.x), AF1_(4.0)*AF1_AU1(c1.y));
-    AF2 p13 = p0+AF2(AF1_( 4.0)*AF1_AU1(c1.x), AF1_(4.0)*AF1_AU1(c1.y));
-    AF2 p14 = p0+AF2(AF1_( 6.0)*AF1_AU1(c1.x), AF1_(4.0)*AF1_AU1(c1.y));
-    // Row 4
-    AF2 p15 = p0+AF2(AF1_(-2.0)*AF1_AU1(c1.x), AF1_(6.0)*AF1_AU1(c1.y));
-    AF2 p16 = p0+AF2(AF1_( 0.0)*AF1_AU1(c1.x), AF1_(6.0)*AF1_AU1(c1.y));
-    AF2 p17 = p0+AF2(AF1_( 2.0)*AF1_AU1(c1.x), AF1_(6.0)*AF1_AU1(c1.y));
-    AF2 p18 = p0+AF2(AF1_( 4.0)*AF1_AU1(c1.x), AF1_(6.0)*AF1_AU1(c1.y));
-    AF2 p19 = p0+AF2(AF1_( 6.0)*AF1_AU1(c1.x), AF1_(6.0)*AF1_AU1(c1.y));
-    // Row 5
-    AF2 p20 = p0+AF2(AF1_(-2.0)*AF1_AU1(c1.x), AF1_(8.0)*AF1_AU1(c1.y));
-    AF2 p21 = p0+AF2(AF1_( 0.0)*AF1_AU1(c1.x), AF1_(8.0)*AF1_AU1(c1.y));
-    AF2 p22 = p0+AF2(AF1_( 2.0)*AF1_AU1(c1.x), AF1_(8.0)*AF1_AU1(c1.y));
-    AF2 p23 = p0+AF2(AF1_( 4.0)*AF1_AU1(c1.x), AF1_(8.0)*AF1_AU1(c1.y));
-    AF2 p24 = p0+AF2(AF1_( 6.0)*AF1_AU1(c1.x), AF1_(8.0)*AF1_AU1(c1.y));
 
-    //
-    // |  1  |  0  |  2  |  3  |  4  |
-    // |  5  |  6  |  7  |  8  |  9  |
-    // |  10 |  11 |  12 |  13 |  14 |
-    // |  15 |  16 |  17 |  18 |  19 |
-    // |  20 |  21 |  22 |  23 |  24 |
-    // 
+    // Downscaling factor = renderedResolution/WindowResolution
+    AF1 scalingFactor = (AF1_AU1(c0.x) > AF1_AU1(c0.y))? AF1_AU1(c0.x) : AF1_AU1(c0.y);
 
-    if  ( AF1_AU1(c0[1]) >= 6 )
+    // Make sure it is at least one
+    if ( scalingFactor < 1.0 ) { scalingFactor = 1.0; }
+
+    // Limit to 6, it becomes too computationally intensive otherwise
+    if ( scalingFactor > 6.0 ) { scalingFactor = 6.0; }
+
+    // Average of bicubic passes
+    vec4 average = vec4(0.0,0.0,0.0,0.0);
+
+    // Averages bicubic passes for better results under a large downscaling factor
+    // |  1  |  0  |  2  |  3   ...
+    // |  5  |  6  |  7  |  8   ...
+    // |  10 |  11 |  12 |  13  ...
+    // |  15 |  16 |  17 |  18  ...
+    //   ... | ... | ... | ...  ...
+    AF1 fScalingFactor = floor(scalingFactor);
+    for(int line = 0; line < fScalingFactor; ++line)
     {
-        // Mean of 5x5 pixels
-        vec4 res  = textureBicubic(s_samplers[0], p0);
-             res += textureBicubic(s_samplers[0], p1);
-             res += textureBicubic(s_samplers[0], p2);
-             res += textureBicubic(s_samplers[0], p3);
-             res += textureBicubic(s_samplers[0], p4);
-
-             res += textureBicubic(s_samplers[0], p5);
-             res += textureBicubic(s_samplers[0], p6);
-             res += textureBicubic(s_samplers[0], p7);
-             res += textureBicubic(s_samplers[0], p8);
-             res += textureBicubic(s_samplers[0], p9);
-
-             res += textureBicubic(s_samplers[0], p10);
-             res += textureBicubic(s_samplers[0], p11);
-             res += textureBicubic(s_samplers[0], p12);
-             res += textureBicubic(s_samplers[0], p13);
-             res += textureBicubic(s_samplers[0], p14);
-
-             res += textureBicubic(s_samplers[0], p15);
-             res += textureBicubic(s_samplers[0], p16);
-             res += textureBicubic(s_samplers[0], p17);
-             res += textureBicubic(s_samplers[0], p18);
-             res += textureBicubic(s_samplers[0], p19);
-
-             res += textureBicubic(s_samplers[0], p20);
-             res += textureBicubic(s_samplers[0], p21);
-             res += textureBicubic(s_samplers[0], p22);
-             res += textureBicubic(s_samplers[0], p23);
-             res += textureBicubic(s_samplers[0], p24);
-
-        imageStore(dst, ivec2(pos), res/25);
+        for(int col = 0; col < fScalingFactor; ++col)
+        {
+            AF2 pc = p0+AF2(AF1_(col * 1.0)*AF1_AU1(c1.x), AF1_(line * 1.0)*AF1_AU1(c1.y));
+            average += textureBicubicApprox(s_samplers[0], pc);
+        }
     }
-    else if  ( AF1_AU1(c0[1]) >= 5 )
-    {
-        // Mean of 4x4 pixels
-        vec4 res  = textureBicubic(s_samplers[0], p0);
-             res += textureBicubic(s_samplers[0], p1);
-             res += textureBicubic(s_samplers[0], p2);
-             res += textureBicubic(s_samplers[0], p3);
 
-             res += textureBicubic(s_samplers[0], p5);
-             res += textureBicubic(s_samplers[0], p6);
-             res += textureBicubic(s_samplers[0], p7);
-             res += textureBicubic(s_samplers[0], p8);
-
-             res += textureBicubic(s_samplers[0], p10);
-             res += textureBicubic(s_samplers[0], p11);
-             res += textureBicubic(s_samplers[0], p12);
-             res += textureBicubic(s_samplers[0], p13);
-
-             res += textureBicubic(s_samplers[0], p15);
-             res += textureBicubic(s_samplers[0], p16);
-             res += textureBicubic(s_samplers[0], p17);
-             res += textureBicubic(s_samplers[0], p18);
-
-        imageStore(dst, ivec2(pos), res/16);
-    }
-    else if  ( AF1_AU1(c0[1]) >= 4 )
-    {
-        // Mean of 3x3 pixels
-        vec4 res  = textureBicubic(s_samplers[0], p0);
-             res += textureBicubic(s_samplers[0], p1);
-             res += textureBicubic(s_samplers[0], p2);
-
-             res += textureBicubic(s_samplers[0], p5);
-             res += textureBicubic(s_samplers[0], p6);
-             res += textureBicubic(s_samplers[0], p7);
-
-             res += textureBicubic(s_samplers[0], p10);
-             res += textureBicubic(s_samplers[0], p11);
-             res += textureBicubic(s_samplers[0], p12);
-
-        imageStore(dst, ivec2(pos), res/9);
-    }
-    else if ( AF1_AU1(c0[1]) >= 3 )
-    {
-        // Mean of 2x2 pixels
-        vec4 res  = textureBicubic(s_samplers[0], p0);
-             res += textureBicubic(s_samplers[0], p1);
-
-             res += textureBicubic(s_samplers[0], p5);
-             res += textureBicubic(s_samplers[0], p6);
-
-        imageStore(dst, ivec2(pos), res/4);
-    }
-    else
-    {
-        imageStore(dst, ivec2(pos), textureBicubic(s_samplers[0], p0));
-    }
+    imageStore(dst, ivec2(pos), average/(fScalingFactor*fScalingFactor));
 }
 
 
@@ -246,3 +132,5 @@ void main()
     pos.x -= 8u;
     bicPass(pos);
 }
+
+/* vim: set expandtab ft=cpp fdm=marker ts=4 sw=4 tw=100 et :*/
