@@ -248,9 +248,11 @@ bool g_bIsNested = false;
 bool g_bGrabbed = false;
 
 GamescopeUpscaleFilter g_upscaleFilter = GamescopeUpscaleFilter::LINEAR;
+GamescopeDownscaleFilter g_downscaleFilter = GamescopeDownscaleFilter::LINEAR;
 GamescopeUpscaleScaler g_upscaleScaler = GamescopeUpscaleScaler::AUTO;
 
 GamescopeUpscaleFilter g_wantedUpscaleFilter = GamescopeUpscaleFilter::LINEAR;
+GamescopeDownscaleFilter g_wantedDownscaleFilter = GamescopeDownscaleFilter::LINEAR;
 GamescopeUpscaleScaler g_wantedUpscaleScaler = GamescopeUpscaleScaler::AUTO;
 GamescopeBicubicParams g_bicubicParams;
 int g_upscaleFilterSharpness = 2;
@@ -466,7 +468,6 @@ int main(int argc, char **argv)
 				g_wantedUpscaleFilter = GamescopeUpscaleFilter::NEAREST;
 				break;
 			case 'D':
-				g_wantedUpscaleFilter = GamescopeUpscaleFilter::BICUBIC;
 				if (optarg)
 				{
 					std::stringstream ss{optarg};
@@ -475,7 +476,7 @@ int main(int argc, char **argv)
 					char comma;
 					if ((ss >> b >> comma >> c) && (comma == ','))
 					{
-						g_wantedUpscaleFilter = GamescopeUpscaleFilter::BICUBIC;
+						g_wantedDownscaleFilter = GamescopeDownscaleFilter::BICUBIC;
 						g_bicubicParams.b = b*100;
 						g_bicubicParams.c = c*100;
 						fprintf(stderr, "B: %f, C: %f\n", b, c);
@@ -485,6 +486,10 @@ int main(int argc, char **argv)
 						fprintf(stderr, "Invalid parameter for --bicubic option\n");
 					}
 				}
+				else
+				{
+					g_wantedDownscaleFilter = GamescopeDownscaleFilter::BICUBIC;
+				} // else
 				break;
 			case 'b':
 				g_bBorderlessOutputWindow = true;

@@ -234,8 +234,8 @@ void inputSDLThreadRun( void )
 							g_wantedUpscaleFilter = GamescopeUpscaleFilter::LINEAR;
 							break;
 						case KEY_K:
-							g_wantedUpscaleFilter = (g_wantedUpscaleFilter == GamescopeUpscaleFilter::BICUBIC) ?
-								GamescopeUpscaleFilter::LINEAR : GamescopeUpscaleFilter::BICUBIC;
+							g_wantedDownscaleFilter = (g_wantedDownscaleFilter == GamescopeDownscaleFilter::BICUBIC) ?
+								GamescopeDownscaleFilter::LINEAR : GamescopeDownscaleFilter::BICUBIC;
 							break;
 						case KEY_U:
 							g_wantedUpscaleFilter = (g_wantedUpscaleFilter == GamescopeUpscaleFilter::FSR) ?

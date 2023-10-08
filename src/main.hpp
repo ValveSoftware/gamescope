@@ -23,11 +23,16 @@ extern bool g_bFullscreen;
 
 extern bool g_bGrabbed;
 
+enum class GamescopeDownscaleFilter : uint32_t
+{
+    LINEAR = 0,
+    BICUBIC,
+};
+
 enum class GamescopeUpscaleFilter : uint32_t
 {
     LINEAR = 0,
     NEAREST,
-    BICUBIC,
     FSR,
     NIS
 };
@@ -48,8 +53,10 @@ struct GamescopeBicubicParams
 };
 
 extern GamescopeUpscaleFilter g_upscaleFilter;
+extern GamescopeDownscaleFilter g_downscaleFilter;
 extern GamescopeUpscaleScaler g_upscaleScaler;
 extern GamescopeUpscaleFilter g_wantedUpscaleFilter;
+extern GamescopeDownscaleFilter g_wantedDownscaleFilter;
 extern GamescopeUpscaleScaler g_wantedUpscaleScaler;
 extern GamescopeBicubicParams g_bicubicParams;
 extern int g_upscaleFilterSharpness;

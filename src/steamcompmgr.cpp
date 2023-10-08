@@ -2235,10 +2235,11 @@ paint_all(bool async)
 				// Just draw focused window as normal, be it Steam or the game
 				paint_window(w, w, &frameInfo, global_focus.cursor, PaintWindowFlag::BasePlane | PaintWindowFlag::DrawBorders, 1.0f, override);
 
-				bool needsScaling = frameInfo.layers[0].scale.x < 0.999f && frameInfo.layers[0].scale.y < 0.999f;
-				frameInfo.useBICUBICLayer0 = g_upscaleFilter == GamescopeUpscaleFilter::BICUBIC;
-				frameInfo.useFSRLayer0 = g_upscaleFilter == GamescopeUpscaleFilter::FSR;
-				frameInfo.useNISLayer0 = g_upscaleFilter == GamescopeUpscaleFilter::NIS && needsScaling;
+				bool needsUpScaling = frameInfo.layers[0].scale.x < 0.999f && frameInfo.layers[0].scale.y < 0.999f;
+				bool needsDownScaling = frameInfo.layers[0].scale.x > 1.001f && frameInfo.layers[0].scale.y > 1.001f;
+				frameInfo.useBICUBICLayer0 = g_downscaleFilter == GamescopeDownscaleFilter::BICUBIC && needsDownScaling;;
+				frameInfo.useFSRLayer0 = g_upscaleFilter == GamescopeUpscaleFilter::FSR && needsUpScaling;
+				frameInfo.useNISLayer0 = g_upscaleFilter == GamescopeUpscaleFilter::NIS && needsUpScaling;
 			}
 			update_touch_scaling( &frameInfo );
 		}
@@ -7130,6 +7131,7 @@ steamcompmgr_main(int argc, char **argv)
 		{
 			g_upscaleScaler = g_wantedUpscaleScaler;
 			g_upscaleFilter = g_wantedUpscaleFilter;
+			g_downscaleFilter = g_wantedDownscaleFilter;
 		}
 
 		static int nIgnoredOverlayRepaints = 0;
