@@ -50,6 +50,8 @@ struct ResListEntry_t {
 	uint64_t desired_present_time;
 	struct wlr_render_timeline wait_timeline;
 	uint64_t wait_point;
+	struct wlr_render_timeline release_timeline;
+	uint64_t release_point;
 };
 
 struct wlserver_content_override;

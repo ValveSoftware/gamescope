@@ -118,8 +118,16 @@ void gamescope_xwayland_server_t::wayland_commit(struct wlr_surface *surf, struc
 		auto sync_v2_state = wlr_linux_explicit_sync_v2_get_surface_state(wlserver.wlr.explicit_sync_v2, surf);
 		if (sync_v2_state != nullptr)
 		{
-			newEntry.wait_timeline = *sync_v2_state->acquire_timeline;
-			newEntry.wait_point = sync_v2_state->acquire_point;
+			if (sync_v2_state->acquire_timeline != nullptr)
+			{
+				newEntry.wait_timeline = *sync_v2_state->acquire_timeline;
+				newEntry.wait_point = sync_v2_state->acquire_point;
+			}
+			if (sync_v2_state->release_timeline != nullptr)
+			{
+				newEntry.release_timeline = *sync_v2_state->release_timeline;
+				newEntry.release_point = sync_v2_state->release_point;
+			}
 		}
 
 		wl_surf->present_id = std::nullopt;
