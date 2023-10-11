@@ -21,6 +21,12 @@
 struct _XDisplay;
 struct xwayland_ctx_t;
 
+// TODO: add getter for timeline handle
+struct wlr_render_timeline {
+	int drm_fd;
+	uint32_t handle;
+};
+
 struct wlserver_vk_swapchain_feedback
 {
 	uint32_t image_count;
@@ -42,6 +48,8 @@ struct ResListEntry_t {
 	std::vector<struct wl_resource*> presentation_feedbacks;
 	std::optional<uint32_t> present_id;
 	uint64_t desired_present_time;
+	struct wlr_render_timeline wait_timeline;
+	uint64_t wait_point;
 };
 
 struct wlserver_content_override;
@@ -106,6 +114,7 @@ struct wlserver_t {
 		struct wlr_compositor *compositor;
 		struct wlr_session *session;
 		struct wlr_seat *seat;
+		struct wlr_linux_explicit_sync_v2 *explicit_sync_v2;
 
 		// Used to simulate key events and set the keymap
 		struct wlr_keyboard *virtual_keyboard_device;

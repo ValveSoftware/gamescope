@@ -943,6 +943,8 @@ struct WaitListEntry_t
 	bool mangoapp_nudge;
 	uint64_t commitID;
 	uint64_t desiredPresentTime;
+	struct wlr_render_timeline wait_timeline;
+	uint64_t wait_point;
 };
 
 sem waitListSem;
@@ -982,12 +984,27 @@ retry:
 
 	assert( bFound == true );
 
+	int timeout_ms = 100;
+
 	gpuvis_trace_begin_ctx_printf( entry.commitID, "wait fence" );
-	struct pollfd fd = { entry.fence, POLLIN, 0 };
-	int ret = poll( &fd, 1, 100 );
-	if ( ret < 0 )
+	if (entry.wait_point != 0)
 	{
-		xwm_log.errorf_errno( "failed to poll fence FD" );
+		uint32_t flags = DRM_SYNCOBJ_WAIT_FLAGS_WAIT_FOR_SUBMIT;
+		uint64_t timeout_ns = (uint64_t)timeout_ms * 1000 * 1000;
+		int ret = drmSyncobjTimelineWait(entry.wait_timeline.drm_fd, &entry.wait_timeline.handle, &entry.wait_point, 1, timeout_ns, flags, nullptr);
+		if (ret < 0)
+		{
+			xwm_log.errorf("failed to wait timeline point");
+		}
+	}
+	else
+	{
+		struct pollfd fd = { entry.fence, POLLIN, 0 };
+		int ret = poll( &fd, 1, timeout_ms );
+		if ( ret < 0 )
+		{
+			xwm_log.errorf_errno( "failed to poll fence FD" );
+		}
 	}
 	gpuvis_trace_end_ctx_printf( entry.commitID, "wait fence" );
 
@@ -6340,6 +6357,8 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 				.mangoapp_nudge = mango_nudge,
 				.commitID = newCommit->commitID,
 				.desiredPresentTime = newCommit->desired_present_time,
+				.wait_timeline = reslistentry.wait_timeline,
+				.wait_point = reslistentry.wait_point,
 			};
 			waitList.push_back( entry );
 		}
