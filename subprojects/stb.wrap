@@ -2,7 +2,7 @@
 directory = stb
 
 url = https://github.com/nothings/stb.git
-revision = master
+revision = 5736b15f7ea0ffb08dd38af21067c314d6a3aae9
 depth = 1
 
 patch_directory = stb
