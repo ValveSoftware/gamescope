@@ -206,7 +206,7 @@ const char usage[] =
 	"  --vr-overlay-physical-width              Sets the physical width of our VR overlay in metres\n"
 	"  --vr-overlay-physical-curvature          Sets the curvature of our VR overlay\n"
 	"  --vr-overlay-physical-pre-curve-pitch    Sets the pre-curve pitch of our VR overlay\n"
-	"  --vr-scrolls-speed    					Mouse scrolling speed of trackpad scroll in VR. Default: 8.0\n"
+	"  --vr-scrolls-speed                       Mouse scrolling speed of trackpad scroll in VR. Default: 8.0\n"
 	"\n"
 #endif
 	"Debug options:\n"
