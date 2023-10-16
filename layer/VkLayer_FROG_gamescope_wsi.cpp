@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <vector>
 #include <algorithm>
+#include <functional>
 #include <unordered_map>
 #include <optional>
 
@@ -38,8 +39,7 @@ namespace GamescopeWSILayer {
   }
 
   static bool contains(const std::vector<const char *> vec, std::string_view lookupValue) {
-    return std::any_of(vec.begin(), vec.end(),
-      [=](const char* value) { return value == lookupValue; });
+    return std::ranges::any_of(vec, std::bind_front(std::equal_to{}, lookupValue));
   }
 
   static int waylandPumpEvents(wl_display *display) {
@@ -762,10 +762,10 @@ namespace GamescopeWSILayer {
           pDispatch->PhysicalDevice,
           swapchainInfo.surface);
 
-        bool supportedSwapchainFormat = std::any_of(
-          supportedSurfaceFormats.begin(),
-          supportedSurfaceFormats.end(),
-          [=](VkSurfaceFormatKHR value) { return value.format == swapchainInfo.imageFormat; });
+        bool supportedSwapchainFormat = std::ranges::any_of(
+          supportedSurfaceFormats,
+          std::bind_front(std::equal_to{}, swapchainInfo.imageFormat),
+          &VkSurfaceFormatKHR::format);
 
         if (!supportedSwapchainFormat) {
           fprintf(stderr, "[Gamescope WSI] Refusing to make swapchain (unsupported VkFormat) for xid: 0x%0x - format: %s - colorspace: %s - flip: %s\n",
