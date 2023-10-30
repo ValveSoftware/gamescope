@@ -286,6 +286,15 @@ create_color_mgmt_luts(const gamescope_color_mgmt_t& newColorMgmt, gamescope_col
 	}
 }
 
+int g_nAsyncFlipsEnabled = 0;
+int g_nSteamMaxHeight = 0;
+bool g_bVRRCapable_CachedValue = false;
+bool g_bVRRInUse_CachedValue = false;
+bool g_bSupportsST2084_CachedValue = false;
+bool g_bForceHDR10OutputDebug = false;
+bool g_bHDREnabled = false;
+bool g_bHDRItmEnable = false;
+
 static void
 update_color_mgmt()
 {
@@ -295,6 +304,13 @@ update_color_mgmt()
 		drm_get_native_colorimetry( &g_DRM,
 			&g_ColorMgmt.pending.displayColorimetry, &g_ColorMgmt.pending.displayEOTF,
 			&g_ColorMgmt.pending.outputEncodingColorimetry, &g_ColorMgmt.pending.outputEncodingEOTF );
+	}
+	else if (g_bForceHDR10OutputDebug)
+	{
+		g_ColorMgmt.pending.displayColorimetry = displaycolorimetry_2020;
+		g_ColorMgmt.pending.displayEOTF = EOTF_PQ;
+		g_ColorMgmt.pending.outputEncodingColorimetry = displaycolorimetry_2020;
+		g_ColorMgmt.pending.outputEncodingEOTF = EOTF_PQ;
 	}
 	else
 	{
@@ -677,15 +693,6 @@ static std::vector<pollfd> pollfds;
 #define MWM_INPUT_APPLICATION_MODAL         1
 
 #define MWM_TEAROFF_WINDOW 1
-
-int g_nAsyncFlipsEnabled = 0;
-int g_nSteamMaxHeight = 0;
-bool g_bVRRCapable_CachedValue = false;
-bool g_bVRRInUse_CachedValue = false;
-bool g_bSupportsST2084_CachedValue = false;
-bool g_bForceHDR10OutputDebug = false;
-bool g_bHDREnabled = false;
-bool g_bHDRItmEnable = false;
 
 Window x11_win(steamcompmgr_win_t *w) {
 	if (w == nullptr)
