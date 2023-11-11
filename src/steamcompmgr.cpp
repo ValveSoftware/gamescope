@@ -847,6 +847,7 @@ extern float g_flMaxWindowScale;
 bool			synchronize;
 
 std::mutex g_SteamCompMgrXWaylandServerMutex;
+static std::unique_lock<std::mutex> *g_SteamCompMgrXWaylandServerLock;
 
 VBlankTimeInfo_t g_SteamCompMgrVBlankTime = {};
 
@@ -6137,8 +6138,8 @@ error(Display *dpy, XErrorEvent *ev)
 	return 0;
 }
 
-[[noreturn]] static void
-steamcompmgr_exit(void)
+static void
+steamcompmgr_exit(bool exit)
 {
 	// Clean up any commits.
 	{
@@ -6170,14 +6171,21 @@ steamcompmgr_exit(void)
 
 	finish_drm( &g_DRM );
 
-	pthread_exit(NULL);
+	if (exit)
+	{
+		// pthread_exit may not call C++ destructors
+		g_SteamCompMgrXWaylandServerLock->unlock();
+		pthread_exit(NULL);
+	}
 }
 
-static int
+[[noreturn]] static int
 handle_io_error(Display *dpy)
 {
 	xwm_log.errorf("X11 I/O error");
-	steamcompmgr_exit();
+	steamcompmgr_exit(true);
+	// actually unreachable but compiler complains anyway
+	return 0;
 }
 
 static bool
@@ -7664,6 +7672,7 @@ steamcompmgr_main(int argc, char **argv)
 	assert( vblankFD >= 0 );
 
 	std::unique_lock<std::mutex> xwayland_server_guard(g_SteamCompMgrXWaylandServerMutex);
+	g_SteamCompMgrXWaylandServerLock = &xwayland_server_guard;
 
 	// Initialize any xwayland ctxs we have
 	{
@@ -8141,7 +8150,7 @@ steamcompmgr_main(int argc, char **argv)
 		vblank = false;
 	}
 
-	steamcompmgr_exit();
+	steamcompmgr_exit(false);
 }
 
 void steamcompmgr_send_frame_done_to_focus_window()
