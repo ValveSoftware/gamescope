@@ -72,6 +72,7 @@
 #include <signal.h>
 #include <linux/input-event-codes.h>
 #include <X11/Xmu/CurUtil.h>
+#include "waitable.h"
 
 #include "steamcompmgr_shared.hpp"
 
@@ -103,6 +104,7 @@
 
 
 static LogScope xwm_log("xwm");
+LogScope g_WaitableLog("waitable");
 
 bool g_bWasPartialComposite = false;
 
@@ -706,7 +708,9 @@ struct ignore {
 	unsigned long	sequence;
 };
 
-struct commit_t
+gamescope::CAsyncWaiter g_ImageWaiter{ "gamescope_img" };
+
+struct commit_t : public gamescope::IWaitable
 {
 	commit_t()
 	{
@@ -758,6 +762,46 @@ struct commit_t
 	uint64_t desired_present_time = 0;
 	uint64_t earliest_present_time = 0;
 	uint64_t present_margin = 0;
+
+	// For waitable:
+	int GetFD() final
+	{
+		return m_nCommitFence;
+	}
+
+	void OnPollIn() final
+	{
+		gpuvis_trace_end_ctx_printf( commitID, "wait fence" );
+
+		g_ImageWaiter.RemoveWaitable( this );
+		close( m_nCommitFence );
+		m_nCommitFence = -1;
+
+		uint64_t frametime;
+		if ( m_bMangoNudge )
+		{
+			uint64_t now = get_time_in_nanos();
+			static uint64_t lastFrameTime = now;
+			frametime = now - lastFrameTime;
+			lastFrameTime = now;
+		}
+
+		// TODO: Move this so it's called in the main loop.
+		// Instead of looping over all the windows like before.
+		// When we get the new IWaitable stuff in there.
+		{
+			std::unique_lock< std::mutex > lock( pDoneCommits->listCommitsDoneLock );
+			pDoneCommits->listCommitsDone.push_back( CommitDoneEntry_t{ commitID, desired_present_time } );
+		}
+
+		if ( m_bMangoNudge )
+			mangoapp_update( frametime, uint64_t(~0ull), uint64_t(~0ull) );
+
+		nudge_steamcompmgr();
+	}
+	int m_nCommitFence = -1;
+	bool m_bMangoNudge = false;
+	CommitDoneList_t *pDoneCommits = nullptr; // I hate this
 };
 
 static std::vector<pollfd> pollfds;
@@ -1068,89 +1112,19 @@ private:
 	int count = 0;
 };
 
-struct WaitListEntry_t
+static void
+dispatch_nudge( int fd )
 {
-	CommitDoneList_t *doneCommits;
-	int fence;
-	// Josh: Whether or not to nudge mangoapp that we got
-	// a frame as soon as we know this commit is done.
-	// This could technically be out of date if we change windows
-	// but for a max couple frames of inaccuracy when switching windows
-	// compared to being all over the place from handling in the
-	// steamcompmgr thread in handle_done_commits, it is worth it.
-	bool mangoapp_nudge;
-	uint64_t commitID;
-	uint64_t desiredPresentTime;
-};
-
-sem waitListSem;
-std::mutex waitListLock;
-std::vector< WaitListEntry_t > waitList;
-
-bool imageWaitThreadRun = true;
-
-void imageWaitThreadMain( void )
-{
-	pthread_setname_np( pthread_self(), "gamescope-img" );
-
-wait:
-	waitListSem.wait();
-
-	if ( imageWaitThreadRun == false )
+	for (;;)
 	{
-		return;
-	}
-
-	bool bFound = false;
-	WaitListEntry_t entry;
-
-retry:
-	{
-		std::unique_lock< std::mutex > lock( waitListLock );
-
-		if( waitList.empty() )
+		static char buf[1024];
+		if ( read( fd, buf, sizeof(buf) ) < 0 )
 		{
-			goto wait;
+			if ( errno != EAGAIN )
+				xwm_log.errorf_errno(" steamcompmgr: dispatch_nudge: read failed" );
+			break;
 		}
-
-		entry = waitList[ 0 ];
-		bFound = true;
-		waitList.erase( waitList.begin() );
 	}
-
-	assert( bFound == true );
-
-	gpuvis_trace_begin_ctx_printf( entry.commitID, "wait fence" );
-	struct pollfd fd = { entry.fence, POLLIN, 0 };
-	int ret = poll( &fd, 1, 100 );
-	if ( ret < 0 )
-	{
-		xwm_log.errorf_errno( "failed to poll fence FD" );
-	}
-	gpuvis_trace_end_ctx_printf( entry.commitID, "wait fence" );
-
-	close( entry.fence );
-
-	uint64_t frametime;
-	if ( entry.mangoapp_nudge )
-	{
-		uint64_t now = get_time_in_nanos();
-		static uint64_t lastFrameTime = now;
-		frametime = now - lastFrameTime;
-		lastFrameTime = now;
-	}
-
-	{
-		std::unique_lock< std::mutex > lock( entry.doneCommits->listCommitsDoneLock );
-		entry.doneCommits->listCommitsDone.push_back( CommitDoneEntry_t{ entry.commitID, entry.desiredPresentTime } );
-	}
-
-	nudge_steamcompmgr();
-
-	if ( entry.mangoapp_nudge )
-		mangoapp_update( frametime, uint64_t(~0ull), uint64_t(~0ull) );	
-
-	goto retry;
 }
 
 sem statsThreadSem;
@@ -6196,8 +6170,7 @@ steamcompmgr_exit(void)
 	g_HeldCommits[ HELD_COMMIT_BASE ] = nullptr;
 	g_HeldCommits[ HELD_COMMIT_FADE ] = nullptr;
 
-	imageWaitThreadRun = false;
-	waitListSem.signal();
+	g_ImageWaiter.Shutdown();
 
 	if ( statsThreadRun == true )
 	{
@@ -6623,20 +6596,12 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 
 		gpuvis_trace_printf( "pushing wait for commit %lu win %lx", newCommit->commitID, w->type == steamcompmgr_win_type_t::XWAYLAND ? w->xwayland().id : 0 );
 		{
-			std::unique_lock< std::mutex > lock( waitListLock );
-			WaitListEntry_t entry
-			{
-				.doneCommits = doneCommits,
-				.fence = fence,
-				.mangoapp_nudge = mango_nudge,
-				.commitID = newCommit->commitID,
-				.desiredPresentTime = newCommit->desired_present_time,
-			};
-			waitList.push_back( entry );
-		}
+			newCommit->m_nCommitFence = fence;
+			newCommit->m_bMangoNudge = mango_nudge;
+			newCommit->pDoneCommits = doneCommits;
 
-		// Wake up commit wait thread if chilling
-		waitListSem.signal();
+			g_ImageWaiter.AddWaitable( newCommit.get(), EPOLLIN );
+		}
 
 		w->commit_queue.push_back( std::move(newCommit) );
 	}
@@ -7030,21 +6995,6 @@ dispatch_vblank( int fd )
 		}
 	}
 	return vblank;
-}
-
-static void
-dispatch_nudge( int fd )
-{
-	for (;;)
-	{
-		static char buf[1024];
-		if ( read( fd, buf, sizeof(buf) ) < 0 )
-		{
-			if ( errno != EAGAIN )
-				xwm_log.errorf_errno(" steamcompmgr: dispatch_nudge: read failed" );
-			break;
-		}
-	}
 }
 
 struct rgba_t
@@ -7737,9 +7687,6 @@ steamcompmgr_main(int argc, char **argv)
 	{
 		spawn_client( &argv[ subCommandArg ] );
 	}
-
-	std::thread imageWaitThread( imageWaitThreadMain );
-	imageWaitThread.detach();
 
 	// EVENT_VBLANK
 	pollfds.push_back(pollfd {
