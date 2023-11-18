@@ -9,4 +9,4 @@
 void generate_cvt_mode(drmModeModeInfo *mode, int hdisplay, int vdisplay,
 	float vrefresh, bool reduced, bool interlaced);
 void generate_fixed_mode(drmModeModeInfo *mode, const drmModeModeInfo *base,
-	int vrefresh, bool use_tuned_clocks, unsigned int use_vfp);
+	int vrefresh, uint16_t display_pid);

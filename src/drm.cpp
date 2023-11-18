@@ -40,6 +40,11 @@ extern "C" {
 
 #include "gamescope-control-protocol.h"
 
+#define JUPITER_A_PID   0x3001
+#define JUPITER_B_PID   0x3002
+#define GALILEO_SDC_PID 0x3003
+#define GALILEO_BOE_PID 0x3004
+
 struct drm_t g_DRM = {};
 
 uint32_t g_nDRMFormat = DRM_FORMAT_INVALID;
@@ -518,7 +523,7 @@ drm_hdr_parse_edid(drm_t *drm, struct connector *connector, const struct di_edid
 			drm_log.errorf("[colorimetry]: GAMESCOPE_INTERNAL_COLORIMETRY_OVERRIDE specified, but could not parse \"rx ry gx gy bx by wx wy\"");
 		}
 	}
-	else if (connector->is_steam_deck_display && !connector->is_galileo_display)
+	else if (connector->steam_deck_display_pid == JUPITER_A_PID || connector->steam_deck_display_pid == JUPITER_B_PID)
 	{
 		drm_log.infof("[colorimetry]: Steam Deck (internal display) detected.");
 
@@ -824,9 +829,6 @@ void drm_update_patched_edid( drm_t *drm )
 	create_patched_edid(drm->connector->edid_data.data(), drm->connector->edid_data.size(), drm, drm->connector);
 }
 
-#define GALILEO_SDC_PID 0x3003
-#define GALILEO_BOE_PID 0x3004
-
 static void parse_edid( drm_t *drm, struct connector *conn)
 {
 	memset(conn->make_pnp, 0, sizeof(conn->make_pnp));
@@ -889,21 +891,23 @@ static void parse_edid( drm_t *drm, struct connector *conn)
 		}
 	}
 
-	drm_log.infof("Connector make %s model %s", conn->make_pnp, conn->model );
+	drm_log.infof("Connector make %s model %s pid 0x%x", conn->make_pnp, conn->model, vendor_product->product);
 
-	conn->is_steam_deck_display =
+	bool is_steam_deck_display =
 		(strcmp(conn->make_pnp, "WLC") == 0 && strcmp(conn->model, "ANX7530 U") == 0) ||
 		(strcmp(conn->make_pnp, "ANX") == 0 && strcmp(conn->model, "ANX7530 U") == 0) ||
 		(strcmp(conn->make_pnp, "VLV") == 0 && strcmp(conn->model, "ANX7530 U") == 0) ||
 		(strcmp(conn->make_pnp, "VLV") == 0 && strcmp(conn->model, "Jupiter") == 0);
 
-	if ((vendor_product->product == GALILEO_SDC_PID) || (vendor_product->product == GALILEO_BOE_PID)) {
-		conn->is_galileo_display = vendor_product->product;
-		conn->valid_display_rates = std::span(galileo_display_rates);
-	} else {
-		conn->is_galileo_display = 0;
-		if ( conn->is_steam_deck_display )
+	if (is_steam_deck_display) {
+		conn->steam_deck_display_pid = vendor_product->product;
+		if (conn->steam_deck_display_pid == GALILEO_SDC_PID || conn->steam_deck_display_pid == GALILEO_BOE_PID) {
+			conn->valid_display_rates = std::span(galileo_display_rates);
+		} else {
 			conn->valid_display_rates = std::span(steam_deck_display_rates);
+		}
+	} else {
+		conn->steam_deck_display_pid = 0;
 	}
 
 	drm_hdr_parse_edid(drm, conn, edid);
@@ -3054,7 +3058,7 @@ bool drm_set_refresh( struct drm_t *drm, int refresh )
 		case DRM_MODE_GENERATE_FIXED:
 			{
 				const drmModeModeInfo *preferred_mode = find_mode(connector, 0, 0, 0);
-				generate_fixed_mode( &mode, preferred_mode, refresh, drm->connector->is_steam_deck_display, drm->connector->is_galileo_display );
+				generate_fixed_mode( &mode, preferred_mode, refresh, drm->connector->steam_deck_display_pid );
 				break;
 			}
 		}
