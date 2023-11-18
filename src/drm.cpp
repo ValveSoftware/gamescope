@@ -40,7 +40,7 @@ extern "C" {
 
 #include "gamescope-control-protocol.h"
 
-#define JUPITER_A_PID   0x3001
+#define JUPITER_BOE_PID 0x3001
 #define JUPITER_B_PID   0x3002
 #define JUPITER_DHD_PID 0x4001
 #define GALILEO_SDC_PID 0x3003
@@ -524,7 +524,7 @@ drm_hdr_parse_edid(drm_t *drm, struct connector *connector, const struct di_edid
 			drm_log.errorf("[colorimetry]: GAMESCOPE_INTERNAL_COLORIMETRY_OVERRIDE specified, but could not parse \"rx ry gx gy bx by wx wy\"");
 		}
 	}
-	else if (connector->steam_deck_display_pid == JUPITER_A_PID || connector->steam_deck_display_pid == JUPITER_B_PID)
+	else if (connector->steam_deck_display_pid == JUPITER_BOE_PID || connector->steam_deck_display_pid == JUPITER_B_PID)
 	{
 		drm_log.infof("[colorimetry]: Steam Deck (internal display) detected.");
 
@@ -903,7 +903,7 @@ static void parse_edid( drm_t *drm, struct connector *conn)
 
 	if (is_steam_deck_display) {
 		if ((strcmp(conn->make_pnp, "DHD") == 0 && strcmp(conn->model, "DeckHD-1200p") == 0)) {
-			// Hardcode the pid to support old DeckHD BIOS build where the pid matches to JUPITER_A_PID
+			// Hardcode the pid to support old DeckHD BIOS build where the pid matches to JUPITER_BOE_PID
 			conn->steam_deck_display_pid = JUPITER_DHD_PID;
 		} else {
 			conn->steam_deck_display_pid = vendor_product->product;

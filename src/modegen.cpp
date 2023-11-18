@@ -293,7 +293,7 @@ unsigned int galileo_boe_vfp[] =
 	172,152,136,120,100,84,68,52,36,20,8
 };
 
-#define JUPITER_A_PID       0x3001
+#define JUPITER_BOE_PID     0x3001
 #define JUPITER_B_PID       0x3002
 #define JUPITER_HFP         40
 #define JUPITER_HSYNC       4
@@ -334,7 +334,7 @@ void generate_fixed_mode(drmModeModeInfo *mode, const drmModeModeInfo *base, int
 		vrefresh = 60;
 	if (display_pid) {
 		unsigned int vfp = 0, vsync = 0, vbp = 0;
-		if (display_pid == JUPITER_A_PID || display_pid == JUPITER_B_PID) {
+		if (display_pid == JUPITER_BOE_PID || display_pid == JUPITER_B_PID) {
 			mode->hdisplay = 800;
 			mode->hsync_start = mode->hdisplay + JUPITER_HFP;
 			mode->hsync_end = mode->hsync_start + JUPITER_HSYNC;
