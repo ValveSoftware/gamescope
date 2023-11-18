@@ -42,6 +42,7 @@ extern "C" {
 
 #define JUPITER_A_PID   0x3001
 #define JUPITER_B_PID   0x3002
+#define JUPITER_DHD_PID 0x4001
 #define GALILEO_SDC_PID 0x3003
 #define GALILEO_BOE_PID 0x3004
 
@@ -897,10 +898,16 @@ static void parse_edid( drm_t *drm, struct connector *conn)
 		(strcmp(conn->make_pnp, "WLC") == 0 && strcmp(conn->model, "ANX7530 U") == 0) ||
 		(strcmp(conn->make_pnp, "ANX") == 0 && strcmp(conn->model, "ANX7530 U") == 0) ||
 		(strcmp(conn->make_pnp, "VLV") == 0 && strcmp(conn->model, "ANX7530 U") == 0) ||
-		(strcmp(conn->make_pnp, "VLV") == 0 && strcmp(conn->model, "Jupiter") == 0);
+		(strcmp(conn->make_pnp, "VLV") == 0 && strcmp(conn->model, "Jupiter") == 0) ||
+		(strcmp(conn->make_pnp, "DHD") == 0 && strcmp(conn->model, "DeckHD-1200p") == 0);
 
 	if (is_steam_deck_display) {
-		conn->steam_deck_display_pid = vendor_product->product;
+		if ((strcmp(conn->make_pnp, "DHD") == 0 && strcmp(conn->model, "DeckHD-1200p") == 0)) {
+			// Hardcode the pid to support old DeckHD BIOS build where the pid matches to JUPITER_A_PID
+			conn->steam_deck_display_pid = JUPITER_DHD_PID;
+		} else {
+			conn->steam_deck_display_pid = vendor_product->product;
+		}
 		if (conn->steam_deck_display_pid == GALILEO_SDC_PID || conn->steam_deck_display_pid == GALILEO_BOE_PID) {
 			conn->valid_display_rates = std::span(galileo_display_rates);
 		} else {
