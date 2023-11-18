@@ -333,7 +333,7 @@ void generate_fixed_mode(drmModeModeInfo *mode, const drmModeModeInfo *base, int
 	if (!vrefresh)
 		vrefresh = 60;
 	if (display_pid) {
-		unsigned int vfp, vsync, vbp = 0;
+		unsigned int vfp = 0, vsync = 0, vbp = 0;
 		if (display_pid == JUPITER_A_PID || display_pid == JUPITER_B_PID) {
 			mode->hdisplay = 800;
 			mode->hsync_start = mode->hdisplay + JUPITER_HFP;
