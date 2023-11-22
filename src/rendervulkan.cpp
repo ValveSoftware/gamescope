@@ -3877,98 +3877,20 @@ bool vulkan_supports_modifiers(void)
 	return g_device.supportsModifiers();
 }
 
-static void texture_destroy( struct wlr_texture *wlr_texture )
+void vulkan_get_shm_formats(const uint32_t **formats, size_t *len)
 {
-	VulkanWlrTexture_t *tex = (VulkanWlrTexture_t *)wlr_texture;
-	wlr_buffer_unlock( tex->buf );
-	delete tex;
-}
-
-static const struct wlr_texture_impl texture_impl = {
-	.destroy = texture_destroy,
-};
-
-static uint32_t renderer_get_render_buffer_caps( struct wlr_renderer *renderer )
-{
-	return 0;
-}
-
-static bool renderer_begin( struct wlr_renderer *renderer, uint32_t width, uint32_t height )
-{
-	abort(); // unreachable
-}
-
-static void renderer_end( struct wlr_renderer *renderer )
-{
-	abort(); // unreachable
-}
-
-static void renderer_clear( struct wlr_renderer *renderer, const float color[4] )
-{
-	abort(); // unreachable
-}
-
-static void renderer_scissor( struct wlr_renderer *renderer, struct wlr_box *box )
-{
-	abort(); // unreachable
-}
-
-static bool renderer_render_subtexture_with_matrix( struct wlr_renderer *renderer, struct wlr_texture *texture, const struct wlr_fbox *box, const float matrix[9], float alpha )
-{
-	abort(); // unreachable
-}
-
-static void renderer_render_quad_with_matrix( struct wlr_renderer *renderer, const float color[4], const float matrix[9] )
-{
-	abort(); // unreachable
-}
-
-static const uint32_t *renderer_get_shm_texture_formats( struct wlr_renderer *wlr_renderer, size_t *len
- )
-{
+	*formats = sampledShmFormats.data();
 	*len = sampledShmFormats.size();
-	return sampledShmFormats.data();
 }
 
-static const struct wlr_drm_format_set *renderer_get_dmabuf_texture_formats( struct wlr_renderer *wlr_renderer )
+const struct wlr_drm_format_set *vulkan_get_dmabuf_texture_formats()
 {
 	return &sampledDRMFormats;
 }
 
-static int renderer_get_drm_fd( struct wlr_renderer *wlr_renderer )
+int vulkan_get_drm_fd()
 {
 	return g_device.drmRenderFd();
-}
-
-static struct wlr_texture *renderer_texture_from_buffer( struct wlr_renderer *wlr_renderer, struct wlr_buffer *buf )
-{
-	VulkanWlrTexture_t *tex = new VulkanWlrTexture_t();
-	wlr_texture_init( &tex->base, wlr_renderer, &texture_impl, buf->width, buf->height );
-	tex->buf = wlr_buffer_lock( buf );
-	// TODO: check format/modifier
-	// TODO: if DMA-BUF, try importing it into Vulkan
-	return &tex->base;
-}
-
-static const struct wlr_renderer_impl renderer_impl = {
-	.begin = renderer_begin,
-	.end = renderer_end,
-	.clear = renderer_clear,
-	.scissor = renderer_scissor,
-	.render_subtexture_with_matrix = renderer_render_subtexture_with_matrix,
-	.render_quad_with_matrix = renderer_render_quad_with_matrix,
-	.get_shm_texture_formats = renderer_get_shm_texture_formats,
-	.get_dmabuf_texture_formats = renderer_get_dmabuf_texture_formats,
-	.get_drm_fd = renderer_get_drm_fd,
-	.get_render_buffer_caps = renderer_get_render_buffer_caps,
-	.texture_from_buffer = renderer_texture_from_buffer,
-};
-
-struct wlr_renderer *vulkan_renderer_create( void )
-{
-	VulkanRenderer_t *renderer = new VulkanRenderer_t();
-	wlr_renderer_init(&renderer->base, &renderer_impl);
-	return &renderer->base;
 }
 
 std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struct wlr_buffer *buf )

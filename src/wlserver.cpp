@@ -24,11 +24,12 @@ extern "C" {
 #include <wlr/backend/libinput.h>
 #include <wlr/backend/multi.h>
 #include <wlr/interfaces/wlr_keyboard.h>
-#include <wlr/render/wlr_renderer.h>
 #include <wlr/types/wlr_compositor.h>
 #include <wlr/types/wlr_keyboard.h>
+#include <wlr/types/wlr_linux_dmabuf_v1.h>
 #include <wlr/types/wlr_pointer.h>
 #include <wlr/types/wlr_seat.h>
+#include <wlr/types/wlr_shm.h>
 #include <wlr/types/wlr_touch.h>
 #include <wlr/util/log.h>
 #include <wlr/xwayland/server.h>
@@ -158,13 +159,11 @@ void xwayland_surface_commit(struct wlr_surface *wlr_surface) {
 	// Mutter and Weston have forward progress on the frame callback in this situation,
 	// so let the commit go through. It will be duplication-eliminated later.
 
-	VulkanWlrTexture_t *tex = (VulkanWlrTexture_t *) wlr_surface_get_texture( wlr_surface );
-	if ( tex == NULL )
-	{
+	if (wlr_surface->current.buffer == NULL) {
 		return;
 	}
 
-	struct wlr_buffer *buf = wlr_buffer_lock( tex->buf );
+	struct wlr_buffer *buf = wlr_buffer_lock(wlr_surface->current.buffer);
 
 	gpuvis_trace_printf( "xwayland_surface_commit wlr_surface %p", wlr_surface );
 
@@ -1404,6 +1403,16 @@ void xdg_surface_new(struct wl_listener *listener, void *data)
 	}
 }
 
+static bool devid_from_fd(int fd, dev_t *devid) {
+	struct stat stat;
+	if (fstat(fd, &stat) != 0) {
+		wl_log.errorf("fstat failed");
+		return false;
+	}
+	*devid = stat.st_rdev;
+	return true;
+}
+
 bool wlserver_init( void ) {
 	assert( wlserver.display != nullptr );
 
@@ -1437,11 +1446,27 @@ bool wlserver_init( void ) {
 
 	wlserver.wlr.virtual_keyboard_device = kbd;
 
-	wlserver.wlr.renderer = vulkan_renderer_create();
+	const uint32_t *shm_formats = nullptr;
+	size_t shm_formats_len = 0;
+	vulkan_get_shm_formats(&shm_formats, &shm_formats_len);
+	wlr_shm_create(wlserver.display, 1, shm_formats, shm_formats_len);
 
-	wlr_renderer_init_wl_display(wlserver.wlr.renderer, wlserver.display);
+	dev_t devid;
+	if (!devid_from_fd(vulkan_get_drm_fd(), &devid))
+	{
+		return false;
+	}
+	struct wlr_linux_dmabuf_feedback_v1 default_feedback = {
+		.main_device = devid,
+	};
+	struct wlr_linux_dmabuf_feedback_v1_tranche *tranche =
+		wlr_linux_dmabuf_feedback_add_tranche(&default_feedback);
+	tranche->target_device = devid;
+	tranche->flags = 1; // SCANOUT
+	tranche->formats = *vulkan_get_dmabuf_texture_formats();
+	wlr_linux_dmabuf_v1_create(wlserver.display, 4, &default_feedback);
 
-	wlserver.wlr.compositor = wlr_compositor_create(wlserver.display, 5, wlserver.wlr.renderer);
+	wlserver.wlr.compositor = wlr_compositor_create(wlserver.display, 5, nullptr);
 
 	wl_signal_add( &wlserver.wlr.compositor->events.new_surface, &new_surface_listener );
 
