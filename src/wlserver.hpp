@@ -102,7 +102,6 @@ struct wlserver_t {
 		struct wlr_backend *headless_backend;
 		struct wlr_backend *libinput_backend;
 
-		struct wlr_renderer *renderer;
 		struct wlr_compositor *compositor;
 		struct wlr_session *session;
 		struct wlr_seat *seat;
@@ -112,12 +111,12 @@ struct wlserver_t {
 
 		std::vector<std::unique_ptr<gamescope_xwayland_server_t>> xwayland_servers;
 	} wlr;
-	
+
 	struct wlr_surface *mouse_focus_surface;
 	struct wlr_surface *kb_focus_surface;
 	double mouse_surface_cursorx = 0.0f;
 	double mouse_surface_cursory = 0.0f;
-	
+
 	bool button_held[ WLSERVER_BUTTON_COUNT ];
 	std::set <uint32_t> touch_down_ids;
 

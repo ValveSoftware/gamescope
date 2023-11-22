@@ -75,17 +75,6 @@ extern "C" {
 #include <vulkan/vulkan.h>
 #include <drm_fourcc.h>
 
-struct VulkanRenderer_t
-{
-	struct wlr_renderer base;
-};
-
-struct VulkanWlrTexture_t
-{
-	struct wlr_texture base;
-	struct wlr_buffer *buf;
-};
-
 inline VkFormat ToSrgbVulkanFormat( VkFormat format )
 {
 	switch ( format )
@@ -394,8 +383,6 @@ void vulkan_update_luts(const std::shared_ptr<CVulkanTexture>& lut1d, const std:
 std::shared_ptr<CVulkanTexture> vulkan_get_hacky_blank_texture();
 
 bool vulkan_screenshot( const struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTexture> pScreenshotTexture );
-
-struct wlr_renderer *vulkan_renderer_create( void );
 
 using mat3x4 = std::array<std::array<float, 4>, 3>;
 
@@ -911,3 +898,7 @@ uint32_t DRMFormatGetBPP( uint32_t nDRMFormat );
 bool vulkan_supports_hdr10();
 
 void vulkan_wait_idle();
+
+void vulkan_get_shm_formats(const uint32_t **formats, size_t *len);
+const struct wlr_drm_format_set *vulkan_get_dmabuf_texture_formats();
+int vulkan_get_drm_fd();
