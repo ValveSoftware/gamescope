@@ -130,6 +130,8 @@ extern float g_flInternalDisplayBrightnessNits;
 extern float g_flHDRItmSdrNits;
 extern float g_flHDRItmTargetNits;
 
+uint64_t g_lastWinSeq = 0;
+
 extern std::atomic<uint64_t> g_lastVblank;
 
 static std::shared_ptr<wlserver_ctm> s_scRGB709To2020Matrix;
@@ -4580,6 +4582,7 @@ add_win(xwayland_ctx_t *ctx, Window id, Window prev, unsigned long sequence)
 	if (!new_win)
 		return;
 
+	new_win->seq = ++g_lastWinSeq;
 	new_win->type = steamcompmgr_win_type_t::XWAYLAND;
 	new_win->_window_types.emplace<steamcompmgr_xwayland_win_t>();
 

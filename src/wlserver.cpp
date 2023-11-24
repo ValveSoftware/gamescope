@@ -1367,6 +1367,7 @@ void xdg_surface_new(struct wl_listener *listener, void *data)
 		wlserver.xdg_wins.emplace_back(window);
 	}
 
+	window->seq = ++g_lastWinSeq;
 	window->type = steamcompmgr_win_type_t::XDG;
 	window->_window_types.emplace<steamcompmgr_xdg_win_t>();
 
