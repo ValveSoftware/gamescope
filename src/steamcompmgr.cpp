@@ -6384,7 +6384,7 @@ void handle_done_commits_xwayland( xwayland_ctx_t *ctx )
 		if ( entry.desiredPresentTime > next_refresh_time )
 		{
 			commits_before_their_time.push_back( entry );
-			break;
+			continue;
 		}
 
 		for ( steamcompmgr_win_t *w = ctx->list; w; w = w->xwayland().next )
