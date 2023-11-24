@@ -33,6 +33,7 @@ extern "C" {
 #include <wlr/util/log.h>
 #include <wlr/xwayland/server.h>
 #include <wlr/types/wlr_xdg_shell.h>
+#include <wlr/types/wlr_commit_queue_v1.h>
 #undef static
 #undef class
 }
@@ -43,6 +44,7 @@ extern "C" {
 #include "gamescope-swapchain-protocol.h"
 #include "gamescope-tearing-control-unstable-v1-protocol.h"
 #include "presentation-time-protocol.h"
+#include "commit-queue-v1-protocol.h"
 
 #include "wlserver.hpp"
 #include "drm.hpp"
@@ -104,10 +106,13 @@ void gamescope_xwayland_server_t::wayland_commit(struct wlr_surface *surf, struc
 
 		auto wl_surf = get_wl_surface_info( surf );
 
+		auto queue_mode = wlr_commit_queue_v1_get_surface_mode(surf);
+
 		ResListEntry_t newEntry = {
 			.surf = surf,
 			.buf = buf,
 			.async = wlserver_surface_is_async(surf),
+			.fifo = queue_mode == WP_COMMIT_QUEUE_V1_QUEUE_MODE_FIFO,
 			.feedback = wlserver_surface_swapchain_feedback(surf),
 			.presentation_feedbacks = std::move(wl_surf->pending_presentation_feedbacks),
 			.present_id = wl_surf->present_id,
@@ -1457,6 +1462,8 @@ bool wlserver_init( void ) {
 	create_gamescope_tearing();
 
 	create_presentation_time();
+
+	wlr_commit_queue_manager_v1_create(wlserver.display, 1);
 
 	wlserver.xdg_shell = wlr_xdg_shell_create(wlserver.display, 3);
 	if (!wlserver.xdg_shell)

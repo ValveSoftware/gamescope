@@ -48,6 +48,7 @@
 #include <string>
 #include <queue>
 #include <variant>
+#include <unordered_set>
 
 #include <assert.h>
 #include <stdlib.h>
@@ -755,6 +756,7 @@ struct commit_t : public gamescope::IWaitable
 	uint64_t commitID = 0;
 	bool done = false;
 	bool async = false;
+	bool fifo = false;
 	std::optional<wlserver_vk_swapchain_feedback> feedback = std::nullopt;
 
 	uint64_t win_seq = 0;
@@ -794,7 +796,12 @@ struct commit_t : public gamescope::IWaitable
 		// When we get the new IWaitable stuff in there.
 		{
 			std::unique_lock< std::mutex > lock( pDoneCommits->listCommitsDoneLock );
-			pDoneCommits->listCommitsDone.push_back( CommitDoneEntry_t{ win_seq, commitID, desired_present_time } );
+			pDoneCommits->listCommitsDone.push_back( CommitDoneEntry_t{
+				.winSeq = win_seq,
+				.commitID = commitID,
+				.desiredPresentTime = desired_present_time,
+				.fifo = fifo,
+			} );
 		}
 
 		if ( m_bMangoNudge )
@@ -1367,7 +1374,7 @@ destroy_buffer( struct wl_listener *listener, void * )
 }
 
 static std::shared_ptr<commit_t>
-import_commit ( steamcompmgr_win_t *w, struct wlr_surface *surf, struct wlr_buffer *buf, bool async, std::shared_ptr<wlserver_vk_swapchain_feedback> swapchain_feedback, std::vector<struct wl_resource*> presentation_feedbacks, std::optional<uint32_t> present_id, uint64_t desired_present_time )
+import_commit ( steamcompmgr_win_t *w, struct wlr_surface *surf, struct wlr_buffer *buf, bool async, std::shared_ptr<wlserver_vk_swapchain_feedback> swapchain_feedback, std::vector<struct wl_resource*> presentation_feedbacks, std::optional<uint32_t> present_id, uint64_t desired_present_time, bool fifo )
 {
 	std::shared_ptr<commit_t> commit = std::make_shared<commit_t>();
 	std::unique_lock<std::mutex> lock( wlr_buffer_map_lock );
@@ -1376,6 +1383,7 @@ import_commit ( steamcompmgr_win_t *w, struct wlr_surface *surf, struct wlr_buff
 	commit->surf = surf;
 	commit->buf = buf;
 	commit->async = async;
+	commit->fifo = fifo;
 	commit->presentation_feedbacks = std::move(presentation_feedbacks);
 	if (swapchain_feedback)
 		commit->feedback = *swapchain_feedback;
@@ -6366,7 +6374,7 @@ bool handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint64_t co
 }
 
 // TODO: Merge these two functions.
-void handle_done_commits_xwayland( xwayland_ctx_t *ctx )
+void handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank )
 {
 	std::lock_guard<std::mutex> lock( ctx->doneCommits.listCommitsDoneLock );
 
@@ -6375,11 +6383,20 @@ void handle_done_commits_xwayland( xwayland_ctx_t *ctx )
 	// commits that were not ready to be presented based on their display timing.
 	std::vector< CommitDoneEntry_t > commits_before_their_time;
 
+	// windows in FIFO mode we got a new frame to present for this vblank
+	std::unordered_set< uint64_t > fifo_win_seqs;
+
 	uint64_t now = get_time_in_nanos();
 
 	// very fast loop yes
 	for ( auto& entry : ctx->doneCommits.listCommitsDone )
 	{
+		if (entry.fifo && (!vblank || fifo_win_seqs.count(entry.winSeq) > 0))
+		{
+			commits_before_their_time.push_back( entry );
+			continue;
+		}
+
 		if (!entry.earliestPresentTime)
 		{
 			entry.earliestPresentTime = next_refresh_time;
@@ -6397,7 +6414,11 @@ void handle_done_commits_xwayland( xwayland_ctx_t *ctx )
 			if (w->seq != entry.winSeq)
 				continue;
 			if (handle_done_commit(w, ctx, entry.commitID, entry.earliestPresentTime, entry.earliestLatchTime))
+			{
+				if (entry.fifo)
+					fifo_win_seqs.insert(entry.winSeq);
 				break;
+			}
 		}
 	}
 
@@ -6582,7 +6603,7 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 		return;
 	}
 
-	std::shared_ptr<commit_t> newCommit = import_commit( w, reslistentry.surf, buf, reslistentry.async, std::move(reslistentry.feedback), std::move(reslistentry.presentation_feedbacks), reslistentry.present_id, reslistentry.desired_present_time );
+	std::shared_ptr<commit_t> newCommit = import_commit( w, reslistentry.surf, buf, reslistentry.async, std::move(reslistentry.feedback), std::move(reslistentry.presentation_feedbacks), reslistentry.present_id, reslistentry.desired_present_time, reslistentry.fifo );
 
 	int fence = -1;
 	if ( newCommit )
@@ -7925,7 +7946,7 @@ steamcompmgr_main(int argc, char **argv)
 			gamescope_xwayland_server_t *server = NULL;
 			for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
 			{
-				handle_done_commits_xwayland(server->ctx.get());
+				handle_done_commits_xwayland(server->ctx.get(), vblank);
 
 				// When we have observed both a complete commit and a VBlank, we should request a new frame.
 				if (vblank)

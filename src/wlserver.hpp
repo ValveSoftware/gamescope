@@ -38,6 +38,7 @@ struct ResListEntry_t {
 	struct wlr_surface *surf;
 	struct wlr_buffer *buf;
 	bool async;
+	bool fifo;
 	std::shared_ptr<wlserver_vk_swapchain_feedback> feedback;
 	std::vector<struct wl_resource*> presentation_feedbacks;
 	std::optional<uint32_t> present_id;
