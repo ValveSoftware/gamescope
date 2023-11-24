@@ -22,7 +22,7 @@ stb_dep = dependency('stb')
 
 wlroots_dep = dependency(
   'wlroots',
-  version: ['>= 0.17.0', '< 0.18.0'],
+  version: ['>= 0.18.0', '< 0.19.0'],
   fallback: ['wlroots', 'wlroots'],
   default_options: ['default_library=static', 'examples=false', 'xwayland=enabled', 'backends=libinput', 'renderers=[]', 'allocators=[]', 'session=enabled'],
 )

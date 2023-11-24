@@ -1177,7 +1177,8 @@ bool wlsession_init( void ) {
 	if ( BIsNested() )
 		return true;
 
-	wlserver.wlr.session = wlr_session_create( wlserver.display );
+	auto loop = wl_display_get_event_loop( wlserver.display );
+	wlserver.wlr.session = wlr_session_create( loop );
 	if ( wlserver.wlr.session == nullptr )
 	{
 		wl_log.errorf( "Failed to create session" );
@@ -1265,7 +1266,7 @@ gamescope_xwayland_server_t::gamescope_xwayland_server_t(wl_display *display)
 
 	update_output_info();
 
-	wlr_output_create_global(output);
+	wlr_output_create_global(output, wlserver.display);
 }
 
 gamescope_xwayland_server_t::~gamescope_xwayland_server_t()
