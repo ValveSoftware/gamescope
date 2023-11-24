@@ -757,6 +757,7 @@ struct commit_t : public gamescope::IWaitable
 	bool async = false;
 	std::optional<wlserver_vk_swapchain_feedback> feedback = std::nullopt;
 
+	uint64_t win_seq = 0;
 	struct wlr_surface *surf = nullptr;
 	std::vector<struct wl_resource*> presentation_feedbacks;
 
@@ -793,7 +794,7 @@ struct commit_t : public gamescope::IWaitable
 		// When we get the new IWaitable stuff in there.
 		{
 			std::unique_lock< std::mutex > lock( pDoneCommits->listCommitsDoneLock );
-			pDoneCommits->listCommitsDone.push_back( CommitDoneEntry_t{ commitID, desired_present_time } );
+			pDoneCommits->listCommitsDone.push_back( CommitDoneEntry_t{ win_seq, commitID, desired_present_time } );
 		}
 
 		if ( m_bMangoNudge )
@@ -1366,11 +1367,12 @@ destroy_buffer( struct wl_listener *listener, void * )
 }
 
 static std::shared_ptr<commit_t>
-import_commit ( struct wlr_surface *surf, struct wlr_buffer *buf, bool async, std::shared_ptr<wlserver_vk_swapchain_feedback> swapchain_feedback, std::vector<struct wl_resource*> presentation_feedbacks, std::optional<uint32_t> present_id, uint64_t desired_present_time )
+import_commit ( steamcompmgr_win_t *w, struct wlr_surface *surf, struct wlr_buffer *buf, bool async, std::shared_ptr<wlserver_vk_swapchain_feedback> swapchain_feedback, std::vector<struct wl_resource*> presentation_feedbacks, std::optional<uint32_t> present_id, uint64_t desired_present_time )
 {
 	std::shared_ptr<commit_t> commit = std::make_shared<commit_t>();
 	std::unique_lock<std::mutex> lock( wlr_buffer_map_lock );
 
+	commit->win_seq = w->seq;
 	commit->surf = surf;
 	commit->buf = buf;
 	commit->async = async;
@@ -6392,6 +6394,8 @@ void handle_done_commits_xwayland( xwayland_ctx_t *ctx )
 
 		for ( steamcompmgr_win_t *w = ctx->list; w; w = w->xwayland().next )
 		{
+			if (w->seq != entry.winSeq)
+				continue;
 			if (handle_done_commit(w, ctx, entry.commitID, entry.earliestPresentTime, entry.earliestLatchTime))
 				break;
 		}
@@ -6578,7 +6582,7 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 		return;
 	}
 
-	std::shared_ptr<commit_t> newCommit = import_commit( reslistentry.surf, buf, reslistentry.async, std::move(reslistentry.feedback), std::move(reslistentry.presentation_feedbacks), reslistentry.present_id, reslistentry.desired_present_time );
+	std::shared_ptr<commit_t> newCommit = import_commit( w, reslistentry.surf, buf, reslistentry.async, std::move(reslistentry.feedback), std::move(reslistentry.presentation_feedbacks), reslistentry.present_id, reslistentry.desired_present_time );
 
 	int fence = -1;
 	if ( newCommit )
