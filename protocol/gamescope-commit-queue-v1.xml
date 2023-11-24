@@ -1,0 +1,181 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="gamescope_commit_queue_v1">
+  <copyright>
+    Copyright © 2023 Valve Corporation
+
+    Permission is hereby granted, free of charge, to any person obtaining a
+    copy of this software and associated documentation files (the "Software"),
+    to deal in the Software without restriction, including without limitation
+    the rights to use, copy, modify, merge, publish, distribute, sublicense,
+    and/or sell copies of the Software, and to permit persons to whom the
+    Software is furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice (including the next
+    paragraph) shall be included in all copies or substantial portions of the
+    Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+    THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+    DEALINGS IN THE SOFTWARE.
+  </copyright>
+
+  <interface name="gamescope_commit_queue_manager_v1" version="1">
+    <description summary="commit queuing">
+      By design Wayland uses a "mailbox" style presentation model. Under
+      the mailbox model, when wl_surface.commit is called, the currently
+      pending state is intended to replace the current state immediately.
+
+      If state is committed many times before the compositor repaints a
+      scene, each commit takes place immediately, updating the existing
+      state. When the compositor repaints the display only the most
+      recent accumulation of state is visible. This may lead to client
+      buffers being released without presentation if they were replaced
+      before being displayed.
+
+      There are other presentation models such as FIFO (First In First
+      Out) in which state commits are explicitly queued for future
+      repaint intervals, and client buffers should not be released
+      without being displayed.
+
+      Graphics APIs such as Vulkan aim to support these presentation
+      models, but they are not implementable on top of our mailbox model
+      without the ability to change the default surface state handling
+      behaviour.
+
+      This interface provides a way to control the compositor's surface
+      state handling to enable presentation models other than mailbox.
+
+      It does so by exposing control of a compositor surface state queue,
+      and specifying for each call of wl_surface.commit whether the
+      pending state should be handled in a mailbox or a FIFO fashion.
+
+      Warning! The protocol described in this file is currently in the testing
+      phase. Backward compatible changes may be added together with the
+      corresponding interface version bump. Backward incompatible changes can
+      only be done by creating a new major version of the extension.
+    </description>
+    <enum name="error">
+      <description summary="fatal presentation error">
+        These fatal protocol errors may be emitted in response to
+        illegal requests.
+      </description>
+      <entry name="queue_controller_already_exists" value="0"
+             summary="commit queue controller already exists for surface"/>
+    </enum>
+
+    <request name="destroy" type="destructor">
+      <description summary="unbind from the surface queuing interface">
+        Informs the server that the client will no longer be using
+        this protocol object. Existing objects created by this object
+        are not affected.
+      </description>
+    </request>
+
+    <request name="get_queue_controller">
+      <description summary="request commit queue submission interface for surface">
+        Establish a queue controller for a surface.
+
+        Graphics APIs (EGL, Vulkan) will likely use this protocol
+        internally, so clients using them shouldn't directly use this
+        protocol on surfaces managed by those APIs, or a
+        queue_controller_already_exists protocol error will occur.
+      </description>
+      <arg name="id" type="new_id" interface="gamescope_commit_queue_v1"/>
+      <arg name="surface" type="object" interface="wl_surface"/>
+    </request>
+  </interface>
+
+  <interface name="gamescope_commit_queue_v1" version="1">
+    <description summary="commit queue controller">
+      A queue controller for a surface.
+
+      A wayland compositor may implicitly queue surface state to
+      allow it to pick the most recently ready state at repaint time,
+      or to allow surface state to contain timing information.
+
+      The commit queue controller object allows explicit control over
+      the queue of upcoming surface state by allowing a client to attach
+      a queue drain mode to pending surface state before it calls
+      wl_surface.commit.
+    </description>
+
+    <enum name="error">
+      <description summary="fatal presentation error">
+        These fatal protocol errors may be emitted in response to
+        illegal requests.
+      </description>
+      <entry name="invalid_queue_mode" value="0"
+             summary="invalid queue mode"/>
+    </enum>
+
+    <enum name="queue_mode">
+      <description summary="Queue drain mode">
+        This enum is used to choose how the compositor processes a queue
+        entry at output repaint time.
+      </description>
+      <entry name="mailbox" value="0">
+        <description summary="Fast forward through past timestamps">
+          State from this queue slot may be updated immediately (without
+          completing a repaint) if newer state is ready to display at
+          repaint time.
+        </description>
+      </entry>
+      <entry name="fifo" value="1">
+        <description summary="Attempt to display each queued commit">
+          This queue slot will be the last state update for this surface
+          that the compositor will process during the repaint in which
+          it is ready for display.
+
+          If the compositor is presenting with tearing, the surface state
+          must be made current for an iteration of the compositor's repaint
+          loop. This may result in the state being visible for a very short
+          duration, with visible artifacts, or even not visible at all for
+          surfaces that aren't full screen.
+
+          The compositor must not cause state processing to stall indefinitely
+          for a surface that is occluded or otherwise not visible. Instead,
+          if the compositor is choosing not to present a surface for reasons
+          unrelated to state readiness, the FIFO condition must be considered
+          satisfied at the moment new state becomes ready to replace the
+          undisplayed state.
+        </description>
+      </entry>
+    </enum>
+
+    <request name="set_queue_mode">
+      <description summary="set the queue draining mode for the pending commit">
+        This request adds a queue drain mode to the pending surface
+        state, which will be commit by the next wl_surface.commit.
+
+        This request tells the compositor how to process the state
+        from that commit when handling its internal state queue.
+
+        If the drain mode is "mailbox", the compositor may continue
+        processing the next state in the queue before it repaints
+        the display.
+
+        If the drain mode is "fifo", the compositor should ensure the
+        queue is not advanced until after this state has been current
+        for a repaint. The queue may be advance without repaint in the
+        case of off-screen or occluded surfaces.
+
+        The default drain mode when none is specified is "mailbox".
+      </description>
+      <arg name="mode" type="uint" enum="drain_mode"/>
+    </request>
+
+    <request name="destroy" type="destructor">
+      <description summary="Destroy the surface queue controller">
+        Informs the server that the client will no longer be using
+        this protocol object.
+
+        Surface state changes previously made by this protocol are
+        unaffected by this object's destruction.
+      </description>
+    </request>
+  </interface>
+</protocol>
