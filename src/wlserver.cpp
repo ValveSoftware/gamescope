@@ -1177,7 +1177,8 @@ bool wlsession_init( void ) {
 	if ( BIsNested() )
 		return true;
 
-	wlserver.wlr.session = wlr_session_create( wlserver.display );
+	auto loop = wl_display_get_event_loop( wlserver.display );
+	wlserver.wlr.session = wlr_session_create( loop );
 	if ( wlserver.wlr.session == nullptr )
 	{
 		wl_log.errorf( "Failed to create session" );
@@ -1265,7 +1266,7 @@ gamescope_xwayland_server_t::gamescope_xwayland_server_t(wl_display *display)
 
 	update_output_info();
 
-	wlr_output_create_global(output);
+	wlr_output_create_global(output, wlserver.display);
 }
 
 gamescope_xwayland_server_t::~gamescope_xwayland_server_t()
@@ -1344,15 +1345,10 @@ static void xdg_toplevel_destroy(struct wl_listener *listener, void *data) {
 	wlserver_surface->xdg_surface = nullptr;
 }
 
-void xdg_surface_new(struct wl_listener *listener, void *data)
+void xdg_toplevel_new(struct wl_listener *listener, void *data)
 {
-	struct wlr_xdg_surface *xdg_surface = (struct wlr_xdg_surface *)data;
-
-	if (xdg_surface->role != WLR_XDG_SURFACE_ROLE_TOPLEVEL)
-	{
-		wl_log.infof("Not top level surface.");
-		return;
-	}
+	struct wlr_xdg_toplevel *xdg_toplevel = (struct wlr_xdg_toplevel *)data;
+	struct wlr_xdg_surface *xdg_surface = xdg_toplevel->base;
 
 	wlserver_wl_surface_info *wlserver_surface = get_wl_surface_info(xdg_surface->surface);
 	if (!wlserver_surface)
@@ -1377,7 +1373,7 @@ void xdg_surface_new(struct wl_listener *listener, void *data)
 	wlserver_xdg_surface_info* xdg_surface_info = &window->xdg().surface;
 	xdg_surface_info->main_surface = xdg_surface->surface;
 	xdg_surface_info->win = window.get();
-	xdg_surface_info->xdg_toplevel = xdg_surface->toplevel;
+	xdg_surface_info->xdg_toplevel = xdg_toplevel;
 
 	wlserver_surface->xdg_surface = xdg_surface_info;
 
@@ -1468,8 +1464,8 @@ bool wlserver_init( void ) {
 		wl_log.infof("Unable to create XDG shell interface");
 		return false;
 	}
-	wlserver.new_xdg_surface.notify = xdg_surface_new;
-	wl_signal_add(&wlserver.xdg_shell->events.new_surface, &wlserver.new_xdg_surface);
+	wlserver.new_xdg_toplevel.notify = xdg_toplevel_new;
+	wl_signal_add(&wlserver.xdg_shell->events.new_toplevel, &wlserver.new_xdg_toplevel);
 
 	int result = -1;
 	int display_slot = 0;
