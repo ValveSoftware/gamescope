@@ -33,6 +33,7 @@ extern "C" {
 #include <wlr/util/log.h>
 #include <wlr/xwayland/server.h>
 #include <wlr/types/wlr_xdg_shell.h>
+#include <wlr/types/wlr_commit_queue_v1.h>
 #undef static
 #undef class
 }
@@ -43,6 +44,7 @@ extern "C" {
 #include "gamescope-swapchain-protocol.h"
 #include "gamescope-tearing-control-unstable-v1-protocol.h"
 #include "presentation-time-protocol.h"
+#include "commit-queue-v1-protocol.h"
 
 #include "wlserver.hpp"
 #include "drm.hpp"
@@ -104,10 +106,13 @@ void gamescope_xwayland_server_t::wayland_commit(struct wlr_surface *surf, struc
 
 		auto wl_surf = get_wl_surface_info( surf );
 
+		auto queue_mode = wlr_commit_queue_v1_get_surface_mode(surf);
+
 		ResListEntry_t newEntry = {
 			.surf = surf,
 			.buf = buf,
 			.async = wlserver_surface_is_async(surf),
+			.fifo = queue_mode == WP_COMMIT_QUEUE_V1_QUEUE_MODE_FIFO,
 			.feedback = wlserver_surface_swapchain_feedback(surf),
 			.presentation_feedbacks = std::move(wl_surf->pending_presentation_feedbacks),
 			.present_id = wl_surf->present_id,
@@ -1177,7 +1182,8 @@ bool wlsession_init( void ) {
 	if ( BIsNested() )
 		return true;
 
-	wlserver.wlr.session = wlr_session_create( wlserver.display );
+	auto loop = wl_display_get_event_loop( wlserver.display );
+	wlserver.wlr.session = wlr_session_create( loop );
 	if ( wlserver.wlr.session == nullptr )
 	{
 		wl_log.errorf( "Failed to create session" );
@@ -1265,7 +1271,7 @@ gamescope_xwayland_server_t::gamescope_xwayland_server_t(wl_display *display)
 
 	update_output_info();
 
-	wlr_output_create_global(output);
+	wlr_output_create_global(output, wlserver.display);
 }
 
 gamescope_xwayland_server_t::~gamescope_xwayland_server_t()
@@ -1344,15 +1350,10 @@ static void xdg_toplevel_destroy(struct wl_listener *listener, void *data) {
 	wlserver_surface->xdg_surface = nullptr;
 }
 
-void xdg_surface_new(struct wl_listener *listener, void *data)
+void xdg_toplevel_new(struct wl_listener *listener, void *data)
 {
-	struct wlr_xdg_surface *xdg_surface = (struct wlr_xdg_surface *)data;
-
-	if (xdg_surface->role != WLR_XDG_SURFACE_ROLE_TOPLEVEL)
-	{
-		wl_log.infof("Not top level surface.");
-		return;
-	}
+	struct wlr_xdg_toplevel *xdg_toplevel = (struct wlr_xdg_toplevel *)data;
+	struct wlr_xdg_surface *xdg_surface = xdg_toplevel->base;
 
 	wlserver_wl_surface_info *wlserver_surface = get_wl_surface_info(xdg_surface->surface);
 	if (!wlserver_surface)
@@ -1367,6 +1368,7 @@ void xdg_surface_new(struct wl_listener *listener, void *data)
 		wlserver.xdg_wins.emplace_back(window);
 	}
 
+	window->seq = ++g_lastWinSeq;
 	window->type = steamcompmgr_win_type_t::XDG;
 	window->_window_types.emplace<steamcompmgr_xdg_win_t>();
 
@@ -1376,7 +1378,7 @@ void xdg_surface_new(struct wl_listener *listener, void *data)
 	wlserver_xdg_surface_info* xdg_surface_info = &window->xdg().surface;
 	xdg_surface_info->main_surface = xdg_surface->surface;
 	xdg_surface_info->win = window.get();
-	xdg_surface_info->xdg_toplevel = xdg_surface->toplevel;
+	xdg_surface_info->xdg_toplevel = xdg_toplevel;
 
 	wlserver_surface->xdg_surface = xdg_surface_info;
 
@@ -1461,14 +1463,16 @@ bool wlserver_init( void ) {
 
 	create_presentation_time();
 
+	wlr_commit_queue_manager_v1_create(wlserver.display, 1);
+
 	wlserver.xdg_shell = wlr_xdg_shell_create(wlserver.display, 3);
 	if (!wlserver.xdg_shell)
 	{
 		wl_log.infof("Unable to create XDG shell interface");
 		return false;
 	}
-	wlserver.new_xdg_surface.notify = xdg_surface_new;
-	wl_signal_add(&wlserver.xdg_shell->events.new_surface, &wlserver.new_xdg_surface);
+	wlserver.new_xdg_toplevel.notify = xdg_toplevel_new;
+	wl_signal_add(&wlserver.xdg_shell->events.new_toplevel, &wlserver.new_xdg_toplevel);
 
 	int result = -1;
 	int display_slot = 0;

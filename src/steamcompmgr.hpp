@@ -140,6 +140,7 @@ extern float focusedWindowOffsetY;
 extern bool g_bFSRActive;
 
 extern uint32_t inputCounter;
+extern uint64_t g_lastWinSeq;
 
 void nudge_steamcompmgr( void );
 void take_screenshot( int flags = TAKE_SCREENSHOT_BASEPLANE_ONLY );

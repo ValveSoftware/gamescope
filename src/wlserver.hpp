@@ -38,6 +38,7 @@ struct ResListEntry_t {
 	struct wlr_surface *surf;
 	struct wlr_buffer *buf;
 	bool async;
+	bool fifo;
 	std::shared_ptr<wlserver_vk_swapchain_feedback> feedback;
 	std::vector<struct wl_resource*> presentation_feedbacks;
 	std::optional<uint32_t> present_id;
@@ -131,7 +132,7 @@ struct wlserver_t {
 	struct wl_listener new_input_method;
 
 	struct wlr_xdg_shell *xdg_shell;
-	struct wl_listener new_xdg_surface;
+	struct wl_listener new_xdg_toplevel;
 	std::vector<std::shared_ptr<steamcompmgr_win_t>> xdg_wins;
 	std::atomic<bool> xdg_dirty;
 	std::mutex xdg_commit_lock;

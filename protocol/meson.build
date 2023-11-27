@@ -14,6 +14,7 @@ protocols = [
 	# Upstream protocols
 	wl_protocol_dir / 'stable/xdg-shell/xdg-shell.xml',
 	wl_protocol_dir / 'stable/presentation-time/presentation-time.xml',
+	wl_protocol_dir / 'staging/commit-queue/commit-queue-v1.xml',
 
 	# Gamescope protocols
 	'gamescope-xwayland.xml',
