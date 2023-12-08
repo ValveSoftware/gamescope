@@ -8097,11 +8097,10 @@ steamcompmgr_main(int argc, char **argv)
 			int nRealRefresh = g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh;
 			int nTargetFPS = g_nSteamCompMgrTargetFPS ? g_nSteamCompMgrTargetFPS : nRealRefresh;
 			nTargetFPS = std::min<int>( nTargetFPS, nRealRefresh );
-			int nMultiplier = nRealRefresh / nTargetFPS;
+			int nVblankDivisor = nRealRefresh / nTargetFPS;
 
-			int nAppRefresh = nRealRefresh * nMultiplier;
 			g_SteamCompMgrAppRefreshCycle = 1'000'000'000ul / nRealRefresh;
-			g_SteamCompMgrLimitedAppRefreshCycle = 1'000'000'000ul / nAppRefresh;
+			g_SteamCompMgrLimitedAppRefreshCycle = 1'000'000'000ul / nRealRefresh * nVblankDivisor;
 		}
 
 		// Handle presentation-time stuff
