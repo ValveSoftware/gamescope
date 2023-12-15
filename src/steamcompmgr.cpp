@@ -2382,7 +2382,9 @@ static void update_touch_scaling( const struct FrameInfo_t *frameInfo )
 	focusedWindowOffsetY = frameInfo->layers[ frameInfo->layerCount - 1 ].offset.y;
 }
 
-static void
+
+inline static void __attribute__((always_inline)) //yes attributes are ugly but compilers aren't able to tell the real performance difference that inlining this function will give 
+						  // (2nd highest hotpath (by plurality of cputime) for gamescope-xwm thread found thru profiling) 
 paint_all(bool async)
 {
 	gamescope_xwayland_server_t *root_server = wlserver_get_xwayland_server(0);
