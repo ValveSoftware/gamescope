@@ -67,7 +67,7 @@ struct wlserver_hdr_metadata
 	}
 
 	wlserver_hdr_metadata(hdr_output_metadata* _metadata, uint32_t blob, bool owned = true)
-		: blob(blob)
+		: blob(blob), owned(owned)
 	{
 		if (_metadata)
 			this->metadata = *_metadata;
@@ -94,6 +94,7 @@ struct wlserver_ctm
 	wlserver_ctm(glm::mat3x4 ctm, uint32_t blob, bool owned = true)
 		: matrix(ctm)
 		, blob(blob)
+	    , owned(owned)
 	{
 	}
 
