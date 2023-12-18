@@ -271,10 +271,10 @@ struct drm_t {
 	std::shared_ptr<wlserver_hdr_metadata> sdr_static_metadata;
 
 	struct {
-		uint32_t mode_id;
+		std::shared_ptr<drm_blob> mode_id;
 		uint32_t color_mgmt_serial;
-		uint32_t lut3d_id[ EOTF_Count ];
-		uint32_t shaperlut_id[ EOTF_Count ];
+		std::shared_ptr<drm_blob> lut3d_id[ EOTF_Count ];
+		std::shared_ptr<drm_blob> shaperlut_id[ EOTF_Count ];
 		enum drm_screen_type screen_type = DRM_SCREEN_TYPE_INTERNAL;
 		bool vrr_enabled = false;
 		drm_valve1_transfer_function output_tf = DRM_VALVE1_TRANSFER_FUNCTION_DEFAULT;

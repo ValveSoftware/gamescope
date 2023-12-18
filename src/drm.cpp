@@ -1733,18 +1733,9 @@ int drm_commit(struct drm_t *drm, const struct FrameInfo_t *frameInfo )
 
 		drm->current = drm->pending;
 
-		for ( size_t i = 0; i < drm->crtcs.size(); i++ )
+		for (auto & crtc : drm->crtcs)
 		{
-			if ( drm->pending.mode_id != drm->current.mode_id )
-				drmModeDestroyPropertyBlob(drm->fd, drm->current.mode_id);
-			for ( uint32_t i = 0; i < EOTF_Count; i++ )
-			{
-				if ( drm->pending.lut3d_id[i] != drm->current.lut3d_id[i] )
-					drmModeDestroyPropertyBlob(drm->fd, drm->current.lut3d_id[i]);
-				if ( drm->pending.shaperlut_id[i] != drm->current.shaperlut_id[i] )
-					drmModeDestroyPropertyBlob(drm->fd, drm->current.shaperlut_id[i]);
-			}
-			drm->crtcs[i].current = drm->crtcs[i].pending;
+			crtc.current = crtc.pending;
 		}
 
 		for (auto &kv : drm->connectors) {
@@ -2427,9 +2418,9 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 
 					if ( !g_bDisableShaperAnd3DLUT )
 					{
-						liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_SHAPER_LUT", drm->pending.shaperlut_id[ ColorSpaceToEOTFIndex( entry.layerState[i].colorspace ) ] );
+						liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_SHAPER_LUT", drm->pending.shaperlut_id[ ColorSpaceToEOTFIndex( entry.layerState[i].colorspace ) ]->blob );
 						liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_SHAPER_TF", shaper_tf );
-						liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_LUT3D", drm->pending.lut3d_id[ ColorSpaceToEOTFIndex( entry.layerState[i].colorspace ) ] );
+						liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_LUT3D", drm->pending.lut3d_id[ ColorSpaceToEOTFIndex( entry.layerState[i].colorspace ) ]->blob );
 						// Josh: See shaders/colorimetry.h colorspace_blend_tf if you have questions as to why we start doing sRGB for BLEND_TF despite potentially working in Gamma 2.2 space prior.
 					}
 					else
@@ -2708,7 +2699,7 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 					return ret;
 			}
 
-			ret = add_crtc_property(drm->req, drm->crtc, "MODE_ID", drm->pending.mode_id);
+			ret = add_crtc_property(drm->req, drm->crtc, "MODE_ID", drm->pending.mode_id->blob);
 			if (ret < 0)
 				return ret;
 
@@ -2952,14 +2943,14 @@ bool drm_update_color_mgmt(struct drm_t *drm)
 			drm_log.errorf_errno("Unable to create SHAPERLUT property blob");
 			return false;
 		}
-		drm->pending.shaperlut_id[ i ] = shaper_blob_id;
+		drm->pending.shaperlut_id[ i ] = std::make_shared<drm_blob>( shaper_blob_id );
 
 		uint32_t lut3d_blob_id = 0;
 		if (drmModeCreatePropertyBlob(drm->fd, g_ColorMgmtLuts[i].lut3d, sizeof(g_ColorMgmtLuts[i].lut3d), &lut3d_blob_id) != 0) {
 			drm_log.errorf_errno("Unable to create LUT3D property blob");
 			return false;
 		}
-		drm->pending.lut3d_id[ i ] = lut3d_blob_id;
+		drm->pending.lut3d_id[ i ] = std::make_shared<drm_blob>( lut3d_blob_id );
 	}
 
 	return true;
@@ -3015,7 +3006,7 @@ bool drm_set_mode( struct drm_t *drm, const drmModeModeInfo *mode )
 
 	drm_log.infof("selecting mode %dx%d@%uHz", mode->hdisplay, mode->vdisplay, mode->vrefresh);
 
-	drm->pending.mode_id = mode_id;
+	drm->pending.mode_id = std::make_shared<drm_blob>(mode_id);
 	drm->needs_modeset = true;
 
 	g_nOutputRefresh = mode->vrefresh;
