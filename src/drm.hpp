@@ -59,54 +59,63 @@ extern "C"
 extern struct drm_t g_DRM;
 void drm_destroy_blob(struct drm_t *drm, uint32_t blob);
 
-struct wlserver_hdr_metadata
+class drm_blob
+{
+public:
+	drm_blob() : blob( 0 ), owned( false )
+	{
+	}
+
+	drm_blob(uint32_t blob, bool owned = true)
+		: blob( blob ), owned( owned )
+	{
+	}
+
+	~drm_blob()
+	{
+		if (blob && owned)
+			drm_destroy_blob( &g_DRM, blob );
+	}
+
+	// No copy constructor, because we can't duplicate the blob handle.
+	drm_blob(const drm_blob&) = delete;
+	drm_blob& operator=(const drm_blob&) = delete;
+	// No move constructor, because we use shared_ptr anyway, but can be added if necessary.
+	drm_blob(drm_blob&&) = delete;
+	drm_blob& operator=(drm_blob&&) = delete;
+
+	uint32_t blob;
+	bool owned;
+};
+
+struct wlserver_hdr_metadata : drm_blob
 {
 	wlserver_hdr_metadata()
 	{
-
 	}
 
 	wlserver_hdr_metadata(hdr_output_metadata* _metadata, uint32_t blob, bool owned = true)
-		: blob(blob), owned(owned)
+		: drm_blob( blob, owned )
 	{
 		if (_metadata)
 			this->metadata = *_metadata;
 	}
 
-	~wlserver_hdr_metadata()
-	{
-		if ( blob && owned )
-			drm_destroy_blob( &g_DRM, blob );
-	}
-
 	hdr_output_metadata metadata = {};
-	uint32_t blob = 0;
-	bool owned = true;
 };
 
-struct wlserver_ctm
+struct wlserver_ctm : drm_blob
 {
 	wlserver_ctm()
 	{
-
 	}
 
 	wlserver_ctm(glm::mat3x4 ctm, uint32_t blob, bool owned = true)
-		: matrix(ctm)
-		, blob(blob)
-	    , owned(owned)
+		: drm_blob( blob, owned ), matrix( ctm )
 	{
-	}
-
-	~wlserver_ctm()
-	{
-		if ( blob && owned )
-			drm_destroy_blob( &g_DRM, blob );
 	}
 
 	glm::mat3x4 matrix{};
-	uint32_t blob = 0;
-	bool owned = true;
 };
 
 #include <wayland-server-core.h>
