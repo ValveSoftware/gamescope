@@ -116,9 +116,6 @@ bool vr_init(int argc, char **argv)
 // Not in public headers yet.
 namespace vr
 {
-    const VROverlayFlags VROverlayFlags_EnableControlBar = (VROverlayFlags)(1 << 23);
-    const VROverlayFlags VROverlayFlags_EnableControlBarKeyboard = (VROverlayFlags)(1 << 24);
-    const VROverlayFlags VROverlayFlags_EnableControlBarClose = (VROverlayFlags)(1 << 25);
     const VROverlayFlags VROverlayFlags_EnableControlBarSteamUI = (VROverlayFlags)(1 << 26);
 
     const EVRButtonId k_EButton_Steam = (EVRButtonId)(50);
