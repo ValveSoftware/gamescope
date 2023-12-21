@@ -2519,10 +2519,10 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 	assert( drm->req == nullptr );
 	drm->req = drmModeAtomicAlloc();
 
-	bool bConnectorSupportsHDR = drm->connector->metadata.supportsST2084;
-	bool bConnectorHDR = g_bOutputHDREnabled && bConnectorSupportsHDR;
-
 	if (drm->connector != nullptr) {
+		bool bConnectorSupportsHDR = drm->connector->metadata.supportsST2084;
+		bool bConnectorHDR = g_bOutputHDREnabled && bConnectorSupportsHDR;
+
 		if (drm->connector->has_colorspace) {
 			drm->connector->pending.colorspace = ( bConnectorHDR ) ? DRM_MODE_COLORIMETRY_BT2020_RGB : DRM_MODE_COLORIMETRY_DEFAULT;
 		}
