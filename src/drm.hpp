@@ -189,9 +189,8 @@ struct connector {
 	char make_pnp[4];
 	char *make;
 	char *model;
-	bool is_steam_deck_display;
+	uint16_t steam_deck_display_pid;
 	std::span<uint32_t> valid_display_rates{};
-	uint16_t is_galileo_display;
 
 	int target_refresh;
 	bool vrr_capable;

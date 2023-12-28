@@ -293,6 +293,21 @@ unsigned int galileo_boe_vfp[] =
 	172,152,136,120,100,84,68,52,36,20,8
 };
 
+#define JUPITER_BOE_PID     0x3001
+#define JUPITER_B_PID       0x3002
+#define JUPITER_HFP         40
+#define JUPITER_HSYNC       4
+#define JUPITER_HBP         0
+#define JUPITER_VFP         30
+#define JUPITER_VSYNC       4
+#define JUPITER_VBP         8
+#define JUPITER_DHD_PID     0x4001
+#define JUPITER_DHD_HFP     40
+#define JUPITER_DHD_HSYNC   20
+#define JUPITER_DHD_HBP     40
+#define JUPITER_DHD_VFP     18
+#define JUPITER_DHD_VSYNC   2
+#define JUPITER_DHD_VBP     20
 #define GALILEO_MIN_REFRESH 45
 #define GALILEO_SDC_PID     0x3003
 #define GALILEO_SDC_VSYNC   1
@@ -312,16 +327,37 @@ unsigned int get_galileo_vfp( int vrefresh, unsigned int * vfp_array, unsigned i
 	return 0;
 }
 
-void generate_fixed_mode(drmModeModeInfo *mode, const drmModeModeInfo *base, int vrefresh, 
-							bool use_tuned_clocks, unsigned int use_vfp )
+void generate_fixed_mode(drmModeModeInfo *mode, const drmModeModeInfo *base, int vrefresh, uint16_t display_pid)
 {
 	*mode = *base;
 	if (!vrefresh)
 		vrefresh = 60;
-	if ( use_vfp ) {
-		unsigned int vfp, vsync, vbp = 0;
-		if (GALILEO_SDC_PID == use_vfp) {
-			vfp = get_galileo_vfp( vrefresh, galileo_sdc_vfp, ARRAY_SIZE(galileo_sdc_vfp) );
+	if (display_pid) {
+		unsigned int vfp = 0, vsync = 0, vbp = 0;
+		if (display_pid == JUPITER_BOE_PID || display_pid == JUPITER_B_PID) {
+			mode->hdisplay = 800;
+			mode->hsync_start = mode->hdisplay + JUPITER_HFP;
+			mode->hsync_end = mode->hsync_start + JUPITER_HSYNC;
+			mode->htotal = mode->hsync_end + JUPITER_HBP;
+
+			mode->vdisplay = 1280;
+			vfp = 30;
+			vsync = JUPITER_VSYNC;
+			vbp = JUPITER_VBP;
+			mode->clock = ( ( mode->htotal * mode->vtotal * vrefresh ) + 999 ) / 1000;
+		} else if (display_pid == JUPITER_DHD_PID) {
+			mode->hdisplay = 1200;
+			mode->hsync_start = mode->hdisplay + JUPITER_DHD_HFP;
+			mode->hsync_end = mode->hsync_start + JUPITER_DHD_HSYNC;
+			mode->htotal = mode->hsync_end + JUPITER_DHD_HBP;
+
+			mode->vdisplay = 1920;
+			vfp = JUPITER_DHD_VFP;
+			vsync = JUPITER_DHD_VSYNC;
+			vbp = JUPITER_DHD_VBP;
+			mode->clock = ( ( mode->htotal * mode->vtotal * vrefresh ) + 999 ) / 1000;
+		} else if (display_pid == GALILEO_SDC_PID) {
+			unsigned int vfp = get_galileo_vfp( vrefresh, galileo_sdc_vfp, ARRAY_SIZE(galileo_sdc_vfp) );
 			// if we did not find a matching rate then we default to 60 Hz
 			if ( !vfp ) {
 				vrefresh = 60;
@@ -329,8 +365,8 @@ void generate_fixed_mode(drmModeModeInfo *mode, const drmModeModeInfo *base, int
 			}
 			vsync = GALILEO_SDC_VSYNC;
 			vbp = GALILEO_SDC_VBP;
-		} else { // BOE Panel
-			vfp = get_galileo_vfp( vrefresh, galileo_boe_vfp, ARRAY_SIZE(galileo_boe_vfp) );
+		} else if (display_pid == GALILEO_BOE_PID) {
+			unsigned int vfp = get_galileo_vfp( vrefresh, galileo_boe_vfp, ARRAY_SIZE(galileo_boe_vfp) );
 			// if we did not find a matching rate then we default to 60 Hz
 			if ( !vfp ) {
 				vrefresh = 60;
@@ -338,28 +374,14 @@ void generate_fixed_mode(drmModeModeInfo *mode, const drmModeModeInfo *base, int
 			}
 			vsync = GALILEO_BOE_VSYNC;
 			vbp = GALILEO_BOE_VBP;
-		} 
+		}
 		mode->vsync_start = mode->vdisplay + vfp;
 		mode->vsync_end = mode->vsync_start + vsync;
 		mode->vtotal = mode->vsync_end + vbp;
 	} else {
-		if ( use_tuned_clocks )
-		{
-			mode->hdisplay = 800;
-			mode->hsync_start = 840;
-			mode->hsync_end = 844;
-			mode->htotal = 884;
-
-			mode->vdisplay = 1280;
-			mode->vsync_start = 1310;
-			mode->vsync_end = 1314;
-			mode->vtotal = 1322;
-		}
-
 		mode->clock = ( ( mode->htotal * mode->vtotal * vrefresh ) + 999 ) / 1000;
 	}
 	mode->vrefresh = (1000 * mode->clock) / (mode->htotal * mode->vtotal);
 
 	snprintf(mode->name, sizeof(mode->name), "%dx%d@%d.00", mode->hdisplay, mode->vdisplay, vrefresh);
 }
-
