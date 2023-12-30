@@ -323,6 +323,7 @@ extern bool g_bRotated;
 extern bool g_bFlipped;
 extern bool g_bDebugLayers;
 extern const char *g_sOutputName;
+extern const char *g_sDevicePath;
 
 enum drm_mode_generation {
 	DRM_MODE_GENERATE_CVT,

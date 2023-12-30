@@ -48,6 +48,7 @@ bool g_bRotated = false;
 bool g_bUseLayers = true;
 bool g_bDebugLayers = false;
 const char *g_sOutputName = nullptr;
+const char *g_sDevicePath = nullptr;
 
 #ifndef DRM_CAP_ATOMIC_ASYNC_PAGE_FLIP
 #define DRM_CAP_ATOMIC_ASYNC_PAGE_FLIP 0x15
@@ -1371,9 +1372,11 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh, bool wants_
 	drm->preferred_height = height;
 	drm->preferred_refresh = refresh;
 
-	drm->device_name = nullptr;
 	dev_t dev_id = 0;
-	if (vulkan_primary_dev_id(&dev_id)) {
+	if (g_sDevicePath) {
+		drm->device_name = strdup(g_sDevicePath);
+	}
+	else if (vulkan_primary_dev_id(&dev_id)) {
 		drmDevice *drm_dev = nullptr;
 		if (drmGetDeviceFromDevId(dev_id, 0, &drm_dev) != 0) {
 			drm_log.errorf("Failed to find DRM device with device ID %" PRIu64, (uint64_t)dev_id);
@@ -1381,12 +1384,15 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh, bool wants_
 		}
 		assert(drm_dev->available_nodes & (1 << DRM_NODE_PRIMARY));
 		drm->device_name = strdup(drm_dev->nodes[DRM_NODE_PRIMARY]);
+	}
+	else {
+		drm->device_name = nullptr;
+	}
+
+    if (drm->device_name)
 		drm_log.infof("opening DRM node '%s'", drm->device_name);
-	}
-	else
-	{
+    else
 		drm_log.infof("warning: picking an arbitrary DRM device");
-	}
 
 	drm->fd = wlsession_open_kms( drm->device_name );
 	if ( drm->fd < 0 )
