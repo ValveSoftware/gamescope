@@ -20,7 +20,7 @@ epoll_dep = dependency('epoll-shim', required: false)
 glm_dep = dependency('glm')
 sdl_dep = dependency('SDL2')
 stb_dep = dependency('stb')
-avif_dep = dependency('libavif')
+avif_dep = dependency('libavif', version: '>=1.0.0')
 
 wlroots_dep = dependency(
   'wlroots',
