@@ -112,7 +112,7 @@ namespace gamescope
 
 	VBlankScheduleTime CVBlankTimer::CalcNextWakeupTime( bool bPreemptive )
 	{
-		const drm_screen_type eScreenType = drm_get_screen_type( &g_DRM );
+		const GamescopeScreenType eScreenType = drm_get_screen_type( &g_DRM );
 
 		const int nRefreshRate = GetRefresh();
 		const uint64_t ulRefreshInterval = kSecInNanoSecs / nRefreshRate;
@@ -125,7 +125,7 @@ namespace gamescope
 		// to not account for vertical front porch when dealing with the vblank
 		// drm_commit is going to target?
 		// Need to re-test that.
-		const uint64_t ulRedZone = eScreenType == DRM_SCREEN_TYPE_INTERNAL
+		const uint64_t ulRedZone = eScreenType == GAMESCOPE_SCREEN_TYPE_INTERNAL
 			? m_ulVBlankDrawBufferRedZone
 			: ( m_ulVBlankDrawBufferRedZone * 60 * kSecInNanoSecs ) / ( nRefreshRate * kSecInNanoSecs );
 

@@ -19,6 +19,7 @@ extern "C" {
 }
 
 #include "drm.hpp"
+#include "defer.hpp"
 #include "main.hpp"
 #include "modegen.hpp"
 #include "vblankmanager.hpp"
@@ -40,12 +41,13 @@ extern "C" {
 
 #include "gamescope-control-protocol.h"
 
+using namespace std::literals;
+
 struct drm_t g_DRM = {};
 
 uint32_t g_nDRMFormat = DRM_FORMAT_INVALID;
 uint32_t g_nDRMFormatOverlay = DRM_FORMAT_INVALID; // for partial composition, we may have more limited formats than base planes + alpha.
 bool g_bRotated = false;
-bool g_bUseLayers = true;
 bool g_bDebugLayers = false;
 const char *g_sOutputName = nullptr;
 
@@ -63,29 +65,28 @@ struct drm_color_ctm2 {
 
 bool g_bSupportsAsyncFlips = false;
 
-enum drm_mode_generation g_drmModeGeneration = DRM_MODE_GENERATE_CVT;
+gamescope::GamescopeModeGeneration g_eGamescopeModeGeneration = gamescope::GAMESCOPE_MODE_GENERATE_CVT;
 enum g_panel_orientation g_drmModeOrientation = PANEL_ORIENTATION_AUTO;
-std::atomic<uint64_t> g_drmEffectiveOrientation[DRM_SCREEN_TYPE_COUNT]{ {DRM_MODE_ROTATE_0}, {DRM_MODE_ROTATE_0} };
+std::atomic<uint64_t> g_drmEffectiveOrientation[gamescope::GAMESCOPE_SCREEN_TYPE_COUNT]{ {DRM_MODE_ROTATE_0}, {DRM_MODE_ROTATE_0} };
 
 bool g_bForceDisableColorMgmt = false;
 
 static LogScope drm_log("drm");
 static LogScope drm_verbose_log("drm", LOG_SILENT);
 
-static std::map< std::string, std::string > pnps = {};
+static std::unordered_map< std::string, std::string > pnps = {};
 
-drm_screen_type drm_get_connector_type(drmModeConnector *connector);
 static void drm_unset_mode( struct drm_t *drm );
 static void drm_unset_connector( struct drm_t *drm );
 
-static uint32_t steam_deck_display_rates[] =
+static constexpr uint32_t s_kSteamDeckLCDRates[] =
 {
 	40, 41, 42, 43, 44, 45, 46, 47, 48, 49,
 	50, 51, 52, 53, 54, 55, 56, 57, 58, 59,
 	60,
 };
 
-static uint32_t galileo_display_rates[] =
+static constexpr uint32_t s_kSteamDeckOLEDRates[] =
 {
 	45,47,48,49,
 	50,51,53,55,56,59,
@@ -95,17 +96,17 @@ static uint32_t galileo_display_rates[] =
 	90,
 };
 
-static uint32_t get_conn_display_info_flags(struct drm_t *drm, struct connector *connector)
+static uint32_t get_conn_display_info_flags( struct drm_t *drm, gamescope::CDRMConnector *pConnector )
 {
-	if (!connector)
+	if ( !pConnector )
 		return 0;
 
 	uint32_t flags = 0;
-	if ( drm_get_connector_type(connector->connector) == DRM_SCREEN_TYPE_INTERNAL )
+	if ( pConnector->GetScreenType() == gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL )
 		flags |= GAMESCOPE_CONTROL_DISPLAY_FLAG_INTERNAL_DISPLAY;
-	if ( connector->vrr_capable )
+	if ( pConnector->IsVRRCapable() )
 		flags |= GAMESCOPE_CONTROL_DISPLAY_FLAG_SUPPORTS_VRR;
-	if ( connector->metadata.supportsST2084 )
+	if ( pConnector->GetHDRInfo().bExposeHDRSupport )
 		flags |= GAMESCOPE_CONTROL_DISPLAY_FLAG_SUPPORTS_HDR;
 
 	return flags;
@@ -115,22 +116,22 @@ void drm_send_gamescope_control(wl_resource *control, struct drm_t *drm)
 {
 	// assumes wlserver_lock HELD!
 
-	if ( !drm->connector )
+	if ( !drm->pConnector )
 		return;
 
-	auto& conn = drm->connector;
+	auto& conn = drm->pConnector;
 
-	uint32_t flags = get_conn_display_info_flags( drm, drm->connector );
+	uint32_t flags = get_conn_display_info_flags( drm, drm->pConnector );
 
 	struct wl_array display_rates;
 	wl_array_init(&display_rates);
-	if ( conn->valid_display_rates.size() )
+	if ( conn->GetValidDynamicRefreshRates().size() )
 	{
-		size_t size = conn->valid_display_rates.size() * sizeof(uint32_t);
+		size_t size = conn->GetValidDynamicRefreshRates().size() * sizeof(uint32_t);
 		uint32_t *ptr = (uint32_t *)wl_array_add( &display_rates, size );
-		memcpy( ptr, conn->valid_display_rates.data(), size );
+		memcpy( ptr, conn->GetValidDynamicRefreshRates().data(), size );
 	}
-	gamescope_control_send_active_display_info( control, drm->connector->name, drm->connector->make, drm->connector->model, flags, &display_rates );
+	gamescope_control_send_active_display_info( control, drm->pConnector->GetName(), drm->pConnector->GetMake(), drm->pConnector->GetModel(), flags, &display_rates );
 	wl_array_release(&display_rates);
 }
 
@@ -175,58 +176,53 @@ static struct fb& get_fb( struct drm_t& drm, uint32_t id )
 	return drm.fb_map[ id ];
 }
 
-static struct crtc *find_crtc_for_connector(struct drm_t *drm, const struct connector *connector) {
-	for (size_t i = 0; i < drm->crtcs.size(); i++) {
-		uint32_t crtc_mask = 1 << i;
-		if (connector->possible_crtcs & crtc_mask)
-			return &drm->crtcs[i];
+static gamescope::CDRMCRTC *find_crtc_for_connector( struct drm_t *drm, gamescope::CDRMConnector *pConnector )
+{
+	for ( std::unique_ptr< gamescope::CDRMCRTC > &pCRTC : drm->crtcs )
+	{
+		if ( pConnector->GetPossibleCRTCMask() & pCRTC->GetCRTCMask() )
+			return pCRTC.get();
 	}
 
 	return nullptr;
 }
 
-static bool get_plane_formats(struct drm_t *drm, struct plane *plane, struct wlr_drm_format_set *formats) {
-	for (uint32_t k = 0; k < plane->plane->count_formats; k++) {
-		uint32_t fmt = plane->plane->formats[k];
-		wlr_drm_format_set_add(formats, fmt, DRM_FORMAT_MOD_INVALID);
+static bool get_plane_formats( struct drm_t *drm, gamescope::CDRMPlane *pPlane, struct wlr_drm_format_set *pFormatSet )
+{
+	for ( uint32_t i = 0; i < pPlane->GetModePlane()->count_formats; i++ )
+	{
+		const uint32_t uFormat = pPlane->GetModePlane()->formats[ i ];
+		wlr_drm_format_set_add( pFormatSet, uFormat, DRM_FORMAT_MOD_INVALID );
 	}
 
-	if (plane->props.count("IN_FORMATS") > 0) {
-		uint64_t blob_id = plane->initial_prop_values["IN_FORMATS"];
+	if ( pPlane->GetProperties().IN_FORMATS )
+	{
+		const uint64_t ulBlobId = pPlane->GetProperties().IN_FORMATS->GetCurrentValue();
 
-		drmModePropertyBlobRes *blob = drmModeGetPropertyBlob(drm->fd, blob_id);
-		if (!blob) {
+		drmModePropertyBlobRes *pBlob = drmModeGetPropertyBlob( drm->fd, ulBlobId );
+		if ( !pBlob )
+		{
 			drm_log.errorf_errno("drmModeGetPropertyBlob(IN_FORMATS) failed");
 			return false;
 		}
+		defer( drmModeFreePropertyBlob( pBlob ) );
 
-		struct drm_format_modifier_blob *data =
-			(struct drm_format_modifier_blob *)blob->data;
-		uint32_t *fmts = (uint32_t *)((char *)data + data->formats_offset);
-		struct drm_format_modifier *mods = (struct drm_format_modifier *)
-			((char *)data + data->modifiers_offset);
-		for (uint32_t i = 0; i < data->count_modifiers; ++i) {
-			for (int j = 0; j < 64; ++j) {
-				if (mods[i].formats & ((uint64_t)1 << j)) {
-					wlr_drm_format_set_add(formats,
-						fmts[j + mods[i].offset], mods[i].modifier);
-				}
+		drm_format_modifier_blob *pModifierBlob = reinterpret_cast<drm_format_modifier_blob *>( pBlob->data );
+
+		uint32_t *pFormats = reinterpret_cast<uint32_t *>( reinterpret_cast<uint8_t *>( pBlob->data ) + pModifierBlob->formats_offset );
+		drm_format_modifier *pMods = reinterpret_cast<drm_format_modifier *>( reinterpret_cast<uint8_t *>( pBlob->data ) + pModifierBlob->modifiers_offset );
+
+		for ( uint32_t i = 0; i < pModifierBlob->count_modifiers; i++ )
+		{
+			for ( uint32_t j = 0; j < 64; j++ )
+			{
+				if ( pMods[i].formats & ( uint64_t(1) << j ) )
+					wlr_drm_format_set_add( pFormatSet, pFormats[j + pMods[i].offset], pMods[i].modifier );
 			}
 		}
-
-		drmModeFreePropertyBlob(blob);
 	}
 
 	return true;
-}
-
-static const char *get_enum_name(const drmModePropertyRes *prop, uint64_t value)
-{
-	for (int i = 0; i < prop->count_enums; i++) {
-		if (prop->enums[i].value == value)
-			return prop->enums[i].name;
-	}
-	return nullptr;
 }
 
 static uint32_t pick_plane_format( const struct wlr_drm_format_set *formats, uint32_t Xformat, uint32_t Aformat )
@@ -245,27 +241,21 @@ static uint32_t pick_plane_format( const struct wlr_drm_format_set *formats, uin
 }
 
 /* Pick a primary plane that can be connected to the chosen CRTC. */
-static struct plane *find_primary_plane(struct drm_t *drm)
+static gamescope::CDRMPlane *find_primary_plane(struct drm_t *drm)
 {
-	struct plane *primary = nullptr;
+	if ( !drm->pCRTC )
+		return nullptr;
 
-	for (size_t i = 0; i < drm->planes.size(); i++) {
-		struct plane *plane = &drm->planes[i];
-
-		if (!(plane->plane->possible_crtcs & (1 << drm->crtc_index)))
-			continue;
-
-		uint64_t plane_type = drm->planes[i].initial_prop_values["type"];
-		if (plane_type == DRM_PLANE_TYPE_PRIMARY) {
-			primary = plane;
-			break;
+	for ( std::unique_ptr< gamescope::CDRMPlane > &pPlane : drm->planes )
+	{
+		if ( pPlane->GetModePlane()->possible_crtcs & drm->pCRTC->GetCRTCMask() )
+		{
+			if ( pPlane->GetProperties().type->GetCurrentValue() == DRM_PLANE_TYPE_PRIMARY )
+				return pPlane.get();
 		}
 	}
 
-	if (primary == nullptr)
-		return nullptr;
-
-	return primary;
+	return nullptr;
 }
 
 static void drm_unlock_fb_internal( struct drm_t *drm, struct fb *fb );
@@ -278,7 +268,10 @@ static void page_flip_handler(int fd, unsigned int frame, unsigned int sec, unsi
 	uint64_t flipcount = (uint64_t)data;
 	g_nCompletedPageFlipCount = flipcount;
 
-	if ( g_DRM.crtc->id != crtc_id )
+	if ( !g_DRM.pCRTC )
+		return;
+
+	if ( g_DRM.pCRTC->GetObjectId() != crtc_id )
 		return;
 
 	// This is the last vblank time
@@ -363,209 +356,6 @@ void flip_handler_thread_run(void)
 	}
 }
 
-static const drmModePropertyRes *get_prop(struct drm_t *drm, uint32_t prop_id)
-{
-	if (drm->props.count(prop_id) > 0) {
-		return drm->props[prop_id];
-	}
-
-	drmModePropertyRes *prop = drmModeGetProperty(drm->fd, prop_id);
-	if (!prop) {
-		drm_log.errorf_errno("drmModeGetProperty failed");
-		return nullptr;
-	}
-
-	drm->props[prop_id] = prop;
-	return prop;
-}
-
-static bool get_object_properties(struct drm_t *drm, uint32_t obj_id, uint32_t obj_type, std::map<std::string, const drmModePropertyRes *> &map, std::map<std::string, uint64_t> &values)
-{
-	drmModeObjectProperties *props = drmModeObjectGetProperties(drm->fd, obj_id, obj_type);
-	if (!props) {
-		drm_log.errorf_errno("drmModeObjectGetProperties failed");
-		return false;
-	}
-
-	map = {};
-	values = {};
-
-	for (uint32_t i = 0; i < props->count_props; i++) {
-		const drmModePropertyRes *prop = get_prop(drm, props->props[i]);
-		if (!prop) {
-			return false;
-		}
-		map[prop->name] = prop;
-		values[prop->name] = props->prop_values[i];
-	}
-
-	drmModeFreeObjectProperties(props);
-	return true;
-}
-
-static bool compare_modes( drmModeModeInfo mode1, drmModeModeInfo mode2 )
-{
-	bool goodRefresh1 = mode1.vrefresh >= 60;
-	bool goodRefresh2 = mode2.vrefresh >= 60;
-	if (goodRefresh1 != goodRefresh2)
-		return goodRefresh1;
-
-	bool preferred1 = mode1.type & DRM_MODE_TYPE_PREFERRED;
-	bool preferred2 = mode2.type & DRM_MODE_TYPE_PREFERRED;
-	if (preferred1 != preferred2)
-		return preferred1;
-
-	int area1 = mode1.hdisplay * mode1.vdisplay;
-	int area2 = mode2.hdisplay * mode2.vdisplay;
-	if (area1 != area2)
-		return area1 > area2;
-
-	return mode1.vrefresh > mode2.vrefresh;
-}
-
-static void
-drm_hdr_parse_edid(drm_t *drm, struct connector *connector, const struct di_edid *edid)
-{
-	struct connector_metadata_t *metadata = &connector->metadata;
-
-	const struct di_edid_chromaticity_coords* chroma = di_edid_get_chromaticity_coords(edid);
-	const struct di_cta_hdr_static_metadata_block* hdr_static_metadata = NULL;
-	const struct di_cta_colorimetry_block* colorimetry = NULL;
-
-	const struct di_edid_cta* cta = NULL;
-	const struct di_edid_ext* const* exts = di_edid_get_extensions(edid);
-	for (; *exts != NULL; exts++) {
-		if ((cta = di_edid_ext_get_cta(*exts)))
-			break;
-	}
-
-	if (cta) {
-		const struct di_cta_data_block* const* blocks = di_edid_cta_get_data_blocks(cta);
-		for (; *blocks != NULL; blocks++) {
-			if (!hdr_static_metadata && (hdr_static_metadata = di_cta_data_block_get_hdr_static_metadata(*blocks)))
-				continue;
-			if (!colorimetry && (colorimetry = di_cta_data_block_get_colorimetry(*blocks)))
-				continue;
-		}
-	}
-
-	struct hdr_metadata_infoframe *infoframe = &metadata->defaultHdrMetadata.hdmi_metadata_type1;
-
-	if (chroma) {
-		infoframe->display_primaries[0].x = color_xy_to_u16(chroma->red_x);
-		infoframe->display_primaries[0].y = color_xy_to_u16(chroma->red_y);
-		infoframe->display_primaries[1].x = color_xy_to_u16(chroma->green_x);
-		infoframe->display_primaries[1].y = color_xy_to_u16(chroma->green_y);
-		infoframe->display_primaries[2].x = color_xy_to_u16(chroma->blue_x);
-		infoframe->display_primaries[2].y = color_xy_to_u16(chroma->blue_y);
-		infoframe->white_point.x = color_xy_to_u16(chroma->white_x);
-		infoframe->white_point.y = color_xy_to_u16(chroma->white_y);
-	}
-
-	/* Some sane defaults for SDR for displays with missing data... */
-	infoframe->max_display_mastering_luminance = nits_to_u16(1000.0f);
-	infoframe->min_display_mastering_luminance = nits_to_u16_dark(0.0f);
-	infoframe->max_cll = nits_to_u16(400.0f);
-	infoframe->max_fall = nits_to_u16(400.0f);
-
-	if (hdr_static_metadata) {
-		if (hdr_static_metadata->desired_content_max_luminance)
-			infoframe->max_display_mastering_luminance = nits_to_u16(hdr_static_metadata->desired_content_max_luminance);
-		if (hdr_static_metadata->desired_content_min_luminance)
-			infoframe->min_display_mastering_luminance = nits_to_u16_dark(hdr_static_metadata->desired_content_min_luminance);
-		/* To be filled in by the app based on the scene, default to desired_content_max_luminance.
-		 *
-		 * Using display's max_fall for the default metadata max_cll to avoid displays
-		 * overcompensating with tonemapping for SDR content.
-		 */
-		float default_max_fall = hdr_static_metadata->desired_content_max_frame_avg_luminance
-			? hdr_static_metadata->desired_content_max_frame_avg_luminance
-			: hdr_static_metadata->desired_content_max_luminance;
-
-		if (default_max_fall) {
-			infoframe->max_cll = nits_to_u16(default_max_fall);
-			infoframe->max_fall = nits_to_u16(default_max_fall);
-		}
-
-		metadata->maxCLL = (uint16_t)hdr_static_metadata->desired_content_max_luminance;
-		metadata->maxFALL = (uint16_t)hdr_static_metadata->desired_content_max_frame_avg_luminance;
-	}
-
-	metadata->supportsST2084 =
-		chroma &&
-		colorimetry && colorimetry->bt2020_rgb &&
-		hdr_static_metadata && hdr_static_metadata->eotfs && hdr_static_metadata->eotfs->pq;
-
-	if (metadata->supportsST2084) {
-		metadata->defaultHdrMetadata.metadata_type = 0;
-		infoframe->metadata_type = 0;
-		infoframe->eotf = HDMI_EOTF_ST2084;
-
-		metadata->hdr10_metadata_blob = drm_create_hdr_metadata_blob(drm, &metadata->defaultHdrMetadata);
-
-		if (metadata->hdr10_metadata_blob == nullptr) {
-			fprintf(stderr, "Failed to create blob for HDR_OUTPUT_METADATA. Falling back to null blob.\n");
-		}
-	}
-
-	const char *coloroverride = getenv( "GAMESCOPE_INTERNAL_COLORIMETRY_OVERRIDE" );
-	if (coloroverride && drm_get_connector_type(connector->connector) == DRM_SCREEN_TYPE_INTERNAL)
-	{
-		if (sscanf( coloroverride, "%f %f %f %f %f %f %f %f",
-			&metadata->colorimetry.primaries.r.x, &metadata->colorimetry.primaries.r.y,
-			&metadata->colorimetry.primaries.g.x, &metadata->colorimetry.primaries.g.y,
-			&metadata->colorimetry.primaries.b.x, &metadata->colorimetry.primaries.b.y,
-			&metadata->colorimetry.white.x, &metadata->colorimetry.white.y ) == 8 )
-		{
-			drm_log.infof("[colorimetry]: GAMESCOPE_INTERNAL_COLORIMETRY_OVERRIDE detected");
-		}
-		else
-		{
-			drm_log.errorf("[colorimetry]: GAMESCOPE_INTERNAL_COLORIMETRY_OVERRIDE specified, but could not parse \"rx ry gx gy bx by wx wy\"");
-		}
-	}
-	else if (connector->is_steam_deck_display && !connector->is_galileo_display)
-	{
-		drm_log.infof("[colorimetry]: Steam Deck (internal display) detected.");
-
-		// Hardcode Steam Deck display info to support
-		// BIOSes with missing info for this in EDID.
-		drm_log.infof("[colorimetry]: using default steamdeck colorimetry");
-		metadata->colorimetry = displaycolorimetry_steamdeck_measured;
-		metadata->eotf = EOTF_Gamma22;
-	}
-	else if (chroma && chroma->red_x != 0.0f)
-	{
-		drm_log.infof("[colorimetry]: EDID with colorimetry detected. Using it");
-		metadata->colorimetry.primaries = { { chroma->red_x, chroma->red_y }, { chroma->green_x, chroma->green_y }, { chroma->blue_x, chroma->blue_y } };
-		metadata->colorimetry.white = { chroma->white_x, chroma->white_y };
-		metadata->eotf = infoframe->eotf == HDMI_EOTF_ST2084 ? EOTF_PQ : EOTF_Gamma22;
-	}
-	else
-	{
-		// No valid chroma data in the EDID, fill it in ourselves.
-		if (infoframe->eotf == HDMI_EOTF_ST2084)
-		{
-			drm_log.infof("[colorimetry]: EDID does not define colorimetry. Assuming rec2020 based on HDMI_EOTF_ST2084 support");
-			// Fallback to 2020 primaries for HDR
-			metadata->colorimetry = displaycolorimetry_2020;
-			metadata->eotf = EOTF_PQ;
-		}
-		else
-		{
-			// Fallback to 709 primaries for SDR
-			drm_log.infof("[colorimetry]: EDID does not define colorimetry. Assuming rec709 / gamma 2.2");
-			metadata->colorimetry = displaycolorimetry_709;
-			metadata->eotf = EOTF_Gamma22;
-		}
-	}
-
-	drm_log.infof("[colorimetry]: r %f %f", metadata->colorimetry.primaries.r.x, metadata->colorimetry.primaries.r.y);
-	drm_log.infof("[colorimetry]: g %f %f", metadata->colorimetry.primaries.g.x, metadata->colorimetry.primaries.g.y);
-	drm_log.infof("[colorimetry]: b %f %f", metadata->colorimetry.primaries.b.x, metadata->colorimetry.primaries.b.y);
-	drm_log.infof("[colorimetry]: w %f %f", metadata->colorimetry.white.x, metadata->colorimetry.white.y);
-}
-
 static constexpr uint32_t EDID_MAX_BLOCK_COUNT = 256;
 static constexpr uint32_t EDID_BLOCK_SIZE = 128;
 static constexpr uint32_t EDID_MAX_STANDARD_TIMING_COUNT = 8;
@@ -639,7 +429,7 @@ static uint8_t encode_max_luminance(float nits)
 	return ceilf((logf(nits / 50.0f) / logf(2.0f)) * 32.0f);
 }
 
-static void create_patched_edid( const uint8_t *orig_data, size_t orig_size, drm_t *drm, struct connector *conn )
+static void create_patched_edid( const uint8_t *orig_data, size_t orig_size, drm_t *drm, gamescope::CDRMConnector *conn )
 {
 	// A zero length indicates that the edid parsing failed.
 	if (orig_size == 0) {
@@ -675,7 +465,7 @@ static void create_patched_edid( const uint8_t *orig_data, size_t orig_size, drm
 	// just hotpatch the edid for the game so we get values we want as if we had
 	// an external display attached.
 	// (Allows for debugging undocked fallback without undocking/redocking)
-	if ( g_bForceHDRSupportDebug && !conn->metadata.supportsST2084 )
+	if ( conn->GetHDRInfo().ShouldPatchEDID() )
 	{
 		// TODO: Allow for override of min luminance
 		float flMaxPeakLuminance = g_ColorMgmt.pending.hdrTonemapDisplayMetadata.BIsValid() ? 
@@ -824,302 +614,119 @@ static void create_patched_edid( const uint8_t *orig_data, size_t orig_size, drm
 
 void drm_update_patched_edid( drm_t *drm )
 {
-	if (!drm || !drm->connector)
+	if (!drm || !drm->pConnector)
 		return;
 
-	create_patched_edid(drm->connector->edid_data.data(), drm->connector->edid_data.size(), drm, drm->connector);
-}
-
-#define GALILEO_SDC_PID 0x3003
-#define GALILEO_BOE_PID 0x3004
-
-static void parse_edid( drm_t *drm, struct connector *conn)
-{
-	memset(conn->make_pnp, 0, sizeof(conn->make_pnp));
-	free(conn->make);
-	conn->make = NULL;
-	free(conn->model);
-	conn->model = NULL;
-
-	if (conn->props.count("EDID") == 0) {
-		return;
-	}
-
-	uint64_t blob_id = conn->initial_prop_values["EDID"];
-	if (blob_id == 0) {
-		return;
-	}
-
-	drmModePropertyBlobRes *blob = drmModeGetPropertyBlob(drm->fd, blob_id);
-	if (!blob) {
-		drm_log.errorf_errno("drmModeGetPropertyBlob(EDID) failed");
-		return;
-	}
-
-	struct di_info *info = di_info_parse_edid(blob->data, blob->length);
-	if (!info) {
-		drmModeFreePropertyBlob(blob);
-		drm_log.errorf("Failed to parse edid");
-		return;
-	}
-
-	conn->edid_data = std::vector<uint8_t>((const uint8_t*)blob->data, ((const uint8_t*)(blob->data)) + blob->length);
-
-	drmModeFreePropertyBlob(blob);
-
-	const struct di_edid *edid = di_info_get_edid(info);
-
-	const struct di_edid_vendor_product *vendor_product = di_edid_get_vendor_product(edid);
-	char pnp_id[] = {
-		vendor_product->manufacturer[0],
-		vendor_product->manufacturer[1],
-		vendor_product->manufacturer[2],
-		'\0',
-	};
-	memcpy(conn->make_pnp, pnp_id, sizeof(pnp_id));
-	if (pnps.count(pnp_id) > 0) {
-		conn->make = strdup(pnps[pnp_id].c_str());
-	}
-	else {
-		// Some vendors like AOC, don't have a PNP id listed,
-		// but their name is literally just "AOC", so just
-		// use the PNP name directly.
-		conn->make = strdup(pnp_id);
-	}
-
-	const struct di_edid_display_descriptor *const *descriptors = di_edid_get_display_descriptors(edid);
-	for (size_t i = 0; descriptors[i] != NULL; i++) {
-		const struct di_edid_display_descriptor *desc = descriptors[i];
-		if (di_edid_display_descriptor_get_tag(desc) == DI_EDID_DISPLAY_DESCRIPTOR_PRODUCT_NAME) {
-			conn->model = strdup(di_edid_display_descriptor_get_string(desc));
-		}
-	}
-
-	drm_log.infof("Connector make %s model %s", conn->make_pnp, conn->model );
-
-	conn->is_steam_deck_display =
-		(strcmp(conn->make_pnp, "WLC") == 0 && strcmp(conn->model, "ANX7530 U") == 0) ||
-		(strcmp(conn->make_pnp, "ANX") == 0 && strcmp(conn->model, "ANX7530 U") == 0) ||
-		(strcmp(conn->make_pnp, "VLV") == 0 && strcmp(conn->model, "ANX7530 U") == 0) ||
-		(strcmp(conn->make_pnp, "VLV") == 0 && strcmp(conn->model, "Jupiter") == 0);
-
-	if ((vendor_product->product == GALILEO_SDC_PID) || (vendor_product->product == GALILEO_BOE_PID)) {
-		conn->is_galileo_display = vendor_product->product;
-		conn->valid_display_rates = std::span(galileo_display_rates);
-	} else {
-		conn->is_galileo_display = 0;
-		if ( conn->is_steam_deck_display )
-			conn->valid_display_rates = std::span(steam_deck_display_rates);
-	}
-
-	drm_hdr_parse_edid(drm, conn, edid);
-
-	di_info_destroy(info);
+	create_patched_edid(drm->pConnector->GetRawEDID().data(), drm->pConnector->GetRawEDID().size(), drm, drm->pConnector);
 }
 
 static bool refresh_state( drm_t *drm )
 {
-	drmModeRes *resources = drmModeGetResources(drm->fd);
-	if (resources == nullptr) {
-		drm_log.errorf_errno("drmModeGetResources failed");
+	drmModeRes *pResources = drmModeGetResources( drm->fd );
+	if ( pResources == nullptr )
+	{
+		drm_log.errorf_errno( "drmModeGetResources failed" );
 		return false;
 	}
+	defer( drmModeFreeResources( pResources ) );
 
 	// Add connectors which appeared
-	for (int i = 0; i < resources->count_connectors; i++) {
-		uint32_t conn_id = resources->connectors[i];
+	for ( int i = 0; i < pResources->count_connectors; i++ )
+	{
+		uint32_t uConnectorId = pResources->connectors[i];
 
-		if (drm->connectors.count(conn_id) == 0) {
-			struct connector conn = { .id = conn_id };
-			drm->connectors[conn_id] = conn;
+		drmModeConnector *pConnector = drmModeGetConnector( drm->fd, uConnectorId );
+		if ( !pConnector )
+			continue;
+
+		if ( !drm->connectors.contains( uConnectorId ) )
+		{
+			drm->connectors.emplace(
+				std::piecewise_construct,
+				std::forward_as_tuple( uConnectorId ),
+				std::forward_as_tuple( pConnector ) );
 		}
 	}
 
 	// Remove connectors which disappeared
-	auto it = drm->connectors.begin();
-	while (it != drm->connectors.end()) {
-		struct connector *conn = &it->second;
+	for ( auto iter = drm->connectors.begin(); iter != drm->connectors.end(); )
+	{
+		gamescope::CDRMConnector *pConnector = &iter->second;
 
-		bool found = false;
-		for (int j = 0; j < resources->count_connectors; j++) {
-			if (resources->connectors[j] == conn->id) {
-				found = true;
-				break;
-			}
-		}
+		const bool bFound = std::any_of(
+			pResources->connectors,
+			pResources->connectors + pResources->count_connectors,
+			std::bind_front( std::equal_to{}, pConnector->GetObjectId() ) );
 
-		if (!found) {
-			drm_log.debugf("connector '%s' disappeared", conn->name);
-
-			if (drm->connector == conn) {
-				drm_log.infof("current connector '%s' disappeared", conn->name);
-				drm->connector = nullptr;
-			}
-
-			free(conn->name);
-			conn->name = nullptr;
-			conn->metadata.hdr10_metadata_blob = nullptr;
-			drmModeFreeConnector(conn->connector);
-			it = drm->connectors.erase(it);
-		} else {
-			it++;
-		}
-	}
-
-	drmModeFreeResources(resources);
-
-	// Re-probe connectors props and status
-	for (auto &kv : drm->connectors) {
-		struct connector *conn = &kv.second;
-		if (conn->connector != nullptr) {
-			conn->metadata.hdr10_metadata_blob = nullptr;
-			drmModeFreeConnector(conn->connector);
-		}
-
-		conn->connector = drmModeGetConnector(drm->fd, conn->id);
-		if (conn->connector == nullptr) {
-			drm_log.errorf_errno("drmModeGetConnector failed");
-			return false;
-		}
-
-		if (!get_object_properties(drm, conn->id, DRM_MODE_OBJECT_CONNECTOR, conn->props, conn->initial_prop_values)) {
-			return false;
-		}
-
-		/* sort modes by preference: preferred flag, then highest area, then
-		 * highest refresh rate */
-		std::stable_sort(conn->connector->modes, conn->connector->modes + conn->connector->count_modes, compare_modes);
-
-		parse_edid(drm, conn);
-
-		if ( conn->name != nullptr )
+		if ( !bFound )
 		{
-			free(conn->name);
-			conn->name = nullptr;
+			drm_log.debugf( "Connector '%s' disappeared.", pConnector->GetName() );
+
+			if ( drm->pConnector == pConnector )
+			{
+				drm_log.infof( "Current connector '%s' disappeared.", pConnector->GetName() );
+				drm->pConnector = nullptr;
+			}
+
+			iter = drm->connectors.erase( iter );
 		}
-
-		const char *type_str = drmModeGetConnectorTypeName(conn->connector->connector_type);
-		if (!type_str)
-			type_str = "Unknown";
-
-		char name[128] = {};
-		snprintf(name, sizeof(name), "%s-%d", type_str, conn->connector->connector_type_id);
-		conn->name = strdup(name);
-
-		conn->possible_crtcs = drmModeConnectorGetPossibleCrtcs(drm->fd, conn->connector);
-		if (!conn->possible_crtcs)
-			drm_log.errorf_errno("drmModeConnectorGetPossibleCrtcs failed");
-
-		conn->has_colorspace = conn->props.contains( "Colorspace" );
-		conn->has_hdr_output_metadata = conn->props.contains( "HDR_OUTPUT_METADATA" );
-		conn->has_content_type = conn->props.contains( "content type" );
-
-		conn->current.crtc_id = conn->initial_prop_values["CRTC_ID"];
-		if (conn->has_colorspace)
-			conn->current.colorspace = conn->initial_prop_values["Colorspace"];
-		if (conn->has_hdr_output_metadata)
-			conn->current.hdr_output_metadata = std::make_shared<wlserver_hdr_metadata>(nullptr, conn->initial_prop_values["HDR_OUTPUT_METADATA"], false);
-		if (conn->has_content_type)
-			conn->current.content_type = conn->initial_prop_values["content type"];
-
-		conn->target_refresh = 0;
-
-		conn->vrr_capable = !!conn->initial_prop_values["vrr_capable"];
-
-		drm_log.debugf("found new connector '%s'", conn->name);
+		else
+			iter++;
 	}
 
-	for (size_t i = 0; i < drm->crtcs.size(); i++) {
-		struct crtc *crtc = &drm->crtcs[i];
-		if (!get_object_properties(drm, crtc->id, DRM_MODE_OBJECT_CRTC, crtc->props, crtc->initial_prop_values)) {
-			return false;
-		}
-
-		crtc->has_gamma_lut = crtc->props.contains( "GAMMA_LUT" );
-		if (!crtc->has_gamma_lut)
-			drm_log.infof("CRTC %" PRIu32 " has no gamma LUT support", crtc->id);
-		crtc->has_degamma_lut = crtc->props.contains( "DEGAMMA_LUT" );
-		if (!crtc->has_degamma_lut)
-			drm_log.infof("CRTC %" PRIu32 " has no degamma LUT support", crtc->id);
-		crtc->has_ctm = crtc->props.contains( "CTM" );
-		if (!crtc->has_ctm)
-			drm_log.infof("CRTC %" PRIu32 " has no CTM support", crtc->id);
-		crtc->has_vrr_enabled = crtc->props.contains( "VRR_ENABLED" );
-		if (!crtc->has_vrr_enabled)
-			drm_log.infof("CRTC %" PRIu32 " has no VRR_ENABLED support", crtc->id);
-		crtc->has_valve1_regamma_tf = crtc->props.contains( "VALVE1_CRTC_REGAMMA_TF" );
-		if (!crtc->has_valve1_regamma_tf)
-			drm_log.infof("CRTC %" PRIu32 " has no VALVE1_CRTC_REGAMMA_TF support", crtc->id);
-
-		crtc->current.active = crtc->initial_prop_values["ACTIVE"];
-		if (crtc->has_vrr_enabled)
-			drm->current.vrr_enabled = crtc->initial_prop_values["VRR_ENABLED"];
-		if (crtc->has_valve1_regamma_tf)
-			drm->current.output_tf = (drm_valve1_transfer_function) crtc->initial_prop_values["VALVE1_CRTC_REGAMMA_TF"];
+	// Re-probe connectors props and status)
+	for ( auto &iter : drm->connectors )
+	{
+		gamescope::CDRMConnector *pConnector = &iter.second;
+		pConnector->RefreshState();
 	}
 
-	for (size_t i = 0; i < drm->planes.size(); i++) {
-		struct plane *plane = &drm->planes[i];
-		if (!get_object_properties(drm, plane->id, DRM_MODE_OBJECT_PLANE, plane->props, plane->initial_prop_values)) {
-			return false;
-		}
-		plane->has_color_mgmt = plane->props.contains( "VALVE1_PLANE_BLEND_TF" );
-	}
+	for ( std::unique_ptr< gamescope::CDRMCRTC > &pCRTC : drm->crtcs )
+		pCRTC->RefreshState();
+
+	for ( std::unique_ptr< gamescope::CDRMPlane > &pPlane : drm->planes )
+		pPlane->RefreshState();
 
 	return true;
 }
 
 static bool get_resources(struct drm_t *drm)
 {
-	drmModeRes *resources = drmModeGetResources(drm->fd);
-	if (resources == nullptr) {
-		drm_log.errorf_errno("drmModeGetResources failed");
-		return false;
-	}
-
-	for (int i = 0; i < resources->count_crtcs; i++) {
-		struct crtc crtc = { .id = resources->crtcs[i] };
-
-		crtc.crtc = drmModeGetCrtc(drm->fd, crtc.id);
-		if (crtc.crtc == nullptr) {
-			drm_log.errorf_errno("drmModeGetCrtc failed");
+	{
+		drmModeRes *pResources = drmModeGetResources( drm->fd );
+		if ( !pResources )
+		{
+			drm_log.errorf_errno( "drmModeGetResources failed" );
 			return false;
 		}
+		defer( drmModeFreeResources( pResources ) );
 
-		drm->crtcs.push_back(crtc);
+		for ( int i = 0; i < pResources->count_crtcs; i++ )
+		{
+			drmModeCrtc *pCRTC = drmModeGetCrtc( drm->fd, pResources->crtcs[ i ] );
+			if ( pCRTC )
+				drm->crtcs.emplace_back( std::make_unique<gamescope::CDRMCRTC>( pCRTC, 1u << i ) );
+		}
 	}
 
-	drmModeFreeResources(resources);
-
-	drmModePlaneRes *plane_resources = drmModeGetPlaneResources(drm->fd);
-	if (!plane_resources) {
-		drm_log.errorf_errno("drmModeGetPlaneResources failed");
-		return false;
-	}
-
-	for (uint32_t i = 0; i < plane_resources->count_planes; i++) {
-		struct plane plane = { .id = plane_resources->planes[i] };
-
-		plane.plane = drmModeGetPlane(drm->fd, plane.id);
-		if (plane.plane == nullptr) {
-			drm_log.errorf_errno("drmModeGetPlane failed");
+	{
+		drmModePlaneRes *pPlaneResources = drmModeGetPlaneResources( drm->fd );
+		if ( !pPlaneResources )
+		{
+			drm_log.errorf_errno( "drmModeGetPlaneResources failed" );
 			return false;
 		}
+		defer( drmModeFreePlaneResources( pPlaneResources ) );
 
-		drm->planes.push_back(plane);
+		for ( uint32_t i = 0; i < pPlaneResources->count_planes; i++ )
+		{
+			drmModePlane *pPlane = drmModeGetPlane( drm->fd, pPlaneResources->planes[ i ] );
+			if ( pPlane )
+				drm->planes.emplace_back( std::make_unique<gamescope::CDRMPlane>( pPlane ) );
+		}
 	}
 
-	drmModeFreePlaneResources(plane_resources);
-
-	if (!refresh_state(drm))
-		return false;
-
-	for (size_t i = 0; i < drm->crtcs.size(); i++) {
-		struct crtc *crtc = &drm->crtcs[i];
-		crtc->pending = crtc->current;
-	}
-
-	return true;
+	return refresh_state( drm );
 }
 
 struct mode_blocklist_entry
@@ -1220,31 +827,33 @@ static bool get_saved_mode(const char *description, saved_mode &mode_info)
 
 static bool setup_best_connector(struct drm_t *drm, bool force, bool initial)
 {
-	if (drm->connector && drm->connector->connector->connection != DRM_MODE_CONNECTED) {
-		drm_log.infof("current connector '%s' disconnected", drm->connector->name);
-		drm->connector = nullptr;
+	if (drm->pConnector && drm->pConnector->GetModeConnector()->connection != DRM_MODE_CONNECTED) {
+		drm_log.infof("current connector '%s' disconnected", drm->pConnector->GetName());
+		drm->pConnector = nullptr;
 	}
 
-	struct connector *best = nullptr;
-	int best_priority = INT_MAX;
-	for (auto &kv : drm->connectors) {
-		struct connector *conn = &kv.second;
+	gamescope::CDRMConnector *best = nullptr;
+	int nBestPriority = INT_MAX;
+	for ( auto &iter : drm->connectors )
+	{
+		gamescope::CDRMConnector *pConnector = &iter.second;
 
-		if (conn->connector->connection != DRM_MODE_CONNECTED)
+		if ( pConnector->GetModeConnector()->connection != DRM_MODE_CONNECTED )
 			continue;
 
-		if (drm->force_internal && drm_get_connector_type(conn->connector) == DRM_SCREEN_TYPE_EXTERNAL)
+		if ( drm->force_internal && pConnector->GetScreenType() == gamescope::GAMESCOPE_SCREEN_TYPE_EXTERNAL )
 			continue;
 
-		int priority = get_connector_priority(drm, conn->name);
-		if (priority < best_priority) {
-			best = conn;
-			best_priority = priority;
+		int nPriority = get_connector_priority( drm, pConnector->GetName() );
+		if ( nPriority < nBestPriority )
+		{
+			best = pConnector;
+			nBestPriority = nPriority;
 		}
 	}
 
 	if (!force) {
-		if ((!best && drm->connector) || (best && best == drm->connector)) {
+		if ((!best && drm->pConnector) || (best && best == drm->pConnector)) {
 			// Let's keep our current connector
 			return true;
 		}
@@ -1268,12 +877,12 @@ static bool setup_best_connector(struct drm_t *drm, bool force, bool initial)
 	}
 
 	char description[256];
-	if (drm_get_connector_type(best->connector) == DRM_SCREEN_TYPE_INTERNAL) {
+	if (best->GetScreenType() == gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL) {
 		snprintf(description, sizeof(description), "Internal screen");
-	} else if (best->make && best->model) {
-		snprintf(description, sizeof(description), "%s %s", best->make, best->model);
-	} else if (best->model) {
-		snprintf(description, sizeof(description), "%s", best->model);
+	} else if (best->GetMake() && best->GetModel()) {
+		snprintf(description, sizeof(description), "%s %s", best->GetMake(), best->GetModel());
+	} else if (best->GetModel()) {
+		snprintf(description, sizeof(description), "%s", best->GetModel());
 	} else {
 		snprintf(description, sizeof(description), "External screen");
 	}
@@ -1281,17 +890,17 @@ static bool setup_best_connector(struct drm_t *drm, bool force, bool initial)
 	const drmModeModeInfo *mode = nullptr;
 	if ( drm->preferred_width != 0 || drm->preferred_height != 0 || drm->preferred_refresh != 0 )
 	{
-		mode = find_mode(best->connector, drm->preferred_width, drm->preferred_height, drm->preferred_refresh);
+		mode = find_mode(best->GetModeConnector(), drm->preferred_width, drm->preferred_height, drm->preferred_refresh);
 	}
 
-	if (!mode && drm_get_connector_type(best->connector) == DRM_SCREEN_TYPE_EXTERNAL) {
+	if (!mode && best->GetScreenType() == gamescope::GAMESCOPE_SCREEN_TYPE_EXTERNAL) {
 		saved_mode mode_info;
 		if (get_saved_mode(description, mode_info))
-			mode = find_mode(best->connector, mode_info.width, mode_info.height, mode_info.refresh);
+			mode = find_mode(best->GetModeConnector(), mode_info.width, mode_info.height, mode_info.refresh);
 	}
 
 	if (!mode) {
-		mode = find_mode(best->connector, 0, 0, 0);
+		mode = find_mode(best->GetModeConnector(), 0, 0, 0);
 	}
 
 	if (!mode) {
@@ -1299,7 +908,7 @@ static bool setup_best_connector(struct drm_t *drm, bool force, bool initial)
 		return false;
 	}
 
-	best->target_refresh = mode->vrefresh;
+	best->SetBaseRefresh( mode->vrefresh );
 
 	if (!drm_set_mode(drm, mode)) {
 		return false;
@@ -1307,15 +916,15 @@ static bool setup_best_connector(struct drm_t *drm, bool force, bool initial)
 
 	const struct wlserver_output_info wlserver_output_info = {
 		.description = description,
-		.phys_width = (int) best->connector->mmWidth,
-		.phys_height = (int) best->connector->mmHeight,
+		.phys_width = (int) best->GetModeConnector()->mmWidth,
+		.phys_height = (int) best->GetModeConnector()->mmHeight,
 	};
 	wlserver_lock();
 	wlserver_set_output_info(&wlserver_output_info);
 	wlserver_unlock();
 
 	if (!initial)
-		create_patched_edid(best->edid_data.data(), best->edid_data.size(), drm, best);
+		create_patched_edid(best->GetRawEDID().data(), best->GetRawEDID().size(), drm, best);
 
 	update_connector_display_info_wl( drm );
 
@@ -1365,6 +974,8 @@ bool env_to_bool(const char *env)
 bool init_drm(struct drm_t *drm, int width, int height, int refresh, bool wants_adaptive_sync)
 {
 	load_pnps();
+
+	drm->bUseLiftoff = true;
 
 	drm->wants_vrr_enabled = wants_adaptive_sync;
 	drm->preferred_width = width;
@@ -1435,14 +1046,15 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh, bool wants_
 		return false;
 
 	drm_log.infof("Connectors:");
-	for (const auto &kv : drm->connectors) {
-		const struct connector *conn = &kv.second;
+	for ( auto &iter : drm->connectors )
+	{
+		gamescope::CDRMConnector *pConnector = &iter.second;
 
 		const char *status_str = "disconnected";
-		if ( conn->connector->connection == DRM_MODE_CONNECTED )
+		if ( pConnector->GetModeConnector()->connection == DRM_MODE_CONNECTED )
 			status_str = "connected";
 
-		drm_log.infof("  %s (%s)", conn->name, status_str);
+		drm_log.infof("  %s (%s)", pConnector->GetName(), status_str);
 	}
 
 	drm->connector_priorities = parse_connector_priorities( g_sOutputName );
@@ -1452,23 +1064,24 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh, bool wants_
 	}
 
 	// Fetch formats which can be scanned out
-	for (size_t i = 0; i < drm->planes.size(); i++) {
-		struct plane *plane = &drm->planes[i];
-		if (!get_plane_formats(drm, plane, &drm->formats))
+	for ( std::unique_ptr< gamescope::CDRMPlane > &pPlane : drm->planes )
+	{
+		if ( !get_plane_formats( drm, pPlane.get(), &drm->formats ) )
 			return false;
 	}
 
 	// TODO: intersect primary planes formats instead
-	struct plane *primary_plane = drm->primary;
-	if (primary_plane == nullptr) {
-		primary_plane = find_primary_plane(drm);
-	}
-	if (primary_plane == nullptr) {
+	if ( !drm->pPrimaryPlane )
+		drm->pPrimaryPlane = find_primary_plane( drm );
+
+	if ( !drm->pPrimaryPlane )
+	{
 		drm_log.errorf("Failed to find a primary plane");
 		return false;
 	}
 
-	if (!get_plane_formats(drm, primary_plane, &drm->primary_formats)) {
+	if ( !get_plane_formats( drm, drm->pPrimaryPlane, &drm->primary_formats ) )
+	{
 		return false;
 	}
 
@@ -1511,9 +1124,8 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh, bool wants_
 	std::thread flip_handler_thread( flip_handler_thread_run );
 	flip_handler_thread.detach();
 
-	if (g_bUseLayers) {
+	if ( drm->bUseLiftoff )
 		liftoff_log_set_priority(g_bDebugLayers ? LIFTOFF_DEBUG : LIFTOFF_ERROR);
-	}
 
 	hdr_output_metadata sdr_metadata;
 	memset(&sdr_metadata, 0, sizeof(sdr_metadata));
@@ -1525,48 +1137,6 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh, bool wants_
 	return true;
 }
 
-static int add_property(drmModeAtomicReq *req, uint32_t obj_id, std::map<std::string, const drmModePropertyRes *> &props, const char *name, uint64_t value)
-{
-	if ( props.count( name ) == 0 )
-	{
-		drm_log.errorf("no property %s on object %u", name, obj_id);
-		return -ENOENT;
-	}
-
-	const drmModePropertyRes *prop = props[ name ];
-
-	int ret = drmModeAtomicAddProperty(req, obj_id, prop->prop_id, value);
-	if ( ret < 0 )
-	{
-		drm_log.errorf_errno( "drmModeAtomicAddProperty failed" );
-	}
-	return ret;
-}
-
-static int add_connector_property(drmModeAtomicReq *req, struct connector *conn, const char *name, uint64_t value)
-{
-	return add_property(req, conn->id, conn->props, name, value);
-}
-
-static int add_crtc_property(drmModeAtomicReq *req, struct crtc *crtc, const char *name, uint64_t value)
-{
-	return add_property(req, crtc->id, crtc->props, name, value);
-}
-
-static int add_plane_property(drmModeAtomicReq *req, struct plane *plane, const char *name, uint64_t value)
-{
-	return add_property(req, plane->id, plane->props, name, value);
-}
-
-static std::shared_ptr<wlserver_hdr_metadata> get_default_hdr_metadata(struct drm_t *drm, struct connector *connector)
-{
-	if ( !connector->has_hdr_output_metadata )
-		return nullptr;
-	if ( !connector->metadata.supportsST2084 )
-		return nullptr;
-	return drm->sdr_static_metadata;
-}
-
 void finish_drm(struct drm_t *drm)
 {
 	// Disable all connectors, CRTCs and planes. This is necessary to leave a
@@ -1575,68 +1145,102 @@ void finish_drm(struct drm_t *drm)
 	// together.
 
 	drmModeAtomicReq *req = drmModeAtomicAlloc();
-	for ( auto &kv : drm->connectors ) {
-		struct connector *conn = &kv.second;
-		add_connector_property(req, conn, "CRTC_ID", 0);
-		if (conn->has_colorspace)
-			add_connector_property(req, conn, "Colorspace", 0);
-		// HACK HACK: Setting to 0 doesn't disable HDR properly.
-		// Set an SDR metadata blob.
-		if (conn->has_hdr_output_metadata)
+
+	for ( auto &iter : drm->connectors )
+	{
+		gamescope::CDRMConnector *pConnector = &iter.second;
+
+		pConnector->GetProperties().CRTC_ID->SetPendingValue( req, 0, true );
+
+		if ( pConnector->GetProperties().Colorspace )
+			pConnector->GetProperties().Colorspace->SetPendingValue( req, 0, true );
+
+		if ( pConnector->GetProperties().HDR_OUTPUT_METADATA )
 		{
-			auto metadata = get_default_hdr_metadata( drm, conn );
-			add_connector_property(req, conn, "HDR_OUTPUT_METADATA", metadata ? metadata->blob : 0);
+			if ( drm->sdr_static_metadata && pConnector->GetHDRInfo().IsHDR10() )
+				pConnector->GetProperties().HDR_OUTPUT_METADATA->SetPendingValue( req, drm->sdr_static_metadata->blob, true );
+			else
+				pConnector->GetProperties().HDR_OUTPUT_METADATA->SetPendingValue( req, 0, true );
 		}
-		if (conn->has_content_type)
-			add_connector_property(req, conn, "content type", 0);
+
+		if ( pConnector->GetProperties().content_type )
+			pConnector->GetProperties().content_type->SetPendingValue( req, 0, true );
 	}
-	for ( size_t i = 0; i < drm->crtcs.size(); i++ ) {
-		add_crtc_property(req, &drm->crtcs[i], "MODE_ID", 0);
-		if ( drm->crtcs[i].has_gamma_lut )
-			add_crtc_property(req, &drm->crtcs[i], "GAMMA_LUT", 0);
-		if ( drm->crtcs[i].has_degamma_lut )
-			add_crtc_property(req, &drm->crtcs[i], "DEGAMMA_LUT", 0);
-		if ( drm->crtcs[i].has_ctm )
-			add_crtc_property(req, &drm->crtcs[i], "CTM", 0);
-		if ( drm->crtcs[i].has_vrr_enabled )
-			add_crtc_property(req, &drm->crtcs[i], "VRR_ENABLED", 0);
-		if ( drm->crtcs[i].has_valve1_regamma_tf )
-			add_crtc_property(req, &drm->crtcs[i], "VALVE1_CRTC_REGAMMA_TF", 0);
-		add_crtc_property(req, &drm->crtcs[i], "ACTIVE", 0);
+
+	for ( std::unique_ptr< gamescope::CDRMCRTC > &pCRTC : drm->crtcs )
+	{
+		pCRTC->GetProperties().ACTIVE->SetPendingValue( req, 0, true );
+		pCRTC->GetProperties().MODE_ID->SetPendingValue( req, 0, true );
+
+		if ( pCRTC->GetProperties().GAMMA_LUT )
+			pCRTC->GetProperties().GAMMA_LUT->SetPendingValue( req, 0, true );
+
+		if ( pCRTC->GetProperties().DEGAMMA_LUT )
+			pCRTC->GetProperties().DEGAMMA_LUT->SetPendingValue( req, 0, true );
+
+		if ( pCRTC->GetProperties().CTM )
+			pCRTC->GetProperties().CTM->SetPendingValue( req, 0, true );
+
+		if ( pCRTC->GetProperties().VRR_ENABLED )
+			pCRTC->GetProperties().VRR_ENABLED->SetPendingValue( req, 0, true );
+
+		if ( pCRTC->GetProperties().OUT_FENCE_PTR )
+			pCRTC->GetProperties().OUT_FENCE_PTR->SetPendingValue( req, 0, true );
+
+		if ( pCRTC->GetProperties().VALVE1_CRTC_REGAMMA_TF )
+			pCRTC->GetProperties().VALVE1_CRTC_REGAMMA_TF->SetPendingValue( req, 0, true );
 	}
-	for ( size_t i = 0; i < drm->planes.size(); i++ ) {
-		struct plane *plane = &drm->planes[i];
-		add_plane_property(req, plane, "FB_ID", 0);
-		add_plane_property(req, plane, "CRTC_ID", 0);
-		add_plane_property(req, plane, "SRC_X", 0);
-		add_plane_property(req, plane, "SRC_Y", 0);
-		add_plane_property(req, plane, "SRC_W", 0);
-		add_plane_property(req, plane, "SRC_H", 0);
-		add_plane_property(req, plane, "CRTC_X", 0);
-		add_plane_property(req, plane, "CRTC_Y", 0);
-		add_plane_property(req, plane, "CRTC_W", 0);
-		add_plane_property(req, plane, "CRTC_H", 0);
-		if (plane->props.count("rotation") > 0)
-			add_plane_property(req, plane, "rotation", DRM_MODE_ROTATE_0);
-		if (plane->props.count("alpha") > 0)
-			add_plane_property(req, plane, "alpha", 0xFFFF);
-		if (plane->props.count("VALVE1_PLANE_DEGAMMA_TF") > 0)
-			add_plane_property(req, plane, "VALVE1_PLANE_DEGAMMA_TF", DRM_VALVE1_TRANSFER_FUNCTION_DEFAULT );
-		if (plane->props.count("VALVE1_PLANE_HDR_MULT") > 0)
-			add_plane_property(req, plane, "VALVE1_PLANE_HDR_MULT", 0x100000000ULL);
-		if (plane->props.count("VALVE1_PLANE_SHAPER_TF") > 0)
-			add_plane_property(req, plane, "VALVE1_PLANE_SHAPER_TF", DRM_VALVE1_TRANSFER_FUNCTION_DEFAULT );
-		if (plane->props.count("VALVE1_PLANE_SHAPER_LUT") > 0)
-			add_plane_property(req, plane, "VALVE1_PLANE_SHAPER_LUT", 0 );
-		if (plane->props.count("VALVE1_PLANE_LUT3D") > 0)
-			add_plane_property(req, plane, "VALVE1_PLANE_LUT3D", 0 );
-		if (plane->props.count("VALVE1_PLANE_BLEND_TF") > 0)
-			add_plane_property(req, plane, "VALVE1_PLANE_BLEND_TF", DRM_VALVE1_TRANSFER_FUNCTION_DEFAULT );
-		if (plane->props.count("VALVE1_PLANE_BLEND_LUT") > 0)
-			add_plane_property(req, plane, "VALVE1_PLANE_BLEND_LUT", 0 );
-		if (plane->props.count("VALVE1_PLANE_CTM") > 0)
-			add_plane_property(req, plane, "VALVE1_PLANE_CTM", 0 );
+
+	for ( std::unique_ptr< gamescope::CDRMPlane > &pPlane : drm->planes )
+	{
+		pPlane->GetProperties().FB_ID->SetPendingValue( req, 0, true );
+		pPlane->GetProperties().CRTC_ID->SetPendingValue( req, 0, true );
+		pPlane->GetProperties().SRC_X->SetPendingValue( req, 0, true );
+		pPlane->GetProperties().SRC_Y->SetPendingValue( req, 0, true );
+		pPlane->GetProperties().SRC_W->SetPendingValue( req, 0, true );
+		pPlane->GetProperties().SRC_H->SetPendingValue( req, 0, true );
+		pPlane->GetProperties().CRTC_X->SetPendingValue( req, 0, true );
+		pPlane->GetProperties().CRTC_Y->SetPendingValue( req, 0, true );
+		pPlane->GetProperties().CRTC_W->SetPendingValue( req, 0, true );
+		pPlane->GetProperties().CRTC_H->SetPendingValue( req, 0, true );
+
+		if ( pPlane->GetProperties().rotation )
+			pPlane->GetProperties().rotation->SetPendingValue( req, DRM_MODE_ROTATE_0, true );
+
+		if ( pPlane->GetProperties().alpha )
+			pPlane->GetProperties().alpha->SetPendingValue( req, 0xFFFF, true );
+
+		//if ( pPlane->GetProperties().zpos )
+		//	pPlane->GetProperties().zpos->SetPendingValue( req, , true );
+
+		if ( pPlane->GetProperties().VALVE1_PLANE_DEGAMMA_TF )
+			pPlane->GetProperties().VALVE1_PLANE_DEGAMMA_TF->SetPendingValue( req, DRM_VALVE1_TRANSFER_FUNCTION_DEFAULT, true );
+
+		if ( pPlane->GetProperties().VALVE1_PLANE_DEGAMMA_LUT )
+			pPlane->GetProperties().VALVE1_PLANE_DEGAMMA_LUT->SetPendingValue( req, 0, true );
+
+		if ( pPlane->GetProperties().VALVE1_PLANE_CTM )
+			pPlane->GetProperties().VALVE1_PLANE_CTM->SetPendingValue( req, 0, true );
+
+		if ( pPlane->GetProperties().VALVE1_PLANE_HDR_MULT )
+			pPlane->GetProperties().VALVE1_PLANE_HDR_MULT->SetPendingValue( req, 0x100000000ULL, true );
+
+		if ( pPlane->GetProperties().VALVE1_PLANE_SHAPER_TF )
+			pPlane->GetProperties().VALVE1_PLANE_SHAPER_TF->SetPendingValue( req, DRM_VALVE1_TRANSFER_FUNCTION_DEFAULT, true );
+
+		if ( pPlane->GetProperties().VALVE1_PLANE_SHAPER_LUT )
+			pPlane->GetProperties().VALVE1_PLANE_SHAPER_LUT->SetPendingValue( req, 0, true );
+
+		if ( pPlane->GetProperties().VALVE1_PLANE_LUT3D )
+			pPlane->GetProperties().VALVE1_PLANE_LUT3D->SetPendingValue( req, 0, true );
+
+		if ( pPlane->GetProperties().VALVE1_PLANE_BLEND_TF )
+			pPlane->GetProperties().VALVE1_PLANE_BLEND_TF->SetPendingValue( req, DRM_VALVE1_TRANSFER_FUNCTION_DEFAULT, true );
+
+		if ( pPlane->GetProperties().VALVE1_PLANE_BLEND_LUT )
+			pPlane->GetProperties().VALVE1_PLANE_BLEND_LUT->SetPendingValue( req, 0, true );
 	}
+
 	// We can't do a non-blocking commit here or else risk EBUSY in case the
 	// previous page-flip is still in flight.
 	uint32_t flags = DRM_MODE_ATOMIC_ALLOW_MODESET;
@@ -1707,14 +1311,32 @@ int drm_commit(struct drm_t *drm, const struct FrameInfo_t *frameInfo )
 
 		drm->pending = drm->current;
 
-		for ( size_t i = 0; i < drm->crtcs.size(); i++ )
+		for ( std::unique_ptr< gamescope::CDRMCRTC > &pCRTC : drm->crtcs )
 		{
-			drm->crtcs[i].pending = drm->crtcs[i].current;
+			for ( std::optional<gamescope::CDRMAtomicProperty> &oProperty : pCRTC->GetProperties() )
+			{
+				if ( oProperty )
+					oProperty->Rollback();
+			}
 		}
 
-		for (auto &kv : drm->connectors) {
-			struct connector *conn = &kv.second;
-			conn->pending = conn->current;
+		for ( std::unique_ptr< gamescope::CDRMPlane > &pPlane : drm->planes )
+		{
+			for ( std::optional<gamescope::CDRMAtomicProperty> &oProperty : pPlane->GetProperties() )
+			{
+				if ( oProperty )
+					oProperty->Rollback();
+			}
+		}
+
+		for ( auto &iter : drm->connectors )
+		{
+			gamescope::CDRMConnector *pConnector = &iter.second;
+			for ( std::optional<gamescope::CDRMAtomicProperty> &oProperty : pConnector->GetProperties() )
+			{
+				if ( oProperty )
+					oProperty->Rollback();
+			}
 		}
 
 		// Undo refcount if the commit didn't actually work
@@ -1736,14 +1358,32 @@ int drm_commit(struct drm_t *drm, const struct FrameInfo_t *frameInfo )
 
 		drm->current = drm->pending;
 
-		for (auto & crtc : drm->crtcs)
+		for ( std::unique_ptr< gamescope::CDRMCRTC > &pCRTC : drm->crtcs )
 		{
-			crtc.current = crtc.pending;
+			for ( std::optional<gamescope::CDRMAtomicProperty> &oProperty : pCRTC->GetProperties() )
+			{
+				if ( oProperty )
+					oProperty->OnCommit();
+			}
 		}
 
-		for (auto &kv : drm->connectors) {
-			struct connector *conn = &kv.second;
-			conn->current = conn->pending;
+		for ( std::unique_ptr< gamescope::CDRMPlane > &pPlane : drm->planes )
+		{
+			for ( std::optional<gamescope::CDRMAtomicProperty> &oProperty : pPlane->GetProperties() )
+			{
+				if ( oProperty )
+					oProperty->OnCommit();
+			}
+		}
+
+		for ( auto &iter : drm->connectors )
+		{
+			gamescope::CDRMConnector *pConnector = &iter.second;
+			for ( std::optional<gamescope::CDRMAtomicProperty> &oProperty : pConnector->GetProperties() )
+			{
+				if ( oProperty )
+					oProperty->OnCommit();
+			}
 		}
 	}
 
@@ -1928,190 +1568,87 @@ void drm_unlock_fbid( struct drm_t *drm, uint32_t fbid )
 	drm_unlock_fb_internal( drm, &fb );
 }
 
-static uint64_t determine_drm_orientation(struct drm_t *drm, struct connector *conn, const drmModeModeInfo *mode)
+static uint64_t determine_drm_orientation(struct drm_t *drm, gamescope::CDRMConnector *pConnector, const drmModeModeInfo *mode)
 {
-	drm_screen_type screenType = drm_get_connector_type(conn->connector);
-
-	if (conn && conn->props.count("panel orientation") > 0)
+	if ( pConnector && pConnector->GetProperties().panel_orientation )
 	{
-		const char *orientation = get_enum_name(conn->props["panel orientation"], conn->initial_prop_values["panel orientation"]);
-
-		if (strcmp(orientation, "Normal") == 0)
+		switch ( pConnector->GetProperties().panel_orientation->GetCurrentValue() )
 		{
-			return DRM_MODE_ROTATE_0;
-		}
-		else if (strcmp(orientation, "Left Side Up") == 0)
-		{
-			return DRM_MODE_ROTATE_90;
-		}
-		else if (strcmp(orientation, "Upside Down") == 0)
-		{
-			return DRM_MODE_ROTATE_180;
-		}
-		else if (strcmp(orientation, "Right Side Up") == 0)
-		{
-			return DRM_MODE_ROTATE_270;
+			case DRM_MODE_PANEL_ORIENTATION_NORMAL:
+				return DRM_MODE_ROTATE_0;
+			case DRM_MODE_PANEL_ORIENTATION_BOTTOM_UP:
+				return DRM_MODE_ROTATE_180;
+			case DRM_MODE_PANEL_ORIENTATION_LEFT_UP:
+				return DRM_MODE_ROTATE_90;
+			case DRM_MODE_PANEL_ORIENTATION_RIGHT_UP:
+				return DRM_MODE_ROTATE_270;
 		}
 	}
-	else
+
+	if ( pConnector->GetScreenType() == gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL && mode )
 	{
-		if (screenType == DRM_SCREEN_TYPE_INTERNAL && mode)
-		{
-			// Auto-detect portait mode for internal displays
-			return mode->hdisplay < mode->vdisplay ? DRM_MODE_ROTATE_270 : DRM_MODE_ROTATE_0;
-		}
-		else
-		{
-			return DRM_MODE_ROTATE_0;
-		}
+		// Auto-detect portait mode for internal displays
+		return mode->hdisplay < mode->vdisplay ? DRM_MODE_ROTATE_270 : DRM_MODE_ROTATE_0;
 	}
 
 	return DRM_MODE_ROTATE_0;
 }
 
 /* Handle the orientation of the display */
-static void update_drm_effective_orientation(struct drm_t *drm, struct connector *conn, const drmModeModeInfo *mode)
+static void update_drm_effective_orientation(struct drm_t *drm, gamescope::CDRMConnector *pConnector, const drmModeModeInfo *mode)
 {
-	drm_screen_type screenType = drm_get_connector_type(conn->connector);
+	gamescope::GamescopeScreenType eScreenType = pConnector->GetScreenType();
 
-	if (screenType == DRM_SCREEN_TYPE_INTERNAL)
+	if ( eScreenType == gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL )
 	{
 		switch ( g_drmModeOrientation )
 		{
 			case PANEL_ORIENTATION_0:
-				g_drmEffectiveOrientation[screenType] = DRM_MODE_ROTATE_0;
+				g_drmEffectiveOrientation[eScreenType] = DRM_MODE_ROTATE_0;
 				break;
 			case PANEL_ORIENTATION_90:
-				g_drmEffectiveOrientation[screenType] = DRM_MODE_ROTATE_90;
+				g_drmEffectiveOrientation[eScreenType] = DRM_MODE_ROTATE_90;
 				break;
 			case PANEL_ORIENTATION_180:
-				g_drmEffectiveOrientation[screenType] = DRM_MODE_ROTATE_180;
+				g_drmEffectiveOrientation[eScreenType] = DRM_MODE_ROTATE_180;
 				break;
 			case PANEL_ORIENTATION_270:
-				g_drmEffectiveOrientation[screenType] = DRM_MODE_ROTATE_270;
+				g_drmEffectiveOrientation[eScreenType] = DRM_MODE_ROTATE_270;
 				break;
 			case PANEL_ORIENTATION_AUTO:
-				g_drmEffectiveOrientation[screenType] = determine_drm_orientation(drm, conn, mode);
+				g_drmEffectiveOrientation[eScreenType] = determine_drm_orientation( drm, pConnector, mode );
 				break;
 		}
 	}
 	else
 	{
-		g_drmEffectiveOrientation[screenType] = determine_drm_orientation(drm, conn, mode);
+		g_drmEffectiveOrientation[eScreenType] = determine_drm_orientation( drm, pConnector, mode );
 	}
 }
 
-static void update_drm_effective_orientations(struct drm_t *drm, struct connector *conn, const drmModeModeInfo *mode)
+static void update_drm_effective_orientations( struct drm_t *drm, const drmModeModeInfo *pMode )
 {
-	drm_screen_type screenType = drm_get_connector_type(conn->connector);
-	if (screenType == DRM_SCREEN_TYPE_INTERNAL)
-	{
-		update_drm_effective_orientation(drm, conn, mode);
-		return;
-	}
-	else if (screenType == DRM_SCREEN_TYPE_EXTERNAL)
-	{
-		update_drm_effective_orientation(drm, conn, mode);
+	gamescope::CDRMConnector *pInternalConnector = nullptr;
+	if ( drm->pConnector && drm->pConnector->GetScreenType() == gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL )
+		pInternalConnector = drm->pConnector;
 
-		struct connector *internal_conn = nullptr;
-		for ( auto &kv : drm->connectors ) {
-			struct connector *kv_con = &kv.second;
-			if (kv_con->connector)
+	if ( !pInternalConnector )
+	{
+		for ( auto &iter : drm->connectors )
+		{
+			gamescope::CDRMConnector *pConnector = &iter.second;
+			if ( pConnector->GetScreenType() == gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL )
 			{
-				drm_screen_type kv_screentype = drm_get_connector_type(kv_con->connector);
-				if (kv_screentype == DRM_SCREEN_TYPE_INTERNAL)
-				{
-					internal_conn = kv_con;
-					break;
-				}
+				pInternalConnector = pConnector;
+				// Find mode for internal connector instead.
+				pMode = find_mode(pInternalConnector->GetModeConnector(), 0, 0, 0);
+				break;
 			}
 		}
-
-		if (internal_conn)
-		{
-			const drmModeModeInfo *default_internal_mode = find_mode(internal_conn->connector, 0, 0, 0);
-			update_drm_effective_orientation(drm, internal_conn, default_internal_mode);
-		}
-	}
-}
-
-/* Prepares an atomic commit without using libliftoff */
-static int
-drm_prepare_basic( struct drm_t *drm, const struct FrameInfo_t *frameInfo )
-{
-	// Discard cases where our non-liftoff path is known to fail
-
-	drm_screen_type screenType = drm_get_screen_type(drm);
-
-	// It only supports one layer
-	if ( frameInfo->layerCount > 1 )
-	{
-		drm_verbose_log.errorf("drm_prepare_basic: cannot handle %d layers", frameInfo->layerCount);
-		return -EINVAL;
 	}
 
-	if ( frameInfo->layers[ 0 ].fbid == 0 )
-	{
-		drm_verbose_log.errorf("drm_prepare_basic: layer has no FB");
-		return -EINVAL;
-	}
-
-	drmModeAtomicReq *req = drm->req;
-	uint32_t fb_id = frameInfo->layers[ 0 ].fbid;
-
-	drm->fbids_in_req.push_back( fb_id );
-
-	add_plane_property(req, drm->primary, "rotation", g_drmEffectiveOrientation[screenType] );
-
-	add_plane_property(req, drm->primary, "FB_ID", fb_id);
-	add_plane_property(req, drm->primary, "CRTC_ID", drm->crtc->id);
-	add_plane_property(req, drm->primary, "SRC_X", 0);
-	add_plane_property(req, drm->primary, "SRC_Y", 0);
-
-	const uint16_t srcWidth = frameInfo->layers[ 0 ].tex->width();
-	const uint16_t srcHeight = frameInfo->layers[ 0 ].tex->height();
-
-	add_plane_property(req, drm->primary, "SRC_W", srcWidth << 16);
-	add_plane_property(req, drm->primary, "SRC_H", srcHeight << 16);
-
-	gpuvis_trace_printf ( "legacy flip fb_id %u src %ix%i", fb_id,
-						 srcWidth, srcHeight );
-
-	int64_t crtcX = frameInfo->layers[ 0 ].offset.x * -1;
-	int64_t crtcY = frameInfo->layers[ 0 ].offset.y * -1;
-	int64_t crtcW = srcWidth / frameInfo->layers[ 0 ].scale.x;
-	int64_t crtcH = srcHeight / frameInfo->layers[ 0 ].scale.y;
-
-	if ( g_bRotated )
-	{
-		int64_t imageH = frameInfo->layers[ 0 ].tex->contentHeight() / frameInfo->layers[ 0 ].scale.y;
-
-		int64_t tmp = crtcX;
-		crtcX = g_nOutputHeight - imageH - crtcY;
-		crtcY = tmp;
-
-		tmp = crtcW;
-		crtcW = crtcH;
-		crtcH = tmp;
-	}
-
-	add_plane_property(req, drm->primary, "CRTC_X", crtcX);
-	add_plane_property(req, drm->primary, "CRTC_Y", crtcY);
-	add_plane_property(req, drm->primary, "CRTC_W", crtcW);
-	add_plane_property(req, drm->primary, "CRTC_H", crtcH);
-
-	gpuvis_trace_printf ( "crtc %li,%li %lix%li", crtcX, crtcY, crtcW, crtcH );
-
-	// TODO: disable all planes except drm->primary
-
-	unsigned test_flags = (drm->flags & DRM_MODE_ATOMIC_ALLOW_MODESET) | DRM_MODE_ATOMIC_TEST_ONLY;
-	int ret = drmModeAtomicCommit( drm->fd, drm->req, test_flags, NULL );
-
-	if ( ret != 0 && ret != -EINVAL && ret != -ERANGE ) {
-		drm_log.errorf_errno( "drmModeAtomicCommit failed" );
-	}
-
-	return ret;
+	if ( pInternalConnector )
+		update_drm_effective_orientation( drm, pInternalConnector, pMode );
 }
 
 // Only used for NV12 buffers
@@ -2333,10 +1870,498 @@ bool g_bDisableBlendTF = false;
 
 bool g_bSinglePlaneOptimizations = true;
 
+namespace gamescope
+{
+	////////////////////
+	// CDRMAtomicObject
+	////////////////////
+	CDRMAtomicObject::CDRMAtomicObject( uint32_t ulObjectId )
+		: m_ulObjectId{ ulObjectId }
+	{
+	}
+
+
+	/////////////////////////
+	// CDRMAtomicTypedObject
+	/////////////////////////
+	template < uint32_t DRMObjectType >
+	CDRMAtomicTypedObject<DRMObjectType>::CDRMAtomicTypedObject( uint32_t ulObjectId )
+		: CDRMAtomicObject{ ulObjectId }
+	{
+	}
+
+	template < uint32_t DRMObjectType >
+	std::optional<DRMObjectRawProperties> CDRMAtomicTypedObject<DRMObjectType>::GetRawProperties()
+	{
+		drmModeObjectProperties *pProperties = drmModeObjectGetProperties( g_DRM.fd, m_ulObjectId, DRMObjectType );
+		if ( !pProperties )
+		{
+			drm_log.errorf_errno( "drmModeObjectGetProperties failed" );
+			return std::nullopt;
+		}
+		defer( drmModeFreeObjectProperties( pProperties ) );
+
+		DRMObjectRawProperties rawProperties;
+		for ( uint32_t i = 0; i < pProperties->count_props; i++ )
+		{
+			drmModePropertyRes *pProperty = drmModeGetProperty( g_DRM.fd, pProperties->props[ i ] );
+			if ( !pProperty )
+				continue;
+			defer( drmModeFreeProperty( pProperty ) );
+
+			rawProperties[ pProperty->name ] = DRMObjectRawProperty{ pProperty->prop_id, pProperties->prop_values[ i ] };
+		}
+
+		return rawProperties;
+	}
+
+
+	/////////////////////////
+	// CDRMAtomicProperty
+	/////////////////////////
+	CDRMAtomicProperty::CDRMAtomicProperty( CDRMAtomicObject *pObject, DRMObjectRawProperty rawProperty )
+		: m_pObject{ pObject }
+		, m_uPropertyId{ rawProperty.uPropertyId }
+		, m_ulPendingValue{ rawProperty.ulValue }
+		, m_ulCurrentValue{ rawProperty.ulValue }
+		, m_ulInitialValue{ rawProperty.ulValue }
+	{
+	}
+
+	/*static*/ std::optional<CDRMAtomicProperty> CDRMAtomicProperty::Instantiate( const char *pszName, CDRMAtomicObject *pObject, const DRMObjectRawProperties& rawProperties )
+	{
+		auto iter = rawProperties.find( pszName );
+		if ( iter == rawProperties.end() )
+			return std::nullopt;
+
+		return CDRMAtomicProperty{ pObject, iter->second };
+	}
+
+	int CDRMAtomicProperty::SetPendingValue( drmModeAtomicReq *pRequest, uint64_t ulValue, bool bForce /*= false*/ )
+	{
+		// In instances where we rolled back due to -EINVAL, or we want to ensure a value from an unclean state
+		// eg. from an unclean or other initial state, you can force an update in the request with bForce.
+
+		if ( ulValue == m_ulPendingValue && !bForce )
+			return 0;
+
+		int ret = drmModeAtomicAddProperty( pRequest, m_pObject->GetObjectId(), m_uPropertyId, ulValue );
+		if ( ret < 0 )
+			return ret;
+
+		m_ulPendingValue = ulValue;
+		return ret;
+	}
+
+	void CDRMAtomicProperty::OnCommit()
+	{
+		m_ulCurrentValue = m_ulPendingValue;
+	}
+
+	void CDRMAtomicProperty::Rollback()
+	{
+		m_ulPendingValue = m_ulCurrentValue;
+	}
+
+	/////////////////////////
+	// CDRMPlane
+	/////////////////////////
+	CDRMPlane::CDRMPlane( drmModePlane *pPlane )
+		: CDRMAtomicTypedObject<DRM_MODE_OBJECT_PLANE>( pPlane->plane_id )
+		, m_pPlane{ pPlane, []( drmModePlane *pPlane ){ drmModeFreePlane( pPlane ); } }
+	{
+		RefreshState();
+	}
+
+	void CDRMPlane::RefreshState()
+	{
+		auto rawProperties = GetRawProperties();
+		if ( rawProperties )
+		{
+			m_Props.type                     = CDRMAtomicProperty::Instantiate( "type",                     this, *rawProperties );
+			m_Props.IN_FORMATS               = CDRMAtomicProperty::Instantiate( "IN_FORMATS",               this, *rawProperties );
+
+			m_Props.FB_ID                    = CDRMAtomicProperty::Instantiate( "FB_ID",                    this, *rawProperties );
+			m_Props.CRTC_ID                  = CDRMAtomicProperty::Instantiate( "CRTC_ID",                  this, *rawProperties );
+			m_Props.SRC_X                    = CDRMAtomicProperty::Instantiate( "SRC_X",                    this, *rawProperties );
+			m_Props.SRC_Y                    = CDRMAtomicProperty::Instantiate( "SRC_Y",                    this, *rawProperties );
+			m_Props.SRC_W                    = CDRMAtomicProperty::Instantiate( "SRC_W",                    this, *rawProperties );
+			m_Props.SRC_H                    = CDRMAtomicProperty::Instantiate( "SRC_H",                    this, *rawProperties );
+			m_Props.CRTC_X                   = CDRMAtomicProperty::Instantiate( "CRTC_X",                   this, *rawProperties );
+			m_Props.CRTC_Y                   = CDRMAtomicProperty::Instantiate( "CRTC_Y",                   this, *rawProperties );
+			m_Props.CRTC_W                   = CDRMAtomicProperty::Instantiate( "CRTC_W",                   this, *rawProperties );
+			m_Props.CRTC_H                   = CDRMAtomicProperty::Instantiate( "CRTC_H",                   this, *rawProperties );
+			m_Props.zpos                     = CDRMAtomicProperty::Instantiate( "zpos",                     this, *rawProperties );
+			m_Props.alpha                    = CDRMAtomicProperty::Instantiate( "alpha",                    this, *rawProperties );
+			m_Props.rotation                 = CDRMAtomicProperty::Instantiate( "rotation",                 this, *rawProperties );
+			m_Props.COLOR_ENCODING           = CDRMAtomicProperty::Instantiate( "COLOR_ENCODING",           this, *rawProperties );
+			m_Props.COLOR_RANGE              = CDRMAtomicProperty::Instantiate( "COLOR_RANGE",              this, *rawProperties );
+			m_Props.VALVE1_PLANE_DEGAMMA_TF  = CDRMAtomicProperty::Instantiate( "VALVE1_PLANE_DEGAMMA_TF",  this, *rawProperties );
+			m_Props.VALVE1_PLANE_DEGAMMA_LUT = CDRMAtomicProperty::Instantiate( "VALVE1_PLANE_DEGAMMA_LUT", this, *rawProperties );
+			m_Props.VALVE1_PLANE_CTM         = CDRMAtomicProperty::Instantiate( "VALVE1_PLANE_CTM",         this, *rawProperties );
+			m_Props.VALVE1_PLANE_HDR_MULT    = CDRMAtomicProperty::Instantiate( "VALVE1_PLANE_HDR_MULT",    this, *rawProperties );
+			m_Props.VALVE1_PLANE_SHAPER_LUT  = CDRMAtomicProperty::Instantiate( "VALVE1_PLANE_SHAPER_LUT",  this, *rawProperties );
+			m_Props.VALVE1_PLANE_SHAPER_TF   = CDRMAtomicProperty::Instantiate( "VALVE1_PLANE_SHAPER_TF",   this, *rawProperties );
+			m_Props.VALVE1_PLANE_LUT3D       = CDRMAtomicProperty::Instantiate( "VALVE1_PLANE_LUT3D",       this, *rawProperties );
+			m_Props.VALVE1_PLANE_BLEND_TF    = CDRMAtomicProperty::Instantiate( "VALVE1_PLANE_BLEND_TF",    this, *rawProperties );
+			m_Props.VALVE1_PLANE_BLEND_LUT   = CDRMAtomicProperty::Instantiate( "VALVE1_PLANE_BLEND_LUT",   this, *rawProperties );
+		}
+	}
+
+	/////////////////////////
+	// CDRMCRTC
+	/////////////////////////
+	CDRMCRTC::CDRMCRTC( drmModeCrtc *pCRTC, uint32_t uCRTCMask )
+		: CDRMAtomicTypedObject<DRM_MODE_OBJECT_CRTC>( pCRTC->crtc_id )
+		, m_pCRTC{ pCRTC, []( drmModeCrtc *pCRTC ){ drmModeFreeCrtc( pCRTC ); } }
+		, m_uCRTCMask{ uCRTCMask }
+	{
+		RefreshState();
+	}
+
+	void CDRMCRTC::RefreshState()
+	{
+		auto rawProperties = GetRawProperties();
+		if ( rawProperties )
+		{
+			m_Props.ACTIVE                   = CDRMAtomicProperty::Instantiate( "ACTIVE",                 this, *rawProperties );
+			m_Props.MODE_ID                  = CDRMAtomicProperty::Instantiate( "MODE_ID",                this, *rawProperties );
+			m_Props.GAMMA_LUT                = CDRMAtomicProperty::Instantiate( "GAMMA_LUT",              this, *rawProperties );
+			m_Props.DEGAMMA_LUT              = CDRMAtomicProperty::Instantiate( "DEGAMMA_LUT",            this, *rawProperties );
+			m_Props.CTM                      = CDRMAtomicProperty::Instantiate( "CTM",                    this, *rawProperties );
+			m_Props.VRR_ENABLED              = CDRMAtomicProperty::Instantiate( "VRR_ENABLED",            this, *rawProperties );
+			m_Props.OUT_FENCE_PTR            = CDRMAtomicProperty::Instantiate( "OUT_FENCE_PTR",          this, *rawProperties );
+			m_Props.VALVE1_CRTC_REGAMMA_TF   = CDRMAtomicProperty::Instantiate( "VALVE1_CRTC_REGAMMA_TF", this, *rawProperties );
+		}
+	}
+
+	/////////////////////////
+	// CDRMConnector
+	/////////////////////////
+	CDRMConnector::CDRMConnector( drmModeConnector *pConnector )
+		: CDRMAtomicTypedObject<DRM_MODE_OBJECT_CONNECTOR>( pConnector->connector_id )
+		, m_pConnector{ pConnector, []( drmModeConnector *pConnector ){ drmModeFreeConnector( pConnector ); } }
+	{
+		RefreshState();
+	}
+
+	void CDRMConnector::RefreshState()
+	{
+		// For the connector re-poll the drmModeConnector to get new modes, etc.
+		// This isn't needed for CRTC/Planes in which the state is immutable for their lifetimes.
+		// Connectors can be re-plugged.
+
+		// TODO: Clean this up.
+		m_pConnector = CAutoDeletePtr< drmModeConnector >
+		{
+			drmModeGetConnector( g_DRM.fd, m_pConnector->connector_id ),
+			[]( drmModeConnector *pConnector ){ drmModeFreeConnector( pConnector ); }
+		};
+
+		// Sort the modes to our preference.
+		std::stable_sort( m_pConnector->modes, m_pConnector->modes + m_pConnector->count_modes, []( const drmModeModeInfo &a, const drmModeModeInfo &b )
+		{
+			bool bGoodRefreshA = a.vrefresh >= 60;
+			bool bGoodRefreshB = b.vrefresh >= 60;
+			if (bGoodRefreshA != bGoodRefreshB)
+				return bGoodRefreshA;
+
+			bool bPreferredA = a.type & DRM_MODE_TYPE_PREFERRED;
+			bool bPreferredB = b.type & DRM_MODE_TYPE_PREFERRED;
+			if (bPreferredA != bPreferredB)
+				return bPreferredA;
+
+			int nAreaA = a.hdisplay * a.vdisplay;
+			int nAreaB = b.hdisplay * b.vdisplay;
+			if (nAreaA != nAreaB)
+				return nAreaA > nAreaB;
+
+			return a.vrefresh > b.vrefresh;
+		} );
+
+		// Clear this information out.
+		m_Mutable = MutableConnectorState{};
+
+		m_Mutable.uPossibleCRTCMask = drmModeConnectorGetPossibleCrtcs( g_DRM.fd, GetModeConnector() );
+
+		// These are string constants from libdrm, no free.
+		const char *pszTypeStr = drmModeGetConnectorTypeName( GetModeConnector()->connector_type );
+		if ( !pszTypeStr )
+			pszTypeStr = "Unknown";
+
+		snprintf( m_Mutable.szName, sizeof( m_Mutable.szName ), "%s-%d", pszTypeStr, GetModeConnector()->connector_type_id );
+		m_Mutable.szName[ sizeof( m_Mutable.szName ) - 1 ] = '\0';
+
+		auto rawProperties = GetRawProperties();
+		if ( rawProperties )
+		{
+			m_Props.CRTC_ID                  = CDRMAtomicProperty::Instantiate( "CRTC_ID",                this, *rawProperties );
+			m_Props.Colorspace               = CDRMAtomicProperty::Instantiate( "Colorspace",             this, *rawProperties );
+			m_Props.content_type             = CDRMAtomicProperty::Instantiate( "content type",           this, *rawProperties );
+			m_Props.panel_orientation        = CDRMAtomicProperty::Instantiate( "panel orientation",      this, *rawProperties );
+			m_Props.HDR_OUTPUT_METADATA      = CDRMAtomicProperty::Instantiate( "HDR_OUTPUT_METADATA",    this, *rawProperties );
+			m_Props.vrr_capable              = CDRMAtomicProperty::Instantiate( "vrr_capable",            this, *rawProperties );
+			m_Props.EDID                     = CDRMAtomicProperty::Instantiate( "EDID",                   this, *rawProperties );
+		}
+
+		ParseEDID();
+	}
+
+	void CDRMConnector::ParseEDID()
+	{
+		if ( !GetProperties().EDID )
+			return;
+
+		uint64_t ulBlobId = GetProperties().EDID->GetCurrentValue();
+		if ( !ulBlobId )
+			return;
+
+		drmModePropertyBlobRes *pBlob = drmModeGetPropertyBlob( g_DRM.fd, ulBlobId );
+		if ( !pBlob )
+			return;
+		defer( drmModeFreePropertyBlob( pBlob ) );
+
+		const uint8_t *pDataPointer = reinterpret_cast<const uint8_t *>( pBlob->data );
+		m_Mutable.EdidData = std::vector<uint8_t>{ pDataPointer, pDataPointer + pBlob->length };
+
+		di_info *pInfo = di_info_parse_edid( m_Mutable.EdidData.data(), m_Mutable.EdidData.size() );
+		if ( !pInfo )
+		{
+			drm_log.errorf( "Failed to parse edid for connector: %s", m_Mutable.szName );
+			return;
+		}
+		defer( di_info_destroy( pInfo ) );
+
+		const di_edid *pEdid = di_info_get_edid( pInfo );
+
+		const di_edid_vendor_product *pProduct = di_edid_get_vendor_product( pEdid );
+		m_Mutable.szMakePNP[0] = pProduct->manufacturer[0];
+		m_Mutable.szMakePNP[1] = pProduct->manufacturer[1];
+		m_Mutable.szMakePNP[2] = pProduct->manufacturer[2];
+		m_Mutable.szMakePNP[3] = '\0';
+
+		m_Mutable.pszMake = m_Mutable.szMakePNP;
+		auto pnpIter = pnps.find( m_Mutable.szMakePNP );
+		if ( pnpIter != pnps.end() )
+			m_Mutable.pszMake = pnpIter->second.c_str();
+
+		const di_edid_display_descriptor *const *pDescriptors = di_edid_get_display_descriptors( pEdid );
+		for ( size_t i = 0; pDescriptors[i] != nullptr; i++ )
+		{
+			const di_edid_display_descriptor *pDesc = pDescriptors[i];
+			if ( di_edid_display_descriptor_get_tag( pDesc ) == DI_EDID_DISPLAY_DESCRIPTOR_PRODUCT_NAME )
+			{
+				// Max length of di_edid_display_descriptor_get_string is 14
+				// m_szModel is 16 bytes.
+				const char *pszModel = di_edid_display_descriptor_get_string( pDesc );
+				strncpy( m_Mutable.szModel, pszModel, sizeof( m_Mutable.szModel ) );
+			}
+		}
+
+		drm_log.infof("Connector %s -> %s - %s", m_Mutable.szName, m_Mutable.szMakePNP, m_Mutable.szModel );
+
+		const bool bSteamDeckDisplay =
+			( m_Mutable.szMakePNP == "WLC"sv && m_Mutable.szModel == "ANX7530 U"sv ) ||
+			( m_Mutable.szMakePNP == "ANX"sv && m_Mutable.szModel == "ANX7530 U"sv ) ||
+			( m_Mutable.szMakePNP == "VLV"sv && m_Mutable.szModel == "ANX7530 U"sv ) ||
+			( m_Mutable.szMakePNP == "VLV"sv && m_Mutable.szModel == "Jupiter"sv ) ||
+			( m_Mutable.szMakePNP == "VLV"sv && m_Mutable.szModel == "Galileo"sv );
+
+		if ( bSteamDeckDisplay )
+		{
+			static constexpr uint32_t kPIDGalileoSDC = 0x3003;
+			static constexpr uint32_t kPIDGalileoBOE = 0x3004;
+
+			if ( pProduct->product == kPIDGalileoSDC )
+			{
+				m_Mutable.eKnownDisplay = GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_OLED_SDC;
+				m_Mutable.ValidDynamicRefreshRates = std::span( s_kSteamDeckOLEDRates );
+			}
+			else if ( pProduct->product == kPIDGalileoBOE )
+			{
+				m_Mutable.eKnownDisplay = GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_OLED_BOE;
+				m_Mutable.ValidDynamicRefreshRates = std::span( s_kSteamDeckOLEDRates );
+			}
+			else
+			{
+				m_Mutable.eKnownDisplay = GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_LCD;
+				m_Mutable.ValidDynamicRefreshRates = std::span( s_kSteamDeckLCDRates );
+			}
+		}
+
+		// Colorimetry
+		const char *pszColorOverride = getenv( "GAMESCOPE_INTERNAL_COLORIMETRY_OVERRIDE" );
+		if ( pszColorOverride && *pszColorOverride && GetScreenType() == GAMESCOPE_SCREEN_TYPE_INTERNAL )
+		{
+			if ( sscanf( pszColorOverride, "%f %f %f %f %f %f %f %f",
+				&m_Mutable.DisplayColorimetry.primaries.r.x, &m_Mutable.DisplayColorimetry.primaries.r.y,
+				&m_Mutable.DisplayColorimetry.primaries.g.x, &m_Mutable.DisplayColorimetry.primaries.g.y,
+				&m_Mutable.DisplayColorimetry.primaries.b.x, &m_Mutable.DisplayColorimetry.primaries.b.y,
+				&m_Mutable.DisplayColorimetry.white.x, &m_Mutable.DisplayColorimetry.white.y ) == 8 )
+			{
+				drm_log.infof( "[colorimetry]: GAMESCOPE_INTERNAL_COLORIMETRY_OVERRIDE detected" );
+			}
+			else
+			{
+				drm_log.errorf( "[colorimetry]: GAMESCOPE_INTERNAL_COLORIMETRY_OVERRIDE specified, but could not parse \"rx ry gx gy bx by wx wy\"" );
+			}
+		}
+		else if ( m_Mutable.eKnownDisplay == GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_LCD )
+		{
+			drm_log.infof( "[colorimetry]: Steam Deck LCD detected. Using known colorimetry" );
+			m_Mutable.DisplayColorimetry = displaycolorimetry_steamdeck_measured;
+		}
+		else
+		{
+			// Steam Deck OLED has calibrated chromaticity coordinates in the EDID
+			// for each unit.
+			// Other external displays probably have this too.
+
+			const di_edid_chromaticity_coords *pChroma = di_edid_get_chromaticity_coords( pEdid );
+			if ( pChroma && pChroma->red_x != 0.0f )
+			{
+				drm_log.infof( "[colorimetry]: EDID with colorimetry detected. Using it" );
+				m_Mutable.DisplayColorimetry = displaycolorimetry_t
+				{
+					.primaries = { { pChroma->red_x, pChroma->red_y }, { pChroma->green_x, pChroma->green_y }, { pChroma->blue_x, pChroma->blue_y } },
+					.white = { pChroma->white_x, pChroma->white_y },
+				};
+			}
+		}
+
+		drm_log.infof( "[colorimetry]: r %f %f", m_Mutable.DisplayColorimetry.primaries.r.x, m_Mutable.DisplayColorimetry.primaries.r.y );
+		drm_log.infof( "[colorimetry]: g %f %f", m_Mutable.DisplayColorimetry.primaries.g.x, m_Mutable.DisplayColorimetry.primaries.g.y );
+		drm_log.infof( "[colorimetry]: b %f %f", m_Mutable.DisplayColorimetry.primaries.b.x, m_Mutable.DisplayColorimetry.primaries.b.y );
+		drm_log.infof( "[colorimetry]: w %f %f", m_Mutable.DisplayColorimetry.white.x, m_Mutable.DisplayColorimetry.white.y );
+
+		/////////////////////
+		// Parse HDR stuff.
+		/////////////////////
+		std::optional<CDRMConnector::HDRInfo> oKnownHDRInfo = GetKnownDisplayHDRInfo( m_Mutable.eKnownDisplay );
+		if ( oKnownHDRInfo )
+		{
+			m_Mutable.HDR = *oKnownHDRInfo;
+		}
+		else
+		{
+			const di_cta_hdr_static_metadata_block *pHDRStaticMetadata = nullptr;
+			const di_cta_colorimetry_block *pColorimetry = nullptr;
+
+			const di_edid_cta* pCTA = NULL;
+			const di_edid_ext *const *ppExts = di_edid_get_extensions( pEdid );
+			for ( ; *ppExts != nullptr; ppExts++ )
+			{
+				if ( ( pCTA = di_edid_ext_get_cta( *ppExts ) ) )
+					break;
+			}
+
+			if ( pCTA )
+			{
+				const di_cta_data_block *const *ppBlocks = di_edid_cta_get_data_blocks( pCTA );
+				for ( ; *ppBlocks != nullptr; ppBlocks++ )
+				{
+					if ( di_cta_data_block_get_tag( *ppBlocks ) == DI_CTA_DATA_BLOCK_HDR_STATIC_METADATA )
+					{
+						pHDRStaticMetadata = di_cta_data_block_get_hdr_static_metadata( *ppBlocks );
+						continue;
+					}
+
+					if ( di_cta_data_block_get_tag( *ppBlocks ) == DI_CTA_DATA_BLOCK_COLORIMETRY )
+					{
+						pColorimetry = di_cta_data_block_get_colorimetry( *ppBlocks );
+						continue;
+					}
+				}
+			}
+
+			if ( pColorimetry && pColorimetry->bt2020_rgb &&
+				 pHDRStaticMetadata && pHDRStaticMetadata->eotfs && pHDRStaticMetadata->eotfs->pq )
+			{
+				m_Mutable.HDR.bExposeHDRSupport = true;
+				m_Mutable.HDR.eOutputEncodingEOTF = EOTF_PQ;
+				m_Mutable.HDR.uMaxContentLightLevel =
+					pHDRStaticMetadata->desired_content_max_luminance
+					? nits_to_u16( pHDRStaticMetadata->desired_content_max_luminance )
+					: nits_to_u16( 1499.0f );
+				m_Mutable.HDR.uMaxFrameAverageLuminance =
+					pHDRStaticMetadata->desired_content_max_frame_avg_luminance
+					? nits_to_u16( pHDRStaticMetadata->desired_content_max_frame_avg_luminance )
+					: nits_to_u16( std::min( 799.f, nits_from_u16( m_Mutable.HDR.uMaxContentLightLevel ) ) );
+				m_Mutable.HDR.uMinContentLightLevel =
+					pHDRStaticMetadata->desired_content_min_luminance
+					? nits_to_u16_dark( pHDRStaticMetadata->desired_content_min_luminance )
+					: nits_to_u16_dark( 0.0f );
+
+				// Generate a default HDR10 infoframe.
+				hdr_output_metadata defaultHDRMetadata{};
+				hdr_metadata_infoframe *pInfoframe = &defaultHDRMetadata.hdmi_metadata_type1;
+
+				// To be filled in by the app based on the scene, default to desired_content_max_luminance
+				//
+		 		// Using display's max_fall for the default metadata max_cll to avoid displays
+		 		// overcompensating with tonemapping for SDR content.
+				uint16_t uDefaultInfoframeLuminances = m_Mutable.HDR.uMaxFrameAverageLuminance;
+
+				pInfoframe->display_primaries[0].x = color_xy_to_u16( m_Mutable.DisplayColorimetry.primaries.r.x );
+				pInfoframe->display_primaries[0].y = color_xy_to_u16( m_Mutable.DisplayColorimetry.primaries.r.y );
+				pInfoframe->display_primaries[1].x = color_xy_to_u16( m_Mutable.DisplayColorimetry.primaries.g.x );
+				pInfoframe->display_primaries[1].y = color_xy_to_u16( m_Mutable.DisplayColorimetry.primaries.g.y );
+				pInfoframe->display_primaries[2].x = color_xy_to_u16( m_Mutable.DisplayColorimetry.primaries.b.x );
+				pInfoframe->display_primaries[2].y = color_xy_to_u16( m_Mutable.DisplayColorimetry.primaries.b.y );
+				pInfoframe->white_point.x = color_xy_to_u16( m_Mutable.DisplayColorimetry.white.x );
+				pInfoframe->white_point.y = color_xy_to_u16( m_Mutable.DisplayColorimetry.white.y );
+				pInfoframe->max_display_mastering_luminance = uDefaultInfoframeLuminances;
+				pInfoframe->min_display_mastering_luminance = m_Mutable.HDR.uMinContentLightLevel;
+				pInfoframe->max_cll = uDefaultInfoframeLuminances;
+				pInfoframe->max_fall = uDefaultInfoframeLuminances;
+				pInfoframe->eotf = HDMI_EOTF_ST2084;
+
+				m_Mutable.HDR.pDefaultMetadataBlob = drm_create_hdr_metadata_blob( &g_DRM, &defaultHDRMetadata );
+			}
+			else
+			{
+				m_Mutable.HDR.bExposeHDRSupport = false;
+			}
+		}
+	}
+
+	/*static*/ std::optional<CDRMConnector::HDRInfo> CDRMConnector::GetKnownDisplayHDRInfo( GamescopeKnownDisplays eKnownDisplay )
+	{
+		if ( eKnownDisplay == GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_OLED_BOE || eKnownDisplay == GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_OLED_SDC )
+		{
+			// The stuff in the EDID for the HDR metadata does not fully
+			// reflect what we can achieve on the display by poking at more
+			// things out-of-band.
+			return HDRInfo
+			{
+				.bExposeHDRSupport = true,
+				.eOutputEncodingEOTF = EOTF_Gamma22,
+				.uMaxContentLightLevel = nits_to_u16( 1000.0f ),
+				.uMaxFrameAverageLuminance = nits_to_u16( 800.0f ), // Full-frame sustained.
+				.uMinContentLightLevel = nits_to_u16_dark( 0 ),
+			};
+		}
+		else if ( eKnownDisplay == GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_LCD )
+		{
+			// Set up some HDR fallbacks for undocking
+			return HDRInfo
+			{
+				.bExposeHDRSupport = false,
+				.eOutputEncodingEOTF = EOTF_Gamma22,
+				.uMaxContentLightLevel = nits_to_u16( 500.0f ),
+				.uMaxFrameAverageLuminance = nits_to_u16( 500.0f ),
+				.uMinContentLightLevel = nits_to_u16_dark( 0.5f ),
+			};
+		}
+
+		return std::nullopt;
+	}
+}
+
 static int
 drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, bool needs_modeset )
 {
-	drm_screen_type screenType = drm_get_screen_type(drm);
+	gamescope::GamescopeScreenType screenType = drm_get_screen_type(drm);
 	auto entry = FrameInfoToLiftoffStateCacheEntry( drm, frameInfo );
 
 	// If we are modesetting, reset the state cache, we might
@@ -2510,8 +2535,6 @@ bool g_bForceAsyncFlips = false;
  * negative errno on failure or if the scene-graph can't be presented directly. */
 int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameInfo )
 {
-	drm->pending.screen_type = drm_get_screen_type(drm);
-
 	drm_update_vrr_state(drm);
 	drm_update_color_mgmt(drm);
 
@@ -2522,43 +2545,17 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 	assert( drm->req == nullptr );
 	drm->req = drmModeAtomicAlloc();
 
-	if (drm->connector != nullptr) {
-		bool bConnectorSupportsHDR = drm->connector->metadata.supportsST2084;
-		bool bConnectorHDR = g_bOutputHDREnabled && bConnectorSupportsHDR;
-
-		if (drm->connector->has_colorspace) {
-			drm->connector->pending.colorspace = ( bConnectorHDR ) ? DRM_MODE_COLORIMETRY_BT2020_RGB : DRM_MODE_COLORIMETRY_DEFAULT;
-		}
-
-		if (drm->connector->has_content_type) {
-			drm->connector->pending.content_type = DRM_MODE_CONTENT_TYPE_GAME;
-		}
-
-		if ( bConnectorHDR )
+	wlserver_hdr_metadata *pHDRMetadata = nullptr;
+	if ( drm->pConnector && drm->pConnector->GetHDRInfo().IsHDR10() )
+	{
+		if ( g_bOutputHDREnabled )
 		{
-			if (drm->connector->has_hdr_output_metadata) {
-				auto hdr_output_metadata = get_default_hdr_metadata( drm, drm->connector );
-
-				if ( drm->connector->metadata.hdr10_metadata_blob )
-					hdr_output_metadata = drm->connector->metadata.hdr10_metadata_blob;
-
-				auto feedback = steamcompmgr_get_base_layer_swapchain_feedback();
-				if (feedback && feedback->hdr_metadata_blob)
-					hdr_output_metadata = feedback->hdr_metadata_blob;
-
-				drm->connector->pending.hdr_output_metadata = hdr_output_metadata;
-			}
+			wlserver_vk_swapchain_feedback* pFeedback = steamcompmgr_get_base_layer_swapchain_feedback();
+			pHDRMetadata = pFeedback ? pFeedback->hdr_metadata_blob.get() : drm->pConnector->GetHDRInfo().pDefaultMetadataBlob.get();
 		}
 		else
 		{
-			if (drm->connector->has_hdr_output_metadata && bConnectorSupportsHDR)
-			{
-				drm->connector->pending.hdr_output_metadata = drm->sdr_static_metadata;
-			}
-			else
-			{
-				drm->connector->pending.hdr_output_metadata = nullptr;
-			}
+			pHDRMetadata = drm->sdr_static_metadata.get();
 		}
 	}
 
@@ -2585,196 +2582,116 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 	uint32_t flags = DRM_MODE_ATOMIC_NONBLOCK;
 
 	// We do internal refcounting with these events
-	if ( drm->crtc != nullptr )
+	if ( drm->pCRTC != nullptr )
 		flags |= DRM_MODE_PAGE_FLIP_EVENT;
 
 	if ( async || g_bForceAsyncFlips )
 		flags |= DRM_MODE_PAGE_FLIP_ASYNC;
 
-	if ( needs_modeset ) {
+	bool bForceInRequest = needs_modeset;
+
+	if ( needs_modeset )
+	{
 		flags |= DRM_MODE_ATOMIC_ALLOW_MODESET;
 
 		// Disable all connectors and CRTCs
 
-		for ( auto &kv : drm->connectors ) {
-			struct connector *conn = &kv.second;
-
-			if ( conn->current.crtc_id == 0 )
+		for ( auto &iter : drm->connectors )
+		{
+			gamescope::CDRMConnector *pConnector = &iter.second;
+			if ( pConnector->GetProperties().CRTC_ID->GetCurrentValue() == 0 )
 				continue;
 
-			conn->pending.crtc_id = 0;
-			int ret = add_connector_property( drm->req, conn, "CRTC_ID", 0 );
-			if (ret < 0)
-				return ret;
+			pConnector->GetProperties().CRTC_ID->SetPendingValue( drm->req, 0, bForceInRequest );
 
-			if (conn->has_colorspace) {
-				ret = add_connector_property( drm->req, conn, "Colorspace", 0 );
-				if (ret < 0)
-					return ret;
-			}
+			if ( pConnector->GetProperties().Colorspace )
+				pConnector->GetProperties().Colorspace->SetPendingValue( drm->req, 0, bForceInRequest );
 
-			if (conn->has_hdr_output_metadata) {
-				ret = add_connector_property( drm->req, conn, "HDR_OUTPUT_METADATA", 0 );
-				if (ret < 0)
-					return ret;
-			}
+			if ( pConnector->GetProperties().HDR_OUTPUT_METADATA )
+				pConnector->GetProperties().HDR_OUTPUT_METADATA->SetPendingValue( drm->req, 0, bForceInRequest );
 
-			if (conn->has_content_type) {
-				ret = add_connector_property( drm->req, conn, "content type", 0 );
-				if (ret < 0)
-					return ret;
-			}
+			if ( pConnector->GetProperties().content_type )
+				pConnector->GetProperties().content_type->SetPendingValue( drm->req, 0, bForceInRequest );
 		}
-		for ( size_t i = 0; i < drm->crtcs.size(); i++ ) {
-			struct crtc *crtc = &drm->crtcs[i];
 
+		for ( std::unique_ptr< gamescope::CDRMCRTC > &pCRTC : drm->crtcs )
+		{
 			// We can't disable a CRTC if it's already disabled, or else the
 			// kernel will error out with "requesting event but off".
-			if (crtc->current.active == 0)
+			if ( pCRTC->GetProperties().ACTIVE->GetCurrentValue() == 0 )
 				continue;
 
-			int ret = add_crtc_property(drm->req, crtc, "MODE_ID", 0);
-			if (ret < 0)
-				return ret;
-			if (crtc->has_gamma_lut)
-			{
-				int ret = add_crtc_property(drm->req, crtc, "GAMMA_LUT", 0);
-				if (ret < 0)
-					return ret;
-			}
-			if (crtc->has_degamma_lut)
-			{
-				int ret = add_crtc_property(drm->req, crtc, "DEGAMMA_LUT", 0);
-				if (ret < 0)
-					return ret;
-			}
-			if (crtc->has_ctm)
-			{
-				int ret = add_crtc_property(drm->req, crtc, "CTM", 0);
-				if (ret < 0)
-					return ret;
-			}
-			if (crtc->has_vrr_enabled)
-			{
-				int ret = add_crtc_property(drm->req, crtc, "VRR_ENABLED", 0);
-				if (ret < 0)
-					return ret;
-			}
-			if (crtc->has_valve1_regamma_tf)
-			{
-				int ret = add_crtc_property(drm->req, crtc, "VALVE1_CRTC_REGAMMA_TF", 0);
-				if (ret < 0)
-					return ret;
-			}
+			pCRTC->GetProperties().ACTIVE->SetPendingValue( drm->req, 0, bForceInRequest );
+			pCRTC->GetProperties().MODE_ID->SetPendingValue( drm->req, 0, bForceInRequest );
 
-			ret = add_crtc_property(drm->req, crtc, "ACTIVE", 0);
-			if (ret < 0)
-				return ret;
-			crtc->pending.active = 0;
+			if ( pCRTC->GetProperties().GAMMA_LUT )
+				pCRTC->GetProperties().GAMMA_LUT->SetPendingValue( drm->req, 0, bForceInRequest );
+
+			if ( pCRTC->GetProperties().DEGAMMA_LUT )
+				pCRTC->GetProperties().DEGAMMA_LUT->SetPendingValue( drm->req, 0, bForceInRequest );
+
+			if ( pCRTC->GetProperties().CTM )
+				pCRTC->GetProperties().CTM->SetPendingValue( drm->req, 0, bForceInRequest );
+
+			if ( pCRTC->GetProperties().VRR_ENABLED )
+				pCRTC->GetProperties().VRR_ENABLED->SetPendingValue( drm->req, 0, bForceInRequest );
+
+			if ( pCRTC->GetProperties().OUT_FENCE_PTR )
+				pCRTC->GetProperties().OUT_FENCE_PTR->SetPendingValue( drm->req, 0, bForceInRequest );
+
+			if ( pCRTC->GetProperties().VALVE1_CRTC_REGAMMA_TF )
+				pCRTC->GetProperties().VALVE1_CRTC_REGAMMA_TF->SetPendingValue( drm->req, 0, bForceInRequest );
 		}
 
-		// Then enable the one we've picked
-		int ret = 0;
-		if (drm->connector != nullptr) {
+		if ( drm->pConnector )
+		{
 			// Always set our CRTC_ID for the modeset, especially
 			// as we zero-ed it above.
-			drm->connector->pending.crtc_id = drm->crtc->id;
-			ret = add_connector_property(drm->req, drm->connector, "CRTC_ID", drm->crtc->id);
-			if (ret < 0)
-				return ret;
+			drm->pConnector->GetProperties().CRTC_ID->SetPendingValue( drm->req, drm->pCRTC->GetObjectId(), bForceInRequest );
 
-			if (drm->connector->has_colorspace) {
-				ret = add_connector_property(drm->req, drm->connector, "Colorspace", drm->connector->pending.colorspace);
-				if (ret < 0)
-					return ret;
-			}
-
-			if (drm->connector->has_hdr_output_metadata) {
-				uint32_t value = drm->connector->pending.hdr_output_metadata ? drm->connector->pending.hdr_output_metadata->blob : 0;
-				ret = add_connector_property(drm->req, drm->connector, "HDR_OUTPUT_METADATA", value);
-				if (ret < 0)
-					return ret;
-			}
-
-			if (drm->connector->has_content_type) {
-				ret = add_connector_property(drm->req, drm->connector, "content type", drm->connector->pending.content_type);
-				if (ret < 0)
-					return ret;
-			}
-
-			ret = add_crtc_property(drm->req, drm->crtc, "MODE_ID", drm->pending.mode_id->blob);
-			if (ret < 0)
-				return ret;
-
-			if (drm->crtc->has_vrr_enabled)
+			if ( drm->pConnector->GetProperties().Colorspace )
 			{
-				ret = add_crtc_property(drm->req, drm->crtc, "VRR_ENABLED", drm->pending.vrr_enabled);
-				if (ret < 0)
-					return ret;
+				uint32_t uColorimetry = g_bOutputHDREnabled && drm->pConnector->GetHDRInfo().IsHDR10()
+					? DRM_MODE_COLORIMETRY_BT2020_RGB
+					: DRM_MODE_COLORIMETRY_DEFAULT;
+				drm->pConnector->GetProperties().Colorspace->SetPendingValue( drm->req, uColorimetry, bForceInRequest );
 			}
+		}
 
-			if (drm->crtc->has_valve1_regamma_tf)
-			{
-				ret = add_crtc_property(drm->req, drm->crtc, "VALVE1_CRTC_REGAMMA_TF", drm->pending.output_tf);
-				if (ret < 0)
-					return ret;
-			}
+		if ( drm->pCRTC )
+		{
+			drm->pCRTC->GetProperties().ACTIVE->SetPendingValue( drm->req, 1u, true );
+			drm->pCRTC->GetProperties().MODE_ID->SetPendingValue( drm->req, drm->pending.mode_id ? drm->pending.mode_id->blob : 0lu, true );
 
-			ret = add_crtc_property(drm->req, drm->crtc, "ACTIVE", 1);
-			if (ret < 0)
-				return ret;
-			drm->crtc->pending.active = 1;
+			if ( drm->pCRTC->GetProperties().VRR_ENABLED )
+				drm->pCRTC->GetProperties().VRR_ENABLED->SetPendingValue( drm->req, drm->pending.vrr_enabled, true );
 		}
 	}
-	else
+
+	if ( drm->pConnector )
 	{
-		if (drm->connector != nullptr) {
-			if (drm->connector->has_colorspace && drm->connector->pending.colorspace != drm->connector->current.colorspace) {
-				int ret = add_connector_property(drm->req, drm->connector, "Colorspace", drm->connector->pending.colorspace);
-				if (ret < 0)
-					return ret;
-			}
+		if ( drm->pConnector->GetProperties().HDR_OUTPUT_METADATA )
+			drm->pConnector->GetProperties().HDR_OUTPUT_METADATA->SetPendingValue( drm->req, pHDRMetadata ? pHDRMetadata->blob : 0lu, bForceInRequest );
 
-			if (drm->connector->has_hdr_output_metadata && drm->connector->pending.hdr_output_metadata != drm->connector->current.hdr_output_metadata) {
-				uint32_t value = drm->connector->pending.hdr_output_metadata ? drm->connector->pending.hdr_output_metadata->blob : 0;
-				int ret = add_connector_property(drm->req, drm->connector, "HDR_OUTPUT_METADATA", value);
-				if (ret < 0)
-					return ret;
-			}
+		if ( drm->pConnector->GetProperties().content_type )
+			drm->pConnector->GetProperties().content_type->SetPendingValue( drm->req, DRM_MODE_CONTENT_TYPE_GAME, bForceInRequest );
+	}
 
-			if (drm->connector->has_content_type && drm->connector->pending.content_type != drm->connector->current.content_type) {
-				int ret = add_connector_property(drm->req, drm->connector, "content type", drm->connector->pending.content_type);
-				if (ret < 0)
-					return ret;
-			}
-		}
-
-		if (drm->crtc != nullptr) {
-			if ( drm->crtc->has_vrr_enabled && drm->pending.vrr_enabled != drm->current.vrr_enabled )
-			{
-				int ret = add_crtc_property(drm->req, drm->crtc, "VRR_ENABLED", drm->pending.vrr_enabled );
-				if (ret < 0)
-					return ret;
-			}
-
-			if ( drm->crtc->has_valve1_regamma_tf && drm->pending.output_tf != drm->current.output_tf )
-			{
-				int ret = add_crtc_property(drm->req, drm->crtc, "VALVE1_CRTC_REGAMMA_TF", drm->pending.output_tf );
-				if (ret < 0)
-					return ret;
-			}
-		}
+	if ( drm->pCRTC )
+	{
+		if ( drm->pCRTC->GetProperties().VALVE1_CRTC_REGAMMA_TF )
+			drm->pCRTC->GetProperties().VALVE1_CRTC_REGAMMA_TF->SetPendingValue( drm->req, drm->pending.output_tf, bForceInRequest );
 	}
 
 	drm->flags = flags;
 
 	int ret;
-	if ( drm->crtc == nullptr ) {
+	if ( drm->pCRTC == nullptr ) {
 		ret = 0;
-	} else if ( g_bUseLayers == true ) {
+	} else if ( drm->bUseLiftoff ) {
 		ret = drm_prepare_liftoff( drm, frameInfo, needs_modeset );
 	} else {
-		ret = drm_prepare_basic( drm, frameInfo );
+		ret = 0;
 	}
 
 	if ( ret != 0 ) {
@@ -2790,21 +2707,6 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 	return ret;
 }
 
-void drm_rollback( struct drm_t *drm )
-{
-	drm->pending = drm->current;
-
-	for ( size_t i = 0; i < drm->crtcs.size(); i++ )
-	{
-		drm->crtcs[i].pending = drm->crtcs[i].current;
-	}
-
-	for (auto &kv : drm->connectors) {
-		struct connector *conn = &kv.second;
-		conn->pending = conn->current;
-	}
-}
-
 bool drm_poll_state( struct drm_t *drm )
 {
 	int out_of_date = drm->out_of_date.exchange(false);
@@ -2818,25 +2720,18 @@ bool drm_poll_state( struct drm_t *drm )
 	return true;
 }
 
-static bool drm_set_crtc( struct drm_t *drm, struct crtc *crtc )
+static bool drm_set_crtc( struct drm_t *drm, gamescope::CDRMCRTC *pCRTC )
 {
-	drm->crtc = crtc;
+	drm->pCRTC = pCRTC;
 	drm->needs_modeset = true;
 
-	for (size_t i = 0; i < drm->crtcs.size(); i++) {
-		if (drm->crtcs[i].id == drm->crtc->id) {
-			drm->crtc_index = i;
-			break;
-		}
-	}
-
-	drm->primary = find_primary_plane( drm );
-	if ( drm->primary == nullptr ) {
+	drm->pPrimaryPlane = find_primary_plane( drm );
+	if ( drm->pPrimaryPlane == nullptr ) {
 		drm_log.errorf("could not find a suitable primary plane");
 		return false;
 	}
 
-	struct liftoff_output *lo_output = liftoff_output_create( drm->lo_device, crtc->id );
+	struct liftoff_output *lo_output = liftoff_output_create( drm->lo_device, pCRTC->GetObjectId() );
 	if ( lo_output == nullptr )
 		return false;
 
@@ -2854,21 +2749,22 @@ static bool drm_set_crtc( struct drm_t *drm, struct crtc *crtc )
 	return true;
 }
 
-bool drm_set_connector( struct drm_t *drm, struct connector *conn )
+bool drm_set_connector( struct drm_t *drm, gamescope::CDRMConnector *conn )
 {
-	drm_log.infof("selecting connector %s", conn->name);
+	drm_log.infof("selecting connector %s", conn->GetName());
 
-	struct crtc *crtc = find_crtc_for_connector(drm, conn);
-	if (crtc == nullptr) {
+	gamescope::CDRMCRTC *pCRTC = find_crtc_for_connector(drm, conn);
+	if (pCRTC == nullptr)
+	{
 		drm_log.errorf("no CRTC found!");
 		return false;
 	}
 
-	if (!drm_set_crtc(drm, crtc)) {
+	if (!drm_set_crtc(drm, pCRTC)) {
 		return false;
 	}
 
-	drm->connector = conn;
+	drm->pConnector = conn;
 	drm->needs_modeset = true;
 
 	return true;
@@ -2876,8 +2772,8 @@ bool drm_set_connector( struct drm_t *drm, struct connector *conn )
 
 static void drm_unset_connector( struct drm_t *drm )
 {
-	drm->crtc = nullptr;
-	drm->primary = nullptr;
+	drm->pCRTC = nullptr;
+	drm->pPrimaryPlane = nullptr;
 
 	for ( int i = 0; i < k_nMaxLayers; i++ )
 	{
@@ -2888,7 +2784,7 @@ static void drm_unset_connector( struct drm_t *drm )
 	liftoff_output_destroy(drm->lo_output);
 	drm->lo_output = nullptr;
 
-	drm->connector = nullptr;
+	drm->pConnector = nullptr;
 	drm->needs_modeset = true;
 }
 
@@ -2902,22 +2798,12 @@ bool drm_get_vrr_in_use(struct drm_t *drm)
 	return drm->current.vrr_enabled;
 }
 
-drm_screen_type drm_get_connector_type(drmModeConnector *connector)
+gamescope::GamescopeScreenType drm_get_screen_type(struct drm_t *drm)
 {
-	if (connector->connector_type == DRM_MODE_CONNECTOR_eDP ||
-		connector->connector_type == DRM_MODE_CONNECTOR_LVDS ||
-		connector->connector_type == DRM_MODE_CONNECTOR_DSI)
-		return DRM_SCREEN_TYPE_INTERNAL;
+	if ( !drm->pConnector )
+		return gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL;
 
-	return DRM_SCREEN_TYPE_EXTERNAL;
-}
-
-drm_screen_type drm_get_screen_type(struct drm_t *drm)
-{
-	if (!drm->connector || !drm->connector->connector)
-		return DRM_SCREEN_TYPE_INTERNAL;
-
-	return drm_get_connector_type(drm->connector->connector);
+	return drm->pConnector->GetScreenType();
 }
 
 bool drm_update_color_mgmt(struct drm_t *drm)
@@ -2963,9 +2849,9 @@ bool drm_update_vrr_state(struct drm_t *drm)
 {
 	drm->pending.vrr_enabled = false;
 
-	if ( drm->connector && drm->crtc && drm->crtc->has_vrr_enabled )
+	if ( drm->pConnector && drm->pCRTC && drm->pCRTC->GetProperties().VRR_ENABLED )
 	{
-		if ( drm->wants_vrr_enabled && drm->connector->vrr_capable )
+		if ( drm->wants_vrr_enabled && drm->pConnector->IsVRRCapable() )
 			drm->pending.vrr_enabled = true;
 	}
 
@@ -2991,21 +2877,21 @@ static void drm_unset_mode( struct drm_t *drm )
 	if (g_nOutputRefresh == 0)
 		g_nOutputRefresh = 60;
 
-	g_drmEffectiveOrientation[DRM_SCREEN_TYPE_INTERNAL] = DRM_MODE_ROTATE_0;
-	g_drmEffectiveOrientation[DRM_SCREEN_TYPE_EXTERNAL] = DRM_MODE_ROTATE_0;
+	g_drmEffectiveOrientation[gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL] = DRM_MODE_ROTATE_0;
+	g_drmEffectiveOrientation[gamescope::GAMESCOPE_SCREEN_TYPE_EXTERNAL] = DRM_MODE_ROTATE_0;
 	g_bRotated = false;
 }
 
 bool drm_set_mode( struct drm_t *drm, const drmModeModeInfo *mode )
 {
-	if (!drm->connector || !drm->connector->connector)
+	if (!drm->pConnector || !drm->pConnector->GetModeConnector())
 		return false;
 
 	uint32_t mode_id = 0;
 	if (drmModeCreatePropertyBlob(drm->fd, mode, sizeof(*mode), &mode_id) != 0)
 		return false;
 
-	drm_screen_type screenType = drm_get_screen_type(drm);
+	gamescope::GamescopeScreenType screenType = drm_get_screen_type(drm);
 
 	drm_log.infof("selecting mode %dx%d@%uHz", mode->hdisplay, mode->vdisplay, mode->vrefresh);
 
@@ -3014,7 +2900,7 @@ bool drm_set_mode( struct drm_t *drm, const drmModeModeInfo *mode )
 
 	g_nOutputRefresh = mode->vrefresh;
 
-	update_drm_effective_orientations(drm, drm->connector, mode);
+	update_drm_effective_orientations(drm, mode);
 
 	switch ( g_drmEffectiveOrientation[screenType] )
 	{
@@ -3045,10 +2931,10 @@ bool drm_set_refresh( struct drm_t *drm, int refresh )
 		width = height;
 		height = tmp;
 	}
-	if (!drm->connector || !drm->connector->connector)
+	if (!drm->pConnector || !drm->pConnector->GetModeConnector())
 		return false;
 
-	drmModeConnector *connector = drm->connector->connector;
+	drmModeConnector *connector = drm->pConnector->GetModeConnector();
 	const drmModeModeInfo *existing_mode = find_mode(connector, width, height, refresh);
 	drmModeModeInfo mode = {0};
 	if ( existing_mode )
@@ -3058,15 +2944,15 @@ bool drm_set_refresh( struct drm_t *drm, int refresh )
 	else
 	{
 		/* TODO: check refresh is within the EDID limits */
-		switch ( g_drmModeGeneration )
+		switch ( g_eGamescopeModeGeneration )
 		{
-		case DRM_MODE_GENERATE_CVT:
+		case gamescope::GAMESCOPE_MODE_GENERATE_CVT:
 			generate_cvt_mode( &mode, width, height, refresh, true, false );
 			break;
-		case DRM_MODE_GENERATE_FIXED:
+		case gamescope::GAMESCOPE_MODE_GENERATE_FIXED:
 			{
 				const drmModeModeInfo *preferred_mode = find_mode(connector, 0, 0, 0);
-				generate_fixed_mode( &mode, preferred_mode, refresh, drm->connector->is_steam_deck_display, drm->connector->is_galileo_display );
+				generate_fixed_mode( &mode, preferred_mode, refresh, drm->pConnector->GetKnownDisplayType() );
 				break;
 			}
 		}
@@ -3079,10 +2965,10 @@ bool drm_set_refresh( struct drm_t *drm, int refresh )
 
 bool drm_set_resolution( struct drm_t *drm, int width, int height )
 {
-	if (!drm->connector || !drm->connector->connector)
+	if (!drm->pConnector || !drm->pConnector->GetModeConnector())
 		return false;
 
-	drmModeConnector *connector = drm->connector->connector;
+	drmModeConnector *connector = drm->pConnector->GetModeConnector();
 	const drmModeModeInfo *mode = find_mode(connector, width, height, 0);
 	if ( !mode )
 	{
@@ -3097,10 +2983,10 @@ int drm_get_default_refresh(struct drm_t *drm)
 	if ( drm->preferred_refresh )
 		return drm->preferred_refresh;
 
-	if ( drm->connector && drm->connector->target_refresh )
-		return drm->connector->target_refresh;
+	if ( drm->pConnector && drm->pConnector->GetBaseRefresh() )
+		return drm->pConnector->GetBaseRefresh();
 
-	if ( drm->connector && drm->connector->connector )
+	if ( drm->pConnector && drm->pConnector->GetModeConnector() )
 	{
 		int width = g_nOutputWidth;
 		int height = g_nOutputHeight;
@@ -3110,7 +2996,7 @@ int drm_get_default_refresh(struct drm_t *drm)
 			height = tmp;
 		}
 
-		drmModeConnector *connector = drm->connector->connector;
+		drmModeConnector *connector = drm->pConnector->GetModeConnector();
 		const drmModeModeInfo *mode = find_mode( connector, width, height, 0);
 		if ( mode )
 			return mode->vrefresh;
@@ -3121,20 +3007,20 @@ int drm_get_default_refresh(struct drm_t *drm)
 
 bool drm_get_vrr_capable(struct drm_t *drm)
 {
-	if ( drm->connector )
-		return drm->connector->vrr_capable;
+	if ( drm->pConnector )
+		return drm->pConnector->IsVRRCapable();
 
 	return false;
 }
 
-bool drm_supports_st2084(struct drm_t *drm, uint16_t *maxCLL, uint16_t *maxFALL)
+bool drm_supports_hdr( struct drm_t *drm, uint16_t *maxCLL, uint16_t *maxFALL )
 {
-	if ( drm->connector && drm->connector->metadata.supportsST2084 )
+	if ( drm->pConnector && drm->pConnector->GetHDRInfo().SupportsHDR() )
 	{
 		if ( maxCLL )
-			*maxCLL = drm->connector->metadata.maxCLL;
+			*maxCLL = drm->pConnector->GetHDRInfo().uMaxContentLightLevel;
 		if ( maxFALL )
-			*maxFALL = drm->connector->metadata.maxFALL;
+			*maxFALL = drm->pConnector->GetHDRInfo().uMaxFrameAverageLuminance;
 		return true;
 	}
 
@@ -3150,10 +3036,10 @@ void drm_set_hdr_state(struct drm_t *drm, bool enabled) {
 
 const char *drm_get_connector_name(struct drm_t *drm)
 {
-	if ( !drm->connector )
+	if ( !drm->pConnector )
 		return nullptr;
 
-	return drm->connector->name;
+	return drm->pConnector->GetName();
 }
 
 const char *drm_get_device_name(struct drm_t *drm)
@@ -3163,10 +3049,10 @@ const char *drm_get_device_name(struct drm_t *drm)
 
 std::pair<uint32_t, uint32_t> drm_get_connector_identifier(struct drm_t *drm)
 {
-	if ( !drm->connector )
+	if ( !drm->pConnector )
 		return { 0u, 0u };
 
-	return std::make_pair(drm->connector->connector->connector_type, drm->connector->connector->connector_type_id);
+	return std::make_pair(drm->pConnector->GetModeConnector()->connector_type, drm->pConnector->GetModeConnector()->connector_type_id);
 }
 
 std::shared_ptr<wlserver_hdr_metadata> drm_create_hdr_metadata_blob(struct drm_t *drm, hdr_output_metadata *metadata)
@@ -3222,20 +3108,20 @@ std::shared_ptr<wlserver_ctm> drm_create_ctm(struct drm_t *drm, glm::mat3x4 ctm)
 
 bool drm_supports_color_mgmt(struct drm_t *drm)
 {
-	if (g_bForceDisableColorMgmt)
+	if ( g_bForceDisableColorMgmt )
 		return false;
 
-	if (!drm->primary)
+	if ( !drm->pPrimaryPlane )
 		return false;
 
-	return drm->primary->has_color_mgmt;
+	return drm->pPrimaryPlane->GetProperties().VALVE1_PLANE_CTM.has_value();
 }
 
 void drm_get_native_colorimetry( struct drm_t *drm,
 	displaycolorimetry_t *displayColorimetry, EOTF *displayEOTF,
 	displaycolorimetry_t *outputEncodingColorimetry, EOTF *outputEncodingEOTF )
 {
-	if ( !drm || !drm->connector )
+	if ( !drm || !drm->pConnector )
 	{
 		*displayColorimetry = displaycolorimetry_709;
 		*displayEOTF = EOTF_Gamma22;
@@ -3244,33 +3130,27 @@ void drm_get_native_colorimetry( struct drm_t *drm,
 		return;
 	}
 
-	*displayColorimetry = drm->connector->metadata.colorimetry;
-	*displayEOTF = drm->connector->metadata.eotf;
+	*displayColorimetry = drm->pConnector->GetDisplayColorimetry();
+	*displayEOTF = EOTF_Gamma22;
 
-	// For HDR output, expected content colorspace != native colorspace.
-	if (drm->connector->metadata.supportsST2084 && g_bOutputHDREnabled)
+	// For HDR10 output, expected content colorspace != native colorspace.
+	if ( g_bOutputHDREnabled && drm->pConnector->GetHDRInfo().IsHDR10() )
 	{
 		*outputEncodingColorimetry = displaycolorimetry_2020;
-		*outputEncodingEOTF = EOTF_PQ;
+		*outputEncodingEOTF = drm->pConnector->GetHDRInfo().eOutputEncodingEOTF;
 	}
 	else
 	{
-		*outputEncodingColorimetry = drm->connector->metadata.colorimetry;
-		*outputEncodingEOTF = drm->connector->metadata.eotf;
-	}
-
-	if (!g_bOutputHDREnabled)
-	{
-		*displayEOTF = EOTF_Gamma22;
+		*outputEncodingColorimetry = drm->pConnector->GetDisplayColorimetry();
 		*outputEncodingEOTF = EOTF_Gamma22;
 	}
 }
 
 
-std::span<uint32_t> drm_get_valid_refresh_rates( struct drm_t *drm )
+std::span<const uint32_t> drm_get_valid_refresh_rates( struct drm_t *drm )
 {
-	if (drm && drm->connector)
-		return drm->connector->valid_display_rates;
+	if ( drm && drm->pConnector )
+		return drm->pConnector->GetValidDynamicRefreshRates();
 
-	return std::span<uint32_t>{};
+	return std::span<const uint32_t>{};
 }

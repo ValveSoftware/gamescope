@@ -172,4 +172,4 @@ MouseCursor *steamcompmgr_get_server_cursor(uint32_t serverId);
 
 extern int g_nAsyncFlipsEnabled;
 
-extern void steamcompmgr_set_app_refresh_cycle_override( drm_screen_type type, int override_fps );
+extern void steamcompmgr_set_app_refresh_cycle_override( gamescope::GamescopeScreenType type, int override_fps );

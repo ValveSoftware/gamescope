@@ -341,13 +341,18 @@ static std::string build_optstring(const struct option *options)
 	return optstring;
 }
 
-static enum drm_mode_generation parse_drm_mode_generation(const char *str)
+static gamescope::GamescopeModeGeneration parse_gamescope_mode_generation( const char *str )
 {
-	if (strcmp(str, "cvt") == 0) {
-		return DRM_MODE_GENERATE_CVT;
-	} else if (strcmp(str, "fixed") == 0) {
-		return DRM_MODE_GENERATE_FIXED;
-	} else {
+	if ( str == "cvt"sv )
+	{
+		return gamescope::GAMESCOPE_MODE_GENERATE_CVT;
+	}
+	else if ( str == "fixed"sv )
+	{
+		return gamescope::GAMESCOPE_MODE_GENERATE_FIXED;
+	}
+	else
+	{
 		fprintf( stderr, "gamescope: invalid value for --generate-drm-mode\n" );
 		exit(1);
 	}
@@ -594,8 +599,6 @@ int main(int argc, char **argv)
 				if (strcmp(opt_name, "help") == 0) {
 					fprintf(stderr, "%s", usage);
 					return 0;
-				} else if (strcmp(opt_name, "disable-layers") == 0) {
-					g_bUseLayers = false;
 				} else if (strcmp(opt_name, "debug-layers") == 0) {
 					g_bDebugLayers = true;
 				} else if (strcmp(opt_name, "disable-color-management") == 0) {
@@ -611,7 +614,7 @@ int main(int argc, char **argv)
 					g_nDefaultTouchClickMode = (enum wlserver_touch_click_mode) atoi( optarg );
 					g_nTouchClickMode = g_nDefaultTouchClickMode;
 				} else if (strcmp(opt_name, "generate-drm-mode") == 0) {
-					g_drmModeGeneration = parse_drm_mode_generation( optarg );
+					g_eGamescopeModeGeneration = parse_gamescope_mode_generation( optarg );
 				} else if (strcmp(opt_name, "force-orientation") == 0) {
 					g_drmModeOrientation = force_orientation( optarg );
 				} else if (strcmp(opt_name, "sharpness") == 0 ||

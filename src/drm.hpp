@@ -11,6 +11,7 @@
 #include <span>
 
 #include "color_helpers.h"
+#include "gamescope_shared.h"
 
 // Josh: Okay whatever, this header isn't
 // available for whatever stupid reason. :v
@@ -27,14 +28,6 @@ enum drm_color_range {
 	DRM_COLOR_YCBCR_FULL_RANGE,
 	DRM_COLOR_RANGE_MAX,
 };
-
-enum drm_screen_type {
-	DRM_SCREEN_TYPE_INTERNAL = 0,
-	DRM_SCREEN_TYPE_EXTERNAL = 1,
-
-	DRM_SCREEN_TYPE_COUNT
-};
-
 
 enum GamescopeAppTextureColorspace {
 	GAMESCOPE_APP_TEXTURE_COLORSPACE_LINEAR = 0,
@@ -137,79 +130,275 @@ extern "C" {
 #include <vector>
 #include <string>
 
+namespace gamescope
+{
+	template <typename T>
+	using CAutoDeletePtr = std::unique_ptr<T, void(*)(T*)>;
+
+	////////////////////////////////////////
+	// DRM Object Wrappers + State Trackers
+	////////////////////////////////////////
+	struct DRMObjectRawProperty
+	{
+		uint32_t uPropertyId = 0ul;
+		uint64_t ulValue = 0ul;
+	};
+	using DRMObjectRawProperties = std::unordered_map<std::string, DRMObjectRawProperty>;
+
+	class CDRMAtomicObject
+	{
+	public:
+		CDRMAtomicObject( uint32_t ulObjectId );
+		uint32_t GetObjectId() const { return m_ulObjectId; }
+
+		// No copy or move constructors.
+		CDRMAtomicObject( const CDRMAtomicObject& ) = delete;
+		CDRMAtomicObject& operator=( const CDRMAtomicObject& ) = delete;
+
+		CDRMAtomicObject( CDRMAtomicObject&& ) = delete;
+		CDRMAtomicObject& operator=( CDRMAtomicObject&& ) = delete;
+	protected:
+		uint32_t m_ulObjectId = 0ul;
+	};
+
+	template < uint32_t DRMObjectType >
+	class CDRMAtomicTypedObject : public CDRMAtomicObject
+	{
+	public:
+		CDRMAtomicTypedObject( uint32_t ulObjectId );
+	protected:
+		std::optional<DRMObjectRawProperties> GetRawProperties();
+	};
+
+	class CDRMAtomicProperty
+	{
+	public:
+		CDRMAtomicProperty( CDRMAtomicObject *pObject, DRMObjectRawProperty rawProperty );
+
+		static std::optional<CDRMAtomicProperty> Instantiate( const char *pszName, CDRMAtomicObject *pObject, const DRMObjectRawProperties& rawProperties );
+
+		uint64_t GetPendingValue() const { return m_ulPendingValue; }
+		uint64_t GetCurrentValue() const { return m_ulCurrentValue; }
+		int SetPendingValue( drmModeAtomicReq *pRequest, uint64_t ulValue, bool bForce );
+
+		void OnCommit();
+		void Rollback();
+	private:
+		CDRMAtomicObject *m_pObject = nullptr;
+		uint32_t m_uPropertyId = 0u;
+
+		uint64_t m_ulPendingValue = 0ul;
+		uint64_t m_ulCurrentValue = 0ul;
+		uint64_t m_ulInitialValue = 0ul;
+	};
+
+	class CDRMPlane final : public CDRMAtomicTypedObject<DRM_MODE_OBJECT_PLANE>
+	{
+	public:
+		// Takes ownership of pPlane.
+		CDRMPlane( drmModePlane *pPlane );
+
+		void RefreshState();
+
+		drmModePlane *GetModePlane() const { return m_pPlane.get(); }
+
+		struct PlaneProperties
+		{
+			std::optional<CDRMAtomicProperty> *begin() { return &FB_ID; }
+			std::optional<CDRMAtomicProperty> *end() { return &DUMMY_END; }
+
+			std::optional<CDRMAtomicProperty> type; // Immutable
+			std::optional<CDRMAtomicProperty> IN_FORMATS; // Immutable
+
+			std::optional<CDRMAtomicProperty> FB_ID;
+			std::optional<CDRMAtomicProperty> CRTC_ID;
+			std::optional<CDRMAtomicProperty> SRC_X;
+			std::optional<CDRMAtomicProperty> SRC_Y;
+			std::optional<CDRMAtomicProperty> SRC_W;
+			std::optional<CDRMAtomicProperty> SRC_H;
+			std::optional<CDRMAtomicProperty> CRTC_X;
+			std::optional<CDRMAtomicProperty> CRTC_Y;
+			std::optional<CDRMAtomicProperty> CRTC_W;
+			std::optional<CDRMAtomicProperty> CRTC_H;
+			std::optional<CDRMAtomicProperty> zpos;
+			std::optional<CDRMAtomicProperty> alpha;
+			std::optional<CDRMAtomicProperty> rotation;
+			std::optional<CDRMAtomicProperty> COLOR_ENCODING;
+			std::optional<CDRMAtomicProperty> COLOR_RANGE;
+			std::optional<CDRMAtomicProperty> VALVE1_PLANE_DEGAMMA_TF;
+			std::optional<CDRMAtomicProperty> VALVE1_PLANE_DEGAMMA_LUT;
+			std::optional<CDRMAtomicProperty> VALVE1_PLANE_CTM;
+			std::optional<CDRMAtomicProperty> VALVE1_PLANE_HDR_MULT;
+			std::optional<CDRMAtomicProperty> VALVE1_PLANE_SHAPER_LUT;
+			std::optional<CDRMAtomicProperty> VALVE1_PLANE_SHAPER_TF;
+			std::optional<CDRMAtomicProperty> VALVE1_PLANE_LUT3D;
+			std::optional<CDRMAtomicProperty> VALVE1_PLANE_BLEND_TF;
+			std::optional<CDRMAtomicProperty> VALVE1_PLANE_BLEND_LUT;
+			std::optional<CDRMAtomicProperty> DUMMY_END;
+		};
+		      PlaneProperties &GetProperties()       { return m_Props; }
+		const PlaneProperties &GetProperties() const { return m_Props; }
+	private:
+		CAutoDeletePtr<drmModePlane> m_pPlane;
+		PlaneProperties m_Props;
+	};
+
+	class CDRMCRTC final : public CDRMAtomicTypedObject<DRM_MODE_OBJECT_CRTC>
+	{
+	public:
+		// Takes ownership of pCRTC.
+		CDRMCRTC( drmModeCrtc *pCRTC, uint32_t uCRTCMask );
+
+		void RefreshState();
+		uint32_t GetCRTCMask() const { return m_uCRTCMask; }
+
+		struct CRTCProperties
+		{
+			std::optional<CDRMAtomicProperty> *begin() { return &ACTIVE; }
+			std::optional<CDRMAtomicProperty> *end() { return &DUMMY_END; }
+
+			std::optional<CDRMAtomicProperty> ACTIVE;
+			std::optional<CDRMAtomicProperty> MODE_ID;
+			std::optional<CDRMAtomicProperty> GAMMA_LUT;
+			std::optional<CDRMAtomicProperty> DEGAMMA_LUT;
+			std::optional<CDRMAtomicProperty> CTM;
+			std::optional<CDRMAtomicProperty> VRR_ENABLED;
+			std::optional<CDRMAtomicProperty> OUT_FENCE_PTR;
+			std::optional<CDRMAtomicProperty> VALVE1_CRTC_REGAMMA_TF;
+			std::optional<CDRMAtomicProperty> DUMMY_END;
+		};
+		      CRTCProperties &GetProperties()       { return m_Props; }
+		const CRTCProperties &GetProperties() const { return m_Props; }
+	private:
+		CAutoDeletePtr<drmModeCrtc> m_pCRTC;
+		uint32_t m_uCRTCMask = 0u;
+		CRTCProperties m_Props;
+	};
+
+	class CDRMConnector final : public CDRMAtomicTypedObject<DRM_MODE_OBJECT_CONNECTOR>
+	{
+	public:
+		CDRMConnector( drmModeConnector *pConnector );
+
+		void RefreshState();
+
+		struct ConnectorProperties
+		{
+			std::optional<CDRMAtomicProperty> *begin() { return &CRTC_ID; }
+			std::optional<CDRMAtomicProperty> *end() { return &DUMMY_END; }
+
+			std::optional<CDRMAtomicProperty> CRTC_ID;
+			std::optional<CDRMAtomicProperty> Colorspace;
+			std::optional<CDRMAtomicProperty> content_type; // "content type" with space!
+			std::optional<CDRMAtomicProperty> panel_orientation; // "panel orientation" with space!
+			std::optional<CDRMAtomicProperty> HDR_OUTPUT_METADATA;
+			std::optional<CDRMAtomicProperty> vrr_capable;
+			std::optional<CDRMAtomicProperty> EDID;
+			std::optional<CDRMAtomicProperty> DUMMY_END;
+		};
+		      ConnectorProperties &GetProperties()       { return m_Props; }
+		const ConnectorProperties &GetProperties() const { return m_Props; }
+
+		struct HDRInfo
+		{
+			// We still want to set up HDR info for Steam Deck LCD with some good
+			// target/mapping values for the display brightness for undocking from a HDR display,
+			// but don't want to expose HDR there as it is not good.
+			bool bExposeHDRSupport = false;
+
+			// The output encoding to use for HDR output.
+			// For typical HDR10 displays, this will be PQ.
+			// For displays doing "traditional HDR" such as Steam Deck OLED, this is Gamma 2.2.
+			EOTF eOutputEncodingEOTF = EOTF_Gamma22;
+
+			uint16_t uMaxContentLightLevel = 500;     // Nits
+			uint16_t uMaxFrameAverageLuminance = 500; // Nits
+			uint16_t uMinContentLightLevel = 0;       // Nits / 10000
+			std::shared_ptr<wlserver_hdr_metadata> pDefaultMetadataBlob;
+
+			bool ShouldPatchEDID() const
+			{
+				return bExposeHDRSupport && eOutputEncodingEOTF == EOTF_Gamma22;
+			}
+
+			bool SupportsHDR() const
+			{
+				// Note: Different to IsHDR10, as we can expose HDR10 on G2.2 displays
+				// using LUTs and CTMs.
+				return bExposeHDRSupport;
+			}
+
+			bool IsHDR10() const
+			{
+				// PQ output encoding is always HDR10 (PQ + 2020) for us.
+				// If that assumption changes, update me.
+				return eOutputEncodingEOTF == EOTF_PQ;
+			}
+		};
+
+		drmModeConnector *GetModeConnector() { return m_pConnector.get(); }
+		const char *GetName() const { return m_Mutable.szName; }
+		const char *GetMake() const { return m_Mutable.pszMake; }
+		const char *GetModel() const { return m_Mutable.szModel; }
+		uint32_t GetPossibleCRTCMask() const { return m_Mutable.uPossibleCRTCMask; }
+		const HDRInfo &GetHDRInfo() const { return m_Mutable.HDR; }
+		std::span<const uint32_t> GetValidDynamicRefreshRates() const { return m_Mutable.ValidDynamicRefreshRates; }
+		GamescopeKnownDisplays GetKnownDisplayType() const { return m_Mutable.eKnownDisplay; }
+		GamescopeScreenType GetScreenType() const
+		{
+			if ( m_pConnector->connector_type == DRM_MODE_CONNECTOR_eDP ||
+				 m_pConnector->connector_type == DRM_MODE_CONNECTOR_LVDS ||
+				 m_pConnector->connector_type == DRM_MODE_CONNECTOR_DSI )
+				return GAMESCOPE_SCREEN_TYPE_INTERNAL;
+
+			return GAMESCOPE_SCREEN_TYPE_EXTERNAL;
+		}
+		bool IsVRRCapable() const
+		{
+			return this->GetProperties().vrr_capable && !!this->GetProperties().vrr_capable->GetCurrentValue();
+		}
+		const displaycolorimetry_t& GetDisplayColorimetry() const { return m_Mutable.DisplayColorimetry; }
+
+		const std::vector<uint8_t> &GetRawEDID() const { return m_Mutable.EdidData; }
+
+		// TODO: Remove
+		void SetBaseRefresh( int nRefresh ) { m_nBaseRefresh = nRefresh; }
+		int  GetBaseRefresh() const { return m_nBaseRefresh; }
+	private:
+		void ParseEDID();
+
+		static std::optional<HDRInfo> GetKnownDisplayHDRInfo( GamescopeKnownDisplays eKnownDisplay );
+
+		CAutoDeletePtr<drmModeConnector> m_pConnector;
+
+		struct MutableConnectorState
+		{
+			int nDefaultRefresh = 0;
+
+			uint32_t uPossibleCRTCMask = 0u;
+			char szName[32]{};
+			char szMakePNP[4]{};
+			char szModel[16]{};
+			const char *pszMake = ""; // Not owned, no free. This is a pointer to pnp db or szMakePNP.
+			GamescopeKnownDisplays eKnownDisplay = GAMESCOPE_KNOWN_DISPLAY_UNKNOWN;
+			std::span<const uint32_t> ValidDynamicRefreshRates{};
+			std::vector<uint8_t> EdidData; // Raw, unmodified.
+
+			displaycolorimetry_t DisplayColorimetry = displaycolorimetry_709;
+			HDRInfo HDR;
+		} m_Mutable;
+
+		// TODO: Remove
+		int m_nBaseRefresh = 0;
+
+		ConnectorProperties m_Props;
+	};
+}
+
 struct saved_mode {
 	int width;
 	int height;
 	int refresh;
-};
-
-struct plane {
-	uint32_t id;
-	drmModePlane *plane;
-	std::map<std::string, const drmModePropertyRes *> props;
-	std::map<std::string, uint64_t> initial_prop_values;
-	bool has_color_mgmt;
-};
-
-struct crtc {
-	uint32_t id;
-	drmModeCrtc *crtc;
-	std::map<std::string, const drmModePropertyRes *> props;
-	std::map<std::string, uint64_t> initial_prop_values;
-	bool has_gamma_lut;
-	bool has_degamma_lut;
-	bool has_ctm;
-	bool has_vrr_enabled;
-	bool has_valve1_regamma_tf;
-
-	struct {
-		bool active;
-	} current, pending;
-};
-
-struct connector_metadata_t {
-   struct hdr_output_metadata defaultHdrMetadata = {};
-   std::shared_ptr<wlserver_hdr_metadata> hdr10_metadata_blob;
-   bool supportsST2084 = false;
-
-   displaycolorimetry_t colorimetry = displaycolorimetry_709;
-   EOTF eotf = EOTF_Gamma22;
-   uint16_t maxCLL = 0;
-   uint16_t maxFALL = 0;
-};
-
-struct connector {
-	uint32_t id;
-	char *name;
-	drmModeConnector *connector;
-	uint32_t possible_crtcs;
-	std::map<std::string, const drmModePropertyRes *> props;
-	std::map<std::string, uint64_t> initial_prop_values;
-
-	char make_pnp[4];
-	char *make;
-	char *model;
-	bool is_steam_deck_display;
-	std::span<uint32_t> valid_display_rates{};
-	uint16_t is_galileo_display;
-
-	int target_refresh;
-	bool vrr_capable;
-
-	connector_metadata_t metadata;
-
-	struct {
-		uint32_t crtc_id;
-		uint32_t colorspace;
-		uint32_t content_type;
-		std::shared_ptr<wlserver_hdr_metadata> hdr_output_metadata;
-	} current, pending;
-
-	std::vector<uint8_t> edid_data;
-
-	bool has_colorspace;
-	bool has_content_type;
-	bool has_hdr_output_metadata;
 };
 
 struct fb {
@@ -240,6 +429,8 @@ enum drm_valve1_transfer_function {
 };
 
 struct drm_t {
+	bool bUseLiftoff;
+
 	int fd;
 
 	int preferred_width, preferred_height, preferred_refresh;
@@ -248,16 +439,15 @@ struct drm_t {
 	bool allow_modifiers;
 	struct wlr_drm_format_set formats;
 
-	std::vector< struct plane > planes;
-	std::vector< struct crtc > crtcs;
-	std::unordered_map< uint32_t, struct connector > connectors;
+	std::vector< std::unique_ptr< gamescope::CDRMPlane > > planes;
+	std::vector< std::unique_ptr< gamescope::CDRMCRTC > > crtcs;
+	std::unordered_map< uint32_t, gamescope::CDRMConnector > connectors;
 
 	std::map< uint32_t, drmModePropertyRes * > props;
 
-	struct plane *primary;
-	struct crtc *crtc;
-	struct connector *connector;
-	int crtc_index;
+	gamescope::CDRMPlane *pPrimaryPlane;
+	gamescope::CDRMCRTC *pCRTC;
+	gamescope::CDRMConnector *pConnector;
 	int kms_in_fence_fd;
 	int kms_out_fence_fd;
 
@@ -277,7 +467,7 @@ struct drm_t {
 		uint32_t color_mgmt_serial;
 		std::shared_ptr<drm_blob> lut3d_id[ EOTF_Count ];
 		std::shared_ptr<drm_blob> shaperlut_id[ EOTF_Count ];
-		enum drm_screen_type screen_type = DRM_SCREEN_TYPE_INTERNAL;
+		// TODO: Remove me, this should be some generic setting.
 		bool vrr_enabled = false;
 		drm_valve1_transfer_function output_tf = DRM_VALVE1_TRANSFER_FUNCTION_DEFAULT;
 	} current, pending;
@@ -318,16 +508,10 @@ extern struct drm_t g_DRM;
 extern uint32_t g_nDRMFormat;
 extern uint32_t g_nDRMFormatOverlay;
 
-extern bool g_bUseLayers;
 extern bool g_bRotated;
 extern bool g_bFlipped;
 extern bool g_bDebugLayers;
 extern const char *g_sOutputName;
-
-enum drm_mode_generation {
-	DRM_MODE_GENERATE_CVT,
-	DRM_MODE_GENERATE_FIXED,
-};
 
 enum g_panel_orientation {
 	PANEL_ORIENTATION_0,	/* NORMAL */
@@ -337,10 +521,18 @@ enum g_panel_orientation {
 	PANEL_ORIENTATION_AUTO,
 };
 
-extern enum drm_mode_generation g_drmModeGeneration;
+enum drm_panel_orientation {
+	DRM_MODE_PANEL_ORIENTATION_UNKNOWN = -1,
+	DRM_MODE_PANEL_ORIENTATION_NORMAL = 0,
+	DRM_MODE_PANEL_ORIENTATION_BOTTOM_UP,
+	DRM_MODE_PANEL_ORIENTATION_LEFT_UP,
+	DRM_MODE_PANEL_ORIENTATION_RIGHT_UP,
+};
+
+extern gamescope::GamescopeModeGeneration g_eGamescopeModeGeneration;
 extern enum g_panel_orientation g_drmModeOrientation;
 
-extern std::atomic<uint64_t> g_drmEffectiveOrientation[DRM_SCREEN_TYPE_COUNT]; // DRM_MODE_ROTATE_*
+extern std::atomic<uint64_t> g_drmEffectiveOrientation[gamescope::GAMESCOPE_SCREEN_TYPE_COUNT]; // DRM_MODE_ROTATE_*
 
 extern bool g_bForceDisableColorMgmt;
 
@@ -348,24 +540,23 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh, bool wants_
 void finish_drm(struct drm_t *drm);
 int drm_commit(struct drm_t *drm, const struct FrameInfo_t *frameInfo );
 int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameInfo );
-void drm_rollback( struct drm_t *drm );
 bool drm_poll_state(struct drm_t *drm);
 uint32_t drm_fbid_from_dmabuf( struct drm_t *drm, struct wlr_buffer *buf, struct wlr_dmabuf_attributes *dma_buf );
 void drm_lock_fbid( struct drm_t *drm, uint32_t fbid );
 void drm_unlock_fbid( struct drm_t *drm, uint32_t fbid );
 void drm_drop_fbid( struct drm_t *drm, uint32_t fbid );
-bool drm_set_connector( struct drm_t *drm, struct connector *conn );
+bool drm_set_connector( struct drm_t *drm, gamescope::CDRMConnector *conn );
 bool drm_set_mode( struct drm_t *drm, const drmModeModeInfo *mode );
 bool drm_set_refresh( struct drm_t *drm, int refresh );
 bool drm_set_resolution( struct drm_t *drm, int width, int height );
 bool drm_update_color_mgmt(struct drm_t *drm);
 bool drm_update_vrr_state(struct drm_t *drm);
-drm_screen_type drm_get_screen_type(struct drm_t *drm);
+gamescope::GamescopeScreenType drm_get_screen_type(struct drm_t *drm);
 
 char *find_drm_node_by_devid(dev_t devid);
 int drm_get_default_refresh(struct drm_t *drm);
 bool drm_get_vrr_capable(struct drm_t *drm);
-bool drm_supports_st2084(struct drm_t *drm, uint16_t *maxCLL = nullptr, uint16_t *maxFALL = nullptr);
+bool drm_supports_hdr(struct drm_t *drm, uint16_t *maxCLL = nullptr, uint16_t *maxFALL = nullptr);
 void drm_set_vrr_enabled(struct drm_t *drm, bool enabled);
 bool drm_get_vrr_in_use(struct drm_t *drm);
 bool drm_supports_color_mgmt(struct drm_t *drm);
@@ -383,7 +574,7 @@ void drm_get_native_colorimetry( struct drm_t *drm,
 	displaycolorimetry_t *displayColorimetry, EOTF *displayEOTF,
 	displaycolorimetry_t *outputEncodingColorimetry, EOTF *outputEncodingEOTF );
 
-std::span<uint32_t> drm_get_valid_refresh_rates( struct drm_t *drm );
+std::span<const uint32_t> drm_get_valid_refresh_rates( struct drm_t *drm );
 
 extern bool g_bSupportsAsyncFlips;
 

@@ -875,9 +875,9 @@ static void create_gamescope_pipewire( void )
 
 static void gamescope_control_set_app_target_refresh_cycle( struct wl_client *client, struct wl_resource *resource, uint32_t fps, uint32_t flags )
 {
-	auto display_type = DRM_SCREEN_TYPE_EXTERNAL;
+	auto display_type = gamescope::GAMESCOPE_SCREEN_TYPE_EXTERNAL;
 	if ( flags & GAMESCOPE_CONTROL_TARGET_REFRESH_CYCLE_FLAG_INTERNAL_DISPLAY )
-		display_type = DRM_SCREEN_TYPE_INTERNAL;
+		display_type = gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL;
 
 	steamcompmgr_set_app_refresh_cycle_override( display_type, fps );
 }
@@ -1956,7 +1956,7 @@ static void apply_touchscreen_orientation(double *x, double *y )
 	double ty = 0;
 
 	// Use internal screen always for orientation purposes.
-	switch ( g_drmEffectiveOrientation[DRM_SCREEN_TYPE_INTERNAL] )
+	switch ( g_drmEffectiveOrientation[gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL] )
 	{
 		default:
 		case DRM_MODE_ROTATE_0:
@@ -1987,8 +1987,8 @@ int get_effective_touch_mode()
 {
 	if (!BIsNested() && g_bTrackpadTouchExternalDisplay)
 	{
-		drm_screen_type screenType = drm_get_screen_type(&g_DRM);
-		if ( screenType == DRM_SCREEN_TYPE_EXTERNAL && g_nTouchClickMode == WLSERVER_TOUCH_CLICK_PASSTHROUGH )
+		gamescope::GamescopeScreenType screenType = drm_get_screen_type(&g_DRM);
+		if ( screenType == gamescope::GAMESCOPE_SCREEN_TYPE_EXTERNAL && g_nTouchClickMode == WLSERVER_TOUCH_CLICK_PASSTHROUGH )
 			return WLSERVER_TOUCH_CLICK_TRACKPAD;
 	}
 

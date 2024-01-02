@@ -149,7 +149,7 @@ struct xwayland_ctx_t final : public gamescope::IWaitable
 		Atom gamescopeXWaylandModeControl;
 
 		Atom gamescopeFPSLimit;
-		Atom gamescopeDynamicRefresh[DRM_SCREEN_TYPE_COUNT];
+		Atom gamescopeDynamicRefresh[gamescope::GAMESCOPE_SCREEN_TYPE_COUNT];
 		Atom gamescopeLowLatency;
 
 		Atom gamescopeFSRFeedback;
@@ -216,9 +216,9 @@ struct xwayland_ctx_t final : public gamescope::IWaitable
 		Atom gamescopeColorAppHDRMetadataFeedback;
 		Atom gamescopeColorSliderInUse;
 		Atom gamescopeColorChromaticAdaptationMode;
-		Atom gamescopeColorMuraCorrectionImage[DRM_SCREEN_TYPE_COUNT];
-		Atom gamescopeColorMuraScale[DRM_SCREEN_TYPE_COUNT];
-		Atom gamescopeColorMuraCorrectionDisabled[DRM_SCREEN_TYPE_COUNT];
+		Atom gamescopeColorMuraCorrectionImage[gamescope::GAMESCOPE_SCREEN_TYPE_COUNT];
+		Atom gamescopeColorMuraScale[gamescope::GAMESCOPE_SCREEN_TYPE_COUNT];
+		Atom gamescopeColorMuraCorrectionDisabled[gamescope::GAMESCOPE_SCREEN_TYPE_COUNT];
 
 		Atom gamescopeCreateXWaylandServer;
 		Atom gamescopeCreateXWaylandServerFeedback;

@@ -328,7 +328,7 @@ int g_nAsyncFlipsEnabled = 0;
 int g_nSteamMaxHeight = 0;
 bool g_bVRRCapable_CachedValue = false;
 bool g_bVRRInUse_CachedValue = false;
-bool g_bSupportsST2084_CachedValue = false;
+bool g_bSupportsHDR_CachedValue = false;
 bool g_bForceHDR10OutputDebug = false;
 bool g_bHDREnabled = false;
 bool g_bHDRItmEnable = false;
@@ -505,8 +505,8 @@ bool set_color_mgmt_enabled( bool bEnabled )
 	return true;
 }
 
-static std::shared_ptr<CVulkanTexture> s_MuraCorrectionImage[DRM_SCREEN_TYPE_COUNT];
-static std::shared_ptr<wlserver_ctm> s_MuraCTMBlob[DRM_SCREEN_TYPE_COUNT];
+static std::shared_ptr<CVulkanTexture> s_MuraCorrectionImage[gamescope::GAMESCOPE_SCREEN_TYPE_COUNT];
+static std::shared_ptr<wlserver_ctm> s_MuraCTMBlob[gamescope::GAMESCOPE_SCREEN_TYPE_COUNT];
 static float g_flMuraScale = 1.0f;
 static bool g_bMuraCompensationDisabled = false;
 
@@ -517,8 +517,8 @@ bool is_mura_correction_enabled()
 
 void update_mura_ctm()
 {
-	s_MuraCTMBlob[DRM_SCREEN_TYPE_INTERNAL] = nullptr;
-	if (s_MuraCorrectionImage[DRM_SCREEN_TYPE_INTERNAL] == nullptr)
+	s_MuraCTMBlob[gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL] = nullptr;
+	if (s_MuraCorrectionImage[gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL] == nullptr)
 		return;
 
 	static constexpr float kMuraMapScale = 0.0625f;
@@ -533,7 +533,7 @@ void update_mura_ctm()
 		0,       flScale, 0,       kMuraOffset * flScale,
 		0,       0,       0,       0, // No mura comp for blue channel.
 	};
-	s_MuraCTMBlob[DRM_SCREEN_TYPE_INTERNAL] = drm_create_ctm(&g_DRM, mura_scale_offset);
+	s_MuraCTMBlob[gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL] = drm_create_ctm(&g_DRM, mura_scale_offset);
 }
 
 bool g_bMuraDebugFullColor = false;
@@ -541,7 +541,7 @@ bool g_bMuraDebugFullColor = false;
 bool set_mura_overlay( const char *path )
 {
 	xwm_log.infof("[josh mura correction] Setting mura correction image to: %s", path);
-	s_MuraCorrectionImage[DRM_SCREEN_TYPE_INTERNAL] = nullptr;
+	s_MuraCorrectionImage[gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL] = nullptr;
 	update_mura_ctm();
 
 	std::string red_path = std::string(path) + "_red.png";
@@ -577,7 +577,7 @@ bool set_mura_overlay( const char *path )
 	CVulkanTexture::createFlags texCreateFlags;
 	texCreateFlags.bFlippable = !BIsNested();
 	texCreateFlags.bSampled = true;
-	s_MuraCorrectionImage[DRM_SCREEN_TYPE_INTERNAL] = vulkan_create_texture_from_bits(w, h, w, h, DRM_FORMAT_ABGR8888, texCreateFlags, (void*)data);
+	s_MuraCorrectionImage[gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL] = vulkan_create_texture_from_bits(w, h, w, h, DRM_FORMAT_ABGR8888, texCreateFlags, (void*)data);
 	free(data);
 
 	xwm_log.infof("[josh mura correction] Loaded new mura correction image!");
@@ -912,26 +912,26 @@ bool g_bCurrentBasePlaneIsFifo = false;
 
 static int g_nSteamCompMgrTargetFPS = 0;
 static uint64_t g_uDynamicRefreshEqualityTime = 0;
-static int g_nDynamicRefreshRate[DRM_SCREEN_TYPE_COUNT] = { 0, 0 };
+static int g_nDynamicRefreshRate[gamescope::GAMESCOPE_SCREEN_TYPE_COUNT] = { 0, 0 };
 // Delay to stop modes flickering back and forth.
 static const uint64_t g_uDynamicRefreshDelay = 600'000'000; // 600ms
 
-static int g_nCombinedAppRefreshCycleOverride[DRM_SCREEN_TYPE_COUNT] = { 0, 0 };
+static int g_nCombinedAppRefreshCycleOverride[gamescope::GAMESCOPE_SCREEN_TYPE_COUNT] = { 0, 0 };
 
 static void _update_app_target_refresh_cycle()
 {
 	if ( BIsNested() )
 	{
-		g_nDynamicRefreshRate[ DRM_SCREEN_TYPE_INTERNAL ] = 0;
-		g_nSteamCompMgrTargetFPS = g_nCombinedAppRefreshCycleOverride[ DRM_SCREEN_TYPE_INTERNAL ];
+		g_nDynamicRefreshRate[ gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL ] = 0;
+		g_nSteamCompMgrTargetFPS = g_nCombinedAppRefreshCycleOverride[ gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL ];
 		return;
 	}
 
-	static drm_screen_type last_type;
+	static gamescope::GamescopeScreenType last_type;
 	static int last_target_fps;
 	static bool first = true;
 
-	drm_screen_type type = drm_get_screen_type( &g_DRM );
+	gamescope::GamescopeScreenType type = drm_get_screen_type( &g_DRM );
 	int target_fps = g_nCombinedAppRefreshCycleOverride[type];
 
 	if ( !first && type == last_type && last_target_fps == target_fps )
@@ -975,7 +975,7 @@ static void update_app_target_refresh_cycle()
 		update_runtime_info();
 }
 
-void steamcompmgr_set_app_refresh_cycle_override( drm_screen_type type, int override_fps )
+void steamcompmgr_set_app_refresh_cycle_override( gamescope::GamescopeScreenType type, int override_fps )
 {
 	g_nCombinedAppRefreshCycleOverride[ type ] = override_fps;
 	update_app_target_refresh_cycle();
@@ -2950,8 +2950,6 @@ paint_all(bool async)
 
 				xwm_log.errorf("Failed to prepare 1-layer flip (%s), trying again with previous mode if modeset needed", strerror( -ret ));
 
-				drm_rollback( &g_DRM );
-
 				// Try once again to in case we need to fall back to another mode.
 				ret = drm_prepare( &g_DRM, async, &compositeFrameInfo );
 
@@ -3144,7 +3142,7 @@ paint_all(bool async)
 
 				if ( !maxCLLNits && !maxFALLNits )
 				{
-					drm_supports_st2084( &g_DRM, &maxCLLNits, &maxFALLNits );
+					drm_supports_hdr( &g_DRM, &maxCLLNits, &maxFALLNits );
 				}
 
 				if ( !maxCLLNits && !maxFALLNits )
@@ -5832,7 +5830,7 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 		g_nSteamCompMgrTargetFPS = get_prop( ctx, ctx->root, ctx->atoms.gamescopeFPSLimit, 0 );
 		update_runtime_info();
 	}
-	for (int i = 0; i < DRM_SCREEN_TYPE_COUNT; i++)
+	for (int i = 0; i < gamescope::GAMESCOPE_SCREEN_TYPE_COUNT; i++)
 	{
 		if ( ev->atom == ctx->atoms.gamescopeDynamicRefresh[i] )
 		{
@@ -6131,24 +6129,24 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 		g_ColorMgmt.pending.chromaticAdaptationMode = ( EChromaticAdaptationMethod ) val;
 	}
 	// TODO: Hook up gamescopeColorMuraCorrectionImage for external.
-	if ( ev->atom == ctx->atoms.gamescopeColorMuraCorrectionImage[DRM_SCREEN_TYPE_INTERNAL] )
+	if ( ev->atom == ctx->atoms.gamescopeColorMuraCorrectionImage[gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL] )
 	{
-		std::string path = get_string_prop( ctx, ctx->root, ctx->atoms.gamescopeColorMuraCorrectionImage[DRM_SCREEN_TYPE_INTERNAL] );
+		std::string path = get_string_prop( ctx, ctx->root, ctx->atoms.gamescopeColorMuraCorrectionImage[gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL] );
 		if ( set_mura_overlay( path.c_str() ) )
 			hasRepaint = true;
 	}
 	// TODO: Hook up gamescopeColorMuraScale for external.
-	if ( ev->atom == ctx->atoms.gamescopeColorMuraScale[DRM_SCREEN_TYPE_INTERNAL] )
+	if ( ev->atom == ctx->atoms.gamescopeColorMuraScale[gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL] )
 	{
-		uint32_t val = get_prop(ctx, ctx->root, ctx->atoms.gamescopeColorMuraScale[DRM_SCREEN_TYPE_INTERNAL], 0);
+		uint32_t val = get_prop(ctx, ctx->root, ctx->atoms.gamescopeColorMuraScale[gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL], 0);
 		float new_scale = bit_cast<float>(val);
 		if ( set_mura_scale( new_scale ) )
 			hasRepaint = true;
 	}
 	// TODO: Hook up gamescopeColorMuraCorrectionDisabled for external.
-	if ( ev->atom == ctx->atoms.gamescopeColorMuraCorrectionDisabled[DRM_SCREEN_TYPE_INTERNAL] )
+	if ( ev->atom == ctx->atoms.gamescopeColorMuraCorrectionDisabled[gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL] )
 	{
-		bool disabled = !!get_prop(ctx, ctx->root, ctx->atoms.gamescopeColorMuraCorrectionDisabled[DRM_SCREEN_TYPE_INTERNAL], 0);
+		bool disabled = !!get_prop(ctx, ctx->root, ctx->atoms.gamescopeColorMuraCorrectionDisabled[gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL], 0);
 		if ( g_bMuraCompensationDisabled != disabled ) {
 			g_bMuraCompensationDisabled = disabled;
 			hasRepaint = true;
@@ -7425,8 +7423,8 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 
 	ctx->atoms.gamescopeXWaylandModeControl = XInternAtom( ctx->dpy, "GAMESCOPE_XWAYLAND_MODE_CONTROL", false );
 	ctx->atoms.gamescopeFPSLimit = XInternAtom( ctx->dpy, "GAMESCOPE_FPS_LIMIT", false );
-	ctx->atoms.gamescopeDynamicRefresh[DRM_SCREEN_TYPE_INTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_DYNAMIC_REFRESH", false );
-	ctx->atoms.gamescopeDynamicRefresh[DRM_SCREEN_TYPE_EXTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_DYNAMIC_REFRESH_EXTERNAL", false );
+	ctx->atoms.gamescopeDynamicRefresh[gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_DYNAMIC_REFRESH", false );
+	ctx->atoms.gamescopeDynamicRefresh[gamescope::GAMESCOPE_SCREEN_TYPE_EXTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_DYNAMIC_REFRESH_EXTERNAL", false );
 	ctx->atoms.gamescopeLowLatency = XInternAtom( ctx->dpy, "GAMESCOPE_LOW_LATENCY", false );
 
 	ctx->atoms.gamescopeFSRFeedback = XInternAtom( ctx->dpy, "GAMESCOPE_FSR_FEEDBACK", false );
@@ -7490,12 +7488,12 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 	ctx->atoms.gamescopeColorAppHDRMetadataFeedback = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_APP_HDR_METADATA_FEEDBACK", false );
 	ctx->atoms.gamescopeColorSliderInUse = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_MANAGEMENT_CHANGING_HINT", false );
 	ctx->atoms.gamescopeColorChromaticAdaptationMode = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_CHROMATIC_ADAPTATION_MODE", false );
-	ctx->atoms.gamescopeColorMuraCorrectionImage[DRM_SCREEN_TYPE_INTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_MURA_CORRECTION_IMAGE", false );
-	ctx->atoms.gamescopeColorMuraCorrectionImage[DRM_SCREEN_TYPE_EXTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_MURA_CORRECTION_IMAGE_EXTERNAL", false );
-	ctx->atoms.gamescopeColorMuraScale[DRM_SCREEN_TYPE_INTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_MURA_SCALE", false );
-	ctx->atoms.gamescopeColorMuraScale[DRM_SCREEN_TYPE_EXTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_MURA_SCALE_EXTERNAL", false );
-	ctx->atoms.gamescopeColorMuraCorrectionDisabled[DRM_SCREEN_TYPE_INTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_MURA_CORRECTION_DISABLED", false );
-	ctx->atoms.gamescopeColorMuraCorrectionDisabled[DRM_SCREEN_TYPE_EXTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_MURA_CORRECTION_DISABLED_EXTERNAL", false );
+	ctx->atoms.gamescopeColorMuraCorrectionImage[gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_MURA_CORRECTION_IMAGE", false );
+	ctx->atoms.gamescopeColorMuraCorrectionImage[gamescope::GAMESCOPE_SCREEN_TYPE_EXTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_MURA_CORRECTION_IMAGE_EXTERNAL", false );
+	ctx->atoms.gamescopeColorMuraScale[gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_MURA_SCALE", false );
+	ctx->atoms.gamescopeColorMuraScale[gamescope::GAMESCOPE_SCREEN_TYPE_EXTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_MURA_SCALE_EXTERNAL", false );
+	ctx->atoms.gamescopeColorMuraCorrectionDisabled[gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_MURA_CORRECTION_DISABLED", false );
+	ctx->atoms.gamescopeColorMuraCorrectionDisabled[gamescope::GAMESCOPE_SCREEN_TYPE_EXTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_MURA_CORRECTION_DISABLED_EXTERNAL", false );
 
 	ctx->atoms.gamescopeCreateXWaylandServer = XInternAtom( ctx->dpy, "GAMESCOPE_CREATE_XWAYLAND_SERVER", false );
 	ctx->atoms.gamescopeCreateXWaylandServerFeedback = XInternAtom( ctx->dpy, "GAMESCOPE_CREATE_XWAYLAND_SERVER_FEEDBACK", false );
@@ -7597,13 +7595,13 @@ void update_vrr_atoms(xwayland_ctx_t *root_ctx, bool force, bool* needs_flush = 
 			*needs_flush = true;
 	}
 
-	bool st2084 = BIsNested() ? vulkan_supports_hdr10() : drm_supports_st2084( &g_DRM );
-	if ( st2084 != g_bSupportsST2084_CachedValue || force )
+	bool HDR = BIsNested() ? vulkan_supports_hdr10() : drm_supports_hdr( &g_DRM );
+	if ( HDR != g_bSupportsHDR_CachedValue || force )
 	{
-		uint32_t hdr_value = st2084 ? 1 : 0;
+		uint32_t hdr_value = HDR ? 1 : 0;
 		XChangeProperty(root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeDisplaySupportsHDR, XA_CARDINAL, 32, PropModeReplace,
 			(unsigned char *)&hdr_value, 1 );
-		g_bSupportsST2084_CachedValue = st2084;
+		g_bSupportsHDR_CachedValue = HDR;
 		if (needs_flush)
 			*needs_flush = true;
 	}
@@ -7646,7 +7644,7 @@ void update_mode_atoms(xwayland_ctx_t *root_ctx, bool* needs_flush = nullptr)
 	if (needs_flush)
 		*needs_flush = true;
 
-	if ( drm_get_screen_type(&g_DRM) == DRM_SCREEN_TYPE_INTERNAL )
+	if ( drm_get_screen_type(&g_DRM) == gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL )
 	{
 		XDeleteProperty(root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeDisplayModeListExternal);
 
@@ -7656,12 +7654,17 @@ void update_mode_atoms(xwayland_ctx_t *root_ctx, bool* needs_flush = nullptr)
 		return;
 	}
 
+	if ( !g_DRM.pConnector || !g_DRM.pConnector->GetModeConnector() )
+	{
+		return;
+	}
+
 	char modes[4096] = "";
 	int remaining_size = sizeof(modes) - 1;
 	int len = 0;
-	for (int i = 0; remaining_size > 0 && i < g_DRM.connector->connector->count_modes; i++)
+	for (int i = 0; remaining_size > 0 && i < g_DRM.pConnector->GetModeConnector()->count_modes; i++)
 	{
-		const auto& mode = g_DRM.connector->connector->modes[i];
+		const auto& mode = g_DRM.pConnector->GetModeConnector()->modes[i];
 		int mode_len = snprintf(&modes[len], remaining_size, "%s%dx%d@%d",
 			i == 0 ? "" : " ",
 			int(mode.hdisplay), int(mode.vdisplay), int(mode.vrefresh));
@@ -7974,7 +7977,7 @@ steamcompmgr_main(int argc, char **argv)
 			}
 		}
 
-		g_bOutputHDREnabled = (g_bSupportsST2084_CachedValue || g_bForceHDR10OutputDebug) && g_bHDREnabled;
+		g_bOutputHDREnabled = (g_bSupportsHDR_CachedValue || g_bForceHDR10OutputDebug) && g_bHDREnabled;
 
 		// Pick our width/height for this potential frame, regardless of how it might change later
 		// At some point we might even add proper locking so we get real updates atomically instead

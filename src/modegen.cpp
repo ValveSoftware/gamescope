@@ -312,15 +312,16 @@ unsigned int get_galileo_vfp( int vrefresh, unsigned int * vfp_array, unsigned i
 	return 0;
 }
 
-void generate_fixed_mode(drmModeModeInfo *mode, const drmModeModeInfo *base, int vrefresh, 
-							bool use_tuned_clocks, unsigned int use_vfp )
+void generate_fixed_mode(drmModeModeInfo *mode, const drmModeModeInfo *base, int vrefresh, gamescope::GamescopeKnownDisplays eKnownDisplay )
 {
 	*mode = *base;
 	if (!vrefresh)
 		vrefresh = 60;
-	if ( use_vfp ) {
-		unsigned int vfp, vsync, vbp = 0;
-		if (GALILEO_SDC_PID == use_vfp) {
+	if ( eKnownDisplay == gamescope::GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_OLED_SDC ||
+		 eKnownDisplay == gamescope::GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_OLED_BOE ) {
+		unsigned int vfp = 0, vsync = 0, vbp = 0;
+		if ( eKnownDisplay == gamescope::GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_OLED_SDC )
+		{
 			vfp = get_galileo_vfp( vrefresh, galileo_sdc_vfp, ARRAY_SIZE(galileo_sdc_vfp) );
 			// if we did not find a matching rate then we default to 60 Hz
 			if ( !vfp ) {
@@ -329,7 +330,7 @@ void generate_fixed_mode(drmModeModeInfo *mode, const drmModeModeInfo *base, int
 			}
 			vsync = GALILEO_SDC_VSYNC;
 			vbp = GALILEO_SDC_VBP;
-		} else { // BOE Panel
+		} else if ( eKnownDisplay == gamescope::GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_OLED_BOE ) { // BOE Panel
 			vfp = get_galileo_vfp( vrefresh, galileo_boe_vfp, ARRAY_SIZE(galileo_boe_vfp) );
 			// if we did not find a matching rate then we default to 60 Hz
 			if ( !vfp ) {
@@ -338,12 +339,12 @@ void generate_fixed_mode(drmModeModeInfo *mode, const drmModeModeInfo *base, int
 			}
 			vsync = GALILEO_BOE_VSYNC;
 			vbp = GALILEO_BOE_VBP;
-		} 
+		}
 		mode->vsync_start = mode->vdisplay + vfp;
 		mode->vsync_end = mode->vsync_start + vsync;
 		mode->vtotal = mode->vsync_end + vbp;
 	} else {
-		if ( use_tuned_clocks )
+		if ( eKnownDisplay == gamescope::GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_LCD )
 		{
 			mode->hdisplay = 800;
 			mode->hsync_start = 840;
