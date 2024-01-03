@@ -1802,7 +1802,7 @@ bool MouseCursor::getTexture()
 				{
 					pixels[i * image->width + j] = image->pixels[i * image->width + j];
 				}
-			} 
+			}
 			std::vector<uint32_t> resizeBuffer( nDesiredWidth * nDesiredHeight );
 			stbir_resize_uint8_srgb( (unsigned char *)pixels.data(),       image->width,  image->height,  0,
 									 (unsigned char *)resizeBuffer.data(), nDesiredWidth, nDesiredHeight, 0,
@@ -2590,7 +2590,7 @@ paint_all( global_focus_t *pFocus, bool async )
 						}
 					}
 				}
-				
+
 				int nOldLayerCount = frameInfo.layerCount;
 
 				uint32_t flags = 0;
@@ -2599,7 +2599,7 @@ paint_all( global_focus_t *pFocus, bool async )
 				paint_window(w, w, &frameInfo, pFocus->cursor, flags);
 				if ( pFocus == GetCurrentFocus() )
 					update_touch_scaling( &frameInfo );
-				
+
 				// paint UI unless it's fully hidden, which it communicates to us through opacity=0
 				// we paint it to extract scaling coefficients above, then remove the layer if one was added
 				if ( w->opacity == TRANSLUCENT && bHasVideoUnderlay && nOldLayerCount < frameInfo.layerCount )
@@ -2692,38 +2692,8 @@ paint_all( global_focus_t *pFocus, bool async )
 			if ( overlay == pFocus->inputFocusWindow && pFocus == GetCurrentFocus() )
 				update_touch_scaling( &frameInfo );
 		}
-		else if ( !GetBackend()->UsesVulkanSwapchain() && GetBackend()->IsSessionBased() )
-		{
-			auto tex = vulkan_get_hacky_blank_texture();
-			if ( tex != nullptr )
-			{
-				// HACK! HACK HACK HACK
-				// To avoid stutter when toggling the overlay on 
-				int curLayer = frameInfo.layerCount++;
-
-				FrameInfo_t::Layer_t *layer = &frameInfo.layers[ curLayer ];
-
-
-				layer->scale.x = g_nOutputWidth == tex->width() ? 1.0f : tex->width() / (float)g_nOutputWidth;
-				layer->scale.y = g_nOutputHeight == tex->height() ? 1.0f : tex->height() / (float)g_nOutputHeight;
-				layer->offset.x = 0.0f;
-				layer->offset.y = 0.0f;
-				layer->opacity = 1.0f; // BLAH
-				layer->zpos = g_zposOverlay;
-				layer->applyColorMgmt = g_ColorMgmt.pending.enabled;
-				layer->eAlphaBlendingMode = cv_overlay_unmultiplied_alpha ? ALPHA_BLENDING_MODE_COVERAGE : ALPHA_BLENDING_MODE_PREMULTIPLIED;
-
-				layer->colorspace = GAMESCOPE_APP_TEXTURE_COLORSPACE_LINEAR;
-				layer->hdr_metadata_blob = nullptr;
-				layer->ctm = nullptr;
-				layer->tex = tex;
-
-				layer->filter = GamescopeUpscaleFilter::NEAREST;
-				layer->blackBorder = true;
-			}
-		}
 	}
-	
+
 	if (notification)
 	{
 		if (notification->opacity)
@@ -3389,7 +3359,7 @@ win_maybe_a_dropdown( steamcompmgr_win_t *w )
 	//
 	// TODO: Come back to me for original Age of Empires HD launcher.
 	// Does that use it? It wants blending!
-	// 
+	//
 	// Only do this if we have CONTROLPARENT right now. Some other apps, such as the
 	// Street Fighter V (310950) Splash Screen also use LAYERED and TOOLWINDOW, and we don't
 	// want that to be overlayed.
@@ -3410,12 +3380,12 @@ win_maybe_a_dropdown( steamcompmgr_win_t *w )
 
 	// Josh:
 	// The logic here is as follows. The window will be treated as a dropdown if:
-	// 
+	//
 	// If this window has a fixed position on the screen + static gravity:
 	//  - If the window has either skipPage or skipTaskbar
 	//    - If the window isn't a dialog, always treat it as a dropdown, as it's
 	//      probably meant to be some form of popup.
-	//    - If the window is a dialog 
+	//    - If the window is a dialog
 	// 		- If the window has transient for, disregard it, as it is trying to redirecting us elsewhere
 	//        ie. a settings menu dialog popup or something.
 	//      - If the window has both skip taskbar and pager, treat it as a dialog.
@@ -3513,7 +3483,7 @@ static bool is_good_override_candidate( steamcompmgr_win_t *override, steamcompm
 
 	auto rect = override->GetGeometry();
 	return override != focus && (rect.nX + rect.nWidth) > 0 && (rect.nY + rect.nHeight) > 0;
-} 
+}
 
 static void
 handle_desktop_window(steamcompmgr_win_t *w);
@@ -3679,7 +3649,7 @@ found:;
 
 	if ( focus )
 	{
-		if ( window_has_commits( focus ) ) 
+		if ( window_has_commits( focus ) )
 			out->focusWindow = focus;
 		else
 			focus->outdatedInteractiveFocus = true;
@@ -3722,9 +3692,9 @@ found:;
 					override_focus = fake_override;
 					goto found2;
 				}
-			}	
+			}
 		}
-		
+
 		found2:;
 		resolveTransientOverrides( true );
 	}
@@ -5334,7 +5304,7 @@ finish_destroy_win(xwayland_ctx_t *ctx, Window id, bool gone)
 		{
 			if (gone)
 				finish_unmap_win (ctx, w);
-			
+
 			{
 				std::unique_lock lock( ctx->list_mutex );
 				*prev = w->xwayland().next;
@@ -5397,7 +5367,7 @@ destroy_win(xwayland_ctx_t *ctx, Window id, bool gone, bool fade)
 		if (x11_win(pFocus->fadeWindow) == id && gone)
 			pFocus->fadeWindow = nullptr;
 	}
-		
+
 	MakeFocusDirty();
 
 	finish_destroy_win(ctx, id, gone);
@@ -6090,7 +6060,7 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 		{
 			get_win_type(ctx, w);
 			MakeFocusDirty();
-		}		
+		}
 	}
 	if (ev->atom == ctx->atoms.sizeHintsAtom)
 	{
@@ -7058,7 +7028,7 @@ void handle_done_commits_xdg( bool vblank, uint64_t vblank_idx )
 			commits_before_their_time.push_back( entry );
 			continue;
 		}
-		
+
 		if (!entry.earliestPresentTime)
 		{
 			entry.earliestPresentTime = next_refresh_time;
@@ -8137,7 +8107,7 @@ void update_mode_atoms(xwayland_ctx_t *root_ctx, bool* needs_flush = nullptr)
 	}
 	XChangeProperty(root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeDisplayModeListExternal, XA_STRING, 8, PropModeReplace,
 		(unsigned char *)modes, strlen(modes) + 1 );
-	
+
 	uint32_t one = 1;
 	XChangeProperty(root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeDisplayIsExternal, XA_CARDINAL, 32, PropModeReplace,
 		(unsigned char *)&one, 1 );
