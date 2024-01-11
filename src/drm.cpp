@@ -3143,6 +3143,7 @@ void drm_get_native_colorimetry( struct drm_t *drm,
 	{
 		*outputEncodingColorimetry = drm->pConnector->GetDisplayColorimetry();
 		*outputEncodingEOTF = EOTF_Gamma22;
+		return;
 	}
 }
 
