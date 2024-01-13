@@ -671,7 +671,7 @@ constexpr const T& clamp( const T& x, const T& min, const T& max )
     return x < min ? min : max < x ? max : x;
 }
 
-extern bool g_bForceRelativeMouse;
+extern ForceRelativeMouseMode g_forceRelativeMouse;
 bool bSteamCompMgrGrab = false;
 
 CommitDoneList_t g_steamcompmgr_xdg_done_commits;
@@ -1887,7 +1887,7 @@ bool MouseCursor::getTexture()
 	m_texture = nullptr;
 
 	// Assume the cursor is fully translucent unless proven otherwise.
-	bool bNoCursor = true;
+	bool bNoCursor = g_forceRelativeMouse != ForceRelativeMouseMode::FORCE_OFF;
 
 	std::shared_ptr<std::vector<uint32_t>> cursorBuffer = nullptr;
 
@@ -1949,7 +1949,7 @@ bool MouseCursor::getTexture()
 
 	m_imageEmpty = bNoCursor;
 
-	if ( !g_bForceRelativeMouse )
+	if ( g_forceRelativeMouse == ForceRelativeMouseMode::OFF )
 	{
 		sdlwindow_grab( m_imageEmpty );
 		bSteamCompMgrGrab = BIsNested() && m_imageEmpty;
@@ -7768,7 +7768,7 @@ steamcompmgr_main(int argc, char **argv)
 	// Reset getopt() state
 	optind = 1;
 
-	bSteamCompMgrGrab = BIsNested() && g_bForceRelativeMouse;
+	bSteamCompMgrGrab = BIsNested() && g_forceRelativeMouse == ForceRelativeMouseMode::FORCE_ON;
 
 	int o;
 	int opt_index = -1;

@@ -45,6 +45,13 @@ enum class GamescopeUpscaleScaler : uint32_t
     STRETCH,
 };
 
+enum class ForceRelativeMouseMode : uint32_t
+{
+    OFF,
+    FORCE_OFF,
+    FORCE_ON,
+};
+
 extern GamescopeUpscaleFilter g_upscaleFilter;
 extern GamescopeUpscaleScaler g_upscaleScaler;
 extern GamescopeUpscaleFilter g_wantedUpscaleFilter;
