@@ -800,7 +800,7 @@ constexpr const T& clamp( const T& x, const T& min, const T& max )
     return x < min ? min : max < x ? max : x;
 }
 
-extern bool g_bForceRelativeMouse;
+extern ForceRelativeMouseMode g_forceRelativeMouse;
 
 CommitDoneList_t g_steamcompmgr_xdg_done_commits;
 
@@ -2427,7 +2427,10 @@ bool ShouldDrawCursor()
 	if ( cv_cursor_composite == 0 )
 		return false;
 
-	if ( g_bForceRelativeMouse )
+	/**
+	 * Should composite cursor when RelativeMouse is not default value ForceRelativeMouseMode::OFF
+	 */
+	if ( g_forceRelativeMouse != ForceRelativeMouseMode::OFF )
 		return true;
 
 	global_focus_t *pFocus = GetCurrentFocus();
@@ -8790,7 +8793,10 @@ steamcompmgr_main(int argc, char **argv)
 					pPaintFocus->cursor->UpdatePosition();
 			}
 
-			if ( pPaintFocus->GetNestedHints() && !g_bForceRelativeMouse )
+			/**
+			 * Update after key input. This should be g_forceRelativeMouse != ForceRelativeMouseMode::FORCE_ON
+			 */
+			if ( pPaintFocus->GetNestedHints() && g_forceRelativeMouse != ForceRelativeMouseMode::FORCE_ON )
 			{
 				const bool bImageEmpty =
 					( pPaintFocus->cursor && pPaintFocus->cursor->imageEmpty() ) &&

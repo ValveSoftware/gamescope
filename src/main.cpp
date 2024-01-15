@@ -84,6 +84,7 @@ const struct option *gamescope_options = (struct option[]){
 	{ "grab", no_argument, nullptr, 'g' },
 	{ "force-grab-cursor", no_argument, nullptr, 0 },
 	{ "display-index", required_argument, nullptr, 0 },
+	{ "never-grab-cursor", no_argument, nullptr, 0 },
 
 	// embedded mode options
 	{ "disable-layers", no_argument, nullptr, 0 },
@@ -224,6 +225,7 @@ const char usage[] =
 	"  --force-grab-cursor            always use relative mouse mode instead of flipping dependent on cursor visibility.\n"
 	"  --display-index                forces gamescope to use a specific display in nested mode."
 	"\n"
+	"  --never-grab-cursor            never use relative mouse mode instead of flipping dependent on cursor visibility.\n"
 	"Embedded mode options:\n"
 	"  -O, --prefer-output            list of connectors in order of preference (ex: DP-1,DP-2,DP-3,HDMI-A-1)\n"
 	"  --default-touch-mode           0: hover, 1: left, 2: right, 3: middle, 4: passthrough\n"
@@ -284,6 +286,7 @@ const char usage[] =
 	"  Super + O                      decrease FSR sharpness by 1\n"
 	"  Super + S                      take a screenshot\n"
 	"  Super + G                      toggle keyboard grab\n"
+	"  Super + M                      toggle never grab mouse\n"
 	"";
 
 std::atomic< bool > g_bRun{true};
@@ -300,7 +303,7 @@ int g_nOutputRefresh = 0;
 bool g_bOutputHDREnabled = false;
 
 bool g_bFullscreen = false;
-bool g_bForceRelativeMouse = false;
+ForceRelativeMouseMode g_forceRelativeMouse = ForceRelativeMouseMode::OFF;
 
 bool g_bGrabbed = false;
 
@@ -807,7 +810,9 @@ int main(int argc, char **argv)
 				} else if (strcmp(opt_name, "immediate-flips") == 0) {
 					cv_tearing_enabled = true;
 				} else if (strcmp(opt_name, "force-grab-cursor") == 0) {
-					g_bForceRelativeMouse = true;
+					g_forceRelativeMouse = ForceRelativeMouseMode::FORCE_ON;
+				} else if (strcmp(opt_name, "never-grab-cursor") == 0) {
+					g_forceRelativeMouse = ForceRelativeMouseMode::FORCE_OFF;
 				} else if (strcmp(opt_name, "display-index") == 0) {
 					g_nNestedDisplayIndex = parse_integer( optarg, opt_name );
 				} else if (strcmp(opt_name, "adaptive-sync") == 0) {
