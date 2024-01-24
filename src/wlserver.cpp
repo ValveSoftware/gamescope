@@ -1658,6 +1658,9 @@ bool wlserver_init( void ) {
 		return false;
 	}
 
+	if (g_bSetWaylandDisplay)
+		setenv("WAYLAND_DISPLAY", wlserver.wl_display_name, true);
+
 	wlserver.wlr.seat = wlr_seat_create(wlserver.display, "seat0");
 	wlr_seat_set_capabilities( wlserver.wlr.seat, WL_SEAT_CAPABILITY_POINTER | WL_SEAT_CAPABILITY_KEYBOARD | WL_SEAT_CAPABILITY_TOUCH );
 

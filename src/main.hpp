@@ -64,6 +64,7 @@ extern int g_nOldPolicy;
 extern struct sched_param g_schedOldParam;
 
 extern int g_nXWaylandCount;
+extern bool g_bSetWaylandDisplay;
 
 extern uint32_t g_preferVendorID;
 extern uint32_t g_preferDeviceID;

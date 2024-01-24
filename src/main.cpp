@@ -103,6 +103,7 @@ const struct option *gamescope_options = (struct option[]){
 
 	// wlserver options
 	{ "xwayland-count", required_argument, nullptr, 0 },
+	{ "set-wayland-display", no_argument, nullptr, 0 },
 
 	// steamcompmgr options
 	{ "cursor", required_argument, nullptr, 0 },
@@ -169,6 +170,7 @@ const char usage[] =
 	"  -C, --hide-cursor-delay        hide cursor image after delay\n"
 	"  -e, --steam                    enable Steam integration\n"
 	"  --xwayland-count               create N xwayland servers\n"
+	"  --set-wayland-display          sets WAYLAND_DISPLAY environment variable for clients\n"
 	"  --prefer-vk-device             prefer Vulkan device for compositing (ex: 1002:7300)\n"
 	"  --force-orientation            rotate the internal display (left, right, normal, upsidedown)\n"
 	"  --force-windows-fullscreen     force windows inside of gamescope to be the size of the nested display (fullscreen)\n"
@@ -281,6 +283,7 @@ int g_upscaleFilterSharpness = 2;
 bool g_bBorderlessOutputWindow = false;
 
 int g_nXWaylandCount = 1;
+bool g_bSetWaylandDisplay = false;
 
 bool g_bNiceCap = false;
 int g_nOldNice = 0;
@@ -614,6 +617,8 @@ int main(int argc, char **argv)
 					g_bForceDisableColorMgmt = true;
 				} else if (strcmp(opt_name, "xwayland-count") == 0) {
 					g_nXWaylandCount = atoi( optarg );
+				} else if (strcmp(opt_name, "set-wayland-display") == 0) {
+					g_bSetWaylandDisplay = true;
 				} else if (strcmp(opt_name, "composite-debug") == 0) {
 					g_uCompositeDebug |= CompositeDebugFlag::Markers;
 					g_uCompositeDebug |= CompositeDebugFlag::PlaneBorders;
