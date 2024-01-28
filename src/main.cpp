@@ -72,6 +72,7 @@ const struct option *gamescope_options = (struct option[]){
 	{ "fullscreen", no_argument, nullptr, 'f' },
 	{ "grab", no_argument, nullptr, 'g' },
 	{ "force-grab-cursor", no_argument, nullptr, 0 },
+	{ "never-grab-cursor", no_argument, nullptr, 0 },
 
 	// embedded mode options
 	{ "disable-layers", no_argument, nullptr, 0 },
@@ -190,6 +191,7 @@ const char usage[] =
 	"  -f, --fullscreen               make the window fullscreen\n"
 	"  -g, --grab                     grab the keyboard\n"
 	"  --force-grab-cursor            always use relative mouse mode instead of flipping dependent on cursor visibility.\n"
+	"  --never-grab-cursor            never use relative mouse mode instead of flipping dependent on cursor visibility.\n"
 	"\n"
 	"Embedded mode options:\n"
 	"  -O, --prefer-output            list of connectors in order of preference\n"
@@ -247,6 +249,7 @@ const char usage[] =
 	"  Super + O                      decrease FSR sharpness by 1\n"
 	"  Super + S                      take a screenshot\n"
 	"  Super + G                      toggle keyboard grab\n"
+	"  Super + M                      toggle mouse grab\n"
 	"";
 
 std::atomic< bool > g_bRun{true};
@@ -262,7 +265,7 @@ int g_nOutputRefresh = 0;
 bool g_bOutputHDREnabled = false;
 
 bool g_bFullscreen = false;
-bool g_bForceRelativeMouse = false;
+ForceRelativeMouseMode g_forceRelativeMouse = ForceRelativeMouseMode::OFF;
 
 bool g_bIsNested = false;
 bool g_bHeadless = false;
@@ -640,7 +643,9 @@ int main(int argc, char **argv)
 				} else if (strcmp(opt_name, "immediate-flips") == 0) {
 					g_nAsyncFlipsEnabled = 1;
 				} else if (strcmp(opt_name, "force-grab-cursor") == 0) {
-					g_bForceRelativeMouse = true;
+					g_forceRelativeMouse = ForceRelativeMouseMode::FORCE_ON;
+				} else if (strcmp(opt_name, "never-grab-cursor") == 0) {
+					g_forceRelativeMouse = ForceRelativeMouseMode::FORCE_OFF;
 				} else if (strcmp(opt_name, "adaptive-sync") == 0) {
 					s_bInitialWantsVRREnabled = true;
 				} else if (strcmp(opt_name, "expose-wayland") == 0) {
@@ -767,7 +772,7 @@ int main(int argc, char **argv)
 
 	if ( !BIsNested() )
 	{
-		g_bForceRelativeMouse = false;
+		g_forceRelativeMouse = ForceRelativeMouseMode::OFF;
 	}
 
 #if HAVE_OPENVR

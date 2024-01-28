@@ -104,7 +104,7 @@ void updateOutputRefresh( void )
 	}
 }
 
-extern bool g_bForceRelativeMouse;
+extern ForceRelativeMouseMode g_forceRelativeMouse;
 
 static std::string gamescope_str = DEFAULT_TITLE;
 
@@ -163,7 +163,7 @@ void inputSDLThreadRun( void )
 		g_nOutputHeight = height;
 	}
 
-	if ( g_bForceRelativeMouse )
+	if ( g_forceRelativeMouse == ForceRelativeMouseMode::FORCE_ON )
 	{
 		SDL_SetRelativeMouseMode( SDL_TRUE );
 		bRelativeMouse = true;
@@ -264,6 +264,9 @@ void inputSDLThreadRun( void )
 						case KEY_F:
 							g_bFullscreen = !g_bFullscreen;
 							SDL_SetWindowFullscreen( g_SDLWindow, g_bFullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0 );
+							break;
+						case KEY_M:
+							sdlwindow_grab( !SDL_GetRelativeMouseMode() );
 							break;
 						case KEY_N:
 							g_wantedUpscaleFilter = GamescopeUpscaleFilter::PIXEL;
@@ -559,7 +562,7 @@ void sdlwindow_grab( bool bGrab )
 	if ( !BIsSDLSession() )
 		return;
 
-	if ( g_bForceRelativeMouse )
+	if ( g_forceRelativeMouse == ForceRelativeMouseMode::FORCE_ON )
 		return;
 
 	static bool s_bWasGrabbed = false;
@@ -580,7 +583,7 @@ void sdlwindow_cursor(std::shared_ptr<std::vector<uint32_t>> pixels, uint32_t wi
 	if ( !BIsSDLSession() )
 		return;
 
-	if ( g_bForceRelativeMouse )
+	if ( g_forceRelativeMouse == ForceRelativeMouseMode::FORCE_ON )
 		return;
 
 	{
