@@ -136,8 +136,8 @@ void inputSDLThreadRun( void )
 	}
 
 	g_SDLWindow = SDL_CreateWindow( DEFAULT_TITLE,
-							   SDL_WINDOWPOS_UNDEFINED,
-							SDL_WINDOWPOS_UNDEFINED,
+							SDL_WINDOWPOS_UNDEFINED_DISPLAY( g_nNestedDisplayIndex ),
+							SDL_WINDOWPOS_UNDEFINED_DISPLAY( g_nNestedDisplayIndex ),
 							g_nOutputWidth,
 							g_nOutputHeight,
 							nSDLWindowFlags );

@@ -13,6 +13,7 @@ extern int g_nNestedWidth;
 extern int g_nNestedHeight;
 extern int g_nNestedRefresh; // Hz
 extern int g_nNestedUnfocusedRefresh; // Hz
+extern int g_nNestedDisplayIndex;
 
 extern uint32_t g_nOutputWidth;
 extern uint32_t g_nOutputHeight;

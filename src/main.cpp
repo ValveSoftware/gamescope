@@ -72,6 +72,7 @@ const struct option *gamescope_options = (struct option[]){
 	{ "fullscreen", no_argument, nullptr, 'f' },
 	{ "grab", no_argument, nullptr, 'g' },
 	{ "force-grab-cursor", no_argument, nullptr, 0 },
+	{ "display-index", required_argument, nullptr, 0 },
 
 	// embedded mode options
 	{ "disable-layers", no_argument, nullptr, 0 },
@@ -190,6 +191,7 @@ const char usage[] =
 	"  -f, --fullscreen               make the window fullscreen\n"
 	"  -g, --grab                     grab the keyboard\n"
 	"  --force-grab-cursor            always use relative mouse mode instead of flipping dependent on cursor visibility.\n"
+	"  --display-index                forces gamescope to use a specific display in nested mode."
 	"\n"
 	"Embedded mode options:\n"
 	"  -O, --prefer-output            list of connectors in order of preference\n"
@@ -255,6 +257,7 @@ int g_nNestedWidth = 0;
 int g_nNestedHeight = 0;
 int g_nNestedRefresh = 0;
 int g_nNestedUnfocusedRefresh = 0;
+int g_nNestedDisplayIndex = 0;
 
 uint32_t g_nOutputWidth = 0;
 uint32_t g_nOutputHeight = 0;
@@ -641,6 +644,8 @@ int main(int argc, char **argv)
 					g_nAsyncFlipsEnabled = 1;
 				} else if (strcmp(opt_name, "force-grab-cursor") == 0) {
 					g_bForceRelativeMouse = true;
+				} else if (strcmp(opt_name, "display-index") == 0) {
+					g_nNestedDisplayIndex = atoi( optarg );
 				} else if (strcmp(opt_name, "adaptive-sync") == 0) {
 					s_bInitialWantsVRREnabled = true;
 				} else if (strcmp(opt_name, "expose-wayland") == 0) {
