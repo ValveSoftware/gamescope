@@ -63,11 +63,34 @@ else
   )
 endif
 
+# Use --depfile to rebuild shaders when included files have changed. Sadly debian based
+# distros don't have up-to-date glslang so we need to check for support first.
+glsl_opt_extra_args=['-V', '--quiet']
+
+if (get_option('debug') or get_option('buildtype').contains('debug')) and ( get_option('b_ndebug') != 'true')
+	glsl_opt_extra_args+=['-gVS'] #compile optimized shaders with debug info (if building w/ debug on), just in case the optimizations cause any weird issues
+endif
+
+if run_command(glsl_compiler, ['--version', '--depfile', 'dummy.dep'], check: false).returncode() == 0
+  glsl_generator_opt = generator(
+    glsl_compiler,
+    output    : ['@BASENAME@.h'],
+    arguments : ['@INPUT@', '-Os', '--vn', '@BASENAME@', '-o', '@OUTPUT@', '--depfile', '@DEPFILE@'] + glsl_opt_extra_args,
+    depfile   : '@BASENAME@.h.d',
+  )
+else
+  glsl_generator_opt = generator(
+    glsl_compiler,
+    output    : ['@BASENAME@.h'],
+    arguments : ['@INPUT@', '-Os', '--vn', '@BASENAME@', '-o', '@OUTPUT@'] + glsl_opt_extra_args,
+  )
+endif
+
+shader_src_dont_opt = [ 'shaders/cs_composite_rcas.comp' ] #gslang optimization flag balloons this specific shader's file size for whatever reason
 shader_src = [
   'shaders/cs_composite_blit.comp',
   'shaders/cs_composite_blur.comp',
   'shaders/cs_composite_blur_cond.comp',
-  'shaders/cs_composite_rcas.comp',
   'shaders/cs_easu.comp',
   'shaders/cs_easu_fp16.comp',
   'shaders/cs_gaussian_blur_horizontal.comp',
@@ -76,7 +99,7 @@ shader_src = [
   'shaders/cs_rgb_to_nv12.comp',
 ]
 
-spirv_shaders = glsl_generator.process(shader_src)
+spirv_shaders = [glsl_generator_opt.process(shader_src), glsl_generator.process(shader_src_dont_opt)]
 
 liftoff_dep = dependency(
   'libliftoff',
