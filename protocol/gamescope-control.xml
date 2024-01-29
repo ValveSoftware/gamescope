@@ -98,5 +98,22 @@
       <arg name="path" type="string" summary="Path to written screenshot"></arg>
     </event>
 
+    <enum name="display_rotation_flag" bitfield="true" since="2">
+      <entry name="normal" value="1"/>
+      <entry name="left" value="2"/>
+      <entry name="right" value="3"/>
+      <entry name="upsidedown" value="4"/>
+    </enum>
+
+    <enum name="display_target_type" since="2">
+      <entry name="internal" value="1"/>
+      <entry name="external" value="2"/>
+    </enum>
+
+    <request name="rotate_display" since="2">
+      <arg name="orientation" type="uint" enum="display_rotation_flag" summary="Set the orientation of the display output."/>
+      <arg name="target_type" type="uint" enum="display_target_type" summary="Internal (1) or External (2) target type."/>
+    </request>
+
   </interface>
 </protocol>
