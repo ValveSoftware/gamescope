@@ -37,13 +37,6 @@ displayinfo_dep = dependency(
   default_options: ['default_library=static'],
 )
 
-required_wlroots_features = ['xwayland', 'libinput_backend']
-foreach feat : required_wlroots_features
-  if wlroots_dep.get_variable('have_' + feat) != 'true'
-    error('Cannot use wlroots built without ' + feat + ' support')
-  endif
-endforeach
-
 glsl_compiler = find_program('glslang', 'glslangValidator', native: true)
 
 # Use --depfile to rebuild shaders when included files have changed. Sadly debian based
@@ -101,6 +94,8 @@ reshade_include = include_directories([
   '../thirdparty/SPIRV-Headers/include/spirv/unified1'
 ])
 
+required_wlroots_features = ['xwayland']
+
 src = [
   'steamcompmgr.cpp',
   'color_helpers.cpp',
@@ -121,6 +116,7 @@ src = [
 gamescope_cpp_args = []
 if drm_dep.found()
   src += 'drm.cpp'
+  required_wlroots_features += 'libinput_backend'
   gamescope_cpp_args += '-DHAVE_DRM=@0@'.format(drm_dep.found().to_int())
 endif
 
@@ -143,6 +139,12 @@ endif
 if openvr_dep.found()
   src += 'vr_session.cpp'
 endif
+
+foreach feat : required_wlroots_features
+  if wlroots_dep.get_variable('have_' + feat) != 'true'
+    error('Cannot use wlroots built without ' + feat + ' support')
+  endif
+endforeach
 
   executable(
     'gamescope',
