@@ -71,13 +71,6 @@ shader_src = [
 
 spirv_shaders = glsl_generator.process(shader_src)
 
-liftoff_dep = dependency(
-  'libliftoff',
-  version: ['>= 0.4.0', '< 0.5.0'],
-  fallback: ['libliftoff', 'liftoff'],
-  default_options: ['default_library=static'],
-)
-
 reshade_src = [
   'reshade/source/effect_codegen_spirv.cpp',
   'reshade/source/effect_expression.cpp',
@@ -118,6 +111,14 @@ if drm_dep.found()
   src += 'drm.cpp'
   required_wlroots_features += 'libinput_backend'
   gamescope_cpp_args += '-DHAVE_DRM=@0@'.format(drm_dep.found().to_int())
+  liftoff_dep = dependency(
+    'libliftoff',
+    version: ['>= 0.4.0', '< 0.5.0'],
+    fallback: ['libliftoff', 'liftoff'],
+    default_options: ['default_library=static'],
+  )
+else
+  liftoff_dep = dependency('', required: false)
 endif
 
 if sdl_dep.found()
