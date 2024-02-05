@@ -36,7 +36,6 @@
 #include <X11/extensions/xfixeswire.h>
 #include <X11/extensions/XInput2.h>
 #include <cstdint>
-#include <drm_mode.h>
 #include <memory>
 #include <thread>
 #include <condition_variable>
