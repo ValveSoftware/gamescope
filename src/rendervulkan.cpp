@@ -21,7 +21,13 @@
 // NIS_Config needs to be included before the X11 headers because of conflicting defines introduced by X11
 #include "shaders/NVIDIAImageScaling/NIS/NIS_Config.h"
 
+#include <drm_fourcc.h>
+#if HAVE_DRM
 #include "drm_include.h"
+#endif
+#include "wlr_begin.hpp"
+#include <wlr/render/drm_format_set.h>
+#include "wlr_end.hpp"
 
 #include "rendervulkan.hpp"
 #include "main.hpp"
@@ -416,9 +422,11 @@ bool CVulkanDevice::createDevice()
 	if ( !GetBackend()->ValidPhysicalDevice( physDev() ) )
 		return false;
 
+#if HAVE_DRM
 	// XXX(JoshA): Move this to ValidPhysicalDevice.
 	// We need to refactor some Vulkan stuff to do that though.
-	if ( hasDrmProps ) {
+	if ( hasDrmProps )
+	{
 		VkPhysicalDeviceDrmPropertiesEXT drmProps = {
 			.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRM_PROPERTIES_EXT,
 		};
@@ -457,7 +465,10 @@ bool CVulkanDevice::createDevice()
 			m_bHasDrmPrimaryDevId = true;
 			m_drmPrimaryDevId = makedev( drmProps.primaryMajor, drmProps.primaryMinor );
 		}
-	} else {
+	}
+	else
+#endif
+	{
 		vk_log.errorf( "physical device doesn't support VK_EXT_physical_device_drm" );
 		return false;
 	}
@@ -2640,9 +2651,11 @@ bool vulkan_init_formats()
 	for ( size_t i = 0; i < sampledDRMFormats.len; i++ )
 	{
 		uint32_t fmt = sampledDRMFormats.formats[ i ].format;
+#if HAVE_DRM
 		char *name = drmGetFormatName(fmt);
 		vk_log.infof( "  %s (0x%" PRIX32 ")", name, fmt );
 		free(name);
+#endif
 	}
 
 	return true;
