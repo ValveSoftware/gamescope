@@ -17,7 +17,9 @@
 #include "wlr_begin.hpp"
 #include <wlr/backend.h>
 #include <wlr/backend/headless.h>
+#if HAVE_DRM
 #include <wlr/backend/libinput.h>
+#endif
 #include <wlr/backend/multi.h>
 #include <wlr/interfaces/wlr_keyboard.h>
 #include <wlr/render/wlr_renderer.h>
@@ -1618,12 +1620,14 @@ bool wlserver_init( void ) {
 
 	if ( GetBackend()->IsSessionBased() )
 	{
+#if HAVE_DRM
 		wlserver.wlr.libinput_backend = wlr_libinput_backend_create( wlserver.display, wlserver.wlr.session );
 		if ( wlserver.wlr.libinput_backend == NULL)
 		{
 			return false;
 		}
 		wlr_multi_backend_add( wlserver.wlr.multi_backend, wlserver.wlr.libinput_backend );
+#endif
 	}
 
 	// Create a stub wlr_keyboard only used to set the keymap
