@@ -96,7 +96,6 @@ src = [
   'edid.cpp',
   'headless.cpp',
   'wlserver.cpp',
-  'modegen.cpp',
   'vblankmanager.cpp',
   'rendervulkan.cpp',
   'log.cpp',
@@ -109,6 +108,7 @@ src = [
 gamescope_cpp_args = []
 if drm_dep.found()
   src += 'drm.cpp'
+  src += 'modegen.cpp'
   required_wlroots_features += 'libinput_backend'
   gamescope_cpp_args += '-DHAVE_DRM=@0@'.format(drm_dep.found().to_int())
   liftoff_dep = dependency(
