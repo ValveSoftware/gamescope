@@ -3,6 +3,7 @@
 #include <thread>
 #include <stdint.h>
 #include <fcntl.h>
+#include <unistd.h>
 #include <sys/epoll.h>
 #include <sys/timerfd.h>
 
