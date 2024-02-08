@@ -927,6 +927,11 @@ void wlserver_send_gamescope_control( wl_resource *control )
 		uint32_t *ptr = (uint32_t *)wl_array_add( &display_rates, size );
 		memcpy( ptr, pConn->GetValidDynamicRefreshRates().data(), size );
 	}
+	else if ( g_nOutputRefresh > 0 )
+	{
+		uint32_t *ptr = (uint32_t *)wl_array_add( &display_rates, sizeof(uint32_t) );
+		*ptr = (uint32_t)g_nOutputRefresh;
+	}
 	gamescope_control_send_active_display_info( control, pConn->GetName(), pConn->GetMake(), pConn->GetModel(), flags, &display_rates );
 	wl_array_release(&display_rates);
 }
