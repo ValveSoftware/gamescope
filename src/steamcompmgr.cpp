@@ -604,6 +604,7 @@ bool set_color_3dlut_override(const char *path)
 	if (!f) {
 		return true;
 	}
+	defer( fclose(f) );
 
 	fseek(f, 0, SEEK_END);
 	long fsize = ftell(f);
@@ -631,6 +632,7 @@ bool set_color_shaperlut_override(const char *path)
 	if (!f) {
 		return true;
 	}
+	defer( fclose(f) );
 
 	fseek(f, 0, SEEK_END);
 	long fsize = ftell(f);
