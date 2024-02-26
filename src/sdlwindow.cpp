@@ -908,6 +908,7 @@ namespace gamescope
 					else if ( event.type == GetUserEventIndex( GAMESCOPE_SDL_EVENT_GRAB ) )
 					{
 						SDL_SetRelativeMouseMode( m_bApplicationGrabbed ? SDL_TRUE : SDL_FALSE );
+						bRelativeMouse = m_bApplicationGrabbed;
 					}
 					else if ( event.type == GetUserEventIndex( GAMESCOPE_SDL_EVENT_CURSOR ) )
 					{
