@@ -557,6 +557,9 @@ namespace gamescope
 
 		m_uUserEventIdBase = SDL_RegisterEvents( GAMESCOPE_SDL_EVENT_COUNT );
 
+		SDL_SetHint( SDL_HINT_APP_NAME, "Gamescope" );
+		SDL_SetHint( SDL_HINT_VIDEO_ALLOW_SCREENSAVER, "1" );
+
 		if ( SDL_Init( SDL_INIT_VIDEO | SDL_INIT_EVENTS ) != 0 )
 		{
 			m_eSDLInit = SDLInitState::SDLInit_Failure;
@@ -879,6 +882,10 @@ namespace gamescope
 						if ( g_bGrabbed )
 							szTitle += " (grabbed)";
 						SDL_SetWindowTitle( m_Connector.GetSDLWindow(), szTitle.c_str() );
+						SDL_SetHint(
+							SDL_HINT_SCREENSAVER_INHIBIT_ACTIVITY_NAME,
+							(std::string("Title: ") + szTitle).c_str() );
+						SDL_DisableScreenSaver();
 					}
 					else if ( event.type == GetUserEventIndex( GAMESCOPE_SDL_EVENT_ICON ) )
 					{
