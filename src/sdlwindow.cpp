@@ -882,9 +882,9 @@ namespace gamescope
 						if ( g_bGrabbed )
 							szTitle += " (grabbed)";
 						SDL_SetWindowTitle( m_Connector.GetSDLWindow(), szTitle.c_str() );
-						SDL_SetHint(
-							SDL_HINT_SCREENSAVER_INHIBIT_ACTIVITY_NAME,
-							(std::string("Title: ") + szTitle).c_str() );
+
+						szTitle = "Title: " + szTitle;
+						SDL_SetHint(SDL_HINT_SCREENSAVER_INHIBIT_ACTIVITY_NAME, szTitle.c_str() );
 						SDL_DisableScreenSaver();
 					}
 					else if ( event.type == GetUserEventIndex( GAMESCOPE_SDL_EVENT_ICON ) )
