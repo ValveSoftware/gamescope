@@ -878,7 +878,7 @@ namespace gamescope
             if ( bNeedsBacking )
                 m_Planes[uCurrentPlane++].Present( m_pBlackBuffer, 0, 0, 0.0, 0.0, 1.0, 1.0, g_nOutputWidth, g_nOutputHeight, GAMESCOPE_APP_TEXTURE_COLORSPACE_PASSTHRU );
 
-            for ( int i = 0; i < 8; i++ )
+            for ( int i = 0; i < 8 && uCurrentPlane < 8; i++ )
                 m_Planes[uCurrentPlane++].Present( i < pFrameInfo->layerCount ? &pFrameInfo->layers[i] : nullptr );
 
             if ( bNeedsBacking )
