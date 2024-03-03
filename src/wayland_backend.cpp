@@ -499,6 +499,9 @@ namespace gamescope
             m_pXdgSurface = xdg_wm_base_get_xdg_surface( m_pBackend->GetXDGWMBase(), m_pSurface );
             xdg_surface_add_listener( m_pXdgSurface, &s_XDGSurfaceListener, this );
             m_pXdgToplevel = xdg_surface_get_toplevel( m_pXdgSurface );
+            if(g_bFullscreen) {
+                xdg_toplevel_set_fullscreen(m_pXdgToplevel, NULL);
+            }
             xdg_toplevel_add_listener( m_pXdgToplevel, &s_XDGToplevelListener, this );
             xdg_toplevel_set_title( m_pXdgToplevel, "Gamescope" );
             xdg_toplevel_set_app_id( m_pXdgToplevel, "gamescope" );
@@ -642,11 +645,14 @@ namespace gamescope
                           ( uint64_t( uTVNSec ) );
 
         // TODO: Someday move g_nOutputRefresh to MHz...
-        int nRefresh = ( 1'000'000'000 + uRefresh - 1 ) / uRefresh;
-        if ( nRefresh && nRefresh != g_nOutputRefresh )
-        {
-            xdg_log.infof( "Changed refresh to: %d", nRefresh );
-            g_nOutputRefresh = nRefresh;
+
+        if(uRefresh != 0) {
+            int nRefresh = ( 1'000'000'000 + uRefresh - 1 ) / uRefresh;
+            if ( nRefresh && nRefresh != g_nOutputRefresh )
+            {
+                xdg_log.infof( "Changed refresh to: %d", nRefresh );
+                g_nOutputRefresh = nRefresh;
+            }
         }
 
         GetVBlankTimer().MarkVBlank( ulTime, true );
