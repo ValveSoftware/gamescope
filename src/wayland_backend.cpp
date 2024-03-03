@@ -578,9 +578,8 @@ namespace gamescope
         {
             if ( !m_pXdgToplevel )
             {
-                // Why does this error *sometimes*, I see other apps do it!
-                //wl_surface_attach( m_pSurface, nullptr, 0, 0 );
-                //wl_surface_damage( m_pSurface, 0, 0, INT32_MAX, INT32_MAX );
+                wl_surface_attach( m_pSurface, nullptr, 0, 0 );
+                wl_surface_damage( m_pSurface, 0, 0, INT32_MAX, INT32_MAX );
             }
         }
     }
