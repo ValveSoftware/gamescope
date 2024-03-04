@@ -133,6 +133,7 @@ gamescope_cpp_args += '-DHAVE_LIBCAP=@0@'.format(cap_dep.found().to_int())
 
 src += spirv_shaders
 src += protocols_server_src
+src += protocols_client_src
 
 if pipewire_dep.found()
   src += 'pipewire.cpp'
