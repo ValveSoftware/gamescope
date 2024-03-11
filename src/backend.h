@@ -22,6 +22,7 @@ struct wlr_buffer;
 struct wlr_dmabuf_attributes;
 
 struct FrameInfo_t;
+extern gamescope::GamescopeScreenType g_ForcedScreenType;
 
 extern bool steamMode;
 
@@ -370,6 +371,8 @@ namespace gamescope
         // Dumb helper we should remove to support multi display someday.
         gamescope::GamescopeScreenType GetScreenType()
         {
+            if (g_ForcedScreenType != GAMESCOPE_SCREEN_TYPE_AUTO)
+                return g_ForcedScreenType;
             if ( GetCurrentConnector() )
                 return GetCurrentConnector()->GetScreenType();
 

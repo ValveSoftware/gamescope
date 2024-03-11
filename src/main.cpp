@@ -139,6 +139,7 @@ const struct option *gamescope_options = (struct option[]){
 	{ "fade-out-duration", required_argument, nullptr, 0 },
 	{ "force-orientation", required_argument, nullptr, 0 },
 	{ "force-external-orientation", required_argument, nullptr, 0 },
+	{ "force-panel-type", required_argument, nullptr, 0 },
 	{ "force-windows-fullscreen", no_argument, nullptr, 0 },
 
 	{ "disable-color-management", no_argument, nullptr, 0 },
@@ -206,6 +207,7 @@ const char usage[] =
 	"  --prefer-vk-device             prefer Vulkan device for compositing (ex: 1002:7300)\n"
 	"  --force-orientation            rotate the internal display (left, right, normal, upsidedown)\n"
 	"  --force-external-orientation   rotate the external display (left, right, normal, upsidedown)\n"
+	"  --force-panel-type             force gamescope to treat the display as either internal or external\n"
 	"  --force-windows-fullscreen     force windows inside of gamescope to be the size of the nested display (fullscreen)\n"
 	"  --cursor-scale-height          if specified, sets a base output height to linearly scale the cursor against.\n"
 	"  --virtual-connector-strategy   Specifies how we should make virtual connectors.\n"
@@ -402,6 +404,18 @@ static GamescopePanelOrientation force_external_orientation(const char *str)
 		return GAMESCOPE_PANEL_ORIENTATION_180;
 	} else {
 		fprintf( stderr, "gamescope: invalid value for --force-external-orientation\n" );
+		exit(1);
+	}
+}
+gamescope::GamescopeScreenType g_ForcedScreenType = gamescope::GAMESCOPE_SCREEN_TYPE_AUTO;
+static gamescope::GamescopeScreenType force_panel_type(const char *str)
+{
+	if (strcmp(str, "internal") == 0) {
+		return gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL;
+	} else if (strcmp(str, "external") == 0) {
+		return gamescope::GAMESCOPE_SCREEN_TYPE_EXTERNAL;
+	} else {
+		fprintf( stderr, "gamescope: invalid value for --force-panel-type\n" );
 		exit(1);
 	}
 }
@@ -827,6 +841,8 @@ int main(int argc, char **argv)
 					g_DesiredInternalOrientation = force_orientation( optarg );
 				} else if (strcmp(opt_name, "force-external-orientation") == 0) {
 					g_DesiredExternalOrientation = force_external_orientation( optarg );
+				} else if (strcmp(opt_name, "force-panel-type") == 0) {
+					g_ForcedScreenType = force_panel_type( optarg );
 				} else if (strcmp(opt_name, "sharpness") == 0 ||
 						   strcmp(opt_name, "fsr-sharpness") == 0) {
 					g_upscaleFilterSharpness = parse_integer( optarg, opt_name );
