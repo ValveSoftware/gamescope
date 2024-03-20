@@ -2450,3 +2450,11 @@ void wlserver_destroy_xwayland_server(gamescope_xwayland_server_t *server)
 
 	std::erase_if(wlserver.wlr.xwayland_servers, [=](const auto& other) { return other.get() == server; });
 }
+
+void wlserver_output_commit()
+{
+	gamescope_xwayland_server_t *server = wlserver.wlr.xwayland_servers[0].get();
+	struct wlr_output *output = server->get_output();
+	wlr_headless_output_set_vblank_phase(wlserver.wlr.headless_backend, output, g_SteamCompMgrVBlankTime.schedule.ulTargetVBlank);
+	wlr_output_commit(output);
+}

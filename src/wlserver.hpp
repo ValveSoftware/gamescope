@@ -283,3 +283,5 @@ void wlserver_send_gamescope_control( wl_resource *control );
 bool wlsession_active();
 
 void wlserver_mousewheel2( int32_t nDiscreteX, int32_t nDiscreteY, double flX, double flY, uint32_t uTime );
+
+void wlserver_output_commit();

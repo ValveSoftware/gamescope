@@ -2720,6 +2720,7 @@ paint_all(bool async)
 		}
 	}
 
+	wlserver_output_commit();
 	if ( GetBackend()->Present( &frameInfo, async ) != 0 )
 	{
 		return;
