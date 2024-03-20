@@ -82,6 +82,9 @@ public:
 
 	void update_output_info();
 
+	void surface_enter_output(struct wlr_surface *surface);
+	void surface_leave_output(struct wlr_surface *surface);
+
 private:
 	struct wlr_xwayland_server *xwayland_server = NULL;
 	struct wl_listener xwayland_ready_listener = { .notify = xwayland_ready_callback };

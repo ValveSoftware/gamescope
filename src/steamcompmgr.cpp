@@ -4368,6 +4368,13 @@ unmap_win(xwayland_ctx_t *ctx, Window id, bool fade)
 		return;
 	w->xwayland().a.map_state = IsUnmapped;
 
+	if (w->xwayland().surface.wl_id)
+	{
+		struct wlr_output *output = ctx->xwayland_server->get_output();
+		struct wlr_surface *surface = w->xwayland().surface.current_surface();
+		ctx->xwayland_server->surface_leave_output(surface);
+	}
+
 	focusDirty = true;
 
 	finish_unmap_win(ctx, w);
@@ -4854,6 +4861,12 @@ handle_wl_surface_id(xwayland_ctx_t *ctx, steamcompmgr_win_t *w, uint32_t surfac
 
 	if ( w == keyboardFocusWindow )
 		wlserver_keyboardfocus( main_surface );
+
+	if (w->xwayland().a.map_state == IsViewable)
+	{
+		struct wlr_output *output = ctx->xwayland_server->get_output();
+		ctx->xwayland_server->surface_enter_output(main_surface);
+	}
 
 	// Pull the first buffer out of that window, if needed
 	xwayland_surface_commit( current_surface );

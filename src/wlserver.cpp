@@ -1523,6 +1523,16 @@ gamescope_xwayland_server_t::~gamescope_xwayland_server_t()
 	wlr_output_destroy(output);
 }
 
+void gamescope_xwayland_server_t::surface_enter_output(struct wlr_surface *surface)
+{
+	wlr_surface_send_enter(surface, output);
+}
+
+void gamescope_xwayland_server_t::surface_leave_output(struct wlr_surface *surface)
+{
+	wlr_surface_send_leave(surface, output);
+}
+
 void gamescope_xwayland_server_t::update_output_info()
 {
 	const auto *info = &wlserver.output_info;
@@ -1544,16 +1554,24 @@ static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 	struct wlserver_xdg_surface_info* info =
 		wl_container_of(listener, info, map);
 
+	gamescope_xwayland_server_t *server = wlserver_get_xwayland_server(0);
+	struct wlr_output *output = server->get_output();
+
 	info->mapped = true;
 	wlserver.xdg_dirty = true;
+	wlr_surface_send_enter(info->current_surface(), output);
 }
 
 static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 	struct wlserver_xdg_surface_info* info =
 		wl_container_of(listener, info, unmap);
 
+	gamescope_xwayland_server_t *server = wlserver_get_xwayland_server(0);
+	struct wlr_output *output = server->get_output();
+
 	info->mapped = false;
 	wlserver.xdg_dirty = true;
+	wlr_surface_send_leave(info->current_surface(), output);
 }
 
 static void xdg_toplevel_destroy(struct wl_listener *listener, void *data) {
