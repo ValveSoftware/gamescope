@@ -115,6 +115,9 @@ struct wlserver_t {
 		struct wlr_session *session;
 		struct wlr_seat *seat;
 
+		struct wlr_timing_manager *timing_manager;
+		struct wl_listener new_commit_timer;
+
 		// Used to simulate key events and set the keymap
 		struct wlr_keyboard *virtual_keyboard_device;
 
@@ -256,6 +259,7 @@ struct wlserver_wl_surface_info
 	std::vector<struct wl_resource *> gamescope_swapchains;
 	std::optional<uint32_t> present_id = std::nullopt;
 	uint64_t desired_present_time = 0;
+	struct wl_listener timestamp;
 
 	uint64_t last_refresh_cycle = 0;
 };

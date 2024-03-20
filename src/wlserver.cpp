@@ -27,6 +27,7 @@
 #include <wlr/types/wlr_keyboard.h>
 #include <wlr/types/wlr_pointer.h>
 #include <wlr/types/wlr_seat.h>
+#include <wlr/types/wlr_timing.h>
 #include <wlr/types/wlr_touch.h>
 #include <wlr/util/log.h>
 #include <wlr/xwayland/server.h>
@@ -40,6 +41,7 @@
 #include "gamescope-tearing-control-unstable-v1-protocol.h"
 #include "gamescope-commit-queue-v1-protocol.h"
 #include "presentation-time-protocol.h"
+#include "commit-timing-v1-protocol.h"
 
 #include "wlserver.hpp"
 #include "hdmi.h"
@@ -1662,6 +1664,23 @@ void xdg_surface_new(struct wl_listener *listener, void *data)
 	}
 }
 
+void handle_set_timestamp(struct wl_listener *listener, void *data)
+{
+	struct wlserver_wl_surface_info *wl_surf_info =
+		wl_container_of(listener, wl_surf_info, timestamp);
+	struct timestamp_info *ts_info = (struct timestamp_info *)data;
+
+	wl_surf_info->desired_present_time = ts_info->curr_timestamp_nsec;
+}
+
+static void timing_manager_handle_new_timer(struct wl_listener *listener, void *data) {
+	struct wlr_timer *timer = (struct wlr_timer *)data;
+	wlserver_wl_surface_info *wl_surf_info = get_wl_surface_info(timer->surface);
+
+	wl_surf_info->timestamp.notify = handle_set_timestamp;
+	wl_signal_add(&timer->events.set_timestamp, &wl_surf_info->timestamp);
+}
+
 bool wlserver_init( void ) {
 	assert( wlserver.display != nullptr );
 
@@ -1720,6 +1739,10 @@ bool wlserver_init( void ) {
 	create_presentation_time();
 
 	commit_queue_manager_v1_create(wlserver.display);
+
+	wlserver.wlr.timing_manager = wlr_timing_manager_create(wlserver.display, 1);
+	wlserver.wlr.new_commit_timer.notify = timing_manager_handle_new_timer;
+	wl_signal_add(&wlserver.wlr.timing_manager->events.timer_create, &wlserver.wlr.new_commit_timer);
 
 	wlserver.xdg_shell = wlr_xdg_shell_create(wlserver.display, 3);
 	if (!wlserver.xdg_shell)

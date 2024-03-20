@@ -19,6 +19,7 @@ protocols = [
 	wl_protocol_dir / 'staging/single-pixel-buffer/single-pixel-buffer-v1.xml',
 	wl_protocol_dir / 'unstable/pointer-constraints/pointer-constraints-unstable-v1.xml',
 	wl_protocol_dir / 'unstable/relative-pointer/relative-pointer-unstable-v1.xml',
+	wl_protocol_dir / 'staging/commit-timing/commit-timing-v1.xml',
 
 	# Frog protocols
 	'frog-color-management-v1.xml',
