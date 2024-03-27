@@ -1,9 +1,39 @@
 #pragma once
 
 #include <X11/Xlib-xcb.h>
+#include <xcb/xcb.h>
+#include <xcb/xcb_aux.h>
 #include <xcb/composite.h>
+		
 #include <cstdio>
 #include <optional>
+#include <atomic>
+
+
+#if defined(__x86_64__) || defined(__i386__)
+        #define _PAUSE(...) __builtin_ia32_pause()
+
+#elif defined(__aarch64__) || defined(__ARM64_ARCH_8__)
+    #include <arm_acle.h>
+    #if __has_builtin(__builtin_arm_yield)
+        #define _PAUSE(...) __yield()
+        //^ ARM-equivalent of the pause intrinsic
+        //found in 8.4 of this ARM extensions pdf:
+        //https://gcc.gnu.org/onlinedocs/gcc/ARM-C-Language-Extensions-_0028ACLE_0029.html
+        // ^gives this link: https://developer.arm.com/documentation/ihi0073/latest/
+    #elif !defined(__clang__)
+        #define _PAUSE(...) asm volatile("yield")
+    #else
+        #define _PAUSE(...) (void)0
+    #endif
+
+#else
+    #define _PAUSE(...) (void)0
+    //                  ^ no-op that consumes semicolon
+    //                    no-op trick credited to: https://stackoverflow.com/a/15297407
+
+#endif
+
 
 namespace xcb {
 
@@ -147,6 +177,62 @@ namespace xcb {
     }
 
     return largestExtent;
+  }
+  
+  static void eventWatcher(std::atomic<bool>* bStateChanged, xcb_connection_t* connection) {
+    xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
+    assert(screen != nullptr);
+    
+    xcb_get_window_attributes_cookie_t cookie = xcb_get_window_attributes_unchecked(connection, screen->root);
+    
+    auto reply = Reply<xcb_get_window_attributes_reply_t>{ xcb_get_window_attributes_reply(connection, cookie, nullptr) };
+    
+    if (reply == nullptr) {
+        fprintf(stderr, "[Gamescope WSI] eventWatcher(): failed to get xcb window attributes, aborting\n");
+        abort();
+    }
+    
+    static constexpr uint32_t mask    = XCB_CW_EVENT_MASK;
+    const uint32_t select_input_val[] = { reply.get()->all_event_masks | reply.get()->your_event_mask | XCB_EVENT_MASK_EXPOSURE | XCB_EVENT_MASK_RESIZE_REDIRECT };
+    
+    xcb_change_window_attributes(connection, screen->root, mask, select_input_val);
+    
+    xcb_aux_sync(connection);
+    
+    xcb_generic_event_t *event;
+    
+    while (true) {
+        if ( (event = xcb_wait_for_event(connection)) == nullptr) {
+            _PAUSE(); //insert cpu pause instruction here
+                      //to keep cpu usage in check
+                      
+            xcb_aux_sync(connection);
+            continue;
+        }
+        
+        bool do_atomic_wait = false;
+        
+        switch (event->response_type & ~0x80) {
+            case XCB_EXPOSE:
+            case XCB_RESIZE_REQUEST:
+            {
+                bStateChanged->store(true, std::memory_order_release);
+                do_atomic_wait = true;
+                break;
+            }
+            default:
+                break;
+        }
+        
+        free(event);
+        xcb_flush(connection);
+        
+        if (do_atomic_wait) {
+             _PAUSE(); //insert cpu pause instruction here
+                      //to keep cpu usage in check
+            bStateChanged->wait(true); //ensure state change is acknowledged by other thread before fetching more events
+        }
+    }
   }
 
 }

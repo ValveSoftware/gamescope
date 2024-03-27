@@ -14,6 +14,7 @@
 #include <functional>
 #include <unordered_map>
 #include <optional>
+#include <thread>
 
 #include <poll.h>
 // For limiter file.
@@ -214,7 +215,35 @@ namespace GamescopeWSILayer {
       // Come back to this eventually.
       return true;
     }
+    
+    bool canBypassXWaylandCached() {
+        static std::atomic<bool> bStateChanged = false;
+        
+        static bool canBypassCached = [this](std::atomic<bool>* bStateChanged, xcb_connection_t* connection) -> bool {
+            std::thread eventWatcherThread(xcb::eventWatcher, bStateChanged, connection);
+            eventWatcherThread.detach();
+            
+            return canBypassXWayland();
+        } (&bStateChanged, connection);
+        
+        /*if ( canBypassCached == true )
+            xcb_flush(connection); //flush to deal with buffered events
+            
+        might not need the commented-out code, 
+            still leaving it in case it ends up being needed
+        */
+        
+        if ( bStateChanged.load(std::memory_order_acquire) ) {
+            //can get away with weak memory ordering above, but not below
+            canBypassCached = canBypassXWayland();
+            bStateChanged.store(false); //strong ordering here to avoid ABA problem
+            bStateChanged.notify_one();
+        }
+        
+        return canBypassCached;
+    }
   };
+  
   VKROOTS_DEFINE_SYNCHRONIZED_MAP_TYPE(GamescopeSurface, VkSurfaceKHR);
 
   struct GamescopeSwapchainData {
@@ -975,7 +1004,9 @@ namespace GamescopeWSILayer {
             continue;
           }
 
-          const bool canBypass = gamescopeSurface->canBypassXWayland();
+          const bool canBypass = gamescopeSurface->canBypassXWaylandCached();
+          //use canBypassXWaylandCached() instead of canBypassXWayland()
+          //since VkDeviceOverrides::QueuePresentKHR() is called many times
           if (canBypass != gamescopeSwapchain->isBypassingXWayland)
             UpdateSwapchainResult(canBypass ? VK_SUBOPTIMAL_KHR : VK_ERROR_OUT_OF_DATE_KHR);
         }
