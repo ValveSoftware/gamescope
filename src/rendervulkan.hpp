@@ -257,6 +257,8 @@ inline bool close_enough(float a, float b, float epsilon = 0.001f)
 	return fabsf(a - b) <= epsilon;
 }
 
+bool DRMFormatHasAlpha( uint32_t nDRMFormat );
+
 struct FrameInfo_t
 {
 	bool useFSRLayer0;
@@ -299,6 +301,14 @@ struct FrameInfo_t
 				return false;
 
 			return tex->isYcbcr();
+		}
+
+		bool hasAlpha() const
+		{
+			if ( !tex )
+				return false;
+
+			return DRMFormatHasAlpha( tex->drmFormat() );
 		}
 
 		bool isScreenSize() const {
@@ -909,6 +919,8 @@ uint32_t VulkanFormatToDRM( VkFormat vkFormat );
 VkFormat DRMFormatToVulkan( uint32_t nDRMFormat, bool bSrgb );
 bool DRMFormatHasAlpha( uint32_t nDRMFormat );
 uint32_t DRMFormatGetBPP( uint32_t nDRMFormat );
+
+std::shared_ptr<CVulkanTexture> vulkan_create_flat_texture( uint32_t width, uint32_t height, uint8_t r, uint8_t g, uint8_t b, uint8_t a );
 
 bool vulkan_supports_hdr10();
 

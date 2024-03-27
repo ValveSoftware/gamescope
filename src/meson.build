@@ -25,7 +25,7 @@ avif_dep = dependency('libavif', version: '>=1.0.0', required: get_option('avif_
 
 wlroots_dep = dependency(
   'wlroots',
-  version: ['>= 0.17.0', '< 0.18.0'],
+  version: ['>= 0.18.0', '< 0.19.0'],
   fallback: ['wlroots', 'wlroots'],
   default_options: ['default_library=static', 'examples=false', 'xwayland=enabled', 'backends=libinput', 'renderers=[]', 'allocators=[]', 'session=enabled'],
 )
@@ -36,6 +36,8 @@ displayinfo_dep = dependency(
   fallback: ['libdisplay-info', 'di_dep'],
   default_options: ['default_library=static'],
 )
+
+libdecor_dep = dependency('libdecor-0')
 
 glsl_compiler = find_program('glslang', 'glslangValidator', native: true)
 
@@ -104,6 +106,7 @@ src = [
   'mangoapp.cpp',
   'reshade_effect_manager.cpp',
   'backend.cpp',
+  'wayland_backend.cpp',
 ]
 
 gamescope_cpp_args = []
@@ -132,6 +135,7 @@ gamescope_cpp_args += '-DHAVE_LIBCAP=@0@'.format(cap_dep.found().to_int())
 
 src += spirv_shaders
 src += protocols_server_src
+src += protocols_client_src
 
 if pipewire_dep.found()
   src += 'pipewire.cpp'
@@ -156,7 +160,8 @@ endforeach
       dep_xxf86vm, dep_xres, glm_dep, drm_dep, wayland_server,
       xkbcommon, thread_dep, sdl_dep, wlroots_dep,
       vulkan_dep, liftoff_dep, dep_xtst, dep_xmu, cap_dep, epoll_dep, pipewire_dep, librt_dep,
-      stb_dep, displayinfo_dep, openvr_dep, dep_xcursor, avif_dep, dep_xi
+      stb_dep, displayinfo_dep, openvr_dep, dep_xcursor, avif_dep, dep_xi,
+      libdecor_dep,
     ],
     install: true,
     cpp_args: gamescope_cpp_args,

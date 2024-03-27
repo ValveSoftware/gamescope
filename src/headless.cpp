@@ -239,6 +239,11 @@ namespace gamescope
 			return false;
 		}
 
+		virtual bool SupportsExplicitSync() const override
+		{
+			return true;
+		}
+
 		virtual bool IsVisible() const override
 		{
 			return true;

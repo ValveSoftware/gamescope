@@ -22,6 +22,7 @@
 #include "steamcompmgr.hpp"
 #include "rendervulkan.hpp"
 #include "wlserver.hpp"
+#include "convar.h"
 #include "gpuvis_trace_utils.h"
 
 #include "backends.h"
@@ -59,6 +60,7 @@ const struct option *gamescope_options = (struct option[]){
 	{ "prefer-vk-device", required_argument, 0 },
 	{ "expose-wayland", no_argument, 0 },
 	{ "mouse-sensitivity", required_argument, nullptr, 's' },
+	{ "mangoapp", no_argument, nullptr, 0 },
 
 	{ "headless", no_argument, 0 },
 
@@ -180,6 +182,7 @@ const char usage[] =
 	"  --hdr-itm-target-nits          set the target luminace of the inverse tone mapping process.\n"
 	"                                 Default: 1000 nits, Max: 10000 nits\n"
 	"  --framerate-limit              Set a simple framerate limit. Used as a divisor of the refresh rate, rounds down eg 60 / 59 -> 60fps, 60 / 25 -> 30fps. Default: 0, disabled.\n"
+	"  --mangoapp                     Launch with the mangoapp (mangohud) performance overlay enabled. You should use this instead of using mangohud on the game or gamescope.\n"
 	"\n"
 	"Nested mode options:\n"
 	"  -o, --nested-unfocused-refresh game refresh rate when unfocused\n"
@@ -632,8 +635,7 @@ int main(int argc, char **argv)
 				} else if (strcmp(opt_name, "hdr-debug-heatmap") == 0) {
 					g_uCompositeDebug |= CompositeDebugFlag::Heatmap;
 				} else if (strcmp(opt_name, "default-touch-mode") == 0) {
-					g_nDefaultTouchClickMode = (enum wlserver_touch_click_mode) atoi( optarg );
-					g_nTouchClickMode = g_nDefaultTouchClickMode;
+					gamescope::cv_touch_click_mode = (gamescope::TouchClickMode) atoi( optarg );
 				} else if (strcmp(opt_name, "generate-drm-mode") == 0) {
 					g_eGamescopeModeGeneration = parse_gamescope_mode_generation( optarg );
 				} else if (strcmp(opt_name, "force-orientation") == 0) {
@@ -751,7 +753,9 @@ int main(int argc, char **argv)
 
 	if ( eCurrentBackend == gamescope::GamescopeBackend::Auto )
 	{
-		if ( g_pOriginalDisplay != NULL || g_pOriginalWaylandDisplay != NULL )
+		if ( g_pOriginalWaylandDisplay != NULL )
+			eCurrentBackend = gamescope::GamescopeBackend::Wayland;
+		else if ( g_pOriginalDisplay != NULL )
 			eCurrentBackend = gamescope::GamescopeBackend::SDL;
 		else
 			eCurrentBackend = gamescope::GamescopeBackend::DRM;
@@ -795,6 +799,12 @@ int main(int argc, char **argv)
 #endif
 		case gamescope::GamescopeBackend::Headless:
 			gamescope::IBackend::Set<gamescope::CHeadlessBackend>();
+			break;
+
+		case gamescope::GamescopeBackend::Wayland:
+			gamescope::IBackend::Set<gamescope::CWaylandBackend>();
+			if ( !GetBackend() )
+				gamescope::IBackend::Set<gamescope::CSDLBackend>();
 			break;
 		default:
 			abort();

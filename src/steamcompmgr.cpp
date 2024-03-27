@@ -713,6 +713,8 @@ struct commit_t : public gamescope::IWaitable
 			// presentation_feedbacks cleared by wlserver_presentation_feedback_discard
 		}
 		wlr_buffer_unlock( buf );
+		if ( m_oReleasePoint )
+			m_oReleasePoint->Release();
 		wlserver_unlock();
     }
 
@@ -763,6 +765,13 @@ struct commit_t : public gamescope::IWaitable
 				return;
 		}
 
+		Signal();
+
+		nudge_steamcompmgr();
+	}
+
+	void Signal()
+	{
 		uint64_t frametime;
 		if ( m_bMangoNudge )
 		{
@@ -787,8 +796,6 @@ struct commit_t : public gamescope::IWaitable
 
 		if ( m_bMangoNudge )
 			mangoapp_update( IsPerfOverlayFIFO() ? uint64_t(~0ull) : frametime, frametime, uint64_t(~0ull) );
-
-		nudge_steamcompmgr();
 	}
 
 	void OnPollHangUp() final
@@ -825,10 +832,16 @@ struct commit_t : public gamescope::IWaitable
 		m_pDoneCommits = pDoneCommits;
 	}
 
+	void SetReleasePoint( const std::optional<GamescopeTimelinePoint>& oReleasePoint )
+	{
+		m_oReleasePoint = oReleasePoint;
+	}
+
 	std::mutex m_WaitableCommitStateMutex;
 	int m_nCommitFence = -1;
 	bool m_bMangoNudge = false;
 	CommitDoneList_t *m_pDoneCommits = nullptr; // I hate this
+	std::optional<GamescopeTimelinePoint> m_oReleasePoint;
 };
 
 static inline void GarbageCollectWaitableCommit( std::shared_ptr<commit_t> &commit )
@@ -892,7 +905,7 @@ bool			hasRepaintNonBasePlane = false;
 
 unsigned long	damageSequence = 0;
 
-unsigned int	cursorHideTime = 10'000;
+uint64_t		cursorHideTime = 10'000ul * 1'000'000ul;
 
 bool			gotXError = false;
 
@@ -918,6 +931,8 @@ static int g_nDynamicRefreshRate[gamescope::GAMESCOPE_SCREEN_TYPE_COUNT] = { 0, 
 static const uint64_t g_uDynamicRefreshDelay = 600'000'000; // 600ms
 
 static int g_nCombinedAppRefreshCycleOverride[gamescope::GAMESCOPE_SCREEN_TYPE_COUNT] = { 0, 0 };
+bool g_nCombinedAppRefreshCycleChangeRefresh[gamescope::GAMESCOPE_SCREEN_TYPE_COUNT] = { true, true };
+bool g_nCombinedAppRefreshCycleChangeFPS[gamescope::GAMESCOPE_SCREEN_TYPE_COUNT] = { true, true };
 
 static void _update_app_target_refresh_cycle()
 {
@@ -950,16 +965,22 @@ static void _update_app_target_refresh_cycle()
 	auto rates = GetBackend()->GetCurrentConnector()->GetValidDynamicRefreshRates();
 
 	g_nDynamicRefreshRate[ type ] = 0;
-	g_nSteamCompMgrTargetFPS = target_fps;
 
-	// Find highest mode to do refresh doubling with.
-	for ( auto rate = rates.rbegin(); rate != rates.rend(); rate++ )
+	if ( g_nCombinedAppRefreshCycleChangeFPS[ type ] )
 	{
-		if (*rate % target_fps == 0)
+		g_nSteamCompMgrTargetFPS = target_fps;
+	}
+
+	if ( g_nCombinedAppRefreshCycleChangeRefresh[ type ] )
+	{
+		// Find highest mode to do refresh doubling with.
+		for ( auto rate = rates.rbegin(); rate != rates.rend(); rate++ )
 		{
-			g_nDynamicRefreshRate[ type ] = *rate;
-			g_nSteamCompMgrTargetFPS = target_fps;
-			return;
+			if (*rate % target_fps == 0)
+			{
+				g_nDynamicRefreshRate[ type ] = *rate;
+				return;
+			}
 		}
 	}
 }
@@ -972,9 +993,11 @@ static void update_app_target_refresh_cycle()
 		update_runtime_info();
 }
 
-void steamcompmgr_set_app_refresh_cycle_override( gamescope::GamescopeScreenType type, int override_fps )
+void steamcompmgr_set_app_refresh_cycle_override( gamescope::GamescopeScreenType type, int override_fps, bool change_refresh, bool change_fps_cap )
 {
 	g_nCombinedAppRefreshCycleOverride[ type ] = override_fps;
+	g_nCombinedAppRefreshCycleChangeRefresh[ type ] = change_refresh;
+	g_nCombinedAppRefreshCycleChangeFPS[ type ] = change_fps_cap;
 	update_app_target_refresh_cycle();
 }
 
@@ -1566,7 +1589,6 @@ MouseCursor::MouseCursor(xwayland_ctx_t *ctx)
 	: m_texture(0)
 	, m_dirty(true)
 	, m_imageEmpty(false)
-	, m_hideForMovement(true)
 	, m_ctx(ctx)
 {
 	m_lastX = g_nNestedWidth / 2;
@@ -1578,33 +1600,35 @@ void MouseCursor::checkSuspension()
 {
 	unsigned int buttonMask = 0;
 
-	bool bWasHidden = m_hideForMovement;
+	bool bWasHidden = wlserver.bCursorHidden;
 
 	steamcompmgr_win_t *window = m_ctx->focus.inputFocusWindow;
 	if (window && window->ignoreNextClickForVisibility)
 	{
 		window->ignoreNextClickForVisibility--;
-		m_hideForMovement = true;
+		wlserver.bCursorHidden = true;
 		return;
 	}
 	else
 	{
 		if (buttonMask & ( Button1Mask | Button2Mask | Button3Mask | Button4Mask | Button5Mask )) {
-			m_hideForMovement = false;
-			m_lastMovedTime = get_time_in_milliseconds();
+			wlserver.bCursorHidden = false;
 
 			// Move the cursor back to where we left it if the window didn't want us to give
 			// it hover/focus where we left it and we moved it before.
 			if (window_wants_no_focus_when_mouse_hidden(window) && bWasHidden)
 			{
+				wlserver_lock();
+				wlserver_mousewarp( m_lastX, m_lastY, 0 );
+				wlserver_unlock();
 				XWarpPointer(m_ctx->dpy, None, x11_win(m_ctx->focus.inputFocusWindow), 0, 0, 0, 0, m_lastX, m_lastY);
 			}
 		}
 	}
 
-	const bool suspended = get_time_in_milliseconds() - m_lastMovedTime > cursorHideTime;
-	if (!m_hideForMovement && suspended) {
-		m_hideForMovement = true;
+	const bool suspended = int64_t( get_time_in_nanos() ) - int64_t( wlserver.ulLastMovedCursorTime ) > int64_t( cursorHideTime );
+	if (!wlserver.bCursorHidden && suspended) {
+		wlserver.bCursorHidden = true;
 
 		// Rearm warp count
 		if (window) {
@@ -1616,7 +1640,10 @@ void MouseCursor::checkSuspension()
 			{
 				m_lastX = m_x;
 				m_lastY = m_y;
-				XWarpPointer(m_ctx->dpy, None, x11_win(m_ctx->focus.inputFocusWindow), 0, 0, 0, 0, window->xwayland().a.width - 1, window->xwayland().a.height - 1);
+				wlserver_lock();
+				wlserver_mousewarp( window->xwayland().a.width - 1, window->xwayland().a.height - 1, 0 );
+				wlserver_mousehide();
+				wlserver_unlock();
 			}
 		}
 
@@ -1780,7 +1807,7 @@ void MouseCursor::constrainPosition()
 	int rootX = m_x, rootY = m_y;
 
 	if ( rootX >= x2 || rootY >= y2 || rootX < x1 || rootY < y1 ) {
-		if ( window_wants_no_focus_when_mouse_hidden( window ) && m_hideForMovement )
+		if ( window_wants_no_focus_when_mouse_hidden( window ) && wlserver.bCursorHidden )
 			warp(window->xwayland().a.width - 1, window->xwayland().a.height - 1);
 		else
 			warp(window->xwayland().a.width / 2, window->xwayland().a.height / 2);
@@ -1788,49 +1815,6 @@ void MouseCursor::constrainPosition()
 		m_lastX = window->xwayland().a.width / 2;
 		m_lastY = window->xwayland().a.height / 2;
 	}
-}
-
-
-void MouseCursor::move(int x, int y)
-{
-	// Some stuff likes to warp in-place
-	if (m_x == x && m_y == y) {
-		return;
-	}
-	m_x = x;
-	m_y = y;
-
-	steamcompmgr_win_t *window = m_ctx->focus.inputFocusWindow;
-
-	if (window) {
-		// If mouse moved and we're on the hook for showing the cursor, repaint
-		if (!m_hideForMovement && !m_imageEmpty) {
-			hasRepaintNonBasePlane = true;
-		}
-
-		// If mouse moved and screen is magnified, repaint
-		if ( zoomScaleRatio != 1.0 )
-		{
-			hasRepaintNonBasePlane = true;
-		}
-	}
-
-	// Ignore the first events as it's likely to be non-user-initiated warps
-	if (!window )
-		return;
-
-	if ( ( window != global_focus.inputFocusWindow || !g_bPendingTouchMovement.exchange(false) ) && window->mouseMoved++ < 5 )
-		return;
-
-	m_lastMovedTime = get_time_in_milliseconds();
-	// Move the cursor back to centre if the window didn't want us to give
-	// it hover/focus where we left it.
-	if ( m_hideForMovement && window_wants_no_focus_when_mouse_hidden(window) )
-	{
-		XWarpPointer(m_ctx->dpy, None, x11_win(m_ctx->focus.inputFocusWindow), 0, 0, 0, 0, m_lastX, m_lastY);
-	}
-	m_hideForMovement = false;
-	updateCursorFeedback();
 }
 
 int MouseCursor::x() const
@@ -1943,7 +1927,7 @@ bool MouseCursor::getTexture()
 
 	m_imageEmpty = bNoCursor;
 
-	if ( !GetBackend()->GetNestedHints() || !g_bForceRelativeMouse )
+	if ( GetBackend()->GetNestedHints() && !g_bForceRelativeMouse )
 	{
 		if ( GetBackend()->GetNestedHints() )
 			GetBackend()->GetNestedHints()->SetRelativeMouseMode( m_imageEmpty );
@@ -1952,14 +1936,11 @@ bool MouseCursor::getTexture()
 
 	m_dirty = false;
 	updateCursorFeedback();
-	UpdateXInputMotionMasks();
 
 	if (m_imageEmpty) {
 
 		return false;
 	}
-
-	UpdatePosition();
 
 	CVulkanTexture::createFlags texCreateFlags;
 	texCreateFlags.bFlippable = true;
@@ -2005,46 +1986,13 @@ void MouseCursor::GetDesiredSize( int& nWidth, int &nHeight )
 	nHeight = nSize;
 }
 
-void MouseCursor::UpdateXInputMotionMasks()
-{
-	bool bShouldMotionMask = !imageEmpty();
-
-	if ( m_bMotionMaskEnabled != bShouldMotionMask )
-	{
-		XIEventMask xi_eventmask;
-		unsigned char xi_mask[ ( XI_LASTEVENT + 7 ) / 8 ]{};
-		xi_eventmask.deviceid = XIAllDevices;
-		xi_eventmask.mask_len = sizeof( xi_mask );
-		xi_eventmask.mask = xi_mask;
-		if ( bShouldMotionMask )
-			XISetMask( xi_mask, XI_RawMotion );
-		XISelectEvents( m_ctx->dpy, m_ctx->root, &xi_eventmask, 1 );
-
-		m_bMotionMaskEnabled = bShouldMotionMask;
-	}
-}
-
-void MouseCursor::UpdatePosition()
-{
-	Window root_return, child_return;
-	int root_x_return, root_y_return;
-	int win_x_return, win_y_return;
-	unsigned int mask_return;
-	XQueryPointer(m_ctx->dpy, m_ctx->root, &root_return, &child_return,
-				&root_x_return, &root_y_return,
-				&win_x_return, &win_y_return,
-				&mask_return);
-
-	move(root_x_return, root_y_return);
-}
-
 void MouseCursor::paint(steamcompmgr_win_t *window, steamcompmgr_win_t *fit, struct FrameInfo_t *frameInfo)
 {
-	if ( m_hideForMovement || m_imageEmpty ) {
+	if ( m_imageEmpty || wlserver.bCursorHidden )
 		return;
-	}
 
-	int winX = m_x, winY = m_y;
+	int winX = wlserver.mouse_surface_cursorx;
+	int winY = wlserver.mouse_surface_cursory;
 
 	// Also need new texture
 	if (!getTexture()) {
@@ -2578,10 +2526,10 @@ paint_all(bool async)
 		if ( overlay == global_focus.inputFocusWindow )
 			update_touch_scaling( &frameInfo );
 	}
-	else
+	else if ( !GetBackend()->UsesVulkanSwapchain() && GetBackend()->IsSessionBased() )
 	{
 		auto tex = vulkan_get_hacky_blank_texture();
-		if ( !GetBackend()->UsesVulkanSwapchain() && tex != nullptr )
+		if ( tex != nullptr )
 		{
 			// HACK! HACK HACK HACK
 			// To avoid stutter when toggling the overlay on 
@@ -5290,7 +5238,7 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 	}
 	if (ev->atom == ctx->atoms.steamTouchClickModeAtom )
 	{
-		g_nTouchClickMode = (enum wlserver_touch_click_mode) get_prop(ctx, ctx->root, ctx->atoms.steamTouchClickModeAtom, g_nDefaultTouchClickMode );
+		gamescope::cv_touch_click_mode = (gamescope::TouchClickMode) get_prop(ctx, ctx->root, ctx->atoms.steamTouchClickModeAtom, 0u );
 	}
 	if (ev->atom == ctx->atoms.steamStreamingClientAtom)
 	{
@@ -6412,18 +6360,15 @@ void handle_presented_for_window( steamcompmgr_win_t* w )
 	if (struct wlr_surface *surface = w->current_surface())
 	{
 		auto info = get_wl_surface_info(surface);
-		if (info != nullptr && info->gamescope_swapchain != nullptr && info->last_refresh_cycle != refresh_cycle)
+		if (info != nullptr && info->last_refresh_cycle != refresh_cycle)
 		{
-			if (info->gamescope_swapchain != nullptr)
-			{
-				// Could have got the override set in this bubble.s
-				surface = w->current_surface();
+			// Could have got the override set in this bubble.
+			surface = w->current_surface();
 
-				if  (info->last_refresh_cycle != refresh_cycle)
-				{
-					info->last_refresh_cycle = refresh_cycle;
-					wlserver_refresh_cycle(surface, refresh_cycle);
-				}
+			if  (info->last_refresh_cycle != refresh_cycle)
+			{
+				info->last_refresh_cycle = refresh_cycle;
+				wlserver_refresh_cycle(surface, refresh_cycle);
 			}
 		}
 	}
@@ -6507,24 +6452,44 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 	int fence = -1;
 	if ( newCommit )
 	{
-		struct wlr_dmabuf_attributes dmabuf = {0};
-		if ( wlr_buffer_get_dmabuf( buf, &dmabuf ) )
-		{
-			fence = dup( dmabuf.fd[0] );
-		}
-		else
-		{
-			fence = newCommit->vulkanTex->memoryFence();
-		}
-
 		// Whether or not to nudge mango app when this commit is done.
 		const bool mango_nudge = ( w == global_focus.focusWindow && !w->isSteamStreamingClient ) ||
 									( global_focus.focusWindow && global_focus.focusWindow->isSteamStreamingClient && w->isSteamStreamingClientVideo );
 
+		bool bKnownReady = false;
+		if ( reslistentry.oAcquireState )
+		{
+			if ( reslistentry.oAcquireState->bKnownReady )
+			{
+				fence = -1;
+				bKnownReady = true;
+			}
+			else
+			{
+				fence = reslistentry.oAcquireState->nEventFd;
+			}
+		}
+		else
+		{
+			struct wlr_dmabuf_attributes dmabuf = {0};
+			if ( wlr_buffer_get_dmabuf( buf, &dmabuf ) )
+			{
+				fence = dup( dmabuf.fd[0] );
+			}
+			else
+			{
+				fence = newCommit->vulkanTex->memoryFence();
+			}
+		}
+
 		gpuvis_trace_printf( "pushing wait for commit %lu win %lx", newCommit->commitID, w->type == steamcompmgr_win_type_t::XWAYLAND ? w->xwayland().id : 0 );
 		{
 			newCommit->SetFence( fence, mango_nudge, doneCommits );
-			g_ImageWaiter.AddWaitable( newCommit.get() );
+			newCommit->SetReleasePoint( reslistentry.oReleasePoint );
+			if ( bKnownReady )
+				newCommit->Signal();
+			else
+				g_ImageWaiter.AddWaitable( newCommit.get() );
 		}
 
 		w->commit_queue.push_back( std::move(newCommit) );
@@ -6714,9 +6679,7 @@ void xwayland_ctx_t::Dispatch()
 	xwayland_ctx_t *ctx = this;
 
 	MouseCursor *cursor = ctx->cursor.get();
-	bool bShouldResetCursor = false;
 	bool bSetFocus = false;
-	bool bShouldUpdateCursor = false;
 
 	while (XPending(ctx->dpy))
 	{
@@ -6842,28 +6805,12 @@ void xwayland_ctx_t::Dispatch()
 				handle_client_message(ctx, &ev.xclient);
 				break;
 			case LeaveNotify:
-				if (ev.xcrossing.window == x11_win(ctx->focus.inputFocusWindow) &&
-					!ctx->focus.overrideWindow)
-				{
-					// Josh: need to defer this as we could have a destroy later on
-					// and end up submitting commands with the currentInputFocusWIndow
-					bShouldResetCursor = true;
-				}
 				break;
 			case SelectionNotify:
 				handle_selection_notify(ctx, &ev.xselection);
 				break;
 			case SelectionRequest:
 				handle_selection_request(ctx, &ev.xselectionrequest);
-				break;
-			case GenericEvent:
-				if (ev.xcookie.extension == ctx->xinput_opcode)
-				{
-					if (ev.xcookie.evtype == XI_RawMotion)
-					{
-						bShouldUpdateCursor = true;
-					}
-				}
 				break;
 
 			default:
@@ -6882,26 +6829,6 @@ void xwayland_ctx_t::Dispatch()
 				break;
 		}
 		XFlush(ctx->dpy);
-	}
-
-	if ( bShouldUpdateCursor )
-	{
-		cursor->UpdatePosition();
-
-		if ( bShouldResetCursor )
-		{
-			// This shouldn't happen due to our pointer barriers,
-			// but there is a known X server bug; warp to last good
-			// position.
-			steamcompmgr_win_t *pInputWindow = ctx->focus.inputFocusWindow;
-			int nX = std::clamp<int>( cursor->x(), pInputWindow->xwayland().a.x, pInputWindow->xwayland().a.x + pInputWindow->xwayland().a.width );
-			int nY = std::clamp<int>( cursor->y(), pInputWindow->xwayland().a.y, pInputWindow->xwayland().a.y + pInputWindow->xwayland().a.height );
-
-			if ( cursor->x() != nX || cursor->y() != nY )
-			{
-				cursor->forcePosition( nX, nY );
-			}
-		}
 	}
 
 	if ( bSetFocus )
@@ -7241,15 +7168,15 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 	}
 	else
 	{
-		std::optional<gamescope::INestedHints::CursorInfo> oHostCursor = std::nullopt;
-		if ( GetBackend()->GetNestedHints() && ( oHostCursor = GetBackend()->GetNestedHints()->GetHostCursor() ) )
+		std::shared_ptr<gamescope::INestedHints::CursorInfo> pHostCursor;
+		if ( GetBackend()->GetNestedHints() && ( pHostCursor = GetBackend()->GetNestedHints()->GetHostCursor() ) )
 		{
 			ctx->cursor->setCursorImage(
-				reinterpret_cast<char *>( oHostCursor->pPixels.data() ),
-				oHostCursor->uWidth,
-				oHostCursor->uHeight,
-				oHostCursor->uXHotspot,
-				oHostCursor->uYHotspot );
+				reinterpret_cast<char *>( pHostCursor->pPixels.data() ),
+				pHostCursor->uWidth,
+				pHostCursor->uHeight,
+				pHostCursor->uXHotspot,
+				pHostCursor->uYHotspot );
 		}
 		else
 		{
@@ -7260,7 +7187,6 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 	}
 
 	ctx->cursor->undirty();
-	ctx->cursor->UpdateXInputMotionMasks();
 
 	XFlush(ctx->dpy);
 }
@@ -7412,6 +7338,8 @@ void update_edid_prop()
 	}
 }
 
+bool g_bLaunchMangoapp = false;
+
 void
 steamcompmgr_main(int argc, char **argv)
 {
@@ -7441,7 +7369,7 @@ steamcompmgr_main(int argc, char **argv)
 				}
 				break;
 			case 'C':
-				cursorHideTime = atoi( optarg );
+				cursorHideTime = uint64_t( atoi( optarg ) ) * 1'000'000ul;
 				break;
 			case 'v':
 				drawDebugInfo = true;
@@ -7495,6 +7423,8 @@ steamcompmgr_main(int argc, char **argv)
 					g_reshade_technique_idx = atoi(optarg);
 				} else if (strcmp(opt_name, "mura-map") == 0) {
 					set_mura_overlay(optarg);
+				} else if (strcmp(opt_name, "mangoapp") == 0) {
+					g_bLaunchMangoapp = true;
 				}
 				break;
 			case '?':
@@ -7549,11 +7479,6 @@ steamcompmgr_main(int argc, char **argv)
 		readyPipeFD = -1;
 	}
 
-	if ( subCommandArg >= 0 )
-	{
-		spawn_client( &argv[ subCommandArg ] );
-	}
-
 	bool vblank = false;
 	g_SteamCompMgrWaiter.AddWaitable( &GetVBlankTimer() );
 	GetVBlankTimer().ArmNextVBlank( true );
@@ -7573,11 +7498,23 @@ steamcompmgr_main(int argc, char **argv)
 	update_mode_atoms(root_ctx);
 	XFlush(root_ctx->dpy);
 
-	GetBackend()->PostInit();
+	if ( !GetBackend()->PostInit() )
+		return;
 
 	update_edid_prop();
 
 	update_screenshot_color_mgmt();
+
+	if ( subCommandArg >= 0 )
+	{
+		spawn_client( &argv[ subCommandArg ] );
+	}
+
+	if ( g_bLaunchMangoapp )
+	{
+		char *pMangoappArgv[] = { strdup( "mangoapp" ), nullptr };
+		spawn_client( pMangoappArgv );
+	}
 
 	// Transpose to get this 3x3 matrix into the right state for applying as a 3x4
 	// on DRM + the Vulkan side.

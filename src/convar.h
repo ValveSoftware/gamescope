@@ -127,7 +127,13 @@ namespace gamescope
             if ( pArgs.size() != 2 )
                 return;
 
-            if constexpr ( std::is_integral<T>::value )
+            if constexpr ( std::is_enum<T>::value )
+            {
+                using Underlying = std::underlying_type<T>::type;
+                std::optional<Underlying> oResult = Parse<Underlying>( pArgs[1] );
+                SetValue( oResult ? static_cast<T>( *oResult ) : T{} );
+            }
+            else if constexpr ( std::is_integral<T>::value )
             {
                 std::optional<T> oResult = Parse<T>( pArgs[1] );
                 SetValue( oResult ? *oResult : T{} );

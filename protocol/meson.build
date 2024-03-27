@@ -12,17 +12,24 @@ wl_protocol_dir = wayland_protos.get_variable('pkgdatadir')
 
 protocols = [
 	# Upstream protocols
+	wl_protocol_dir / 'stable/linux-dmabuf/linux-dmabuf-v1.xml',
+	wl_protocol_dir / 'stable/viewporter/viewporter.xml',
 	wl_protocol_dir / 'stable/xdg-shell/xdg-shell.xml',
 	wl_protocol_dir / 'stable/presentation-time/presentation-time.xml',
+	wl_protocol_dir / 'staging/single-pixel-buffer/single-pixel-buffer-v1.xml',
+	wl_protocol_dir / 'unstable/pointer-constraints/pointer-constraints-unstable-v1.xml',
+	wl_protocol_dir / 'unstable/relative-pointer/relative-pointer-unstable-v1.xml',
+	wl_protocol_dir / 'staging/fractional-scale/fractional-scale-v1.xml',
+
+	# Frog protocols
+	'frog-color-management-v1.xml',
 
 	# Gamescope protocols
 	'gamescope-xwayland.xml',
 	'gamescope-pipewire.xml',
 	'gamescope-input-method.xml',
-	'gamescope-tearing-control-unstable-v1.xml',
 	'gamescope-control.xml',
 	'gamescope-swapchain.xml',
-	'gamescope-commit-queue-v1.xml',
 ]
 
 protocols_client_src = []

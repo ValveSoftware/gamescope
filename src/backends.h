@@ -10,6 +10,7 @@ namespace gamescope
         SDL,
         OpenVR,
         Headless,
+        Wayland,
     };
 
     // Backend forward declarations.
@@ -17,4 +18,5 @@ namespace gamescope
     class CDRMBackend;
     class COpenVRBackend;
     class CHeadlessBackend;
+    class CWaylandBackend;
 }

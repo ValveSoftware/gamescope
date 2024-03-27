@@ -3110,6 +3110,11 @@ namespace gamescope
 				if ( !SupportsColorManagement() )
 					bNeedsFullComposite |= ( pFrameInfo->layerCount > 1 || pFrameInfo->layers[0].colorspace != GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ );
 			}
+			else
+			{
+				if ( !SupportsColorManagement() )
+					bNeedsFullComposite |= ColorspaceIsHDR( pFrameInfo->layers[0].colorspace );
+			}
 
 			bNeedsFullComposite |= !!(g_uCompositeDebug & CompositeDebugFlag::Heatmap);
 
@@ -3238,7 +3243,7 @@ namespace gamescope
 
 				baseLayer->filter = GamescopeUpscaleFilter::NEAREST;
 				baseLayer->ctm = nullptr;
-				baseLayer->colorspace = g_bOutputHDREnabled ? GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ : GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB;
+				baseLayer->colorspace = pFrameInfo->outputEncodingEOTF == EOTF_PQ ? GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ : GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB;
 
 				m_bWasPartialCompsiting = false;
 			}
@@ -3368,7 +3373,6 @@ namespace gamescope
 				for ( uint32_t i = 0; i < 12; i++ )
 					ctm2.matrix[i] = drm_calc_s31_32( pData[i] );
 
-				fprintf( stderr, " !!!! MAKING CTM BLOB!!!!!!\n ");
 				if ( drmModeCreatePropertyBlob( g_DRM.fd, reinterpret_cast<const void *>( &ctm2 ), sizeof( ctm2 ), &uBlob ) != 0 )
 					return nullptr;
 			}
@@ -3459,6 +3463,11 @@ namespace gamescope
 		}
 
         virtual bool IsSessionBased() const override
+		{
+			return true;
+		}
+
+		virtual bool SupportsExplicitSync() const override
 		{
 			return true;
 		}

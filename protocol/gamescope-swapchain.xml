@@ -29,7 +29,7 @@
     it.
   </description>
 
-  <interface name="gamescope_swapchain_factory" version="1">
+  <interface name="gamescope_swapchain_factory_v2" version="1">
     <request name="destroy" type="destructor"></request>
 
     <request name="create_swapchain">
@@ -88,8 +88,12 @@
       <arg name="vk_colorspace" type="uint" summary="VkColorSpaceKHR of swapchain"/>
       <arg name="vk_composite_alpha" type="uint" summary="VkCompositeAlphaFlagBitsKHR of swapchain"/>
       <arg name="vk_pre_transform" type="uint" summary="VkSurfaceTransformFlagBitsKHR of swapchain"/>
-      <arg name="vk_present_mode" type="uint" summary="VkPresentModeKHR of swapchain"/>
       <arg name="vk_clipped" type="uint" summary="clipped (VkBool32) of swapchain"/>
+    </request>
+
+    <request name="set_present_mode">
+      <description summary="Add a fifo queue constraint"/>
+      <arg name="vk_present_mode" type="uint" summary="VkPresentModeKHR"/>
     </request>
 
     <request name="set_hdr_metadata">
@@ -180,6 +184,10 @@
       </description>
       <arg name="refresh_cycle_hi" type="uint" summary="high part of the refresh cycle in nanos"/>
       <arg name="refresh_cycle_lo" type="uint" summary="low part of the refresh cycle in nanos"/>
+    </event>
+
+    <event name="retired">
+      <description summary="Swapchain was remotely retired"></description>
     </event>
   </interface>
 </protocol>

@@ -2,6 +2,7 @@
 #include <memory>
 #define VK_NO_PROTOTYPES
 #include <vulkan/vulkan.h>
+#include <linux/input-event-codes.h>
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wnon-virtual-dtor"
@@ -56,6 +57,7 @@ static bool GetVulkanInstanceExtensionsRequired( std::vector< std::string > &out
 {
     if ( !vr::VRCompositor() )
     {
+        openvr_log.errorf( "GetVulkanInstanceExtensionsRequired: Failed to get VRCompositor" );
         return false;
     }
 
@@ -98,6 +100,7 @@ static bool GetVulkanDeviceExtensionsRequired( VkPhysicalDevice pPhysicalDevice,
 {
     if ( !vr::VRCompositor() )
     {
+        openvr_log.errorf( "GetVulkanDeviceExtensionsRequired: Failed to get VRCompositor" );
         return false;
     }
 
@@ -254,6 +257,15 @@ namespace gamescope
 			if ( g_nOutputWidth == 0 )
 				g_nOutputWidth = g_nOutputHeight * 16 / 9;
 
+            vr::EVRInitError error = vr::VRInitError_None;
+            VR_Init( &error, vr::VRApplication_Background );
+
+            if ( error != vr::VRInitError_None )
+            {
+                openvr_log.errorf("Unable to init VR runtime: %s\n", vr::VR_GetVRInitErrorAsEnglishDescription( error ));
+                return false;
+            }
+
 			if ( !vulkan_init( vulkan_get_instance(), VK_NULL_HANDLE ) )
 			{
 				return false;
@@ -264,16 +276,6 @@ namespace gamescope
 				fprintf( stderr, "Failed to initialize Wayland session\n" );
 				return false;
 			}
-
-            //
-            vr::EVRInitError error = vr::VRInitError_None;
-            VR_Init(&error, vr::VRApplication_Background);
-
-            if ( error != vr::VRInitError_None )
-            {
-                openvr_log.errorf("Unable to init VR runtime: %s\n", vr::VR_GetVRInitErrorAsEnglishDescription( error ));
-                return false;
-            }
 
             // Reset getopt() state
             optind = 1;
@@ -322,10 +324,10 @@ namespace gamescope
                 }
             }
 
-            if ( m_pchOverlayKey )
+            if ( !m_pchOverlayKey )
                 m_pchOverlayKey = wlserver_get_wl_display_name();
 
-            if ( m_pchOverlayName )
+            if ( !m_pchOverlayName )
                 m_pchOverlayName = "Gamescope";
 
             if ( !vr::VROverlay() )
@@ -351,6 +353,7 @@ namespace gamescope
             vr::VROverlay()->SetOverlayFlag( m_hOverlay, vr::VROverlayFlags_WantsModalBehavior,	    m_bModal );
             vr::VROverlay()->SetOverlayFlag( m_hOverlay, vr::VROverlayFlags_SendVRSmoothScrollEvents, true );
             vr::VROverlay()->SetOverlayFlag( m_hOverlay, vr::VROverlayFlags_VisibleInDashboard,       false );
+            vr::VROverlay()->SetOverlayFlag( m_hOverlay, vr::VROverlayFlags_HideLaserIntersection,    m_bRelativeMouse );
 
             vr::VROverlay()->SetOverlayWidthInMeters( m_hOverlay,  m_flPhysicalWidth );
             vr::VROverlay()->SetOverlayCurvature	( m_hOverlay,  m_flPhysicalCurvature );
@@ -422,7 +425,7 @@ namespace gamescope
             if ( !oCompositeResult )
                 return -EINVAL;
 
-            UpdateTouchMode();
+            vulkan_wait( *oCompositeResult, true );
 
             auto outputImage = vulkan_get_last_output_image( false, false );
 
@@ -442,10 +445,6 @@ namespace gamescope
 
             vr::VROverlay()->SetOverlayFlag( m_hOverlay, vr::VROverlayFlags_EnableControlBarSteamUI, steamMode );
 
-            // Wait for the composite result on our side *after* we
-            // commit the buffer to the compositor to avoid a bubble.
-            vulkan_wait( *oCompositeResult, true );
-
             vr::Texture_t texture = { &data, vr::TextureType_Vulkan, vr::ColorSpace_Gamma };
             vr::VROverlay()->SetOverlayTexture( m_hOverlay, &texture );
             if ( m_bNudgeToVisible )
@@ -453,6 +452,9 @@ namespace gamescope
                 vr::VROverlay()->ShowDashboard( m_pchOverlayKey );
                 m_bNudgeToVisible = false;
             }
+
+            GetVBlankTimer().UpdateWasCompositing( true );
+            GetVBlankTimer().UpdateLastDrawTime( get_time_in_nanos() - g_SteamCompMgrVBlankTime.ulWakeupTime );
 
             return 0;
 		}
@@ -535,6 +537,12 @@ namespace gamescope
 			return false;
 		}
 
+        virtual bool SupportsExplicitSync() const override
+        {
+            // We always composite right now, so yes.
+            return true;
+        }
+
 		virtual bool IsVisible() const override
 		{
             return m_bOverlayVisible.load();
@@ -587,6 +595,11 @@ namespace gamescope
         }
         virtual void SetRelativeMouseMode( bool bRelative ) override
         {
+            if ( bRelative != m_bRelativeMouse )
+            {
+                vr::VROverlay()->SetOverlayFlag( m_hOverlay, vr::VROverlayFlags_HideLaserIntersection, bRelative );
+                m_bRelativeMouse = bRelative;
+            }
         }
         virtual void SetVisible( bool bVisible ) override
         {
@@ -619,7 +632,7 @@ namespace gamescope
 
                 vr::VROverlay()->SetOverlayRaw( m_hOverlayThumbnail, &(*uIconPixels)[2], uWidth, uHeight, sizeof(uint32_t) );
             }
-            else if ( m_pchOverlayName )
+            else if ( m_pchOverlayIcon )
             {
                 vr::VROverlay()->SetOverlayFromFile( m_hOverlayThumbnail, m_pchOverlayIcon );
             }
@@ -628,9 +641,9 @@ namespace gamescope
                 vr::VROverlay()->ClearOverlayTexture( m_hOverlayThumbnail );
             }
         }
-		virtual std::optional<INestedHints::CursorInfo> GetHostCursor() override
+		virtual std::shared_ptr<INestedHints::CursorInfo> GetHostCursor() override
         {
-            return std::nullopt;
+            return nullptr;
         }
 
 	protected:
@@ -640,12 +653,6 @@ namespace gamescope
 		}
 
 	private:
-
-        void UpdateTouchMode()
-        {
-            const bool bHideLaserIntersection = g_nTouchClickMode != WLSERVER_TOUCH_CLICK_PASSTHROUGH;
-            vr::VROverlay()->SetOverlayFlag( m_hOverlay, vr::VROverlayFlags_HideLaserIntersection, bHideLaserIntersection );
-        }
 
         void WaitUntilVisible()
         {
@@ -663,8 +670,6 @@ namespace gamescope
                 vr::VREvent_t vrEvent;
                 while( vr::VROverlay()->PollNextOverlayEvent( m_hOverlay, &vrEvent, sizeof( vrEvent ) ) )
                 {
-                    uint32_t timestamp = vrEvent.eventAgeSeconds * 1'000'000;
-
                     switch( vrEvent.eventType )
                     {
                         case vr::VREvent_OverlayClosed:
@@ -686,11 +691,10 @@ namespace gamescope
                             float x = vrEvent.data.mouse.x;
                             float y = g_nOutputHeight - vrEvent.data.mouse.y;
 
-                            x /= (float)g_nOutputWidth;
-                            y /= (float)g_nOutputHeight;
-
                             wlserver_lock();
-                            wlserver_touchmotion( x, y, 0, timestamp );
+                            if ( GetTouchClickMode() == TouchClickModes::Passthrough )
+                                wlserver_touchmotion( x / float( g_nOutputWidth ), y / float( g_nOutputHeight ), 0, ++m_uFakeTimestamp );
+                            wlserver_mousewarp( x, y, m_uFakeTimestamp );
                             wlserver_unlock();
                             break;
                         }
@@ -705,25 +709,19 @@ namespace gamescope
 
                             wlserver_lock();
                             if ( vrEvent.eventType == vr::VREvent_MouseButtonDown )
-                                wlserver_touchdown( x, y, 0, timestamp );
+                                wlserver_touchdown( x, y, 0, ++m_uFakeTimestamp );
                             else
-                                wlserver_touchup( 0, timestamp );
+                                wlserver_touchup( 0, ++m_uFakeTimestamp );
                             wlserver_unlock();
                             break;
                         }
 
                         case vr::VREvent_ScrollSmooth:
                         {
+                            float flX = -vrEvent.data.scroll.xdelta * m_flScrollSpeed;
+                            float flY = -vrEvent.data.scroll.ydelta * m_flScrollSpeed;
                             wlserver_lock();
-
-                            m_flScrollAccum[0] += -vrEvent.data.scroll.xdelta * m_flScrollSpeed;
-                            m_flScrollAccum[1] += -vrEvent.data.scroll.ydelta * m_flScrollSpeed;
-
-                            float dx, dy;
-                            m_flScrollAccum[0] = modf( m_flScrollAccum[0], &dx );
-                            m_flScrollAccum[1] = modf( m_flScrollAccum[1], &dy );
-
-                            wlserver_mousewheel( dx, dy, timestamp );
+                            wlserver_mousewheel( flX, flY, ++m_uFakeTimestamp );
                             wlserver_unlock();
                             break;
                         }
@@ -770,15 +768,17 @@ namespace gamescope
         bool m_bEnableControlBarKeyboard = false;
         bool m_bEnableControlBarClose = false;
         bool m_bModal = false;
+        bool m_bRelativeMouse = false;
         float m_flPhysicalWidth = 2.0f;
         float m_flPhysicalCurvature = 0.0f;
         float m_flPhysicalPreCurvePitch = 0.0f;
-        float m_flScrollSpeed = 8.0f;
-        float m_flScrollAccum[2] = { 0.0f, 0.0f };
+        float m_flScrollSpeed = 1.0f;
         vr::VROverlayHandle_t m_hOverlay = vr::k_ulOverlayHandleInvalid;
         vr::VROverlayHandle_t m_hOverlayThumbnail = vr::k_ulOverlayHandleInvalid;
         wlserver_input_method *m_pIME = nullptr;
         std::atomic<bool> m_bOverlayVisible = { false };
+
+        std::atomic<uint32_t> m_uFakeTimestamp = { 0 };
 	};
 
 	/////////////////////////

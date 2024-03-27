@@ -1,5 +1,10 @@
 #pragma once
 
+#include <stdarg.h>
+#include <stdio.h>
+#include <errno.h>
+#include <string.h>
+
 #ifdef __GNUC__
 #define ATTRIB_PRINTF(start, end) __attribute__((format(printf, start, end)))
 #else

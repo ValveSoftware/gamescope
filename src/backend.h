@@ -3,6 +3,7 @@
 #include "color_helpers.h"
 #include "gamescope_shared.h"
 #include "vulkan_include.h"
+#include "convar.h"
 
 #include <cassert>
 #include <span>
@@ -20,6 +21,21 @@ namespace gamescope
 {
     struct VBlankScheduleTime;
     class BackendBlob;
+
+    namespace TouchClickModes
+    {
+        enum TouchClickMode : uint32_t
+        {
+            Hover,
+            Left,
+            Right,
+            Middle,
+            Passthrough,
+            Disabled,
+            Trackpad,
+        };
+    }
+    using TouchClickMode = TouchClickModes::TouchClickMode;
 
     struct BackendConnectorHDRInfo
     {
@@ -109,7 +125,7 @@ namespace gamescope
         virtual void SetVisible( bool bVisible ) = 0;
         virtual void SetTitle( std::shared_ptr<std::string> szTitle ) = 0;
         virtual void SetIcon( std::shared_ptr<std::vector<uint32_t>> uIconPixels ) = 0;
-        virtual std::optional<CursorInfo> GetHostCursor() = 0;
+        virtual std::shared_ptr<CursorInfo> GetHostCursor() = 0;
     };
 
     struct BackendPresentFeedback
@@ -173,6 +189,8 @@ namespace gamescope
         virtual bool UsesVulkanSwapchain() const = 0;
         virtual bool IsSessionBased() const = 0;
 
+        virtual bool SupportsExplicitSync() const = 0;
+
         // Dumb helper we should remove to support multi display someday.
         gamescope::GamescopeScreenType GetScreenType()
         {
@@ -196,6 +214,8 @@ namespace gamescope
 
         // TODO: Make me const someday.
         virtual BackendPresentFeedback& PresentationFeedback() = 0;
+
+        virtual TouchClickMode GetTouchClickMode() = 0;
 
         static IBackend *Get();
         template <typename T>
@@ -221,6 +241,8 @@ namespace gamescope
         virtual VBlankScheduleTime FrameSync() override;
 
         virtual BackendPresentFeedback& PresentationFeedback() override { return m_PresentFeedback; }
+
+        virtual TouchClickMode GetTouchClickMode() override;
     protected:
         BackendPresentFeedback m_PresentFeedback{};
     };
@@ -275,6 +297,8 @@ namespace gamescope
         uint32_t m_uBlob = 0;
         bool m_bOwned = false;
     };
+
+    extern ConVar<TouchClickMode> cv_touch_click_mode;
 }
 
 inline gamescope::IBackend *GetBackend()
