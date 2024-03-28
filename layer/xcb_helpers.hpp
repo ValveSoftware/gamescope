@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <optional>
 #include <atomic>
+#include <time.h>
 
 
 #if defined(__x86_64__) || defined(__i386__)
@@ -179,6 +180,22 @@ namespace xcb {
     return largestExtent;
   }
   
+  static constexpr timespec nanos_to_timespec( const uint64_t ulNanos )
+  {
+    timespec ts =
+    {
+        .tv_sec = time_t( ulNanos / 1'000'000'000ul ),
+        .tv_nsec = long( ulNanos % 1'000'000'000ul ),
+    };
+    return ts;
+  }
+  
+  static void sleep_for_nanos(const uint64_t nanos)
+  {
+    timespec ts = nanos_to_timespec( nanos );
+    nanosleep(&ts, nullptr);
+  }
+  
   static void eventWatcher(std::atomic<bool>* bStateChanged, xcb_connection_t* connection) {
     xcb_screen_t* screen = xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
     assert(screen != nullptr);
@@ -193,20 +210,41 @@ namespace xcb {
     }
     
     static constexpr uint32_t mask    = XCB_CW_EVENT_MASK;
-    const uint32_t select_input_val[] = { reply.get()->all_event_masks | reply.get()->your_event_mask | XCB_EVENT_MASK_EXPOSURE | XCB_EVENT_MASK_RESIZE_REDIRECT };
+    const uint32_t select_input_val[] = { reply.get()->your_event_mask | XCB_EVENT_MASK_EXPOSURE | XCB_EVENT_MASK_RESIZE_REDIRECT };
     
     xcb_change_window_attributes(connection, screen->root, mask, select_input_val);
+    
+    auto register_child_window_events = [&](){
+        xcb_query_tree_cookie_t cookie = xcb_query_tree(connection, screen->root);
+        auto treeReply = Reply<xcb_query_tree_reply_t>{ xcb_query_tree_reply(connection, cookie, nullptr) };
+        xcb_window_t* children = xcb_query_tree_children(treeReply.get());
+        for (uint32_t i = 0; i < treeReply->children_len; i++) {
+          xcb_window_t child = children[i];
+
+          xcb_get_window_attributes_cookie_t attributeCookie = xcb_get_window_attributes(connection, child);
+          auto attributeReply = Reply<xcb_get_window_attributes_reply_t>{ xcb_get_window_attributes_reply(connection, attributeCookie, nullptr) };
+          static constexpr uint32_t childMask    = XCB_CW_EVENT_MASK;
+          const uint32_t child_select_input_val[] = { attributeReply.get()->your_event_mask | XCB_EVENT_MASK_EXPOSURE | XCB_EVENT_MASK_RESIZE_REDIRECT };
+          xcb_change_window_attributes(connection, child, childMask, child_select_input_val);
+        }
+    };
+    
+    register_child_window_events();
     
     xcb_aux_sync(connection);
     
     xcb_generic_event_t *event;
     
     while (true) {
-        if ( (event = xcb_wait_for_event(connection)) == nullptr) {
+        if ( (event = xcb_poll_for_event(connection)) == nullptr) {
             _PAUSE(); //insert cpu pause instruction here
                       //to keep cpu usage in check
-                      
+            
+            register_child_window_events();
+                
             xcb_aux_sync(connection);
+            
+            sleep_for_nanos(100'000ul); //100 microseconds
             continue;
         }
         
