@@ -9,6 +9,10 @@
 #include <optional>
 #include <atomic>
 #include <time.h>
+#include <vector>
+#include <string.h>
+#include <algorithm>
+#include <iterator>
 
 
 #if defined(__x86_64__) || defined(__i386__)
@@ -214,19 +218,33 @@ namespace xcb {
     
     xcb_change_window_attributes(connection, screen->root, mask, select_input_val);
     
+    std::vector<xcb_window_t> registered_children(8);
+    std::vector<xcb_window_t> tmp_vec(8);
+    
     auto register_child_window_events = [&](){
         xcb_query_tree_cookie_t cookie = xcb_query_tree(connection, screen->root);
         auto treeReply = Reply<xcb_query_tree_reply_t>{ xcb_query_tree_reply(connection, cookie, nullptr) };
         xcb_window_t* children = xcb_query_tree_children(treeReply.get());
-        for (uint32_t i = 0; i < treeReply->children_len; i++) {
-          xcb_window_t child = children[i];
-
+        
+        std::vector<xcb_window_t> new_windows;
+        _PAUSE(); //insert cpu pause instruction here
+                      //to keep cpu usage in check
+        if (treeReply->children_len > 0) {
+        	tmp_vec.resize(treeReply->children_len);
+        	memcpy(reinterpret_cast<void*>(tmp_vec.data()), reinterpret_cast<void*>(children), sizeof(children[0]) * treeReply->children_len);
+        	std::sort(tmp_vec.begin(), tmp_vec.end());
+        	std::set_difference(tmp_vec.begin(), tmp_vec.end(), registered_children.begin(), registered_children.end(), std::inserter(new_windows, new_windows.begin()));
+        }
+        
+        for (xcb_window_t& child : new_windows) {
           xcb_get_window_attributes_cookie_t attributeCookie = xcb_get_window_attributes(connection, child);
           auto attributeReply = Reply<xcb_get_window_attributes_reply_t>{ xcb_get_window_attributes_reply(connection, attributeCookie, nullptr) };
           static constexpr uint32_t childMask    = XCB_CW_EVENT_MASK;
           const uint32_t child_select_input_val[] = { attributeReply.get()->your_event_mask | XCB_EVENT_MASK_EXPOSURE | XCB_EVENT_MASK_RESIZE_REDIRECT };
           xcb_change_window_attributes(connection, child, childMask, child_select_input_val);
         }
+        
+        registered_children.swap(tmp_vec);
     };
     
     register_child_window_events();
@@ -237,8 +255,6 @@ namespace xcb {
     
     while (true) {
         if ( (event = xcb_poll_for_event(connection)) == nullptr) {
-            _PAUSE(); //insert cpu pause instruction here
-                      //to keep cpu usage in check
             
             register_child_window_events();
                 
