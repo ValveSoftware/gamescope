@@ -45,7 +45,7 @@
     it.
   </description>
 
-  <interface name="gamescope_input_method_manager" version="2">
+  <interface name="gamescope_input_method_manager" version="3">
     <description summary="input method manager">
       The input method manager allows the client to become the input method on
       a chosen seat.
@@ -72,7 +72,7 @@
     </request>
   </interface>
 
-  <interface name="gamescope_input_method" version="2">
+  <interface name="gamescope_input_method" version="3">
     <description summary="input method">
       An input method object allows for clients to compose text.
 
@@ -174,6 +174,41 @@
         and reset to initial on the next gamescope_text_input.commit request.
       </description>
       <arg name="action" type="uint" enum="action" summary="action performed"/>
+    </request>
+
+    <!-- Collection of pointer/button related things for Steam Input. -->
+
+    <enum name="button_state" since="3">
+      <description summary="physical button state">
+	Describes the physical state of a button that produced the button
+	event.
+      </description>
+      <entry name="released" value="0" summary="the button is not pressed"/>
+      <entry name="pressed" value="1" summary="the button is pressed"/>
+    </enum>
+
+    <request name="pointer_motion" since="3">
+      <description summary="move the cursor!"/>
+      <arg name="dx" type="fixed" summary="delta x"/>
+      <arg name="dy" type="fixed" summary="delta y"/>
+    </request>
+
+    <request name="pointer_warp" since="3">
+      <description summary="warp the cursor!"/>
+      <arg name="x" type="fixed" summary="x pos"/>
+      <arg name="y" type="fixed" summary="y pos"/>
+    </request>
+
+    <request name="pointer_wheel" since="3">
+      <description summary="scroll the cursor! Uses the 120 scaling mechanism."/>
+      <arg name="x" type="int" summary="x * 120 -> 120 = 1.0"/>
+      <arg name="y" type="int" summary="y * 120 -> 120 = 1.0"/>
+    </request>
+
+    <request name="pointer_button" since="3">
+      <description summary="click the cursor!"/>
+      <arg name="button" type="uint" summary="Linux button code, eg. BTN_LEFT"/>
+      <arg name="state" type="uint" enum="button_state" summary="wl_pointer_button_state" />
     </request>
   </interface>
 </protocol>

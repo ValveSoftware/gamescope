@@ -27,7 +27,7 @@ namespace gamescope
     class CVBlankTimer : public ITimerWaitable
     {
     public:
-        static constexpr uint64_t kSecInNanoSecs = 1'000'000'000ul;
+        static constexpr uint64_t kMilliSecInNanoSecs = 1'000'000ul;
         // VBlank timer defaults and starting values.
         // Anything time-related is nanoseconds unless otherwise specified.
         static constexpr uint64_t kStartingVBlankDrawTime = 3'000'000ul;

@@ -89,6 +89,7 @@
 #include "edid.h"
 #include "hdmi.h"
 #include "convar.h"
+#include "refresh_rate.h"
 
 #if HAVE_AVIF
 #include "avif/avif.h"
@@ -5136,11 +5137,11 @@ static bool steamcompmgr_should_vblank_window( bool bShouldLimitFPS, uint64_t vb
 {
 	bool bSendCallback = true;
 
-	int nRefresh = g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh;
+	int nRefreshHz = gamescope::ConvertmHzToHz( g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh );
 	int nTargetFPS = g_nSteamCompMgrTargetFPS;
-	if ( g_nSteamCompMgrTargetFPS && bShouldLimitFPS && nRefresh > nTargetFPS )
+	if ( g_nSteamCompMgrTargetFPS && bShouldLimitFPS && nRefreshHz > nTargetFPS )
 	{
-		int nVblankDivisor = nRefresh / nTargetFPS;
+		int nVblankDivisor = nRefreshHz / nTargetFPS;
 
 		if ( vblank_idx % nVblankDivisor != 0 )
 			bSendCallback = false;
@@ -6526,10 +6527,11 @@ void check_new_xdg_res()
 	}
 }
 
-pid_t child_pid = 0;
+std::mutex g_ChildPidMutex;
+std::vector<pid_t> g_ChildPids;
 
 static void
-spawn_client( char **argv )
+spawn_client( char **argv, bool bAsyncChild )
 {
 #if defined(__linux__)
 	// (Don't Lose) The Children
@@ -6590,10 +6592,13 @@ spawn_client( char **argv )
 		free( pchPreloadCopy );
 	}
 
-	child_pid = fork();
+	pid_t child_pid = fork();
 
 	if ( child_pid < 0 )
+	{
 		xwm_log.errorf_errno( "fork failed" );
+		_exit( 1 );
+	}
 
 	// Are we in the child?
 	if ( child_pid == 0 )
@@ -6609,6 +6614,12 @@ spawn_client( char **argv )
 
 		// Restore prior rlimit in case child uses select()
 		restore_fd_limit();
+
+		// Reset signal stuff
+		setsid();
+		sigset_t set;
+		sigemptyset(&set);
+		sigprocmask(SIG_SETMASK, &set, NULL);
 
 		// Set modified LD_PRELOAD if needed
 		if ( pchCurrentPreload != nullptr )
@@ -6629,37 +6640,45 @@ spawn_client( char **argv )
 		setenv( "ENABLE_GAMESCOPE_WSI", "1", 0 );
 		// Unset this to avoid it leaking to Proton apps, etc.
 		unsetenv("SDL_VIDEODRIVER");
-		execvp( argv[ 0 ], argv );
 
+		execvp( argv[ 0 ], argv );
 		xwm_log.errorf_errno( "execvp failed" );
 		_exit( 1 );
 	}
 
-	std::thread waitThread([]() {
-		pthread_setname_np( pthread_self(), "gamescope-wait" );
-
-		// Because we've set PR_SET_CHILD_SUBREAPER above, we'll get process
-		// status notifications for all of our child processes, even if our
-		// direct child exits. Wait until all have exited.
-		while ( true )
+	if ( !bAsyncChild && child_pid > 0 )
+	{
 		{
-			if ( wait( nullptr ) < 0 )
-			{
-				if ( errno == EINTR )
-					continue;
-				if ( errno != ECHILD )
-					xwm_log.errorf_errno( "steamcompmgr: wait failed" );
-				break;
-			}
+			std::unique_lock lock( g_ChildPidMutex );
+			g_ChildPids.emplace_back( child_pid );
 		}
 
-        fprintf(stderr, "gamescope: children shut down!\n");
-        child_pid = 0;
-		g_bRun = false;
-		nudge_steamcompmgr();
-	});
+		std::thread waitThread([ cChildPid = child_pid ]() {
+			pthread_setname_np( pthread_self(), "gamescope-wait" );
 
-	waitThread.detach();
+			// Because we've set PR_SET_CHILD_SUBREAPER above, we'll get process
+			// status notifications for all of our child processes, even if our
+			// direct child exits. Wait until all have exited.
+			while ( true )
+			{
+				int status = 0;
+				if ( waitpid( cChildPid, &status, 0 ) < 0 )
+				{
+					if ( errno == EINTR )
+						continue;
+					if ( errno != ECHILD )
+						xwm_log.errorf_errno( "steamcompmgr: wait failed" );
+					break;
+				}
+			}
+
+			fprintf(stderr, "gamescope: children shut down!\n");
+			g_bRun = false;
+			nudge_steamcompmgr();
+		});
+
+		waitThread.detach();
+	}
 }
 
 static void
@@ -7228,8 +7247,9 @@ void update_vrr_atoms(xwayland_ctx_t *root_ctx, bool force, bool* needs_flush = 
 
 	if ( g_nOutputRefresh != g_nCurrentRefreshRate_CachedValue || force )
 	{
+		int32_t nRefresh = gamescope::ConvertmHzToHz( g_nOutputRefresh );
 		XChangeProperty(root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeDisplayRefreshRateFeedback, XA_CARDINAL, 32, PropModeReplace,
-			(unsigned char *)&g_nOutputRefresh, 1 );
+			(unsigned char *)&nRefresh, 1 );
 		g_nCurrentRefreshRate_CachedValue = g_nOutputRefresh;
 		if (needs_flush)
 			*needs_flush = true;
@@ -7507,13 +7527,13 @@ steamcompmgr_main(int argc, char **argv)
 
 	if ( subCommandArg >= 0 )
 	{
-		spawn_client( &argv[ subCommandArg ] );
+		spawn_client( &argv[ subCommandArg ], false );
 	}
 
 	if ( g_bLaunchMangoapp )
 	{
 		char *pMangoappArgv[] = { strdup( "mangoapp" ), nullptr };
-		spawn_client( pMangoappArgv );
+		spawn_client( pMangoappArgv, true );
 	}
 
 	// Transpose to get this 3x3 matrix into the right state for applying as a 3x4
@@ -7691,13 +7711,14 @@ steamcompmgr_main(int argc, char **argv)
 		{
 			vblank_idx++;
 
-			int nRealRefresh = g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh;
-			int nTargetFPS = g_nSteamCompMgrTargetFPS ? g_nSteamCompMgrTargetFPS : nRealRefresh;
-			nTargetFPS = std::min<int>( nTargetFPS, nRealRefresh );
-			int nVblankDivisor = nRealRefresh / nTargetFPS;
+			int nRealRefreshmHz = g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh;
+			int nRealRefreshHz = gamescope::ConvertmHzToHz( nRealRefreshmHz );
+			int nTargetFPS = g_nSteamCompMgrTargetFPS ? g_nSteamCompMgrTargetFPS : nRealRefreshHz;
+			nTargetFPS = std::min<int>( nTargetFPS, nRealRefreshHz );
+			int nVblankDivisor = nRealRefreshHz / nTargetFPS;
 
-			g_SteamCompMgrAppRefreshCycle = 1'000'000'000ul / nRealRefresh;
-			g_SteamCompMgrLimitedAppRefreshCycle = 1'000'000'000ul / nRealRefresh * nVblankDivisor;
+			g_SteamCompMgrAppRefreshCycle = gamescope::mHzToRefreshCycle( nRealRefreshmHz );
+			g_SteamCompMgrLimitedAppRefreshCycle = g_SteamCompMgrAppRefreshCycle * nVblankDivisor;
 		}
 
 		// Handle presentation-time stuff

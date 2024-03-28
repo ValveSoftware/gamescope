@@ -39,6 +39,7 @@
 #include "steamcompmgr.hpp"
 #include "vblankmanager.hpp"
 #include "wlserver.hpp"
+#include "refresh_rate.h"
 
 #include "wlr_begin.hpp"
 #include <libliftoff.h>
@@ -52,8 +53,30 @@
 
 static constexpr bool k_bUseCursorPlane = false;
 
+extern int g_nPreferredOutputWidth;
+extern int g_nPreferredOutputHeight;
+
 namespace gamescope
 {
+	// Get a DRM mode in mHz
+	// Taken from wlroots, but we can't access it as we don't
+	// use the drm backend.
+	static int32_t GetModeRefresh(const drmModeModeInfo *mode)
+	{
+		int32_t nRefresh = (mode->clock * 1'000'000ll / mode->htotal + mode->vtotal / 2) / mode->vtotal;
+
+		if (mode->flags & DRM_MODE_FLAG_INTERLACE)
+			nRefresh *= 2;
+
+		if (mode->flags & DRM_MODE_FLAG_DBLSCAN)
+			nRefresh /= 2;
+
+		if (mode->vscan > 1)
+			nRefresh /= mode->vscan;
+
+		return nRefresh;
+	}
+
 	template <typename T>
 	using CAutoDeletePtr = std::unique_ptr<T, void(*)(T*)>;
 
@@ -134,6 +157,7 @@ namespace gamescope
 			std::optional<CDRMAtomicProperty> IN_FORMATS; // Immutable
 
 			std::optional<CDRMAtomicProperty> FB_ID;
+			std::optional<CDRMAtomicProperty> IN_FENCE_FD;
 			std::optional<CDRMAtomicProperty> CRTC_ID;
 			std::optional<CDRMAtomicProperty> SRC_X;
 			std::optional<CDRMAtomicProperty> SRC_Y;
@@ -382,8 +406,6 @@ struct drm_t {
 	gamescope::CDRMPlane *pPrimaryPlane;
 	gamescope::CDRMCRTC *pCRTC;
 	gamescope::CDRMConnector *pConnector;
-	int kms_in_fence_fd;
-	int kms_out_fence_fd;
 
 	struct wlr_drm_format_set primary_formats;
 
@@ -485,19 +507,19 @@ static void drm_unset_connector( struct drm_t *drm );
 
 static constexpr uint32_t s_kSteamDeckLCDRates[] =
 {
-	40, 41, 42, 43, 44, 45, 46, 47, 48, 49,
-	50, 51, 52, 53, 54, 55, 56, 57, 58, 59,
-	60,
+	40'000, 41'000, 42'000, 43'000, 44'000, 45'000, 46'000, 47'000, 48'000, 49'000,
+	50'000, 51'000, 52'000, 53'000, 54'000, 55'000, 56'000, 57'000, 58'000, 59'000,
+	60'000,
 };
 
 static constexpr uint32_t s_kSteamDeckOLEDRates[] =
 {
-	45,47,48,49,
-	50,51,53,55,56,59,
-	60,62,64,65,66,68,
-	72,73,76,77,78,
-	80,81,82,84,85,86,87,88,
-	90,
+	45'000, 47'000, 48'000, 49'000, 
+	50'000, 51'000, 53'000, 55'000, 56'000, 59'000, 
+	60'000, 62'000, 64'000, 65'000, 66'000, 68'000, 
+	72'000, 73'000, 76'000, 77'000, 78'000, 
+	80'000, 81'000, 82'000, 84'000, 85'000, 86'000, 87'000, 88'000, 
+	90'000, 
 };
 
 static void update_connector_display_info_wl(struct drm_t *drm)
@@ -694,6 +716,9 @@ static void page_flip_handler(int fd, unsigned int frame, unsigned int sec, unsi
 	g_DRM.flip_lock.unlock();
 
 	mangoapp_output_update( vblanktime );
+
+	// Nudge so that steamcompmgr releases commits.
+	nudge_steamcompmgr();
 }
 
 void flip_handler_thread_run(void)
@@ -991,7 +1016,7 @@ static bool setup_best_connector(struct drm_t *drm, bool force, bool initial)
 	const drmModeModeInfo *mode = nullptr;
 	if ( drm->preferred_width != 0 || drm->preferred_height != 0 || drm->preferred_refresh != 0 )
 	{
-		mode = find_mode(best->GetModeConnector(), drm->preferred_width, drm->preferred_height, drm->preferred_refresh);
+		mode = find_mode(best->GetModeConnector(), drm->preferred_width, drm->preferred_height, gamescope::ConvertmHzToHz( drm->preferred_refresh ));
 	}
 
 	if (!mode && best->GetScreenType() == gamescope::GAMESCOPE_SCREEN_TYPE_EXTERNAL) {
@@ -1066,6 +1091,9 @@ void load_pnps(void)
 
 extern bool env_to_bool(const char *env);
 
+uint32_t g_uAlwaysSignalledSyncobj = 0;
+int g_nAlwaysSignalledSyncFile = -1;
+
 bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 {
 	load_pnps();
@@ -1117,6 +1145,17 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 	}
 	if (drmGetCap(drm->fd, DRM_CAP_CURSOR_HEIGHT, &drm->cursor_height) != 0) {
 		drm->cursor_height = 64;
+	}
+
+	int err = drmSyncobjCreate(drm->fd, DRM_SYNCOBJ_CREATE_SIGNALED, &g_uAlwaysSignalledSyncobj);
+	if (err < 0) {
+		drm_log.errorf("Failed to create dummy signalled syncobj");
+		return false;
+	}
+	err = drmSyncobjExportSyncFile(drm->fd, g_uAlwaysSignalledSyncobj, &g_nAlwaysSignalledSyncFile);
+	if (err < 0) {
+		drm_log.errorf("Failed to create dummy signalled sync file");
+		return false;
 	}
 
 	uint64_t cap;
@@ -1220,8 +1259,6 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 		}
 	}
 
-	drm->kms_in_fence_fd = -1;
-
 	std::thread flip_handler_thread( flip_handler_thread_run );
 	flip_handler_thread.detach();
 
@@ -1294,6 +1331,7 @@ void finish_drm(struct drm_t *drm)
 	for ( std::unique_ptr< gamescope::CDRMPlane > &pPlane : drm->planes )
 	{
 		pPlane->GetProperties().FB_ID->SetPendingValue( req, 0, true );
+		pPlane->GetProperties().IN_FENCE_FD->SetPendingValue( req, -1, true );
 		pPlane->GetProperties().CRTC_ID->SetPendingValue( req, 0, true );
 		pPlane->GetProperties().SRC_X->SetPendingValue( req, 0, true );
 		pPlane->GetProperties().SRC_Y->SetPendingValue( req, 0, true );
@@ -1866,6 +1904,7 @@ namespace gamescope
 			m_Props.IN_FORMATS               = CDRMAtomicProperty::Instantiate( "IN_FORMATS",               this, *rawProperties );
 
 			m_Props.FB_ID                    = CDRMAtomicProperty::Instantiate( "FB_ID",                    this, *rawProperties );
+			m_Props.IN_FENCE_FD              = CDRMAtomicProperty::Instantiate( "IN_FENCE_FD",              this, *rawProperties );
 			m_Props.CRTC_ID                  = CDRMAtomicProperty::Instantiate( "CRTC_ID",                  this, *rawProperties );
 			m_Props.SRC_X                    = CDRMAtomicProperty::Instantiate( "SRC_X",                    this, *rawProperties );
 			m_Props.SRC_Y                    = CDRMAtomicProperty::Instantiate( "SRC_Y",                    this, *rawProperties );
@@ -2326,6 +2365,7 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 			}
 
 			liftoff_layer_set_property( drm->lo_layers[ i ], "FB_ID", frameInfo->layers[ i ].fbid);
+			liftoff_layer_set_property( drm->lo_layers[ i ], "IN_FENCE_FD", g_nAlwaysSignalledSyncFile);
 			drm->fbids_in_req.push_back( frameInfo->layers[ i ].fbid );
 
 			liftoff_layer_set_property( drm->lo_layers[ i ], "zpos", entry.layerState[i].zpos );
@@ -2441,6 +2481,7 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 		else
 		{
 			liftoff_layer_set_property( drm->lo_layers[ i ], "FB_ID", 0 );
+			liftoff_layer_set_property( drm->lo_layers[ i ], "IN_FENCE_FD", -1 );
 
 			liftoff_layer_unset_property( drm->lo_layers[ i ], "COLOR_ENCODING" );
 			liftoff_layer_unset_property( drm->lo_layers[ i ], "COLOR_RANGE" );
@@ -2848,7 +2889,7 @@ static void drm_unset_mode( struct drm_t *drm )
 
 	g_nOutputRefresh = drm->preferred_refresh;
 	if (g_nOutputRefresh == 0)
-		g_nOutputRefresh = 60;
+		g_nOutputRefresh = gamescope::ConvertHztomHz( 60 );
 
 	g_bRotated = false;
 }
@@ -2863,7 +2904,7 @@ bool drm_set_mode( struct drm_t *drm, const drmModeModeInfo *mode )
 	drm->pending.mode_id = GetBackend()->CreateBackendBlob( *mode );
 	drm->needs_modeset = true;
 
-	g_nOutputRefresh = mode->vrefresh;
+	g_nOutputRefresh = gamescope::GetModeRefresh( mode );
 
 	update_drm_effective_orientations(drm, mode);
 
@@ -3035,7 +3076,7 @@ namespace gamescope
 				return false;
 			}
 
-			return init_drm( &g_DRM, 0, 0, 0 );
+			return init_drm( &g_DRM, g_nPreferredOutputWidth, g_nPreferredOutputHeight, g_nNestedRefresh );
 		}
 
 		virtual bool PostInit() override
@@ -3487,7 +3528,7 @@ namespace gamescope
 
 		virtual bool HackTemporarySetDynamicRefresh( int nRefresh ) override
 		{
-			return drm_set_refresh( &g_DRM, nRefresh );
+			return drm_set_refresh( &g_DRM, ConvertmHzToHz( nRefresh ) );
 		}
 
 		virtual void HackUpdatePatchedEdid() override

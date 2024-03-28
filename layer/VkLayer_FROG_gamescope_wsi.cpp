@@ -1106,7 +1106,7 @@ namespace GamescopeWSILayer {
           auto gamescopeSurface = GamescopeSurface::get(gamescopeSwapchain->surface);
           if (gamescopeSwapchain->retired)
             return VK_ERROR_OUT_OF_DATE_KHR;
-          else if (gamescopeSurface->canBypassXWaylandCached()) {
+          else if (gamescopeSwapchain->isBypassingXWayland) {
             gamescope_swapchain_override_window_content(gamescopeSwapchain->object, gamescopeSwapchain->serverId, gamescopeSurface->window);
             VkPresentModeKHR presentMode = oOriginalPresentModeInfo ? oOriginalPresentModeInfo->pPresentModes[i] : gamescopeSwapchain->presentMode;
             if (forceFifo && !frameLimiterAware)

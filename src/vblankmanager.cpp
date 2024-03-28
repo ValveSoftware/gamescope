@@ -17,6 +17,7 @@
 #include "vblankmanager.hpp"
 #include "steamcompmgr.hpp"
 #include "main.hpp"
+#include "refresh_rate.h"
 
 LogScope g_VBlankLog("vblank");
 
@@ -81,7 +82,7 @@ namespace gamescope
 
 	uint64_t CVBlankTimer::GetNextVBlank( uint64_t ulOffset ) const
 	{
-		const uint64_t ulIntervalNSecs = kSecInNanoSecs / GetRefresh();
+		const uint64_t ulIntervalNSecs = mHzToRefreshCycle( GetRefresh() );
 		const uint64_t ulNow = get_time_in_nanos();
 
 		uint64_t ulTargetPoint = GetLastVBlank() + ulIntervalNSecs - ulOffset;
@@ -97,7 +98,7 @@ namespace gamescope
 		const GamescopeScreenType eScreenType = GetBackend()->GetScreenType();
 
 		const int nRefreshRate = GetRefresh();
-		const uint64_t ulRefreshInterval = kSecInNanoSecs / nRefreshRate;
+		const uint64_t ulRefreshInterval = mHzToRefreshCycle( nRefreshRate );
 		// The redzone is relative to 60Hz for external displays.
 		// Scale it by our target refresh so we don't miss submitting for
 		// vblank in DRM.
@@ -109,7 +110,7 @@ namespace gamescope
 		// Need to re-test that.
 		const uint64_t ulRedZone = eScreenType == GAMESCOPE_SCREEN_TYPE_INTERNAL
 			? m_ulVBlankDrawBufferRedZone
-			: ( m_ulVBlankDrawBufferRedZone * 60 * kSecInNanoSecs ) / ( nRefreshRate * kSecInNanoSecs );
+			: ( m_ulVBlankDrawBufferRedZone * 60 * kMilliSecInNanoSecs ) / ( nRefreshRate * kMilliSecInNanoSecs );
 
 		bool bVRR = GetBackend()->IsVRRActive();
 		uint64_t ulOffset = 0;

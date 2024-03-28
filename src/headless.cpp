@@ -1,6 +1,7 @@
 #include "backend.h"
 #include "rendervulkan.hpp"
 #include "wlserver.hpp"
+#include "refresh_rate.h"
 
 extern int g_nPreferredOutputWidth;
 extern int g_nPreferredOutputHeight;
@@ -113,7 +114,7 @@ namespace gamescope
 			if ( g_nOutputWidth == 0 )
 				g_nOutputWidth = g_nOutputHeight * 16 / 9;
 			if ( g_nOutputRefresh == 0 )
-				g_nOutputRefresh = 60;
+				g_nOutputRefresh = ConvertHztomHz( 60 );
 
 			if ( !vulkan_init( vulkan_get_instance(), VK_NULL_HANDLE ) )
 			{

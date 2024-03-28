@@ -16,6 +16,7 @@
 #include "wlserver.hpp"
 #include "log.hpp"
 #include "ime.hpp"
+#include "refresh_rate.h"
 
 #include <signal.h>
 #include <string.h>
@@ -369,7 +370,7 @@ namespace gamescope
             }
 
             // Setup misc. stuff
-            g_nOutputRefresh = (int) vr::VRSystem()->GetFloatTrackedDeviceProperty( vr::k_unTrackedDeviceIndex_Hmd, vr::Prop_DisplayFrequency_Float );
+            g_nOutputRefresh = (int32_t) ConvertHztomHz( roundf( vr::VRSystem()->GetFloatTrackedDeviceProperty( vr::k_unTrackedDeviceIndex_Hmd, vr::Prop_DisplayFrequency_Float ) ) );
 
             std::thread input_thread_vrinput( [this](){ this->VRInputThread(); } );
             input_thread_vrinput.detach();

@@ -65,7 +65,7 @@ static uint32_t utf8_decode(const char **str_ptr)
 	return ret;
 }
 
-#define IME_MANAGER_VERSION 2
+#define IME_MANAGER_VERSION 3
 
 /* Some clients assume keycodes are coming from evdev and interpret them. Only
  * use keys that would normally produce characters for our emulated events. */
@@ -113,6 +113,8 @@ struct wlserver_input_method {
 
 	struct wl_event_source *ime_reset_ime_keyboard_event_source;
 	struct wl_event_source *ime_release_ime_keypress_event_source;
+
+	uint32_t uFakeTimestamp = 0;
 };
 
 struct wlserver_input_method_manager {
@@ -123,8 +125,6 @@ struct wlserver_input_method_manager {
 };
 
 static LogScope ime_log("ime");
-
-static struct wlserver_input_method *active_input_method = nullptr;
 
 static xkb_keysym_t keysym_from_ch(uint32_t ch)
 {
@@ -484,18 +484,48 @@ static void ime_handle_destroy(struct wl_client *client, struct wl_resource *ime
 	wl_resource_destroy(ime_resource);
 }
 
+static void ime_handle_pointer_motion(struct wl_client *client, struct wl_resource *ime_resource, wl_fixed_t dx, wl_fixed_t dy)
+{
+	struct wlserver_input_method *ime = (struct wlserver_input_method *)wl_resource_get_user_data(ime_resource);
+
+	wlserver_mousemotion(wl_fixed_to_double(dx), wl_fixed_to_double(dy), ++ime->uFakeTimestamp);
+}
+
+static void ime_handle_pointer_warp(struct wl_client *client, struct wl_resource *ime_resource, wl_fixed_t x, wl_fixed_t y)
+{
+	struct wlserver_input_method *ime = (struct wlserver_input_method *)wl_resource_get_user_data(ime_resource);
+
+	wlserver_mousewarp(wl_fixed_to_double(x), wl_fixed_to_double(y), ++ime->uFakeTimestamp);
+}
+
+static void ime_handle_pointer_wheel(struct wl_client *client, struct wl_resource *ime_resource, int32_t x, int32_t y)
+{
+	struct wlserver_input_method *ime = (struct wlserver_input_method *)wl_resource_get_user_data(ime_resource);
+
+	wlserver_mousewheel( x / 120.0, y / 120.0, ++ime->uFakeTimestamp);
+}
+
+static void ime_handle_pointer_button(struct wl_client *client, struct wl_resource *ime_resource, uint32_t button, uint32_t state)
+{
+	struct wlserver_input_method *ime = (struct wlserver_input_method *)wl_resource_get_user_data(ime_resource);
+
+	wlserver_mousebutton( button, state == GAMESCOPE_INPUT_METHOD_BUTTON_STATE_PRESSED, ++ime->uFakeTimestamp);
+}
+
 static const struct gamescope_input_method_interface ime_impl = {
 	.destroy = ime_handle_destroy,
 	.commit = ime_handle_commit,
 	.set_string = ime_handle_set_string,
 	.set_action = ime_handle_set_action,
+
+	.pointer_motion = ime_handle_pointer_motion,
+	.pointer_warp = ime_handle_pointer_warp,
+	.pointer_wheel = ime_handle_pointer_wheel,
+	.pointer_button = ime_handle_pointer_button,
 };
 
 void destroy_ime(struct wlserver_input_method *ime)
 {
-	if (ime == active_input_method)
-		active_input_method = nullptr;
-
 	wlr_keyboard_finish(&ime->keyboard);
 }
 
@@ -535,11 +565,6 @@ static void manager_handle_create_input_method(struct wl_client *client, struct 
 	struct wl_resource *ime_resource = wl_resource_create(client, &gamescope_input_method_interface, version, id);
 	wl_resource_set_implementation(ime_resource, &ime_impl, nullptr, ime_handle_resource_destroy);
 
-	if (active_input_method != nullptr) {
-		gamescope_input_method_send_unavailable(ime_resource);
-		return;
-	}
-
 	struct wlserver_input_method *ime = new wlserver_input_method();
 	ime->resource = ime_resource;
 	ime->manager = manager;
@@ -558,8 +583,6 @@ static void manager_handle_create_input_method(struct wl_client *client, struct 
 
 	ime->ime_reset_ime_keyboard_event_source = wl_event_loop_add_timer(manager->server->event_loop, reset_ime_keyboard, ime);
 	ime->ime_release_ime_keypress_event_source = wl_event_loop_add_timer(manager->server->event_loop, release_key_if_needed, ime);
-
-	active_input_method = ime;
 }
 
 struct wlserver_input_method *create_local_ime()

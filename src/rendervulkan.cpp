@@ -2864,7 +2864,7 @@ std::shared_ptr<CVulkanTexture> vulkan_create_flat_texture( uint32_t width, uint
 	assert( bRes );
 
 	uint8_t* dst = (uint8_t *)g_device.uploadBufferData( width * height * 4 );
-	for ( uint32_t i = 0; i < width * height; i += 4 )
+	for ( uint32_t i = 0; i < width * height * 4; i += 4 )
 	{
 		dst[i + 0] = b;
 		dst[i + 1] = g;

@@ -26,6 +26,7 @@
 #include "gpuvis_trace_utils.h"
 
 #include "backends.h"
+#include "refresh_rate.h"
 
 #if HAVE_PIPEWIRE
 #include "pipewire.hpp"
@@ -389,7 +390,8 @@ static enum GamescopeUpscaleFilter parse_upscaler_filter(const char *str)
 }
 
 struct sigaction handle_signal_action = {};
-extern pid_t child_pid;
+extern std::mutex g_ChildPidMutex;
+extern std::vector<pid_t> g_ChildPids;
 
 static void handle_signal( int sig )
 {
@@ -401,10 +403,16 @@ static void handle_signal( int sig )
 	case SIGQUIT:
 	case SIGTERM:
 	case SIGINT:
-		if (child_pid != 0)
 		{
-			fprintf( stderr, "gamescope: Received %s signal, forwarding to child!\n", strsignal(sig) );
-			kill(child_pid, sig);
+			std::unique_lock lock( g_ChildPidMutex );
+			for ( auto& child_pid : g_ChildPids )
+			{
+				if (child_pid != 0)
+				{
+					fprintf( stderr, "gamescope: Received %s signal, forwarding to child!\n", strsignal(sig) );
+					kill(child_pid, sig);
+				}
+			}
 		}
 
 		fprintf( stderr, "gamescope: Received %s signal, attempting shutdown!\n", strsignal(sig) );
@@ -583,7 +591,7 @@ int main(int argc, char **argv)
 				g_nNestedHeight = atoi( optarg );
 				break;
 			case 'r':
-				g_nNestedRefresh = atoi( optarg );
+				g_nNestedRefresh = gamescope::ConvertHztomHz( atoi( optarg ) );
 				break;
 			case 'W':
 				g_nPreferredOutputWidth = atoi( optarg );
@@ -592,7 +600,7 @@ int main(int argc, char **argv)
 				g_nPreferredOutputHeight = atoi( optarg );
 				break;
 			case 'o':
-				g_nNestedUnfocusedRefresh = atoi( optarg );
+				g_nNestedUnfocusedRefresh = gamescope::ConvertHztomHz( atoi( optarg ) );
 				break;
 			case 'm':
 				g_flMaxWindowScale = atof( optarg );

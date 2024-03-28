@@ -18,6 +18,7 @@
 #include "rendervulkan.hpp"
 #include "steamcompmgr.hpp"
 #include "defer.hpp"
+#include "refresh_rate.h"
 
 #include "sdlscancodetable.hpp"
 
@@ -222,7 +223,7 @@ namespace gamescope
 		if ( g_nOutputWidth == 0 )
 			g_nOutputWidth = g_nOutputHeight * 16 / 9;
 		if ( g_nOutputRefresh == 0 )
-			g_nOutputRefresh = 60;
+			g_nOutputRefresh = gamescope::ConvertHztomHz( 60 );
 
 		uint32_t uSDLWindowFlags = SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN | SDL_WINDOW_ALLOW_HIGHDPI;
 
@@ -840,7 +841,7 @@ namespace gamescope
 								display_index = SDL_GetWindowDisplayIndex( m_Connector.GetSDLWindow() );
 								if ( SDL_GetDesktopDisplayMode( display_index, &mode ) == 0 )
 								{
-									g_nOutputRefresh = mode.refresh_rate;
+									g_nOutputRefresh = ConvertHztomHz( mode.refresh_rate );
 								}
 							}
 							break;

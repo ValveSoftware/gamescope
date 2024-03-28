@@ -6,6 +6,7 @@
 #include "edid.h"
 #include "defer.hpp"
 #include "convar.h"
+#include "refresh_rate.h"
 
 #include <cstring>
 #include <unordered_map>
@@ -36,6 +37,7 @@ extern int g_nPreferredOutputWidth;
 extern int g_nPreferredOutputHeight;
 extern bool g_bForceHDR10OutputDebug;
 extern bool g_bBorderlessOutputWindow;
+extern bool g_bAllowVRR;
 
 extern bool alwaysComposite;
 extern bool g_bColorSliderInUse;
@@ -503,6 +505,10 @@ namespace gamescope
         void SetFullscreen( bool bFullscreen ); // Thread safe, can be called from the input thread.
         void UpdateFullscreenState();
 
+        void SetHostCompositorIsCurrentlyVRR( bool bActive ) { m_bHostCompositorIsCurrentlyVRR = bActive; }
+
+        bool CurrentDisplaySupportsVRR() const { return m_bHostCompositorIsCurrentlyVRR; }
+
     private:
 
         void Wayland_Registry_Global( wl_registry *pRegistry, uint32_t uName, const char *pInterface, uint32_t uVersion );
@@ -575,6 +581,8 @@ namespace gamescope
 
         bool m_bVisible = true;
         std::atomic<bool> m_bDesiredFullscreenState = { false };
+
+        bool m_bHostCompositorIsCurrentlyVRR = false;
     };
     const wl_registry_listener CWaylandBackend::s_RegistryListener =
     {
@@ -666,7 +674,7 @@ namespace gamescope
 
     bool CWaylandConnector::SupportsVRR() const
     {
-        return false;
+        return m_pBackend->CurrentDisplaySupportsVRR();
     }
 
     std::span<const uint8_t> CWaylandConnector::GetRawEDID() const
@@ -925,28 +933,39 @@ namespace gamescope
     void CWaylandPlane::Wayland_PresentationFeedback_SyncOutput( struct wp_presentation_feedback *pFeedback, wl_output *pOutput )
     {
     }
-    void CWaylandPlane::Wayland_PresentationFeedback_Presented( struct wp_presentation_feedback *pFeedback, uint32_t uTVSecHi, uint32_t uTVSecLo, uint32_t uTVNSec, uint32_t uRefresh, uint32_t uSeqHi, uint32_t uSeqLo, uint32_t uFlags )
+    void CWaylandPlane::Wayland_PresentationFeedback_Presented( struct wp_presentation_feedback *pFeedback, uint32_t uTVSecHi, uint32_t uTVSecLo, uint32_t uTVNSec, uint32_t uRefreshCycle, uint32_t uSeqHi, uint32_t uSeqLo, uint32_t uFlags )
     {
         uint64_t ulTime = ( ( ( uint64_t( uTVSecHi ) << 32ul ) | uTVSecLo ) * 1'000'000'000lu ) +
                           ( uint64_t( uTVNSec ) );
 
-        if ( uRefresh )
+        if ( uRefreshCycle )
         {
-            // TODO: Someday move g_nOutputRefresh to MHz...
-            int nRefresh = ( 1'000'000'000 + uRefresh - 1 ) / uRefresh;
+            int32_t nRefresh = RefreshCycleTomHz( uRefreshCycle );
             if ( nRefresh && nRefresh != g_nOutputRefresh )
             {
-                xdg_log.infof( "Changed refresh to: %d", nRefresh );
+                xdg_log.infof( "Changed refresh to: %.3fhz", ConvertmHzToHz( (float) nRefresh ) );
                 g_nOutputRefresh = nRefresh;
             }
+
+            m_pBackend->SetHostCompositorIsCurrentlyVRR( false );
+        }
+        else
+        {
+            m_pBackend->SetHostCompositorIsCurrentlyVRR( true );
         }
 
         GetVBlankTimer().MarkVBlank( ulTime, true );
         wp_presentation_feedback_destroy( pFeedback );
+
+        // Nudge so that steamcompmgr releases commits.
+        nudge_steamcompmgr();
     }
     void CWaylandPlane::Wayland_PresentationFeedback_Discarded( struct wp_presentation_feedback *pFeedback )
     {
         wp_presentation_feedback_destroy( pFeedback );
+
+        // Nudge so that steamcompmgr releases commits.
+        nudge_steamcompmgr();
     }
 
     void CWaylandPlane::Wayland_FrogColorManagedSurface_PreferredMetadata(
@@ -1032,7 +1051,7 @@ namespace gamescope
         if ( g_nOutputWidth == 0 )
             g_nOutputWidth = g_nOutputHeight * 16 / 9;
         if ( g_nOutputRefresh == 0 )
-            g_nOutputRefresh = 60;
+            g_nOutputRefresh = ConvertHztomHz( 60 );
 
         if ( !( m_pDisplay = wl_display_connect( nullptr ) ) )
         {
@@ -1401,7 +1420,7 @@ namespace gamescope
     }
     bool CWaylandBackend::IsVRRActive() const
     {
-        return false;
+        return g_bAllowVRR && m_bHostCompositorIsCurrentlyVRR;
     }
 
     bool CWaylandBackend::SupportsPlaneHardwareCursor() const
