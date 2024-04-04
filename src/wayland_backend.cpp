@@ -457,7 +457,7 @@ namespace gamescope
         virtual std::span<const char *const> GetInstanceExtensions() const override;
         virtual std::span<const char *const> GetDeviceExtensions( VkPhysicalDevice pVkPhysicalDevice ) const override;
         virtual VkImageLayout GetPresentLayout() const override;
-        virtual void GetPreferredOutputFormat( VkFormat *pPrimaryPlaneFormat, VkFormat *pOverlayPlaneFormat ) const override;
+        virtual void GetPreferredOutputFormat( uint32_t *pPrimaryPlaneFormat, uint32_t *pOverlayPlaneFormat ) const override;
         virtual bool ValidPhysicalDevice( VkPhysicalDevice pVkPhysicalDevice ) const override;
 
         virtual int Present( const FrameInfo_t *pFrameInfo, bool bAsync ) override;
@@ -1261,23 +1261,23 @@ namespace gamescope
         return VK_IMAGE_LAYOUT_GENERAL;
     }
 
-    void CWaylandBackend::GetPreferredOutputFormat( VkFormat *pPrimaryPlaneFormat, VkFormat *pOverlayPlaneFormat ) const
+    void CWaylandBackend::GetPreferredOutputFormat( uint32_t *pPrimaryPlaneFormat, uint32_t *pOverlayPlaneFormat ) const
     {
-        VkFormat u8BitFormat = VK_FORMAT_UNDEFINED;
+        uint32_t u8BitFormat = DRM_FORMAT_INVALID;
         if ( m_FormatModifiers.contains( DRM_FORMAT_ARGB8888 ) )
-            u8BitFormat = VK_FORMAT_B8G8R8A8_UNORM;
+            u8BitFormat = DRM_FORMAT_ARGB8888;
         else if ( m_FormatModifiers.contains( DRM_FORMAT_ABGR8888 ) )
-            u8BitFormat = VK_FORMAT_R8G8B8A8_UNORM;
+            u8BitFormat = DRM_FORMAT_ABGR8888;
 
-        VkFormat u10BitFormat = VK_FORMAT_UNDEFINED;
+        uint32_t u10BitFormat = DRM_FORMAT_INVALID;
         if ( m_FormatModifiers.contains( DRM_FORMAT_ABGR2101010 ) )
-            u10BitFormat = VK_FORMAT_A2B10G10R10_UNORM_PACK32;
+            u10BitFormat = DRM_FORMAT_ABGR2101010;
         else if ( m_FormatModifiers.contains( DRM_FORMAT_ARGB2101010 ) )
-            u10BitFormat = VK_FORMAT_A2R10G10B10_UNORM_PACK32;
+            u10BitFormat = DRM_FORMAT_ARGB2101010;
 
-        assert( u8BitFormat != VK_FORMAT_UNDEFINED );
+        assert( u8BitFormat != DRM_FORMAT_INVALID );
 
-        *pPrimaryPlaneFormat = u10BitFormat != VK_FORMAT_UNDEFINED ? u10BitFormat : u8BitFormat;
+        *pPrimaryPlaneFormat = u10BitFormat != DRM_FORMAT_INVALID ? u10BitFormat : u8BitFormat;
         *pOverlayPlaneFormat = u8BitFormat;
     }
 
