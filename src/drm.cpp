@@ -509,6 +509,7 @@ struct drm_color_ctm2 {
 };
 
 bool g_bSupportsAsyncFlips = false;
+bool g_bSupportsSyncObjs = false;
 
 extern gamescope::GamescopeModeGeneration g_eGamescopeModeGeneration;
 extern GamescopePanelOrientation g_DesiredInternalOrientation;
@@ -1120,18 +1121,23 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 		drm->cursor_height = 64;
 	}
 
-	int err = drmSyncobjCreate(drm->fd, DRM_SYNCOBJ_CREATE_SIGNALED, &g_uAlwaysSignalledSyncobj);
-	if (err < 0) {
-		drm_log.errorf("Failed to create dummy signalled syncobj");
-		return false;
-	}
-	err = drmSyncobjExportSyncFile(drm->fd, g_uAlwaysSignalledSyncobj, &g_nAlwaysSignalledSyncFile);
-	if (err < 0) {
-		drm_log.errorf("Failed to create dummy signalled sync file");
-		return false;
+	uint64_t cap;
+	g_bSupportsSyncObjs = drmGetCap(drm->fd, DRM_CAP_SYNCOBJ, &cap) == 0 && cap != 0;
+	if ( g_bSupportsSyncObjs ) {
+		int err = drmSyncobjCreate(drm->fd, DRM_SYNCOBJ_CREATE_SIGNALED, &g_uAlwaysSignalledSyncobj);
+		if (err < 0) {
+			drm_log.errorf("Failed to create dummy signalled syncobj");
+			return false;
+		}
+		err = drmSyncobjExportSyncFile(drm->fd, g_uAlwaysSignalledSyncobj, &g_nAlwaysSignalledSyncFile);
+		if (err < 0) {
+			drm_log.errorf("Failed to create dummy signalled sync file");
+			return false;
+		}
+	} else {
+		drm_log.errorf("Syncobjs are not supported by the KMS driver");
 	}
 
-	uint64_t cap;
 	if (drmGetCap(drm->fd, DRM_CAP_ADDFB2_MODIFIERS, &cap) == 0 && cap != 0) {
 		drm->allow_modifiers = true;
 	}
@@ -3410,7 +3416,7 @@ namespace gamescope
 
 		virtual bool SupportsExplicitSync() const override
 		{
-			return true;
+			return g_bSupportsSyncObjs;
 		}
 
 		virtual bool IsVisible() const override
