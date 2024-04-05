@@ -6252,7 +6252,7 @@ void handle_done_commits_xdg()
 		if ( desired_present_nsec > next_refresh_time )
 		{
 			commits_before_their_time.push_back( entry );
-			break;
+			continue;
 		}
 
 		for (const auto& xdg_win : g_steamcompmgr_xdg_wins)
