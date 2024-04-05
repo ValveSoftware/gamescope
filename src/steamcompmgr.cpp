@@ -735,6 +735,7 @@ struct commit_t : public gamescope::IWaitable
 	bool done = false;
 	bool async = false;
 	bool fifo = false;
+	bool round_to_nearest = false;
 	bool is_steam = false;
 	std::optional<wlserver_vk_swapchain_feedback> feedback = std::nullopt;
 
@@ -789,6 +790,7 @@ struct commit_t : public gamescope::IWaitable
 				.commitID = commitID,
 				.desiredPresentTime = desired_present_time,
 				.fifo = fifo,
+				.roundToNearest = round_to_nearest,
 			} );
 		}
 
@@ -1386,7 +1388,7 @@ destroy_buffer( struct wl_listener *listener, void * )
 }
 
 static std::shared_ptr<commit_t>
-import_commit ( steamcompmgr_win_t *w, struct wlr_surface *surf, struct wlr_buffer *buf, bool async, std::shared_ptr<wlserver_vk_swapchain_feedback> swapchain_feedback, std::vector<struct wl_resource*> presentation_feedbacks, std::optional<uint32_t> present_id, uint64_t desired_present_time, bool fifo )
+import_commit ( steamcompmgr_win_t *w, struct wlr_surface *surf, struct wlr_buffer *buf, bool async, std::shared_ptr<wlserver_vk_swapchain_feedback> swapchain_feedback, std::vector<struct wl_resource*> presentation_feedbacks, std::optional<uint32_t> present_id, uint64_t desired_present_time, bool fifo, bool round_to_nearest )
 {
 	std::shared_ptr<commit_t> commit = std::make_shared<commit_t>();
 	std::unique_lock<std::mutex> lock( wlr_buffer_map_lock );
@@ -1396,6 +1398,7 @@ import_commit ( steamcompmgr_win_t *w, struct wlr_surface *surf, struct wlr_buff
 	commit->buf = buf;
 	commit->async = async;
 	commit->fifo = fifo;
+	commit->round_to_nearest = round_to_nearest;
 	commit->is_steam = window_is_steam( w );
 	commit->presentation_feedbacks = std::move(presentation_feedbacks);
 	if (swapchain_feedback)
@@ -6146,6 +6149,22 @@ bool handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint64_t co
 	return false;
 }
 
+static uint64_t desired_present_time_round_to_nearest(uint64_t desired_present_nsec)
+{
+	uint64_t desired_present_rounded_nsec = desired_present_nsec;
+	uint64_t refresh_nsec = gamescope::mHzToRefreshCycle(GetVBlankTimer().GetRefresh());
+	uint64_t cycle_phase_nsec = GetVBlankTimer().GetLastVBlank() % refresh_nsec;
+
+	desired_present_rounded_nsec -= cycle_phase_nsec;
+	desired_present_rounded_nsec += refresh_nsec/2;
+	desired_present_rounded_nsec -= (desired_present_rounded_nsec % refresh_nsec);
+	desired_present_rounded_nsec += cycle_phase_nsec;
+	// 1ms slop
+	desired_present_rounded_nsec -= 1000000;
+
+	return desired_present_rounded_nsec;
+}
+
 // TODO: Merge these two functions.
 void handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank, uint64_t vblank_idx )
 {
@@ -6182,7 +6201,10 @@ void handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank, uint64_t vb
 			entry.earliestLatchTime = now;
 		}
 
-		if ( entry.desiredPresentTime > next_refresh_time )
+		uint64_t desired_present_nsec = entry.roundToNearest ?
+			desired_present_time_round_to_nearest(entry.desiredPresentTime) :
+			entry.desiredPresentTime;
+		if ( desired_present_nsec > next_refresh_time )
 		{
 			commits_before_their_time.push_back( entry );
 			continue;
@@ -6224,7 +6246,10 @@ void handle_done_commits_xdg()
 			entry.earliestLatchTime = now;
 		}
 
-		if ( entry.desiredPresentTime > next_refresh_time )
+		uint64_t desired_present_nsec = entry.roundToNearest ?
+			desired_present_time_round_to_nearest(entry.desiredPresentTime) :
+			entry.desiredPresentTime;
+		if ( desired_present_nsec > next_refresh_time )
 		{
 			commits_before_their_time.push_back( entry );
 			break;
@@ -6368,7 +6393,7 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 		return;
 	}
 
-	std::shared_ptr<commit_t> newCommit = import_commit( w, reslistentry.surf, buf, reslistentry.async, std::move(reslistentry.feedback), std::move(reslistentry.presentation_feedbacks), reslistentry.present_id, reslistentry.desired_present_time, reslistentry.fifo );
+	std::shared_ptr<commit_t> newCommit = import_commit( w, reslistentry.surf, buf, reslistentry.async, std::move(reslistentry.feedback), std::move(reslistentry.presentation_feedbacks), reslistentry.present_id, reslistentry.desired_present_time, reslistentry.fifo, reslistentry.round_to_nearest );
 
 	int fence = -1;
 	if ( newCommit )

@@ -44,6 +44,7 @@ struct CommitDoneEntry_t
 	uint64_t earliestPresentTime;
 	uint64_t earliestLatchTime;
 	bool fifo;
+	bool roundToNearest;
 };
 
 struct CommitDoneList_t
