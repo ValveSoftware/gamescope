@@ -1097,6 +1097,7 @@ static bool		debugFocus = false;
 static bool		drawDebugInfo = false;
 static bool		debugEvents = false;
 bool			steamMode = false;
+bool 			overlayWorkaround = false;
 bool		alwaysComposite = false;
 static bool		useXRes = true;
 
@@ -7419,6 +7420,8 @@ steamcompmgr_main(int argc, char **argv)
 					debugFocus = true;
 				} else if (strcmp(opt_name, "synchronous-x11") == 0) {
 					synchronize = true;
+				} else if (strcmp(opt_name, "overlay-workaround") == 0) {
+					overlayWorkaround = true;
 				} else if (strcmp(opt_name, "debug-events") == 0) {
 					debugEvents = true;
 				} else if (strcmp(opt_name, "cursor") == 0) {
