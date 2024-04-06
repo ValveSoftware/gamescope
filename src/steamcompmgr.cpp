@@ -6541,6 +6541,10 @@ spawn_client( char **argv, bool bAsyncChild )
 	const char *pchCurrentPreload = getenv( "LD_PRELOAD" );
 	bool bFirst = true;
 
+	if( overlayWorkaround ){
+		xwm_log.debugf( "Working around steam overlay" );
+	}
+
 	if ( pchCurrentPreload != nullptr )
 	{
 		pchPreloadCopy = strdup( pchCurrentPreload );
@@ -6561,7 +6565,7 @@ spawn_client( char **argv, bool bAsyncChild )
 			// If there's a string and it's not gameoverlayrenderer, append it to our new LD_PRELOAD
 			if ( pchPreloadCopy[ i ] != '\0' )
 			{
-				if ( strstr( pchPreloadCopy + i, "gameoverlayrenderer.so" ) == nullptr )
+				if ( overlayWorkaround || strstr( pchPreloadCopy + i, "gameoverlayrenderer.so" ) == nullptr )
 				{
 					if ( bFirst == false )
 					{
