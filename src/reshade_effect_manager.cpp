@@ -307,29 +307,27 @@ PingPongUniform::PingPongUniform(reshadefx::uniform_info uniformInfo)
     : ReshadeUniform(uniformInfo)
 {
     const auto matchesAnnotationName = [&](const auto& name){ return std::ranges::find_if(uniformInfo.annotations, std::bind_front(std::equal_to{}, name), &reshadefx::annotation::name);};
+    const auto getFloatAttribute = [](const auto& annotationAttribute, auto idx){ return annotationAttribute->type.is_floating_point() ? annotationAttribute->value.as_float[idx] : static_cast<float>(annotationAttribute->value.as_int[idx]);};
     if (auto minAnnotation = matchesAnnotationName("min");
         minAnnotation != uniformInfo.annotations.end())
     {
-        min = minAnnotation->type.is_floating_point() ? minAnnotation->value.as_float[0] : static_cast<float>(minAnnotation->value.as_int[0]);
+        min = getFloatAttribute(minAnnotation, 0);
     }
     if (auto maxAnnotation = matchesAnnotationName("max");
         maxAnnotation != uniformInfo.annotations.end())
     {
-        max = maxAnnotation->type.is_floating_point() ? maxAnnotation->value.as_float[0] : static_cast<float>(maxAnnotation->value.as_int[0]);
+        max = getFloatAttribute(maxAnnotation, 0);
     }
     if (auto smoothingAnnotation = matchesAnnotationName("smoothing");
         smoothingAnnotation != uniformInfo.annotations.end())
     {
-        smoothing = smoothingAnnotation->type.is_floating_point() ? smoothingAnnotation->value.as_float[0]
-                                                                    : static_cast<float>(smoothingAnnotation->value.as_int[0]);
+        smoothing = getFloatAttribute(smoothingAnnotation, 0);
     }
     if (auto stepAnnotation = matchesAnnotationName("step");
         stepAnnotation != uniformInfo.annotations.end())
     {
-        stepMin =
-            stepAnnotation->type.is_floating_point() ? stepAnnotation->value.as_float[0] : static_cast<float>(stepAnnotation->value.as_int[0]);
-        stepMax =
-            stepAnnotation->type.is_floating_point() ? stepAnnotation->value.as_float[1] : static_cast<float>(stepAnnotation->value.as_int[1]);
+        stepMin = getFloatAttribute(stepAnnotation, 0);
+        stepMax = getFloatAttribute(stepAnnotation, 1);
     }
 
     lastFrame = std::chrono::high_resolution_clock::now();
