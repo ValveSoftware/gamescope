@@ -307,21 +307,17 @@ PingPongUniform::PingPongUniform(reshadefx::uniform_info uniformInfo)
     : ReshadeUniform(uniformInfo)
 {
     const auto matchesAnnotationName = [&](const auto& name){ return std::ranges::find_if(uniformInfo.annotations, std::bind_front(std::equal_to{}, name), &reshadefx::annotation::name);};
-    const auto getFloatAttribute = [](const auto& annotationAttribute, auto idx){ return annotationAttribute->type.is_floating_point() ? annotationAttribute->value.as_float[idx] : static_cast<float>(annotationAttribute->value.as_int[idx]);};
-    if (auto minAnnotation = matchesAnnotationName("min");
-        minAnnotation != uniformInfo.annotations.end())
-    {
-        min = getFloatAttribute(minAnnotation, 0);
-    }
-    if (auto maxAnnotation = matchesAnnotationName("max");
-        maxAnnotation != uniformInfo.annotations.end())
-    {
-        max = getFloatAttribute(maxAnnotation, 0);
-    }
-    if (auto smoothingAnnotation = matchesAnnotationName("smoothing");
-        smoothingAnnotation != uniformInfo.annotations.end())
-    {
-        smoothing = getFloatAttribute(smoothingAnnotation, 0);
+    const auto getFloatAttribute = [](const auto& annotationAttribute, auto idx){ return annotationAttribute->type.is_floating_point()
+                                                                                              ? annotationAttribute->value.as_float[idx]
+                                                                                              : static_cast<float>(annotationAttribute->value.as_int[idx]);};
+    using _t = std::pair<const char*, const std::reference_wrapper<float>>;
+    const auto listOfAnnotationAttributes = {_t{"min", min}, {"max", max}, {"smoothing", smoothing}};
+    for(const auto &[attributeName, attributeFloat] : listOfAnnotationAttributes) {
+        if (const auto annotationNameIter = matchesAnnotationName(attributeName);
+            annotationNameIter != std::end(uniformInfo.annotations))
+        {
+            attributeFloat.get() = getFloatAttribute(annotationNameIter, 0);
+        }
     }
     if (auto stepAnnotation = matchesAnnotationName("step");
         stepAnnotation != uniformInfo.annotations.end())
