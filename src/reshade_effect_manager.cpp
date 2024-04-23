@@ -310,22 +310,18 @@ PingPongUniform::PingPongUniform(reshadefx::uniform_info uniformInfo)
     const auto getFloatAttribute = [](const auto& annotationAttribute, auto idx){ return annotationAttribute->type.is_floating_point()
                                                                                               ? annotationAttribute->value.as_float[idx]
                                                                                               : static_cast<float>(annotationAttribute->value.as_int[idx]);};
-    using _t = std::pair<const char*, const std::reference_wrapper<float>>;
-    const auto listOfAnnotationAttributes = {_t{"min", min}, {"max", max}, {"smoothing", smoothing}};
-    for(const auto &[attributeName, attributeFloat] : listOfAnnotationAttributes) {
+    using _t = std::pair<const char*, const std::array<const std::optional<const std::reference_wrapper<float>>, 16>>; // reshadefx::constant::as_float index size = 16;
+    const auto listOfAnnotationAttributes = {_t{"min", {min}}, {"max", {max}}, {"smoothing", {smoothing}}, {"step", {stepMin, stepMax}}};
+    for(const auto &[attributeName, attributeFloats] : listOfAnnotationAttributes) {
         if (const auto annotationNameIter = matchesAnnotationName(attributeName);
             annotationNameIter != std::end(uniformInfo.annotations))
         {
-            attributeFloat.get() = getFloatAttribute(annotationNameIter, 0);
+            const auto max_idx = std::ranges::count_if(attributeFloats, std::identity{}, &decltype(attributeFloats)::value_type::has_value); // More explicit than bind_front style.
+            for(auto i = 0; i < max_idx; ++i) {
+                attributeFloats[i]->get() = getFloatAttribute(annotationNameIter, i);
+            }
         }
     }
-    if (auto stepAnnotation = matchesAnnotationName("step");
-        stepAnnotation != uniformInfo.annotations.end())
-    {
-        stepMin = getFloatAttribute(stepAnnotation, 0);
-        stepMax = getFloatAttribute(stepAnnotation, 1);
-    }
-
     lastFrame = std::chrono::high_resolution_clock::now();
 }
 void PingPongUniform::update(void* mappedBuffer)
