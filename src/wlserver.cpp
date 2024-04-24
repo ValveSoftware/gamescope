@@ -43,6 +43,7 @@
 #include "gamescope-pipewire-protocol.h"
 #include "gamescope-control-protocol.h"
 #include "gamescope-swapchain-protocol.h"
+#include "commit-timing-v1-protocol.h"
 #include "presentation-time-protocol.h"
 
 #include "wlserver.hpp"
@@ -195,6 +196,7 @@ std::optional<ResListEntry_t> PrepareCommit( struct wlr_surface *surf, struct wl
 		.buf = buf,
 		.async = wlserver_surface_is_async(surf),
 		.fifo = wlserver_surface_is_fifo(surf),
+		.round_to_nearest = wl_surf->round_to_nearest,
 		.feedback = pFeedback,
 		.presentation_feedbacks = std::move(wl_surf->pending_presentation_feedbacks),
 		.present_id = wl_surf->present_id,
@@ -206,6 +208,7 @@ std::optional<ResListEntry_t> PrepareCommit( struct wlr_surface *surf, struct wl
 	wl_surf->desired_present_time = 0;
 	wl_surf->pending_presentation_feedbacks.clear();
 	wl_surf->oCurrentPresentMode = std::nullopt;
+	wl_surf->round_to_nearest = false;
 	return newEntry;
 }
 
@@ -1099,6 +1102,164 @@ static void create_gamescope_control( void )
 }
 
 ////////////////////////
+// commit-timing
+////////////////////////
+
+struct commit_timer {
+	struct wl_resource *resource;
+
+	struct wlr_surface *surface;
+	enum timer_stage curr_stage;
+	enum timer_rounding_mode curr_rounding_mode;
+	uint64_t curr_timestamp_nsec;
+
+	struct wl_listener client_commit;
+	struct wlr_addon surface_addon;
+};
+
+static inline int64_t timespec_to_nsec(const struct timespec timespec) {
+	return (int64_t)timespec.tv_sec * 1'000'000'000ul + timespec.tv_nsec;
+}
+
+static void resource_handle_destroy(struct wl_client *client, struct wl_resource *resource) {
+       wl_resource_destroy(resource);
+}
+
+static void commit_timer_destroy(struct commit_timer *timer) {
+	if (timer == NULL) {
+		return;
+	}
+	wl_list_remove(&timer->client_commit.link);
+	wlr_addon_finish(&timer->surface_addon);
+	wl_resource_set_user_data(timer->resource, NULL); // make inert
+	free(timer);
+}
+
+static void surface_timer_addon_handle_destroy(struct wlr_addon *addon) {
+	struct commit_timer *timer = wl_container_of(addon, timer, surface_addon);
+	commit_timer_destroy(timer);
+}
+
+static const struct wlr_addon_interface surface_timer_addon_impl = {
+	.name = "wp_commit_timer_v1",
+	.destroy = surface_timer_addon_handle_destroy,
+};
+
+static bool is_valid_timestamp(const struct commit_timer *timer, uint64_t desired_present_nsec) {
+	struct timespec now;
+	clock_gettime(CLOCK_MONOTONIC, &now);
+
+	uint64_t now_nsec = timespec_to_nsec(now);
+	if (desired_present_nsec <= now_nsec)
+		return false;
+
+	return true;
+}
+
+static void commit_timer_handle_client_surface_commit(struct wl_listener *listener, void *data) {
+	struct commit_timer *timer =
+		(struct commit_timer *)wl_container_of(listener, timer, client_commit);
+
+	if (timer->curr_timestamp_nsec) {
+		wlserver_wl_surface_info *wl_info = get_wl_surface_info(timer->surface);
+		wl_info->desired_present_time = timer->curr_timestamp_nsec;
+		wl_info->round_to_nearest = timer->curr_rounding_mode == TIMER_ROUNDING_NEAREST ? true : false;
+		wl_info->stage = timer->curr_stage;
+		timer->curr_timestamp_nsec = 0;
+	}
+}
+
+static void commit_timer_handle_set_timestamp(struct wl_client *client,
+		struct wl_resource *resource, uint32_t tv_sec_hi, uint32_t tv_sec_lo,
+		uint32_t tv_nsec, uint32_t stage, uint32_t rounding_mode) {
+	struct commit_timer *timer = (struct commit_timer *)
+		wl_resource_get_user_data(resource);
+
+	if (timer->curr_timestamp_nsec) {
+	    wl_resource_post_error(resource,
+	        WP_COMMIT_TIMER_V1_ERROR_ALREADY_HAS_TIMESTAMP,
+	        "surface already has a timestamp");
+	    return;
+	}
+
+	uint64_t timestamp_nsec = timespec_to_nsec({ .tv_sec = (int64_t)tv_sec_hi<<32 |
+	                            tv_sec_lo, .tv_nsec = tv_nsec });
+	if (!is_valid_timestamp(timer, timestamp_nsec)) {
+	    wl_resource_post_error(resource,
+	        WP_COMMIT_TIMER_V1_ERROR_INVALID_TIMESTAMP,
+	        "client provided an invalid timestamp");
+	    return;
+	}
+	timer->curr_timestamp_nsec = timestamp_nsec;
+	timer->curr_stage = (enum timer_stage)stage;
+	timer->curr_rounding_mode = (enum timer_rounding_mode)rounding_mode;
+}
+
+static void commit_timer_handle_resource_destroy(struct wl_resource *resource) {
+	struct commit_timer *timer =
+		(struct commit_timer *)wl_resource_get_user_data(resource);
+	commit_timer_destroy(timer);
+}
+
+static const struct wp_commit_timer_v1_interface commit_timer_impl = {
+	.set_timestamp = commit_timer_handle_set_timestamp,
+	.destroy = resource_handle_destroy,
+};
+
+static void timing_manager_handle_get_commit_timer(struct wl_client *client,
+		struct wl_resource *manager_resource, uint32_t id, struct wl_resource *surface_resource) {
+	struct wlr_surface *surface = wlr_surface_from_resource(surface_resource);
+
+	if (wlr_addon_find(&surface->addons, NULL, &surface_timer_addon_impl) != NULL) {
+		wl_resource_post_error(manager_resource,
+			WP_COMMIT_TIMING_MANAGER_V1_ERROR_COMMIT_TIMER_EXISTS,
+			"A wp_commit_timer_v1 object already exists for this surface");
+		return;
+	}
+
+	struct commit_timer *timer = (struct commit_timer *)calloc(1, sizeof(*timer));
+	if (timer == NULL) {
+		wl_resource_post_no_memory(manager_resource);
+		return;
+	}
+
+	timer->surface = surface;
+
+	timer->resource = wl_resource_create(client, &wp_commit_timer_v1_interface,
+		wl_resource_get_version(manager_resource), id);
+	if (timer->resource == NULL) {
+		free(timer);
+		wl_resource_post_no_memory(manager_resource);
+		return;
+	}
+	wl_resource_set_implementation(timer->resource, &commit_timer_impl, timer,
+		commit_timer_handle_resource_destroy);
+
+	wlr_addon_init(&timer->surface_addon, &surface->addons, NULL, &surface_timer_addon_impl);
+
+	timer->client_commit.notify = commit_timer_handle_client_surface_commit;
+	wl_signal_add(&surface->events.client_commit, &timer->client_commit);
+}
+
+static const struct wp_commit_timing_manager_v1_interface timing_manager_impl = {
+	.destroy = resource_handle_destroy,
+	.get_timer = timing_manager_handle_get_commit_timer,
+};
+
+static void timing_manager_bind(struct wl_client *client, void *data, uint32_t version, uint32_t id) {
+	struct wl_resource *resource = wl_resource_create(client, &wp_commit_timing_manager_v1_interface, version, id);
+	if (resource == NULL) {
+		wl_client_post_no_memory(client);
+		return;
+	}
+	wl_resource_set_implementation(resource, &timing_manager_impl, NULL, NULL);
+}
+
+static void create_commit_timing_manager(struct wl_display *display) {
+	wl_global_create(display, &wp_commit_timing_manager_v1_interface, 1, NULL, timing_manager_bind);
+}
+
+////////////////////////
 // presentation-time
 ////////////////////////
 
@@ -1628,6 +1789,8 @@ bool wlserver_init( void ) {
 	create_gamescope_control();
 
 	create_presentation_time();
+
+	create_commit_timing_manager(wlserver.display);
 
 	// Have to make this old ancient thing for compat with older XWayland.
 	// Someday, he will be purged.

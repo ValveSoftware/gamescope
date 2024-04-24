@@ -25,6 +25,17 @@
 struct _XDisplay;
 struct xwayland_ctx_t;
 
+// commit_timing_v1 protocol
+enum timer_stage {
+	TIMER_STAGE_LATCH = 0,
+	TIMER_STAGE_PRESENT = 1
+};
+
+enum timer_rounding_mode {
+	TIMER_ROUNDING_NEAREST = 0,
+	TIMER_ROUNDING_NOT_BEFORE = 1
+};
+
 struct wlserver_vk_swapchain_feedback
 {
 	uint32_t image_count;
@@ -57,6 +68,7 @@ struct ResListEntry_t {
 	struct wlr_buffer *buf;
 	bool async;
 	bool fifo;
+	bool round_to_nearest;
 	std::shared_ptr<wlserver_vk_swapchain_feedback> feedback;
 	std::vector<struct wl_resource*> presentation_feedbacks;
 	std::optional<uint32_t> present_id;
@@ -264,6 +276,8 @@ struct wlserver_wl_surface_info
 	std::vector<struct wl_resource *> gamescope_swapchains;
 	std::optional<uint32_t> present_id = std::nullopt;
 	uint64_t desired_present_time = 0;
+	bool round_to_nearest = false;
+	enum timer_stage stage;
 
 	uint64_t last_refresh_cycle = 0;
 };
