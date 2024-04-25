@@ -305,8 +305,13 @@ TimerUniform::~TimerUniform()
 template<typename T>
 using AnnotationArrayType = std::pair<const char*, const std::array<const std::optional<const std::reference_wrapper<T>>, 16>>; // reshadefx::constant::as_* index size = 16;
 
-template <typename T, typename Callable>
-static void processAttributes(const decltype(reshadefx::uniform_info::annotations)& annotationInfo, const Callable getTypeAttribute, const std::initializer_list<AnnotationArrayType<T>>& listOfAnnotationAttributes){
+template <typename T>
+static void processAttributes(const decltype(reshadefx::uniform_info::annotations)& annotationInfo, const std::initializer_list<AnnotationArrayType<T>>& listOfAnnotationAttributes){
+    const auto [is_type_x, true_type_t, false_type_t] = [](){
+        if constexpr (std::is_same_v<T, float>) { return std::tuple{&reshadefx::type::is_floating_point, &reshadefx::constant::as_float, &reshadefx::constant::as_int};}
+        if constexpr (std::is_same_v<T, int>) { return std::tuple{&reshadefx::type::is_integral, &reshadefx::constant::as_int, &reshadefx::constant::as_float};}
+    }();
+    const auto getTypeAttribute = [&](const auto a, const auto i){ return (a->type.*is_type_x)() ? (a->value.*true_type_t)[i] : static_cast<T>((a->value.*false_type_t)[i]);};
     const auto matchesAnnotationName = [&](const auto& name){ return std::ranges::find_if(annotationInfo, std::bind_front(std::equal_to{}, name), &reshadefx::annotation::name);};
     for(const auto &[attributeName, attributeVariableRefs] : listOfAnnotationAttributes) {
         if (const auto iter_ = matchesAnnotationName(attributeName); iter_ != std::end(annotationInfo))
@@ -323,10 +328,7 @@ static void processAttributes(const decltype(reshadefx::uniform_info::annotation
 PingPongUniform::PingPongUniform(reshadefx::uniform_info uniformInfo)
     : ReshadeUniform(uniformInfo)
 {
-    const auto getFloatAttribute = [](const auto& annotationAttribute, auto idx){ return annotationAttribute->type.is_floating_point()
-                                                                                              ? annotationAttribute->value.as_float[idx]
-                                                                                              : static_cast<float>(annotationAttribute->value.as_int[idx]);};
-    processAttributes<float>(uniformInfo.annotations, getFloatAttribute, {{"min", {min}}, {"max", {max}}, {"smoothing", {smoothing}}, {"step", {stepMin, stepMax}}});
+    processAttributes<float>(uniformInfo.annotations, {{"min", {min}}, {"max", {max}}, {"smoothing", {smoothing}}, {"step", {stepMin, stepMax}}});
     lastFrame = std::chrono::high_resolution_clock::now();
 }
 void PingPongUniform::update(void* mappedBuffer)
@@ -366,10 +368,7 @@ PingPongUniform::~PingPongUniform()
 RandomUniform::RandomUniform(reshadefx::uniform_info uniformInfo)
     : ReshadeUniform(uniformInfo)
 {
-    const auto getIntAttribute = [](const auto& annotationAttribute, auto idx){ return annotationAttribute->type.is_integral()
-                                                                                            ? annotationAttribute->value.as_int[idx]
-                                                                                            : static_cast<int>(annotationAttribute->value.as_float[idx]);};
-    processAttributes<int>(uniformInfo.annotations, getIntAttribute, {{"min", {min}}, {"max", {max}}});
+    processAttributes<int>(uniformInfo.annotations, {{"min", {min}}, {"max", {max}}});
 }
 void RandomUniform::update(void* mappedBuffer)
 {
