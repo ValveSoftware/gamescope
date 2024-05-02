@@ -2103,12 +2103,14 @@ namespace gamescope
 			( m_Mutable.szMakePNP == "ANX"sv && m_Mutable.szModel == "ANX7530 U"sv ) ||
 			( m_Mutable.szMakePNP == "VLV"sv && m_Mutable.szModel == "ANX7530 U"sv ) ||
 			( m_Mutable.szMakePNP == "VLV"sv && m_Mutable.szModel == "Jupiter"sv ) ||
+			( m_Mutable.szMakePNP == "DHD"sv && m_Mutable.szModel == "DeckHD-1200p"sv ) ||
 			( m_Mutable.szMakePNP == "VLV"sv && m_Mutable.szModel == "Galileo"sv );
 
 		if ( bSteamDeckDisplay )
 		{
 			static constexpr uint32_t kPIDGalileoSDC = 0x3003;
 			static constexpr uint32_t kPIDGalileoBOE = 0x3004;
+			static constexpr uint32_t kPIDJupiterDHD = 0x4001;
 
 			if ( pProduct->product == kPIDGalileoSDC )
 			{
@@ -2119,6 +2121,10 @@ namespace gamescope
 			{
 				m_Mutable.eKnownDisplay = GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_OLED_BOE;
 				m_Mutable.ValidDynamicRefreshRates = std::span( s_kSteamDeckOLEDRates );
+			}
+			else if (pProduct-> product == kPIDJupiterDHD ) {
+				m_Mutable.eKnownDisplay = GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_LCD_DHD;
+				m_Mutable.ValidDynamicRefreshRates = std::span( s_kSteamDeckLCDRates );
 			}
 			else
 			{
@@ -2149,7 +2155,8 @@ namespace gamescope
 			drm_log.infof( "[colorimetry]: Steam Deck LCD detected. Using known colorimetry" );
 			m_Mutable.DisplayColorimetry = displaycolorimetry_steamdeck_measured;
 		}
-		else
+		else if (m_Mutable.eKnownDisplay == GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_OLED_BOE ||
+				 m_Mutable.eKnownDisplay == GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_OLED_SDC )
 		{
 			// Steam Deck OLED has calibrated chromaticity coordinates in the EDID
 			// for each unit.
@@ -2279,7 +2286,7 @@ namespace gamescope
 				.uMinContentLightLevel = nits_to_u16_dark( 0 ),
 			};
 		}
-		else if ( eKnownDisplay == GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_LCD )
+		else if ( eKnownDisplay == GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_LCD || eKnownDisplay == GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_LCD_DHD )
 		{
 			// Set up some HDR fallbacks for undocking
 			return BackendConnectorHDRInfo

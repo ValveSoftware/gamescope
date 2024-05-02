@@ -293,6 +293,21 @@ unsigned int galileo_boe_vfp[] =
 	172,152,136,120,100,84,68,52,36,20,8
 };
 
+#define JUPITER_BOE_PID     0x3001
+#define JUPITER_B_PID       0x3002
+#define JUPITER_HFP         40
+#define JUPITER_HSYNC       4
+#define JUPITER_HBP         0
+#define JUPITER_VFP         30
+#define JUPITER_VSYNC       4
+#define JUPITER_VBP         8
+#define JUPITER_DHD_PID     0x4001
+#define JUPITER_DHD_HFP     40
+#define JUPITER_DHD_HSYNC   20
+#define JUPITER_DHD_HBP     40
+#define JUPITER_DHD_VFP     18
+#define JUPITER_DHD_VSYNC   2
+#define JUPITER_DHD_VBP     20
 #define GALILEO_MIN_REFRESH 45
 #define GALILEO_SDC_PID     0x3003
 #define GALILEO_SDC_VSYNC   1
@@ -344,7 +359,18 @@ void generate_fixed_mode(drmModeModeInfo *mode, const drmModeModeInfo *base, int
 		mode->vsync_end = mode->vsync_start + vsync;
 		mode->vtotal = mode->vsync_end + vbp;
 	} else {
-		if ( eKnownDisplay == gamescope::GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_LCD )
+		if ( eKnownDisplay == gamescope:: GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_LCD_DHD ) {
+			mode->hdisplay = 1200;
+			mode->hsync_start = mode->hdisplay + JUPITER_DHD_HFP;
+			mode->hsync_end = mode->hsync_start + JUPITER_DHD_HSYNC;
+			mode->htotal = mode->hsync_end + JUPITER_DHD_HBP;
+
+			mode->vdisplay = 1920;
+			mode->vsync_start = mode->vdisplay + JUPITER_DHD_VFP;
+			mode->vsync_end = mode->vsync_start + JUPITER_DHD_VSYNC;
+			mode->vtotal = mode->vsync_end + JUPITER_DHD_VBP;
+		}
+		else if ( eKnownDisplay == gamescope::GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_LCD )
 		{
 			mode->hdisplay = 800;
 			mode->hsync_start = 840;
@@ -352,9 +378,9 @@ void generate_fixed_mode(drmModeModeInfo *mode, const drmModeModeInfo *base, int
 			mode->htotal = 884;
 
 			mode->vdisplay = 1280;
-			mode->vsync_start = 1310;
-			mode->vsync_end = 1314;
-			mode->vtotal = 1322;
+			mode->vsync_start = mode->vdisplay + JUPITER_VFP;
+			mode->vsync_end = mode->vsync_start + JUPITER_VSYNC;
+			mode->vtotal = mode->vsync_end + JUPITER_VBP;
 		}
 
 		mode->clock = ( ( mode->htotal * mode->vtotal * vrefresh ) + 999 ) / 1000;
