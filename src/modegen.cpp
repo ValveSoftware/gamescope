@@ -293,14 +293,16 @@ unsigned int galileo_boe_vfp[] =
 	172,152,136,120,100,84,68,52,36,20,8
 };
 
+//SD LCD Stock Timings
 #define JUPITER_BOE_PID     0x3001
 #define JUPITER_B_PID       0x3002
 #define JUPITER_HFP         40
 #define JUPITER_HSYNC       4
-#define JUPITER_HBP         0
+#define JUPITER_HBP         40
 #define JUPITER_VFP         30
 #define JUPITER_VSYNC       4
 #define JUPITER_VBP         8
+//SD LCD DeckHD Timings
 #define JUPITER_DHD_PID     0x4001
 #define JUPITER_DHD_HFP     40
 #define JUPITER_DHD_HSYNC   20
@@ -308,13 +310,15 @@ unsigned int galileo_boe_vfp[] =
 #define JUPITER_DHD_VFP     18
 #define JUPITER_DHD_VSYNC   2
 #define JUPITER_DHD_VBP     20
-#define GALILEO_MIN_REFRESH 45
+//SD OLED SDC Timings
 #define GALILEO_SDC_PID     0x3003
 #define GALILEO_SDC_VSYNC   1
 #define GALILEO_SDC_VBP     22
+//SD OLED BOE Timings
 #define GALILEO_BOE_PID     0x3004
 #define GALILEO_BOE_VSYNC   2
 #define GALILEO_BOE_VBP     30
+#define GALILEO_MIN_REFRESH 45
 #define ARRAY_SIZE(x) (sizeof(x)/sizeof(x[0]))
 
 unsigned int get_galileo_vfp( int vrefresh, unsigned int * vfp_array, unsigned int num_rates )
@@ -359,7 +363,7 @@ void generate_fixed_mode(drmModeModeInfo *mode, const drmModeModeInfo *base, int
 		mode->vsync_end = mode->vsync_start + vsync;
 		mode->vtotal = mode->vsync_end + vbp;
 	} else {
-		if ( eKnownDisplay == gamescope:: GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_LCD_DHD ) {
+		if ( eKnownDisplay == gamescope::GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_LCD_DHD ) {
 			mode->hdisplay = 1200;
 			mode->hsync_start = mode->hdisplay + JUPITER_DHD_HFP;
 			mode->hsync_end = mode->hsync_start + JUPITER_DHD_HSYNC;
@@ -373,9 +377,9 @@ void generate_fixed_mode(drmModeModeInfo *mode, const drmModeModeInfo *base, int
 		else if ( eKnownDisplay == gamescope::GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_LCD )
 		{
 			mode->hdisplay = 800;
-			mode->hsync_start = 840;
-			mode->hsync_end = 844;
-			mode->htotal = 884;
+			mode->hsync_start = mode->hdisplay + JUPITER_HFP;
+			mode->hsync_end = mode->hsync_start + JUPITER_HSYNC;
+			mode->htotal = mode->hsync_end + JUPITER_HBP;
 
 			mode->vdisplay = 1280;
 			mode->vsync_start = mode->vdisplay + JUPITER_VFP;
