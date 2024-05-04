@@ -10,12 +10,6 @@
 [submodule "subprojects/libdisplay-info"]
 	path = subprojects/libdisplay-info
 	url = https://gitlab.freedesktop.org/emersion/libdisplay-info
-[submodule "subprojects/openvr"]
-	path = subprojects/openvr
-	url = https://github.com/ValveSoftware/openvr.git
-[submodule "src/reshade"]
-	path = src/reshade
-	url = https://github.com/Joshua-Ashton/reshade
 [submodule "thirdparty/SPIRV-Headers"]
 	path = thirdparty/SPIRV-Headers
 	url = https://github.com/KhronosGroup/SPIRV-Headers/
