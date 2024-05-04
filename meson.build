@@ -1,5 +1,5 @@
 project(
-  'gamescope',
+  'microscope',
   'c',
   'cpp',
   meson_version: '>=0.58.0',
