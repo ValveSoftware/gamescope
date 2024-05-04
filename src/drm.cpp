@@ -498,7 +498,6 @@ struct DRMPresentCtx
 extern bool alwaysComposite;
 extern bool g_bColorSliderInUse;
 extern bool fadingOut;
-extern std::string g_reshade_effect;
 
 #ifndef DRM_CAP_ATOMIC_ASYNC_PAGE_FLIP
 #define DRM_CAP_ATOMIC_ASYNC_PAGE_FLIP 0x15
@@ -3131,7 +3130,6 @@ namespace gamescope
 			bNeedsFullComposite |= !k_bUseCursorPlane && bDrewCursor;
 			bNeedsFullComposite |= g_bColorSliderInUse;
 			bNeedsFullComposite |= pFrameInfo->bFadingOut;
-			bNeedsFullComposite |= !g_reshade_effect.empty();
 
 			if ( g_bOutputHDREnabled )
 			{

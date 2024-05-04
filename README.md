@@ -71,21 +71,6 @@ See `gamescope --help` for a full list of options.
 * `-b`: create a border-less window.
 * `-f`: create a full-screen window.
 
-## Reshade support
-
-Gamescope supports a subset of Reshade effects/shaders using the `--reshade-effect [path]` and `--reshade-technique-idx [idx]` command line parameters.
-
-This provides an easy way to do shader effects (ie. CRT shader, film grain, debugging HDR with histograms, etc) on top of whatever is being displayed in Gamescope without having to hook into the underlying process.
-
-There is currently no way to set the value of uniforms/options, they will just be their initializer values currently.
-
-Using Reshade effects will increase latency as there will be work performed on the general gfx + compute queue as opposed to only using the realtime async compute queue which can run in tandem with the game's gfx work.
-
-Using Reshade effects is **highly discouraged** for doing simple transformations which can be achieved with LUTs/CTMs which are possible to do in the DC (Display Core) on AMDGPU at scanout time, or with the current regular async compute composite path.
-The looks system where you can specify your own 3D LUTs would be a better alternative for such transformations.
-
-Pull requests for improving Reshade compatibility support are appreciated.
-
 ## Status of Gamescope Packages
 
 [![Packaging status](https://repology.org/badge/vertical-allrepos/gamescope.svg)](https://repology.org/project/gamescope/versions)

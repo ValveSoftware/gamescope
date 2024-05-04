@@ -43,7 +43,6 @@ extern bool g_bAllowVRR;
 extern bool alwaysComposite;
 extern bool g_bColorSliderInUse;
 extern bool fadingOut;
-extern std::string g_reshade_effect;
 
 using namespace std::literals;
 
@@ -1318,7 +1317,6 @@ namespace gamescope
             bNeedsFullComposite |= bNeedsCompositeFromFilter;
             bNeedsFullComposite |= g_bColorSliderInUse;
             bNeedsFullComposite |= pFrameInfo->bFadingOut;
-            bNeedsFullComposite |= !g_reshade_effect.empty();
 
             if ( g_bOutputHDREnabled )
                 bNeedsFullComposite |= g_bHDRItmEnable;

@@ -28,7 +28,7 @@ add_project_arguments(cppc.get_supported_arguments([
   '-Wno-unused-const-variable',
   '-Wno-volatile', # glm warning
   '-Wno-deprecated-volatile',
-  '-Wno-ignored-qualifiers', # reshade warning
+  '-Wno-ignored-qualifiers', 
   '-Wno-missing-braces',
 ]), language: 'cpp')
 
@@ -44,24 +44,8 @@ dep_x11 = dependency('x11')
 dep_wayland = dependency('wayland-client')
 vulkan_dep = dependency('vulkan')
 
-if get_option('enable_openvr_support')
-  openvr_dep = dependency('openvr', version: '>= 2', required : false)
-  if not openvr_dep.found()
-    cmake = import('cmake')
-    openvr_var = cmake.subproject_options()
-    openvr_var.add_cmake_defines({'USE_LIBCXX': false})
-    openvr_var.set_override_option('warning_level', '0')
-    openvr_proj = cmake.subproject('openvr', options : openvr_var)
-    openvr_dep = openvr_proj.dependency('openvr_api')
-  endif
-else
-  # null dep
-  openvr_dep = dependency('', required : false)
-endif
-
 add_project_arguments(
   '-DHAVE_PIPEWIRE=@0@'.format(pipewire_dep.found().to_int()),
-  '-DHAVE_OPENVR=@0@'.format(openvr_dep.found().to_int()),
   language: 'cpp',
 )
 

@@ -83,24 +83,6 @@ const struct option *gamescope_options = (struct option[]){
 	{ "adaptive-sync", no_argument, nullptr, 0 },
 	{ "framerate-limit", required_argument, nullptr, 0 },
 
-	// openvr options
-#if HAVE_OPENVR
-	{ "openvr", no_argument, nullptr, 0 },
-	{ "vr-overlay-key", required_argument, nullptr, 0 },
-	{ "vr-overlay-explicit-name", required_argument, nullptr, 0 },
-	{ "vr-overlay-default-name", required_argument, nullptr, 0 },
-	{ "vr-overlay-icon", required_argument, nullptr, 0 },
-	{ "vr-overlay-show-immediately", no_argument, nullptr, 0 },
-	{ "vr-overlay-enable-control-bar", no_argument, nullptr, 0 },
-	{ "vr-overlay-enable-control-bar-keyboard", no_argument, nullptr, 0 },
-	{ "vr-overlay-enable-control-bar-close", no_argument, nullptr, 0 },
-	{ "vr-overlay-modal", no_argument, nullptr, 0 },
-	{ "vr-overlay-physical-width", required_argument, nullptr, 0 },
-	{ "vr-overlay-physical-curvature", required_argument, nullptr, 0 },
-	{ "vr-overlay-physical-pre-curve-pitch", required_argument, nullptr, 0 },
-	{ "vr-scroll-speed", required_argument, nullptr, 0 },
-#endif
-
 	// wlserver options
 	{ "xwayland-count", required_argument, nullptr, 0 },
 
@@ -133,9 +115,6 @@ const struct option *gamescope_options = (struct option[]){
 	{ "hdr-debug-force-support", no_argument, nullptr, 0 },
 	{ "hdr-debug-force-output", no_argument, nullptr, 0 },
 	{ "hdr-debug-heatmap", no_argument, nullptr, 0 },
-
-	{ "reshade-effect", required_argument, nullptr, 0 },
-	{ "reshade-technique-idx", required_argument, nullptr, 0 },
 
 	// Steam Deck options
 	{ "mura-map", required_argument, nullptr, 0 },
@@ -200,24 +179,6 @@ const char usage[] =
 	"  --immediate-flips              Enable immediate flips, may result in tearing\n"
 	"  --adaptive-sync                Enable adaptive sync if available (variable rate refresh)\n"
 	"\n"
-#if HAVE_OPENVR
-	"VR mode options:\n"
-	"  --openvr                                 Uses the openvr backend and outputs as a VR overlay\n"
-	"  --vr-overlay-key                         Sets the SteamVR overlay key to this string\n"
-	"  --vr-overlay-explicit-name               Force the SteamVR overlay name to always be this string\n"
-	"  --vr-overlay-default-name                Sets the fallback SteamVR overlay name when there is no window title\n"
-	"  --vr-overlay-icon                        Sets the SteamVR overlay icon to this file\n"
-	"  --vr-overlay-show-immediately            Makes our VR overlay take focus immediately\n"
-	"  --vr-overlay-enable-control-bar          Enables the SteamVR control bar\n"
-	"  --vr-overlay-enable-control-bar-keyboard Enables the SteamVR keyboard button on the control bar\n"
-	"  --vr-overlay-enable-control-bar-close    Enables the SteamVR close button on the control bar\n"
-	"  --vr-overlay-modal                       Makes our VR overlay appear as a modal\n"
-	"  --vr-overlay-physical-width              Sets the physical width of our VR overlay in metres\n"
-	"  --vr-overlay-physical-curvature          Sets the curvature of our VR overlay\n"
-	"  --vr-overlay-physical-pre-curve-pitch    Sets the pre-curve pitch of our VR overlay\n"
-	"  --vr-scrolls-speed                       Mouse scrolling speed of trackpad scroll in VR. Default: 8.0\n"
-	"\n"
-#endif
 	"Debug options:\n"
 	"  --disable-layers               disable libliftoff (hardware planes)\n"
 	"  --debug-layers                 debug libliftoff\n"
@@ -232,10 +193,6 @@ const char usage[] =
 	"  --hdr-debug-force-support      forces support for HDR, etc even if the display doesn't support it. HDR clients will be outputted as SDR still in that case.\n"
 	"  --hdr-debug-force-output       forces support and output to HDR10 PQ even if the output does not support it (will look very wrong if it doesn't)\n"
 	"  --hdr-debug-heatmap            displays a heatmap-style debug view of HDR luminence across the scene in nits."
-	"\n"
-	"Reshade shader options:\n"
-	"  --reshade-effect               sets the name of a reshade shader to use in either /usr/share/gamescope/reshade/Shaders or ~/.local/share/gamescope/reshade/Shaders\n"
-	"  --reshade-technique-idx        sets technique idx to use from the reshade effect\n"
 	"\n"
 	"Steam Deck options:\n"
 	"  --mura-map                     Set the mura compensation map to use for the display. Takes in a path to the mura map.\n"
@@ -674,11 +631,6 @@ int main(int argc, char **argv)
 				} else if (strcmp(opt_name, "cursor-scale-height") == 0) {
 					g_nCursorScaleHeight = atoi(optarg);
 				}
-#if HAVE_OPENVR
-				else if (strcmp(opt_name, "openvr") == 0) {
-					eCurrentBackend = gamescope::GamescopeBackend::OpenVR;
-				}
-#endif
 				break;
 			case '?':
 				fprintf( stderr, "See --help for a list of options.\n" );

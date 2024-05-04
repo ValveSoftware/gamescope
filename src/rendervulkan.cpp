@@ -51,8 +51,6 @@
 #include "shaders/ffx_a.h"
 #include "shaders/ffx_fsr1.h"
 
-#include "reshade_effect_manager.hpp"
-
 extern bool g_bWasPartialComposite;
 
 static constexpr mat3x4 g_rgb2yuv_srgb_to_bt601_limited = {{
@@ -303,8 +301,6 @@ bool CVulkanDevice::BInit(VkInstance instance, VkSurfaceKHR surface)
 
 	std::thread piplelineThread([this](){compileAllPipelines();});
 	piplelineThread.detach();
-
-	g_reshadeManager.init(this);
 
 	return true;
 }
@@ -3656,41 +3652,11 @@ std::optional<uint64_t> vulkan_screenshot( const struct FrameInfo_t *frameInfo, 
 	return sequence;
 }
 
-extern std::string g_reshade_effect;
-extern uint32_t g_reshade_technique_idx;
-
 std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTexture> pPipewireTexture, bool partial, std::shared_ptr<CVulkanTexture> pOutputOverride, bool increment )
 {
 	EOTF outputTF = frameInfo->outputEncodingEOTF;
 	if (!frameInfo->applyOutputColorMgmt)
 		outputTF = EOTF_Count; //Disable blending stuff.
-
-	if (!g_reshade_effect.empty())
-	{
-		if (frameInfo->layers[0].tex)
-		{
-			ReshadeEffectKey key
-			{
-				.path             = g_reshade_effect,
-				.bufferWidth      = frameInfo->layers[0].tex->width(),
-				.bufferHeight     = frameInfo->layers[0].tex->height(),
-				.bufferColorSpace = frameInfo->layers[0].colorspace,
-				.bufferFormat     = frameInfo->layers[0].tex->format(),
-				.techniqueIdx     = g_reshade_technique_idx,
-			};
-
-			ReshadeEffectPipeline* pipeline = g_reshadeManager.pipeline(key);
-			if (pipeline != nullptr)
-			{
-				uint64_t seq = pipeline->execute(frameInfo->layers[0].tex, &frameInfo->layers[0].tex);
-				g_device.wait(seq);
-			}
-		}
-	}
-	else
-	{
-		g_reshadeManager.clear();
-	}
 
 	std::shared_ptr<CVulkanTexture> compositeImage;
 	if ( pOutputOverride )

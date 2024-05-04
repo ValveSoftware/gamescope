@@ -74,22 +74,6 @@ shader_src = [
 
 spirv_shaders = glsl_generator.process(shader_src)
 
-reshade_src = [
-  'reshade/source/effect_codegen_spirv.cpp',
-  'reshade/source/effect_expression.cpp',
-  'reshade/source/effect_lexer.cpp',
-  'reshade/source/effect_parser_exp.cpp',
-  'reshade/source/effect_parser_stmt.cpp',
-  'reshade/source/effect_preprocessor.cpp',
-  'reshade/source/effect_symbol_table.cpp',
-]
-
-reshade_include = include_directories([
-  'reshade/source',
-  'reshade/include',
-  '../thirdparty/SPIRV-Headers/include/spirv/unified1'
-])
-
 required_wlroots_features = ['xwayland']
 
 src = [
@@ -106,7 +90,6 @@ src = [
   'log.cpp',
   'ime.cpp',
   'mangoapp.cpp',
-  'reshade_effect_manager.cpp',
   'backend.cpp',
   'wayland_backend.cpp',
   'InputEmulation.cpp',
@@ -145,10 +128,6 @@ if pipewire_dep.found()
   src += 'pipewire.cpp'
 endif
 
-if openvr_dep.found()
-  src += 'vr_session.cpp'
-endif
-
 foreach feat : required_wlroots_features
   if wlroots_dep.get_variable('have_' + feat) != 'true'
     error('Cannot use wlroots built without ' + feat + ' support')
@@ -157,14 +136,13 @@ endforeach
 
   executable(
     'gamescope',
-    src, reshade_src,
-    include_directories : [reshade_include],
+    src,
     dependencies: [
       dep_wayland, dep_x11, dep_xdamage, dep_xcomposite, dep_xrender, dep_xext, dep_xfixes,
       dep_xxf86vm, dep_xres, glm_dep, drm_dep, wayland_server,
       xkbcommon, thread_dep, sdl_dep, wlroots_dep,
       vulkan_dep, liftoff_dep, dep_xtst, dep_xmu, cap_dep, epoll_dep, pipewire_dep, librt_dep,
-      stb_dep, displayinfo_dep, openvr_dep, dep_xcursor, avif_dep, dep_xi,
+      stb_dep, displayinfo_dep, dep_xcursor, avif_dep, dep_xi,
       libdecor_dep, eis_dep,
     ],
     install: true,

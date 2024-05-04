@@ -6,5 +6,4 @@ option('avif_screenshots',           type: 'feature', description: 'Support for 
 option('input_emulation' ,           type: 'feature', description: 'Support for XTest/Input Emulation with libei')
 option('enable_gamescope',           type : 'boolean', value : true, description: 'Build Gamescope executable')
 option('enable_gamescope_wsi_layer', type : 'boolean', value : true, description: 'Build Gamescope layer')
-option('enable_openvr_support',      type : 'boolean', value : true, description: 'OpenVR Integrations')
 option('benchmark', type: 'feature', description: 'Benchmark tools')
