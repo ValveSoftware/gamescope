@@ -88,6 +88,8 @@ std::mutex g_wlserver_xdg_shell_windows_lock;
 
 static struct wl_list pending_surfaces = {0};
 
+static std::atomic<bool> g_bShutdownWLServer{ false };
+
 static void wlserver_x11_surface_info_set_wlr( struct wlserver_x11_surface_info *surf, struct wlr_surface *wlr_surf, bool override );
 wlserver_wl_surface_info *get_wl_surface_info(struct wlr_surface *wlr_surf);
 
@@ -1363,6 +1365,9 @@ static bool filter_global(const struct wl_client *client, const struct wl_global
 		return false;
 	}
 
+	if (g_bShutdownWLServer)
+		return false;
+
 	/* We create one wl_output global per Xwayland server, to easily have
 	 * per-server output configuration. Only expose the wl_output belonging to
 	 * the server. */
@@ -1831,7 +1836,6 @@ void wlserver_unlock(bool flush)
 extern std::mutex g_SteamCompMgrXWaylandServerMutex;
 
 static int g_wlserverNudgePipe[2] = {-1, -1};
-static std::atomic<bool> g_bShutdownWLServer{ false };
 
 void wlserver_run(void)
 {
