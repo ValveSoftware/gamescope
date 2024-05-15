@@ -552,6 +552,16 @@ namespace gamescope
 		ColorOpProperties m_Props;
 	};
 
+	struct CDRMColorPipeline
+	{
+		std::unique_ptr<gamescope::CDRMColorOp> degamma;
+		std::unique_ptr<gamescope::CDRMColorOp> CTM;
+		std::unique_ptr<gamescope::CDRMColorOp> HDRMult;
+		std::unique_ptr<gamescope::CDRMColorOp> shaper;
+		std::unique_ptr<gamescope::CDRMColorOp> lut3D;
+		std::unique_ptr<gamescope::CDRMColorOp> blend;
+	};
+
 	class CDRMFb final : public CBaseBackendFb
 	{
 	public:
@@ -912,7 +922,7 @@ static bool refresh_state( drm_t *drm )
 	return true;
 }
 
-static bool get_color_pipeline( struct drm_t *drm, uint32_t uHeadId )
+static std::optional<gamescope::CDRMColorPipeline> get_color_pipeline( struct drm_t *drm, uint32_t uHeadId )
 {
 	std::vector<std::unique_ptr<gamescope::CDRMColorOp>> pipeline;
 
@@ -925,7 +935,31 @@ static bool get_color_pipeline( struct drm_t *drm, uint32_t uHeadId )
 		pipeline.emplace_back( std::move(pColorOp) );
 	}
 
-	return true;
+	// Check if the pipeline has what we need
+	if ( pipeline.size() != 6 )
+		return {};
+	if ( pipeline[0]->GetProperties().TYPE.value().GetInitialValue() != DRM_COLOROP_1D_CURVE )
+		return {};
+	if ( pipeline[1]->GetProperties().TYPE.value().GetInitialValue() != DRM_COLOROP_CTM_3X4 )
+		return {};
+	if ( pipeline[2]->GetProperties().TYPE.value().GetInitialValue() != DRM_COLOROP_MULTIPLIER )
+		return {};
+	if ( pipeline[3]->GetProperties().TYPE.value().GetInitialValue() != DRM_COLOROP_1D_CURVE )
+		return {};
+	if ( pipeline[4]->GetProperties().TYPE.value().GetInitialValue() != DRM_COLOROP_3D_LUT )
+		return {};
+	if ( pipeline[5]->GetProperties().TYPE.value().GetInitialValue() != DRM_COLOROP_1D_CURVE )
+		return {};
+
+	gamescope::CDRMColorPipeline p {
+		.degamma = std::move(pipeline[0]),
+		.CTM = std::move(pipeline[1]),
+		.HDRMult = std::move(pipeline[2]),
+		.shaper = std::move(pipeline[3]),
+		.lut3D = std::move(pipeline[4]),
+		.blend = std::move(pipeline[5]),
+	};
+	return p;
 }
 
 static bool get_plane_color_pipelines( struct drm_t *drm, std::unique_ptr< gamescope::CDRMPlane > &pPlane )
@@ -942,8 +976,7 @@ static bool get_plane_color_pipelines( struct drm_t *drm, std::unique_ptr< games
 	for ( int i = 0; i < pProperty->count_enums; i++ )
 	{
 		auto entry = pProperty->enums[ i ];
-		if ( !get_color_pipeline( drm, entry.value ) )
-			return false;
+		get_color_pipeline( drm, entry.value );
 	}
 
 	return true;
@@ -1327,6 +1360,8 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 		drm_log.errorf("drmSetClientCap(ATOMIC) failed");
 		return false;
 	}
+
+	drmSetClientCap(drm->fd, DRM_CLIENT_CAP_PLANE_COLOR_PIPELINE, 1);
 
 	if (drmGetCap(drm->fd, DRM_CAP_CURSOR_WIDTH, &drm->cursor_width) != 0) {
 		drm->cursor_width = 64;
