@@ -937,7 +937,7 @@ bool ReshadeEffectPipeline::init(CVulkanDevice *device, const ReshadeEffectKey &
         flags.bStorage = true;
         flags.bColorAttachment = true;
 
-        bool ret = m_rt->BInit(m_key.bufferWidth, m_key.bufferHeight, 1, VulkanFormatToDRM(m_key.bufferFormat), flags, nullptr);
+        bool ret = m_rt->BInit(m_key.bufferWidth, m_key.bufferHeight, 1, VulkanFormatToDRM(m_key.bufferFormat, true), flags, nullptr);
         assert(ret);
     }
 
@@ -958,7 +958,7 @@ bool ReshadeEffectPipeline::init(CVulkanDevice *device, const ReshadeEffectKey &
             assert(tex.levels == 1);
             assert(tex.type == reshadefx::texture_type::texture_2d);
 
-            bool ret = texture->BInit(tex.width, tex.height, tex.depth, VulkanFormatToDRM(ConvertReshadeFormat(tex.format)), flags, nullptr);
+            bool ret = texture->BInit(tex.width, tex.height, tex.depth, VulkanFormatToDRM(ConvertReshadeFormat(tex.format), true), flags, nullptr);
             assert(ret);
         }
 

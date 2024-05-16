@@ -170,7 +170,7 @@ namespace gamescope
         virtual std::span<const char *const> GetInstanceExtensions() const = 0;
         virtual std::span<const char *const> GetDeviceExtensions( VkPhysicalDevice pVkPhysicalDevice ) const = 0;
         virtual VkImageLayout GetPresentLayout() const = 0;
-        virtual void GetPreferredOutputFormat( VkFormat *pPrimaryPlaneFormat, VkFormat *pOverlayPlaneFormat ) const = 0;
+        virtual void GetPreferredOutputFormat( uint32_t *pPrimaryPlaneFormat, uint32_t *pOverlayPlaneFormat ) const = 0;
         virtual bool ValidPhysicalDevice( VkPhysicalDevice pVkPhysicalDevice ) const = 0;
 
         virtual int Present( const FrameInfo_t *pFrameInfo, bool bAsync ) = 0;

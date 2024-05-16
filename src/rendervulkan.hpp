@@ -158,7 +158,7 @@ public:
 	};
 
 	bool BInit( uint32_t width, uint32_t height, uint32_t depth, uint32_t drmFormat, createFlags flags, wlr_dmabuf_attributes *pDMA = nullptr, uint32_t contentWidth = 0, uint32_t contentHeight = 0, CVulkanTexture *pExistingImageToReuseMemory = nullptr );
-	bool BInitFromSwapchain( VkImage image, uint32_t width, uint32_t height, VkFormat format );
+	bool BInitFromSwapchain( VkImage image, uint32_t width, uint32_t height, uint32_t drmFormat );
 
 	inline VkImageView view( bool linear ) { return linear ? m_linearView : m_srgbView; }
 	inline VkImageView linearView() { return m_linearView; }
@@ -503,8 +503,8 @@ struct VulkanOutput_t
 	std::vector<std::shared_ptr<CVulkanTexture>> outputImagesPartialOverlay;
 	std::shared_ptr<CVulkanTexture> temporaryHackyBlankImage;
 
-	VkFormat outputFormat = VK_FORMAT_UNDEFINED;
-	VkFormat outputFormatOverlay = VK_FORMAT_UNDEFINED;
+	uint32_t outputFormat = DRM_FORMAT_INVALID;
+	uint32_t outputFormatOverlay = DRM_FORMAT_INVALID;
 
 	std::array<std::shared_ptr<CVulkanTexture>, 2> pScreenshotImages;
 
@@ -917,7 +917,7 @@ private:
 	uint32_t m_renderBufferOffset = 0;
 };
 
-uint32_t VulkanFormatToDRM( VkFormat vkFormat );
+uint32_t VulkanFormatToDRM( VkFormat vkFormat, bool bHasAlpha );
 VkFormat DRMFormatToVulkan( uint32_t nDRMFormat, bool bSrgb );
 bool DRMFormatHasAlpha( uint32_t nDRMFormat );
 uint32_t DRMFormatGetBPP( uint32_t nDRMFormat );

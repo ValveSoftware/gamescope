@@ -409,10 +409,10 @@ namespace gamescope
 		{
 			return VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
 		}
-        virtual void GetPreferredOutputFormat( VkFormat *pPrimaryPlaneFormat, VkFormat *pOverlayPlaneFormat ) const override
+        virtual void GetPreferredOutputFormat( uint32_t *pPrimaryPlaneFormat, uint32_t *pOverlayPlaneFormat ) const override
         {
-			*pPrimaryPlaneFormat = VK_FORMAT_A2B10G10R10_UNORM_PACK32;
-			*pOverlayPlaneFormat = VK_FORMAT_B8G8R8A8_UNORM;
+			*pPrimaryPlaneFormat = DRM_FORMAT_ABGR2101010;
+			*pOverlayPlaneFormat = DRM_FORMAT_BGRA8888;
         }
 		virtual bool ValidPhysicalDevice( VkPhysicalDevice pVkPhysicalDevice ) const override
 		{
