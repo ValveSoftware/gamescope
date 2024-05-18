@@ -2912,29 +2912,6 @@ static void apply_touchscreen_orientation(GamescopePanelOrientation orientation,
 			break;
 	}
 
-	// Rotate screen if it's forced with --force-external-orientation
-	switch ( GetBackend()->GetConnector( gamescope::GAMESCOPE_SCREEN_TYPE_EXTERNAL )->GetCurrentOrientation() )
-	{
-		default:
-		case GAMESCOPE_PANEL_ORIENTATION_AUTO:
-		case GAMESCOPE_PANEL_ORIENTATION_0:
-			tx = *x;
-			ty = *y;
-			break;
-		case GAMESCOPE_PANEL_ORIENTATION_90:
-			tx = 1.0 - *y;
-			ty = *x;
-			break;
-		case GAMESCOPE_PANEL_ORIENTATION_180:
-			tx = 1.0 - *x;
-			ty = 1.0 - *y;
-			break;
-		case GAMESCOPE_PANEL_ORIENTATION_270:
-			tx = *y;
-			ty = 1.0 - *x;
-			break;
-	}
-
 	*x = tx;
 	*y = ty;
 }
