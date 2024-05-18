@@ -5840,7 +5840,6 @@ steamcompmgr_exit(void)
 static int
 handle_io_error(Display *dpy)
 {
-	abort();
 	xwm_log.errorf("X11 I/O error");
 	steamcompmgr_exit();
 }
