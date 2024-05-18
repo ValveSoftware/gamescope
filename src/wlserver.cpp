@@ -86,6 +86,7 @@ using namespace std::literals;
 extern gamescope::ConVar<bool> cv_drm_debug_disable_explicit_sync;
 
 //#define GAMESCOPE_SWAPCHAIN_DEBUG
+gamescope::ConVar<bool> cv_touch_gestures( "enable_touch_gestures", false, "Enable/Disable the usage of touch gestures" );
 
 struct wlserver_t wlserver = {
 	.touch_down_ids = {}
@@ -2953,6 +2954,33 @@ void wlserver_touchmotion( double x, double y, int touch_id, uint32_t time, bool
 
 			if ( bAlwaysWarpCursor )
 				wlserver_mousewarp( tx, ty, time, false );
+
+			if (cv_touch_gestures) {
+				bool start_gesture = false;
+
+				// Round the x-coordinate to the nearest whole number
+				uint32_t roundedCursorX = static_cast<int>(std::round(tx));
+				// Grab 2% of the display to be used for the edge range
+				uint32_t edge_range = static_cast<uint32_t>(g_nOutputWidth * 0.02);
+
+				// Determine if the gesture should start
+				if (roundedCursorX <= edge_range || roundedCursorX >= g_nOutputWidth - edge_range) {
+					start_gesture = true;
+				}
+
+				// Handle Home gesture
+				if (start_gesture && roundedCursorX >= edge_range) {
+					wlserver_open_steam_menu(0);
+					start_gesture = false;
+				}
+
+				// Handle QAM gesture
+				if (start_gesture && roundedCursorX >= g_nOutputWidth - edge_range && roundedCursorX <= g_nOutputWidth) {
+					wlserver_open_steam_menu(1);
+					start_gesture = false;
+				}
+			}
+
 		}
 		else if ( eMode == gamescope::TouchClickModes::Disabled )
 		{
