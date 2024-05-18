@@ -2247,9 +2247,9 @@ namespace gamescope
 
 	void CDRMConnector::UpdateEffectiveOrientation( const drmModeModeInfo *pMode )
 	{
-		if ( this->GetScreenType() == ( GAMESCOPE_SCREEN_TYPE_INTERNAL && g_DesiredInternalOrientation != GAMESCOPE_PANEL_ORIENTATION_AUTO )
-										|| ( GAMESCOPE_SCREEN_TYPE_EXTERNAL && g_DesiredExternalOrientation != GAMESCOPE_PANEL_ORIENTATION_AUTO
-											&& g_bExternalForced ) )
+		if ( this->GetScreenType() == GAMESCOPE_SCREEN_TYPE_INTERNAL && g_DesiredInternalOrientation != GAMESCOPE_PANEL_ORIENTATION_AUTO
+										|| GAMESCOPE_SCREEN_TYPE_EXTERNAL && g_DesiredExternalOrientation != GAMESCOPE_PANEL_ORIENTATION_AUTO
+											&& g_bExternalForced )
 		{
 			m_ChosenOrientation = g_DesiredInternalOrientation;
 		}
