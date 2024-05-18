@@ -2244,7 +2244,9 @@ namespace gamescope
 
 	void CDRMConnector::UpdateEffectiveOrientation( const drmModeModeInfo *pMode )
 	{
-		if ( this->GetScreenType() == GAMESCOPE_SCREEN_TYPE_INTERNAL && g_DesiredInternalOrientation != GAMESCOPE_PANEL_ORIENTATION_AUTO )
+		if ( this->GetScreenType() == ( GAMESCOPE_SCREEN_TYPE_INTERNAL && g_DesiredInternalOrientation != GAMESCOPE_PANEL_ORIENTATION_AUTO )
+										|| ( GAMESCOPE_SCREEN_TYPE_EXTERNAL && g_DesiredExternalOrientation != GAMESCOPE_PANEL_ORIENTATION_AUTO
+											&& g_bExternalForced ) )
 		{
 			m_ChosenOrientation = g_DesiredInternalOrientation;
 		}
@@ -3269,8 +3271,26 @@ bool drm_update_color_mgmt(struct drm_t *drm)
 	return true;
 }
 
-int g_nDynamicRefreshHz = 0;
+void drm_set_orientation( struct drm_t *drm, bool isRotated)
+{
+	int width = g_nOutputWidth;
+	int height = g_nOutputHeight;
+	g_bRotated = isRotated;
+	if ( g_bRotated ) {
+		int tmp = width;
+		width = height;
+		height = tmp;
+	}
 
+	if (!drm->pConnector || !drm->pConnector->GetModeConnector())
+		return;
+
+	drmModeConnector *connector = drm->pConnector->GetModeConnector();
+	const drmModeModeInfo *mode = find_mode(connector, width, height, 0);
+	update_drm_effective_orientations(drm, mode);
+}
+
+int g_nDynamicRefreshHz = 0;
 static void drm_unset_mode( struct drm_t *drm )
 {
 	drm->pending.mode_id = 0;

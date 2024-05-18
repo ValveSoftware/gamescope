@@ -414,6 +414,7 @@ static gamescope::GamescopeScreenType force_panel_type(const char *str)
 	if (strcmp(str, "internal") == 0) {
 		return gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL;
 	} else if (strcmp(str, "external") == 0) {
+		g_bExternalForced = true;
 		return gamescope::GAMESCOPE_SCREEN_TYPE_EXTERNAL;
 	} else {
 		fprintf( stderr, "gamescope: invalid value for --force-panel-type\n" );

@@ -57,6 +57,16 @@ enum GamescopePanelOrientation
 	GAMESCOPE_PANEL_ORIENTATION_AUTO,
 };
 
+enum GamescopePanelExternalOrientation
+{
+	GAMESCOPE_PANEL_EXTERNAL_ORIENTATION_0,   // normal
+	GAMESCOPE_PANEL_EXTERNAL_ORIENTATION_270, // right
+	GAMESCOPE_PANEL_EXTERNAL_ORIENTATION_90,  // left
+	GAMESCOPE_PANEL_EXTERNAL_ORIENTATION_180, // upside down
+
+	GAMESCOPE_PANEL_EXTERNAL_ORIENTATION_AUTO,
+};
+
 // Disable partial composition for now until we get
 // composite priorities working in libliftoff + also
 // use the proper libliftoff composite plane system.
