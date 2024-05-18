@@ -2597,6 +2597,12 @@ namespace gamescope
 
 			m_Mutable.HDR.pDefaultMetadataBlob = GetBackend()->CreateBackendBlob( defaultHDRMetadata );
 		}
+
+		// Apply command line overrides
+		if ( g_customRefreshRates.size() > 0 && ( GetScreenType() == GAMESCOPE_SCREEN_TYPE_INTERNAL || g_bExternalForced ) ) {
+			m_Mutable.ValidDynamicRefreshRates.clear();
+			m_Mutable.ValidDynamicRefreshRates = std::vector(g_customRefreshRates);
+		}
 	}
 
 	/////////////////////////
