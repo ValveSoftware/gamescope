@@ -87,6 +87,8 @@ extern gamescope::ConVar<bool> cv_drm_debug_disable_explicit_sync;
 
 //#define GAMESCOPE_SWAPCHAIN_DEBUG
 gamescope::ConVar<bool> cv_touch_gestures( "enable_touch_gestures", false, "Enable/Disable the usage of touch gestures" );
+extern GamescopePanelOrientation g_DesiredInternalOrientation;
+extern GamescopePanelOrientation g_DesiredExternalOrientation;
 
 struct wlserver_t wlserver = {
 	.touch_down_ids = {}
@@ -1145,43 +1147,43 @@ static void gamescope_control_rotate_display( struct wl_client *client, struct w
 	if (target_type == GAMESCOPE_CONTROL_DISPLAY_TARGET_TYPE_INTERNAL )
 	{
 		switch (orientation) {
-		case GAMESCOPE_CONTROL_DISPLAY_ROTATION_FLAG_NORMAL:
-			//m_ChosenOrientation = GAMESCOPE_PANEL_ORIENTATION_0;
-			break;
-		case GAMESCOPE_CONTROL_DISPLAY_ROTATION_FLAG_LEFT:
-			//m_ChosenOrientation = GAMESCOPE_PANEL_ORIENTATION_90;
-			isRotated = true;
-			break;
-		case GAMESCOPE_CONTROL_DISPLAY_ROTATION_FLAG_RIGHT:
-			//m_ChosenOrientation = GAMESCOPE_PANEL_ORIENTATION_270;
-			isRotated = true;
-			break;
-		case GAMESCOPE_CONTROL_DISPLAY_ROTATION_FLAG_UPSIDEDOWN:
-			//m_ChosenOrientation = GAMESCOPE_PANEL_ORIENTATION_180;
-			break;
-		default:
-			wl_log.errorf("Invalid target orientation selected");
+			case GAMESCOPE_CONTROL_DISPLAY_ROTATION_FLAG_NORMAL:
+				g_DesiredInternalOrientation = GAMESCOPE_PANEL_ORIENTATION_0;
+				break;
+			case GAMESCOPE_CONTROL_DISPLAY_ROTATION_FLAG_LEFT:
+				g_DesiredInternalOrientation = GAMESCOPE_PANEL_ORIENTATION_90;
+				isRotated = true;
+				break;
+			case GAMESCOPE_CONTROL_DISPLAY_ROTATION_FLAG_RIGHT:
+				g_DesiredInternalOrientation = GAMESCOPE_PANEL_ORIENTATION_270;
+				isRotated = true;
+				break;
+			case GAMESCOPE_CONTROL_DISPLAY_ROTATION_FLAG_UPSIDEDOWN:
+				g_DesiredInternalOrientation = GAMESCOPE_PANEL_ORIENTATION_180;
+				break;
+			default:
+				wl_log.errorf("Invalid target orientation selected");
 		}
 	}
 	else if (target_type == GAMESCOPE_CONTROL_DISPLAY_TARGET_TYPE_EXTERNAL )
 	{
 		switch (orientation) {
-		case GAMESCOPE_CONTROL_DISPLAY_ROTATION_FLAG_NORMAL:
-			//m_ChosenOrientation = GAMESCOPE_PANEL_EXTERNAL_ORIENTATION_0;
-			break;
-		case GAMESCOPE_CONTROL_DISPLAY_ROTATION_FLAG_LEFT:
-			//m_ChosenOrientation = GAMESCOPE_PANEL_EXTERNAL_ORIENTATION_90;
-			isRotated = true;
-			break;
-		case GAMESCOPE_CONTROL_DISPLAY_ROTATION_FLAG_RIGHT:
-			//m_ChosenOrientation = GAMESCOPE_PANEL_EXTERNAL_ORIENTATION_270;
-			isRotated = true;
-			break;
-		case GAMESCOPE_CONTROL_DISPLAY_ROTATION_FLAG_UPSIDEDOWN:
-			//m_ChosenOrientation = GAMESCOPE_PANEL_EXTERNAL_ORIENTATION_180;
-			break;
-		default:
-			wl_log.errorf("Invalid target orientation selected");
+			case GAMESCOPE_CONTROL_DISPLAY_ROTATION_FLAG_NORMAL:
+				g_DesiredExternalOrientation = GAMESCOPE_PANEL_ORIENTATION_0;
+				break;
+			case GAMESCOPE_CONTROL_DISPLAY_ROTATION_FLAG_LEFT:
+				g_DesiredExternalOrientation = GAMESCOPE_PANEL_ORIENTATION_90;
+				isRotated = true;
+				break;
+			case GAMESCOPE_CONTROL_DISPLAY_ROTATION_FLAG_RIGHT:
+				g_DesiredExternalOrientation = GAMESCOPE_PANEL_ORIENTATION_270;
+				isRotated = true;
+				break;
+			case GAMESCOPE_CONTROL_DISPLAY_ROTATION_FLAG_UPSIDEDOWN:
+				g_DesiredExternalOrientation = GAMESCOPE_PANEL_ORIENTATION_180;
+				break;
+			default:
+				wl_log.errorf("Invalid target orientation selected");
 		}
 	}
 	//drm_set_orientation(&g_DRM, isRotated);
@@ -2937,33 +2939,61 @@ const std::shared_ptr<wlserver_vk_swapchain_feedback>& wlserver_surface_swapchai
 /* Handle the orientation of the touch inputs */
 static void apply_touchscreen_orientation(GamescopePanelOrientation orientation, double *x, double *y )
 {
-	double tx = 0;
-	double ty = 0;
+    double tx = 0;
+    double ty = 0;
 
-	switch ( orientation )
-	{
-		default:
-		case GAMESCOPE_PANEL_ORIENTATION_AUTO:
-		case GAMESCOPE_PANEL_ORIENTATION_0:
-			tx = *x;
-			ty = *y;
-			break;
-		case GAMESCOPE_PANEL_ORIENTATION_90:
-			tx = 1.0 - *y;
-			ty = *x;
-			break;
-		case GAMESCOPE_PANEL_ORIENTATION_180:
-			tx = 1.0 - *x;
-			ty = 1.0 - *y;
-			break;
-		case GAMESCOPE_PANEL_ORIENTATION_270:
-			tx = *y;
-			ty = 1.0 - *x;
-			break;
-	}
+    // Use internal screen always for orientation purposes.
+    if ( g_ForcedScreenType == gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL || g_ForcedScreenType == gamescope::GAMESCOPE_SCREEN_TYPE_EXTERNAL )
+    {
+        switch ( g_DesiredInternalOrientation )
+        {
+			default:
+			case GAMESCOPE_PANEL_ORIENTATION_AUTO:
+			case GAMESCOPE_PANEL_ORIENTATION_0:
+				tx = *x;
+				ty = *y;
+				break;
+			case GAMESCOPE_PANEL_ORIENTATION_90:
+				tx = 1.0 - *y;
+				ty = *x;
+				break;
+			case GAMESCOPE_PANEL_ORIENTATION_180:
+				tx = 1.0 - *x;
+				ty = 1.0 - *y;
+				break;
+			case GAMESCOPE_PANEL_ORIENTATION_270:
+				tx = *y;
+				ty = 1.0 - *x;
+				break;
+        }
+    }
+    else if (g_ForcedScreenType == gamescope::GAMESCOPE_SCREEN_TYPE_AUTO)
+    {
+        switch (GetBackend()->GetConnector(gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL)->GetCurrentOrientation())
+        {
+			default:
+			case GAMESCOPE_PANEL_ORIENTATION_AUTO:
+			case GAMESCOPE_PANEL_ORIENTATION_0:
+				tx = *x;
+				ty = *y;
+				break;
+			case GAMESCOPE_PANEL_ORIENTATION_90:
+				tx = 1.0 - *y;
+				ty = *x;
+				break;
+			case GAMESCOPE_PANEL_ORIENTATION_180:
+				tx = 1.0 - *x;
+				ty = 1.0 - *y;
+				break;
+			case GAMESCOPE_PANEL_ORIENTATION_270:
+				tx = *y;
+				ty = 1.0 - *x;
+				break;
+        }
+    }
 
-	*x = tx;
-	*y = ty;
+    *x = tx;
+    *y = ty;
 }
 
 void wlserver_touchmotion( double x, double y, int touch_id, uint32_t time, bool bAlwaysWarpCursor, gamescope::IBackendConnector* connector )

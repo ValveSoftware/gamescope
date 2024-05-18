@@ -425,6 +425,9 @@ namespace gamescope
 
 		GamescopeScreenType GetScreenType() const override
 		{
+			if ( g_ForcedScreenType != GAMESCOPE_SCREEN_TYPE_AUTO )
+				return g_ForcedScreenType;
+
 			if ( m_pConnector->connector_type == DRM_MODE_CONNECTOR_eDP ||
 				 m_pConnector->connector_type == DRM_MODE_CONNECTOR_LVDS ||
 				 m_pConnector->connector_type == DRM_MODE_CONNECTOR_DSI )
