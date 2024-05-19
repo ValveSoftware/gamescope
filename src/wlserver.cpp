@@ -85,6 +85,8 @@ using namespace std::literals;
 
 extern gamescope::ConVar<bool> cv_drm_debug_disable_explicit_sync;
 
+bool pending_gesture = false;
+bool pending_osk = false;
 //#define GAMESCOPE_SWAPCHAIN_DEBUG
 gamescope::ConVar<bool> cv_touch_gestures( "enable_touch_gestures", false, "Enable/Disable the usage of touch gestures" );
 extern GamescopePanelOrientation g_DesiredInternalOrientation;
@@ -374,6 +376,39 @@ void wlserver_open_steam_menu( bool qam )
 
 	XTestFakeKeyEvent(server->get_xdisplay(), XKeysymToKeycode( server->get_xdisplay(), keycode ), False, CurrentTime);
 	XTestFakeKeyEvent(server->get_xdisplay(), XKeysymToKeycode( server->get_xdisplay(), XK_Control_L ), False, CurrentTime);
+}
+
+void wlserver_open_steam_osk(bool osk)
+{
+	gamescope_xwayland_server_t *server = wlserver_get_xwayland_server( 0 );
+	if (!server)
+		return;
+
+	uint32_t osk_open = osk;
+
+	if (osk_open)
+	{
+		const char *command = "xdg-open steam://open/keyboard?";
+		int result = system(command);
+		if (result == 0) {
+			printf("Command executed successfully.\n");
+		} else {
+			printf("Error executing command.\n");
+		}
+		pending_osk = false;
+	}
+	else
+	{
+		const char *command = "xdg-open steam://close/keyboard?";
+		int result = system(command);
+		if (result == 0) {
+			printf("Command executed successfully.\n");
+		} else {
+			printf("Error executing command.\n");
+		}
+		pending_osk = false;
+	}
+
 }
 
 static void wlserver_handle_pointer_button(struct wl_listener *listener, void *data)
@@ -3035,32 +3070,46 @@ void wlserver_touchmotion( double x, double y, int touch_id, uint32_t time, bool
 			if ( bAlwaysWarpCursor )
 				wlserver_mousewarp( tx, ty, time, false );
 
-			if (cv_touch_gestures) {
-				bool start_gesture = false;
-
-				// Round the x-coordinate to the nearest whole number
+			if ( cv_touch_gestures )
+			{
 				uint32_t roundedCursorX = static_cast<int>(std::round(tx));
-				// Grab 2% of the display to be used for the edge range
-				uint32_t edge_range = static_cast<uint32_t>(g_nOutputWidth * 0.02);
+				uint32_t roundedCursorY = static_cast<int>(std::round(ty));
+				uint32_t edge_range_x = static_cast<uint32_t>(g_nOutputWidth * 0.02);
+				uint32_t edge_range_y = static_cast<uint32_t>(g_nOutputWidth * 0.02);
+				uint32_t gesture_limits_x = edge_range_x * 2;
+				uint32_t gesture_limits_y = edge_range_y * 2;
 
-				// Determine if the gesture should start
-				if (roundedCursorX <= edge_range || roundedCursorX >= g_nOutputWidth - edge_range) {
-					start_gesture = true;
-				}
+				// Left to Right and Right to Left
+				if (!pending_gesture && roundedCursorX >= 1 && roundedCursorX < edge_range_x ||
+						!pending_gesture && roundedCursorX >= g_nOutputWidth - edge_range_x )
+					pending_gesture = true;
 
-				// Handle Home gesture
-				if (start_gesture && roundedCursorX >= edge_range) {
+				//left
+				if (pending_gesture && roundedCursorX >= edge_range_x && roundedCursorX < gesture_limits_x) {
 					wlserver_open_steam_menu(0);
-					start_gesture = false;
+					pending_gesture = false;
 				}
-
-				// Handle QAM gesture
-				if (start_gesture && roundedCursorX >= g_nOutputWidth - edge_range && roundedCursorX <= g_nOutputWidth) {
+				//right
+				if (pending_gesture && roundedCursorX <= g_nOutputWidth - edge_range_x && roundedCursorX > g_nOutputWidth - gesture_limits_x) {
 					wlserver_open_steam_menu(1);
-					start_gesture = false;
+					pending_gesture = false;
+				}
+				// Top to Bottom and Bottom to Top
+				if (!pending_gesture && roundedCursorY >= 1 && roundedCursorY < edge_range_y ||
+						!pending_gesture && roundedCursorY >= g_nOutputHeight - edge_range_y )
+					pending_gesture = true;
+				// Top
+				if (pending_gesture && roundedCursorY >= edge_range_y && roundedCursorY < gesture_limits_y) {
+					pending_gesture = false;
+					// Top to Bottom function to add
+				}
+				// Bottom
+				if (pending_gesture && !pending_osk && roundedCursorY <= g_nOutputWidth - edge_range_y && roundedCursorY > g_nOutputHeight - gesture_limits_y) {
+					pending_gesture = false;
+					pending_osk = true;
+					//wlserver_open_steam_osk(1);
 				}
 			}
-
 		}
 		else if ( eMode == gamescope::TouchClickModes::Disabled )
 		{
