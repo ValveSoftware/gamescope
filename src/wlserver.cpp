@@ -85,7 +85,8 @@ using namespace std::literals;
 
 extern gamescope::ConVar<bool> cv_drm_debug_disable_explicit_sync;
 
-bool pending_gesture = false;
+bool pending_gesture_x = false;
+bool pending_gesture_y = false;
 bool pending_osk = false;
 //#define GAMESCOPE_SWAPCHAIN_DEBUG
 gamescope::ConVar<bool> cv_touch_gestures( "enable_touch_gestures", false, "Enable/Disable the usage of touch gestures" );
@@ -3031,6 +3032,16 @@ static void apply_touchscreen_orientation(GamescopePanelOrientation orientation,
     *y = ty;
 }
 
+void wlserver_gesture_flush()
+{
+	pending_gesture_x = false;
+	pending_gesture_y = false;
+}
+
+// Variables to track the direction of the touch motion
+uint32_t previous_tx = 0;
+uint32_t previous_ty = 0;
+
 void wlserver_touchmotion( double x, double y, int touch_id, uint32_t time, bool bAlwaysWarpCursor, gamescope::IBackendConnector* connector )
 {
 	assert( wlserver_is_lock_held() );
@@ -3072,43 +3083,55 @@ void wlserver_touchmotion( double x, double y, int touch_id, uint32_t time, bool
 
 			if ( cv_touch_gestures )
 			{
-				uint32_t roundedCursorX = static_cast<int>(std::round(tx));
-				uint32_t roundedCursorY = static_cast<int>(std::round(ty));
-				uint32_t edge_range_x = static_cast<uint32_t>(g_nOutputWidth * 0.02);
-				uint32_t edge_range_y = static_cast<uint32_t>(g_nOutputWidth * 0.02);
+				uint32_t rounded_tx = static_cast<int>(std::round(tx));
+				uint32_t rounded_ty = static_cast<int>(std::round(ty));
+				uint32_t edge_range_x = static_cast<uint32_t>(g_nOutputWidth * 0.05);
+				uint32_t edge_range_y = static_cast<uint32_t>(g_nOutputWidth * 0.05);
 				uint32_t gesture_limits_x = edge_range_x * 2;
 				uint32_t gesture_limits_y = edge_range_y * 2;
+				uint32_t threshold_distance_x = gesture_limits_x;
+				uint32_t threshold_distance_y = gesture_limits_y;
 
 				// Left to Right and Right to Left
-				if (!pending_gesture && roundedCursorX >= 1 && roundedCursorX < edge_range_x ||
-						!pending_gesture && roundedCursorX >= g_nOutputWidth - edge_range_x )
-					pending_gesture = true;
+				if (!pending_gesture_x && ((rounded_tx >= 1 && rounded_tx < edge_range_x) || (rounded_tx >= g_nOutputWidth - edge_range_x))) {
+					// Check if the distance moved is greater than the threshold
+					if (rounded_tx - previous_tx > threshold_distance_x) {
+						pending_gesture_x = true;
+					}
+				}
+
+				// Top to Bottom and Bottom to Top
+				if (!pending_gesture_y && ((rounded_ty >= 1 && rounded_ty < edge_range_y) || (rounded_ty >= g_nOutputHeight - edge_range_y))) {
+					// Check if the distance moved is greater than the threshold
+					if (rounded_ty - previous_ty > threshold_distance_y) {
+						pending_gesture_y = true;
+					}
+				}
 
 				//left
-				if (pending_gesture && roundedCursorX >= edge_range_x && roundedCursorX < gesture_limits_x) {
+				if (pending_gesture_x && previous_tx < rounded_tx && rounded_tx >= edge_range_x && rounded_tx < gesture_limits_x) {
 					wlserver_open_steam_menu(0);
-					pending_gesture = false;
+					wlserver_gesture_flush();
 				}
 				//right
-				if (pending_gesture && roundedCursorX <= g_nOutputWidth - edge_range_x && roundedCursorX > g_nOutputWidth - gesture_limits_x) {
+				if (pending_gesture_x && previous_tx > rounded_tx && rounded_tx <= g_nOutputWidth - edge_range_x && rounded_tx > g_nOutputWidth - gesture_limits_x) {
 					wlserver_open_steam_menu(1);
-					pending_gesture = false;
+					wlserver_gesture_flush();
 				}
-				// Top to Bottom and Bottom to Top
-				if (!pending_gesture && roundedCursorY >= 1 && roundedCursorY < edge_range_y ||
-						!pending_gesture && roundedCursorY >= g_nOutputHeight - edge_range_y )
-					pending_gesture = true;
+
 				// Top
-				if (pending_gesture && roundedCursorY >= edge_range_y && roundedCursorY < gesture_limits_y) {
-					pending_gesture = false;
+				if (pending_gesture_y && previous_ty < rounded_ty && rounded_ty >= edge_range_y && rounded_ty < gesture_limits_y) {
+					wlserver_gesture_flush();
 					// Top to Bottom function to add
 				}
 				// Bottom
-				if (pending_gesture && !pending_osk && roundedCursorY <= g_nOutputWidth - edge_range_y && roundedCursorY > g_nOutputHeight - gesture_limits_y) {
-					pending_gesture = false;
+				if (pending_gesture_y && previous_ty > rounded_ty && !pending_osk && rounded_ty <= g_nOutputWidth - edge_range_y && rounded_ty > g_nOutputHeight - gesture_limits_y) {
+					wlserver_gesture_flush();
 					pending_osk = true;
 					//wlserver_open_steam_osk(1);
 				}
+				previous_tx = rounded_tx;
+				previous_ty = rounded_ty;
 			}
 		}
 		else if ( eMode == gamescope::TouchClickModes::Disabled )
