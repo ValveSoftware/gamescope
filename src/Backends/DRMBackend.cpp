@@ -425,13 +425,20 @@ namespace gamescope
 
 		GamescopeScreenType GetScreenType() const override
 		{
-			if ( g_ForcedScreenType != GAMESCOPE_SCREEN_TYPE_AUTO )
-				return g_ForcedScreenType;
-
 			if ( m_pConnector->connector_type == DRM_MODE_CONNECTOR_eDP ||
 				 m_pConnector->connector_type == DRM_MODE_CONNECTOR_LVDS ||
 				 m_pConnector->connector_type == DRM_MODE_CONNECTOR_DSI )
-				return GAMESCOPE_SCREEN_TYPE_INTERNAL;
+			{
+				if ( g_bExternalForced )
+				{
+					return g_ForcedScreenType;
+				}
+				else
+				{
+					return GAMESCOPE_SCREEN_TYPE_INTERNAL;
+				}
+			}
+
 
 			return GAMESCOPE_SCREEN_TYPE_EXTERNAL;
 		}
@@ -2247,11 +2254,11 @@ namespace gamescope
 
 	void CDRMConnector::UpdateEffectiveOrientation( const drmModeModeInfo *pMode )
 	{
-		if ((this->GetScreenType() == GAMESCOPE_SCREEN_TYPE_INTERNAL && g_DesiredInternalOrientation != GAMESCOPE_PANEL_ORIENTATION_AUTO) ||
-			(this->GetScreenType() == GAMESCOPE_SCREEN_TYPE_EXTERNAL && g_DesiredInternalOrientation != GAMESCOPE_PANEL_ORIENTATION_AUTO && g_bExternalForced)) {
+		if ( this->GetScreenType() == GAMESCOPE_SCREEN_TYPE_INTERNAL && g_DesiredInternalOrientation != GAMESCOPE_PANEL_ORIENTATION_AUTO ) {
 			drm_log.infof("We are rotating the orientation of the internal or faked external display");
 			m_ChosenOrientation = g_DesiredInternalOrientation;
-		} else if (this->GetScreenType() == GAMESCOPE_SCREEN_TYPE_EXTERNAL && g_DesiredExternalOrientation != GAMESCOPE_PANEL_ORIENTATION_AUTO) {
+		}
+		else if (this->GetScreenType() == GAMESCOPE_SCREEN_TYPE_EXTERNAL && g_DesiredExternalOrientation != GAMESCOPE_PANEL_ORIENTATION_AUTO) {
 			drm_log.infof("We are rotating the orientation of an external display");
 			m_ChosenOrientation = g_DesiredExternalOrientation;
 		}

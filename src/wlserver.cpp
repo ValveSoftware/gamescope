@@ -2980,29 +2980,57 @@ static void apply_touchscreen_orientation(GamescopePanelOrientation orientation,
     double ty = 0;
 
     // Use internal screen always for orientation purposes.
-    if ( g_ForcedScreenType == gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL || g_ForcedScreenType == gamescope::GAMESCOPE_SCREEN_TYPE_EXTERNAL )
+    if ( g_ForcedScreenType != gamescope::GAMESCOPE_SCREEN_TYPE_AUTO )
     {
-        switch ( g_DesiredInternalOrientation )
-        {
-			default:
-			case GAMESCOPE_PANEL_ORIENTATION_AUTO:
-			case GAMESCOPE_PANEL_ORIENTATION_0:
-				tx = *x;
-				ty = *y;
-				break;
-			case GAMESCOPE_PANEL_ORIENTATION_90:
-				tx = 1.0 - *y;
-				ty = *x;
-				break;
-			case GAMESCOPE_PANEL_ORIENTATION_180:
-				tx = 1.0 - *x;
-				ty = 1.0 - *y;
-				break;
-			case GAMESCOPE_PANEL_ORIENTATION_270:
-				tx = *y;
-				ty = 1.0 - *x;
-				break;
-        }
+		if ( g_ForcedScreenType == gamescope::GAMESCOPE_SCREEN_TYPE_EXTERNAL )
+		{
+			switch (GetBackend()->GetConnector(gamescope::GAMESCOPE_SCREEN_TYPE_EXTERNAL)->GetCurrentOrientation())
+			{
+				default:
+				case GAMESCOPE_PANEL_ORIENTATION_AUTO:
+				case GAMESCOPE_PANEL_ORIENTATION_0:
+					tx = *x;
+					ty = *y;
+					break;
+				case GAMESCOPE_PANEL_ORIENTATION_90:
+					tx = 1.0 - *y;
+					ty = *x;
+					break;
+				case GAMESCOPE_PANEL_ORIENTATION_180:
+					tx = 1.0 - *x;
+					ty = 1.0 - *y;
+					break;
+				case GAMESCOPE_PANEL_ORIENTATION_270:
+					tx = *y;
+					ty = 1.0 - *x;
+					break;
+			}
+		}
+		else
+		{
+			switch (GetBackend()->GetConnector(gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL)->GetCurrentOrientation())
+			{
+				default:
+				case GAMESCOPE_PANEL_ORIENTATION_AUTO:
+				case GAMESCOPE_PANEL_ORIENTATION_0:
+					tx = *x;
+					ty = *y;
+					break;
+				case GAMESCOPE_PANEL_ORIENTATION_90:
+					tx = 1.0 - *y;
+					ty = *x;
+					break;
+				case GAMESCOPE_PANEL_ORIENTATION_180:
+					tx = 1.0 - *x;
+					ty = 1.0 - *y;
+					break;
+				case GAMESCOPE_PANEL_ORIENTATION_270:
+					tx = *y;
+					ty = 1.0 - *x;
+					break;
+			}
+		}
+
     }
     else if (g_ForcedScreenType == gamescope::GAMESCOPE_SCREEN_TYPE_AUTO)
     {
