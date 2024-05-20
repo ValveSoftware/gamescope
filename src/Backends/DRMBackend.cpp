@@ -2249,7 +2249,7 @@ namespace gamescope
 	{
 		if ((this->GetScreenType() == GAMESCOPE_SCREEN_TYPE_INTERNAL && g_DesiredInternalOrientation != GAMESCOPE_PANEL_ORIENTATION_AUTO) ||
 			(this->GetScreenType() == GAMESCOPE_SCREEN_TYPE_EXTERNAL && g_DesiredInternalOrientation != GAMESCOPE_PANEL_ORIENTATION_AUTO && g_bExternalForced)) {
-			drm_log.infof("We are rotating the orientation of the internal or faked external display")
+			drm_log.infof("We are rotating the orientation of the internal or faked external display");
 			m_ChosenOrientation = g_DesiredInternalOrientation;
 		} else if (this->GetScreenType() == GAMESCOPE_SCREEN_TYPE_EXTERNAL && g_DesiredExternalOrientation != GAMESCOPE_PANEL_ORIENTATION_AUTO) {
 			drm_log.infof("We are rotating the orientation of an external display");
