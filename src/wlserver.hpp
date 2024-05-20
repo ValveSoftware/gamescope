@@ -286,6 +286,7 @@ extern gamescope::ConVar<bool> cv_touch_gestures;
 void wlserver_open_steam_menu( bool qam );
 extern void drm_set_orientation( struct drm_t *drm, bool isRotated);
 extern drm_t g_DRM;
+extern bool panelTypeChanged;
 uint32_t wlserver_make_new_xwayland_server();
 void wlserver_destroy_xwayland_server(gamescope_xwayland_server_t *server);
 

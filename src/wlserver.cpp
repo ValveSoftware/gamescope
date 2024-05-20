@@ -2984,26 +2984,29 @@ static void apply_touchscreen_orientation(GamescopePanelOrientation orientation,
     {
 		if ( g_ForcedScreenType == gamescope::GAMESCOPE_SCREEN_TYPE_EXTERNAL )
 		{
-			switch (GetBackend()->GetConnector(gamescope::GAMESCOPE_SCREEN_TYPE_EXTERNAL)->GetCurrentOrientation())
+			if(panelTypeChanged)
 			{
-				default:
-				case GAMESCOPE_PANEL_ORIENTATION_AUTO:
-				case GAMESCOPE_PANEL_ORIENTATION_0:
-					tx = *x;
-					ty = *y;
-					break;
-				case GAMESCOPE_PANEL_ORIENTATION_90:
-					tx = 1.0 - *y;
-					ty = *x;
-					break;
-				case GAMESCOPE_PANEL_ORIENTATION_180:
-					tx = 1.0 - *x;
-					ty = 1.0 - *y;
-					break;
-				case GAMESCOPE_PANEL_ORIENTATION_270:
-					tx = *y;
-					ty = 1.0 - *x;
-					break;
+				switch (GetBackend()->GetConnector(gamescope::GAMESCOPE_SCREEN_TYPE_EXTERNAL)->GetCurrentOrientation())
+				{
+					default:
+					case GAMESCOPE_PANEL_ORIENTATION_AUTO:
+					case GAMESCOPE_PANEL_ORIENTATION_0:
+						tx = *x;
+						ty = *y;
+						break;
+					case GAMESCOPE_PANEL_ORIENTATION_90:
+						tx = 1.0 - *y;
+						ty = *x;
+						break;
+					case GAMESCOPE_PANEL_ORIENTATION_180:
+						tx = 1.0 - *x;
+						ty = 1.0 - *y;
+						break;
+					case GAMESCOPE_PANEL_ORIENTATION_270:
+						tx = *y;
+						ty = 1.0 - *x;
+						break;
+				}
 			}
 		}
 		else
