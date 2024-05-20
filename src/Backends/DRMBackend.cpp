@@ -2247,20 +2247,19 @@ namespace gamescope
 
 	void CDRMConnector::UpdateEffectiveOrientation( const drmModeModeInfo *pMode )
 	{
-		if ( this->GetScreenType() == GAMESCOPE_SCREEN_TYPE_INTERNAL && g_DesiredInternalOrientation != GAMESCOPE_PANEL_ORIENTATION_AUTO
-										|| GAMESCOPE_SCREEN_TYPE_EXTERNAL && g_DesiredExternalOrientation != GAMESCOPE_PANEL_ORIENTATION_AUTO
-											&& g_bExternalForced )
-		{
+		if ((this->GetScreenType() == GAMESCOPE_SCREEN_TYPE_INTERNAL && g_DesiredInternalOrientation != GAMESCOPE_PANEL_ORIENTATION_AUTO) ||
+			(this->GetScreenType() == GAMESCOPE_SCREEN_TYPE_EXTERNAL && g_DesiredInternalOrientation != GAMESCOPE_PANEL_ORIENTATION_AUTO && g_bExternalForced)) {
+			drm_log.infof("We are rotating the orientation of the internal or faked external display")
 			m_ChosenOrientation = g_DesiredInternalOrientation;
-		}
-		else if ( this->GetScreenType() == GAMESCOPE_SCREEN_TYPE_EXTERNAL && g_DesiredExternalOrientation != GAMESCOPE_PANEL_ORIENTATION_AUTO )
-		{
+		} else if (this->GetScreenType() == GAMESCOPE_SCREEN_TYPE_EXTERNAL && g_DesiredExternalOrientation != GAMESCOPE_PANEL_ORIENTATION_AUTO) {
+			drm_log.infof("We are rotating the orientation of an external display");
 			m_ChosenOrientation = g_DesiredExternalOrientation;
 		}
 		else
 		{
 			if ( this->GetProperties().panel_orientation )
 			{
+				drm_log.infof("We are using a kernel orientation quirk to rotate the display");
 				switch ( this->GetProperties().panel_orientation->GetCurrentValue() )
 				{
 					case DRM_MODE_PANEL_ORIENTATION_NORMAL:
@@ -2282,6 +2281,7 @@ namespace gamescope
 
 			if ( this->GetScreenType() == gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL && pMode )
 			{
+				drm_log.infof("We are using legacy code to rotate the display");
 				// Auto-detect portait mode for internal displays
 				m_ChosenOrientation = pMode->hdisplay < pMode->vdisplay
 					? GAMESCOPE_PANEL_ORIENTATION_270
@@ -2289,6 +2289,7 @@ namespace gamescope
 			}
 			else
 			{
+				drm_log.infof("No orientation quirks have been applied");
 				m_ChosenOrientation = GAMESCOPE_PANEL_ORIENTATION_0;
 			}
 		}
