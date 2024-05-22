@@ -63,7 +63,7 @@ const struct option *gamescope_options = (struct option[]){
 	{ "mouse-sensitivity", required_argument, nullptr, 's' },
 	{ "mangoapp", no_argument, nullptr, 0 },
 
-	{ "headless", no_argument, 0 },
+	{ "backend", required_argument, nullptr, 0 },
 
 	// nested mode options
 	{ "nested-unfocused-refresh", required_argument, nullptr, 'o' },
@@ -85,7 +85,6 @@ const struct option *gamescope_options = (struct option[]){
 
 	// openvr options
 #if HAVE_OPENVR
-	{ "openvr", no_argument, nullptr, 0 },
 	{ "vr-overlay-key", required_argument, nullptr, 0 },
 	{ "vr-overlay-explicit-name", required_argument, nullptr, 0 },
 	{ "vr-overlay-default-name", required_argument, nullptr, 0 },
@@ -161,7 +160,15 @@ const char usage[] =
 	"  --sharpness, --fsr-sharpness   upscaler sharpness from 0 (max) to 20 (min)\n"
 	"  --expose-wayland               support wayland clients using xdg-shell\n"
 	"  -s, --mouse-sensitivity        multiply mouse movement by given decimal number\n"
-	"  --headless                     use headless backend (no window, no DRM output)\n"
+	"  --backend                      select rendering backend\n"
+	"                                     auto => autodetect (default)\n"
+	"                                     drm => use DRM backend (standalone display session)\n"
+	"                                     sdl => use SDL backend\n"
+#if HAVE_OPENVR
+	"                                     openvr => use OpenVR backend (outputs as a VR overlay)\n"
+#endif
+	"                                     headless => use headless backend (no window, no DRM output)\n"
+	"                                     wayland => use Wayland backend\n"
 	"  --cursor                       path to default cursor image\n"
 	"  -R, --ready-fd                 notify FD when ready\n"
 	"  --rt                           Use realtime scheduling\n"
@@ -202,7 +209,6 @@ const char usage[] =
 	"\n"
 #if HAVE_OPENVR
 	"VR mode options:\n"
-	"  --openvr                                 Uses the openvr backend and outputs as a VR overlay\n"
 	"  --vr-overlay-key                         Sets the SteamVR overlay key to this string\n"
 	"  --vr-overlay-explicit-name               Force the SteamVR overlay name to always be this string\n"
 	"  --vr-overlay-default-name                Sets the fallback SteamVR overlay name when there is no window title\n"
@@ -385,6 +391,28 @@ static enum GamescopeUpscaleFilter parse_upscaler_filter(const char *str)
 		return GamescopeUpscaleFilter::PIXEL;
 	} else {
 		fprintf( stderr, "gamescope: invalid value for --filter\n" );
+		exit(1);
+	}
+}
+
+static enum gamescope::GamescopeBackend parse_backend_name(const char *str)
+{
+	if (strcmp(str, "auto") == 0) {
+		return gamescope::GamescopeBackend::Auto;
+	} else if (strcmp(str, "drm") == 0) {
+		return gamescope::GamescopeBackend::DRM;
+	} else if (strcmp(str, "sdl") == 0) {
+		return gamescope::GamescopeBackend::SDL;
+#if HAVE_OPENVR
+	} else if (strcmp(str, "openvr") == 0) {
+		return gamescope::GamescopeBackend::OpenVR;
+#endif
+	} else if (strcmp(str, "headless") == 0) {
+		return gamescope::GamescopeBackend::Headless;
+	} else if (strcmp(str, "wayland") == 0) {
+		return gamescope::GamescopeBackend::Wayland;
+	} else {
+		fprintf( stderr, "gamescope: invalid value for --backend\n" );
 		exit(1);
 	}
 }
@@ -669,16 +697,11 @@ int main(int argc, char **argv)
 					g_bAllowVRR = true;
 				} else if (strcmp(opt_name, "expose-wayland") == 0) {
 					g_bExposeWayland = true;
-				} else if (strcmp(opt_name, "headless") == 0) {
-					eCurrentBackend = gamescope::GamescopeBackend::Headless;
+				} else if (strcmp(opt_name, "backend") == 0) {
+					eCurrentBackend = parse_backend_name( optarg );
 				} else if (strcmp(opt_name, "cursor-scale-height") == 0) {
 					g_nCursorScaleHeight = atoi(optarg);
 				}
-#if HAVE_OPENVR
-				else if (strcmp(opt_name, "openvr") == 0) {
-					eCurrentBackend = gamescope::GamescopeBackend::OpenVR;
-				}
-#endif
 				break;
 			case '?':
 				fprintf( stderr, "See --help for a list of options.\n" );
