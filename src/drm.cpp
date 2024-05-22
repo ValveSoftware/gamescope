@@ -1172,7 +1172,7 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 		return false;
 	if ( liftoff_device_register_all_planes( drm->lo_device ) < 0 )
 		return false;
-
+	
 	drm_log.infof("Connectors:");
 	for ( auto &iter : drm->connectors )
 	{
@@ -2481,7 +2481,11 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 		}
 	}
 
-	int ret = liftoff_output_apply( drm->lo_output, drm->req, drm->flags );
+	struct liftoff_output_apply_options lo_options = {
+		.timeout_ns = std::numeric_limits<int64_t>::max()
+	};
+
+	int ret = liftoff_output_apply( drm->lo_output, drm->req, drm->flags, &lo_options);
 
 	if ( ret == 0 )
 	{
