@@ -3,7 +3,9 @@
 #include <variant>
 #include <string>
 #include <utility>
+#include <bit>
 
+#include <wlr/util/box.h>
 #include "xwayland_ctx.hpp"
 #include "gamescope-control-protocol.h"
 
@@ -89,6 +91,7 @@ struct steamcompmgr_xdg_win_t
 	uint32_t id;
 
 	struct wlserver_xdg_surface_info surface;
+	struct wlr_box geometry;
 };
 
 struct steamcompmgr_win_t {
@@ -144,6 +147,22 @@ struct steamcompmgr_win_t {
 
 	std::variant<steamcompmgr_xwayland_win_t, steamcompmgr_xdg_win_t>
 		_window_types;
+
+	const struct wlr_box* const  __attribute__((pure)) geometry() const {
+		if (type == steamcompmgr_win_type_t::XWAYLAND) {
+			typedef struct {
+				wlr_box box;
+				bool padding[ (sizeof(XWindowAttributes) - sizeof(wlr_box)) ];
+			} padded_box;
+			
+			const padded_box* geo_padded = std::bit_cast<padded_box*, const XWindowAttributes*>(&(xwayland().a));
+			const wlr_box* geo = &(geo_padded->box);
+			return geo;
+		} else {
+			const wlr_box* geo = &(xdg().geometry);
+			return geo;
+		}
+	}
 
 	uint32_t id() const
 	{

@@ -1639,6 +1639,8 @@ void xdg_surface_new(struct wl_listener *listener, void *data)
 			it++;
 		}
 	}
+		
+	wlr_xdg_surface_get_geometry(xdg_surface, &(window->xdg().geometry));
 }
 
 #if HAVE_LIBEIS

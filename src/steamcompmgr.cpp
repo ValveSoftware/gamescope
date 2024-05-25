@@ -1732,14 +1732,14 @@ void MouseCursor::paint(steamcompmgr_win_t *window, steamcompmgr_win_t *fit, str
 		return;
 	}
 
-	uint32_t sourceWidth = window->xwayland().a.width;
-	uint32_t sourceHeight = window->xwayland().a.height;
+	uint32_t sourceWidth = window->geometry()->width;
+	uint32_t sourceHeight = window->geometry()->height;
 
 	if ( fit )
 	{
 		// If we have an override window, try to fit it in as long as it won't make our scale go below 1.0.
-		sourceWidth = std::max<uint32_t>( sourceWidth, clamp<int>( fit->xwayland().a.x + fit->xwayland().a.width, 0, currentOutputWidth ) );
-		sourceHeight = std::max<uint32_t>( sourceHeight, clamp<int>( fit->xwayland().a.y + fit->xwayland().a.height, 0, currentOutputHeight ) );
+		sourceWidth = std::max<uint32_t>( sourceWidth, clamp<int>( fit->geometry()->x + fit->geometry()->width, 0, currentOutputWidth ) );
+		sourceHeight = std::max<uint32_t>( sourceHeight, clamp<int>( fit->geometry()->y + fit->geometry()->height, 0, currentOutputHeight ) );
 	}
 
 	float cursor_scale = 1.0f;
@@ -1762,8 +1762,8 @@ void MouseCursor::paint(steamcompmgr_win_t *window, steamcompmgr_win_t *fit, str
 	cursorOffsetY = (currentOutputHeight - sourceHeight * currentScaleRatio_y) / 2.0f;
 
 	// Actual point on scaled screen where the cursor hotspot should be
-	scaledX = (winX - window->xwayland().a.x) * currentScaleRatio_x + cursorOffsetX;
-	scaledY = (winY - window->xwayland().a.y) * currentScaleRatio_y + cursorOffsetY;
+	scaledX = (winX - window->geometry()->x) * currentScaleRatio_x + cursorOffsetX;
+	scaledY = (winY - window->geometry()->y) * currentScaleRatio_y + cursorOffsetY;
 
 	if ( zoomScaleRatio != 1.0 )
 	{
@@ -1933,8 +1933,8 @@ paint_window(steamcompmgr_win_t *w, steamcompmgr_win_t *scaleW, struct FrameInfo
 
 	if (notificationMode)
 	{
-		sourceWidth = mainOverlayWindow->xwayland().a.width;
-		sourceHeight = mainOverlayWindow->xwayland().a.height;
+		sourceWidth = mainOverlayWindow->geometry()->width;
+		sourceHeight = mainOverlayWindow->geometry()->height;
 	}
 	else if ( flags & PaintWindowFlag::NoScale )
 	{
@@ -1956,15 +1956,15 @@ paint_window(steamcompmgr_win_t *w, steamcompmgr_win_t *scaleW, struct FrameInfo
 			sourceWidth = lastCommit->vulkanTex->width();
 			sourceHeight = lastCommit->vulkanTex->height();
 		} else {
-			sourceWidth = scaleW->xwayland().a.width;
-			sourceHeight = scaleW->xwayland().a.height;
+			sourceWidth = scaleW->geometry()->width;
+			sourceHeight = scaleW->geometry()->height;
 		}
 
 		if ( fit )
 		{
 			// If we have an override window, try to fit it in as long as it won't make our scale go below 1.0.
-			sourceWidth = std::max<uint32_t>( sourceWidth, clamp<int>( fit->xwayland().a.x + fit->xwayland().a.width, 0, currentOutputWidth ) );
-			sourceHeight = std::max<uint32_t>( sourceHeight, clamp<int>( fit->xwayland().a.y + fit->xwayland().a.height, 0, currentOutputHeight ) );
+			sourceWidth = std::max<uint32_t>( sourceWidth, clamp<int>( fit->geometry()->x + fit->geometry()->width, 0, currentOutputWidth ) );
+			sourceHeight = std::max<uint32_t>( sourceHeight, clamp<int>( fit->geometry()->y + fit->geometry()->height, 0, currentOutputHeight ) );
 		}
 	}
 
@@ -2010,8 +2010,8 @@ paint_window(steamcompmgr_win_t *w, steamcompmgr_win_t *scaleW, struct FrameInfo
 	{
 		int xOffset = 0, yOffset = 0;
 
-		int width = w->xwayland().a.width * currentScaleRatio_x;
-		int height = w->xwayland().a.height * currentScaleRatio_y;
+		int width = w->geometry()->width * currentScaleRatio_x;
+		int height = w->geometry()->height * currentScaleRatio_y;
 
 		if (globalScaleRatio != 1.0f)
 		{
@@ -3715,24 +3715,34 @@ determine_and_apply_focus()
 
 	if ( global_focus.inputFocusWindow )
 	{
+		//bResetToCorner and bResetToCenter are in the ctx struct, 
+		//and only the xwayland window struct has a ctx member
+		//so, for xdg windows, just use the root ctx when accessing bResetToCorner & bResetToCenter:
+		xwayland_ctx_t* ctx = global_focus.inputFocusWindow->type == steamcompmgr_win_type_t::XWAYLAND
+							   ? global_focus.inputFocusWindow->xwayland().ctx
+							   : root_ctx;
+		if (ctx == root_ctx) {
+			assert(ctx != nullptr);
+		}
+		
 		// Cannot simply XWarpPointer here as we immediately go on to
 		// do wlserver_mousefocus and need to update m_x and m_y of the cursor.
-		if ( global_focus.inputFocusWindow->xwayland().ctx->focus.bResetToCorner )
+		if ( ctx->focus.bResetToCorner )
 		{
 			wlserver_lock();
-			wlserver_mousewarp( global_focus.inputFocusWindow->xwayland().a.width / 2, global_focus.inputFocusWindow->xwayland().a.height / 2, 0, true );
-			wlserver_fake_mouse_pos( global_focus.inputFocusWindow->xwayland().a.width - 1, global_focus.inputFocusWindow->xwayland().a.height - 1 );
+			wlserver_mousewarp( global_focus.inputFocusWindow->geometry()->width / 2, global_focus.inputFocusWindow->geometry()->height / 2, 0, true );
+			wlserver_fake_mouse_pos( global_focus.inputFocusWindow->geometry()->width - 1, global_focus.inputFocusWindow->geometry()->height - 1 );
 			wlserver_unlock();
 		}
-		else if ( global_focus.inputFocusWindow->xwayland().ctx->focus.bResetToCenter )
+		else if ( ctx->focus.bResetToCenter )
 		{
 			wlserver_lock();
-			wlserver_mousewarp( global_focus.inputFocusWindow->xwayland().a.width / 2, global_focus.inputFocusWindow->xwayland().a.height / 2, 0, true );
+			wlserver_mousewarp( global_focus.inputFocusWindow->geometry()->width / 2, global_focus.inputFocusWindow->geometry()->height / 2, 0, true );
 			wlserver_unlock();
 		}
 
-		global_focus.inputFocusWindow->xwayland().ctx->focus.bResetToCorner = false;
-		global_focus.inputFocusWindow->xwayland().ctx->focus.bResetToCenter = false;
+		ctx->focus.bResetToCorner = false;
+		ctx->focus.bResetToCenter = false;
 	}
 
 	// Determine if we need to repaints
@@ -4300,6 +4310,7 @@ add_win(xwayland_ctx_t *ctx, Window id, Window prev, unsigned long sequence)
 		delete new_win;
 		return;
 	}
+	
 
 	new_win->xwayland().ctx = ctx;
 	new_win->xwayland().damage_sequence = 0;
@@ -6664,7 +6675,7 @@ const char* g_customCursorPath = nullptr;
 int g_customCursorHotspotX = 0;
 int g_customCursorHotspotY = 0;
 
-xwayland_ctx_t g_ctx;
+xwayland_ctx_t g_ctx; // <---- why does this exist???? O_o
 
 static bool setup_error_handlers = false;
 
