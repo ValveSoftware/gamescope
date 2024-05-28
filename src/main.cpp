@@ -482,6 +482,7 @@ static enum gamescope::GamescopeBackend parse_backend_name(const char *str)
 		fprintf( stderr, "gamescope: invalid value for --backend\n" );
 		exit(1);
 	}
+}
 
 std::vector<uint32_t> g_customRefreshRates;
 // eg: 60,60,90,110-120
