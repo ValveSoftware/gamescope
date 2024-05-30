@@ -19,6 +19,7 @@
 #include <float.h>
 
 #include "main.hpp"
+#include "config.hpp"
 #include "steamcompmgr.hpp"
 #include "rendervulkan.hpp"
 #include "wlserver.hpp"
@@ -708,6 +709,9 @@ int main(int argc, char **argv)
 				return 1;
 		}
 	}
+
+	if ( gamescope::config_read() != 0 )
+		return 1;
 
 #if defined(__linux__) && HAVE_LIBCAP
 	cap_t caps = cap_get_proc();

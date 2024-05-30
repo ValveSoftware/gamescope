@@ -20,6 +20,7 @@ thread_dep = dependency('threads')
 cap_dep = dependency('libcap', required: get_option('rt_cap'))
 epoll_dep = dependency('epoll-shim', required: false)
 glm_dep = dependency('glm')
+jsoncpp_dep = dependency('jsoncpp')
 sdl_dep = dependency('SDL2', required: get_option('sdl2_backend'))
 stb_dep = dependency('stb')
 avif_dep = dependency('libavif', version: '>=1.0.0', required: get_option('avif_screenshots'))
@@ -94,6 +95,7 @@ required_wlroots_features = ['xwayland']
 
 src = [
   'steamcompmgr.cpp',
+  'config.cpp',
   'convar.cpp',
   'commit.cpp',
   'color_helpers.cpp',
@@ -161,7 +163,7 @@ endforeach
     include_directories : [reshade_include],
     dependencies: [
       dep_wayland, dep_x11, dep_xdamage, dep_xcomposite, dep_xrender, dep_xext, dep_xfixes,
-      dep_xxf86vm, dep_xres, glm_dep, drm_dep, wayland_server,
+      dep_xxf86vm, dep_xres, glm_dep, drm_dep, wayland_server, jsoncpp_dep,
       xkbcommon, thread_dep, sdl_dep, wlroots_dep,
       vulkan_dep, liftoff_dep, dep_xtst, dep_xmu, cap_dep, epoll_dep, pipewire_dep, librt_dep,
       stb_dep, displayinfo_dep, openvr_dep, dep_xcursor, avif_dep, dep_xi,
