@@ -834,8 +834,10 @@ int main(int argc, char **argv)
 
 		case gamescope::GamescopeBackend::Wayland:
 			gamescope::IBackend::Set<gamescope::CWaylandBackend>();
+#if HAVE_SDL2
 			if ( !GetBackend() )
 				gamescope::IBackend::Set<gamescope::CSDLBackend>();
+#endif
 			break;
 		default:
 			abort();
