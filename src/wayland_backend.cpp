@@ -2265,8 +2265,10 @@ namespace gamescope
         if ( !oState )
             return;
 
-        double flX = ( wl_fixed_to_double( fSurfaceX ) + oState->nDestX ) / g_nOutputWidth;
-        double flY = ( wl_fixed_to_double( fSurfaceY ) + oState->nDestY ) / g_nOutputHeight;
+        auto scale = m_pCurrentCursorPlane->GetScale() / 120.;
+		
+        double flX = ( wl_fixed_to_double( fSurfaceX ) * scale + oState->nDestX ) / g_nOutputWidth;
+        double flY = ( wl_fixed_to_double( fSurfaceY ) * scale + oState->nDestY ) / g_nOutputHeight;
 
         wlserver_lock();
         wlserver_touchmotion( flX, flY, 0, ++m_uFakeTimestamp );
