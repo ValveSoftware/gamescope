@@ -1,6 +1,6 @@
 #if HAVE_LIBEIS
 
-#include <libei-1.0/libeis.h>
+#include <libeis.h>
 #include <stdio.h>
 
 #include "InputEmulation.h"
