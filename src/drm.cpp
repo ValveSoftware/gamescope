@@ -27,6 +27,7 @@
 
 #include "backend.h"
 #include "color_helpers.h"
+#include "config.hpp"
 #include "defer.hpp"
 #include "drm_include.h"
 #include "edid.h"
@@ -2099,6 +2100,10 @@ namespace gamescope
 
 		drm_log.infof("Connector %s -> %s - %s", m_Mutable.szName, m_Mutable.szMakePNP, m_Mutable.szModel );
 
+		m_Mutable.ValidDynamicRefreshRates = config_get_refresh_rates( m_Mutable.szMakePNP, pProduct->product );
+		if ( !m_Mutable.ValidDynamicRefreshRates.empty() )
+			drm_log.infof("Got refresh rates from the configuration file");
+
 		const bool bSteamDeckDisplay =
 			( m_Mutable.szMakePNP == "WLC"sv && m_Mutable.szModel == "ANX7530 U"sv ) ||
 			( m_Mutable.szMakePNP == "ANX"sv && m_Mutable.szModel == "ANX7530 U"sv ) ||
@@ -2114,17 +2119,20 @@ namespace gamescope
 			if ( pProduct->product == kPIDGalileoSDC )
 			{
 				m_Mutable.eKnownDisplay = GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_OLED_SDC;
-				m_Mutable.ValidDynamicRefreshRates = std::span( s_kSteamDeckOLEDRates );
+				if ( m_Mutable.ValidDynamicRefreshRates.empty() )
+					m_Mutable.ValidDynamicRefreshRates = std::span( s_kSteamDeckOLEDRates );
 			}
 			else if ( pProduct->product == kPIDGalileoBOE )
 			{
 				m_Mutable.eKnownDisplay = GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_OLED_BOE;
-				m_Mutable.ValidDynamicRefreshRates = std::span( s_kSteamDeckOLEDRates );
+				if ( m_Mutable.ValidDynamicRefreshRates.empty() )
+					m_Mutable.ValidDynamicRefreshRates = std::span( s_kSteamDeckOLEDRates );
 			}
 			else
 			{
 				m_Mutable.eKnownDisplay = GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_LCD;
-				m_Mutable.ValidDynamicRefreshRates = std::span( s_kSteamDeckLCDRates );
+				if ( m_Mutable.ValidDynamicRefreshRates.empty() )
+					m_Mutable.ValidDynamicRefreshRates = std::span( s_kSteamDeckLCDRates );
 			}
 		}
 
