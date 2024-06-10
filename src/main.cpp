@@ -115,6 +115,7 @@ const struct option *gamescope_options = (struct option[]){
 	{ "debug-hud", no_argument, nullptr, 'v' },
 	{ "debug-events", no_argument, nullptr, 0 },
 	{ "steam", no_argument, nullptr, 'e' },
+	{ "overlay-workaround", no_argument, nullptr, 0 },
 	{ "force-composition", no_argument, nullptr, 'c' },
 	{ "composite-debug", no_argument, nullptr, 0 },
 	{ "disable-xres", no_argument, nullptr, 'x' },
@@ -179,6 +180,7 @@ const char usage[] =
 	"  -T, --stats-path               write statistics to path\n"
 	"  -C, --hide-cursor-delay        hide cursor image after delay\n"
 	"  -e, --steam                    enable Steam integration\n"
+	"  --overlay-workaround           workaround steam overlay's issues with wayland by allowing the overlay attach to the game rather than gamescope\n"
 	"  --xwayland-count               create N xwayland servers\n"
 	"  --prefer-vk-device             prefer Vulkan device for compositing (ex: 1002:7300)\n"
 	"  --force-orientation            rotate the internal display (left, right, normal, upsidedown)\n"
