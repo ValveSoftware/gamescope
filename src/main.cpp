@@ -854,7 +854,7 @@ int main(int argc, char **argv)
 	if ( !GetBackend() )
 	{
 		fprintf( stderr, "Failed to create backend.\n" );
-		return 1;
+		exit(1);
 	}
 
 	g_ForcedNV12ColorSpace = parse_colorspace_string( getenv( "GAMESCOPE_NV12_COLORSPACE" ) );
@@ -862,13 +862,13 @@ int main(int argc, char **argv)
 	if ( !vulkan_init_formats() )
 	{
 		fprintf( stderr, "vulkan_init_formats failed\n" );
-		return 1;
+		exit(1);
 	}
 
 	if ( !vulkan_make_output() )
 	{
 		fprintf( stderr, "vulkan_make_output failed\n" );
-		return 1;
+		exit(1);
 	}
 
 	// Prevent our clients from connecting to the parent compositor
@@ -897,7 +897,7 @@ int main(int argc, char **argv)
 		if ( g_nNestedWidth != 0 )
 		{
 			fprintf( stderr, "Cannot specify -w without -h\n" );
-			return 1;
+			exit(1);
 		}
 		g_nNestedWidth = g_nOutputWidth;
 		g_nNestedHeight = g_nOutputHeight;
@@ -908,7 +908,9 @@ int main(int argc, char **argv)
 	if ( !wlserver_init() )
 	{
 		fprintf( stderr, "Failed to initialize wlserver\n" );
-		return 1;
+		exit(1);
+	} else {
+		GetBackend()->releaseLatch();
 	}
 
 	gamescope_xwayland_server_t *base_server = wlserver_get_xwayland_server(0);

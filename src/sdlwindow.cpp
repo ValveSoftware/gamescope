@@ -117,6 +117,8 @@ namespace gamescope
 		// IBackend
 		/////////////
 
+		virtual void latchWait() override;
+		virtual void releaseLatch() override;
 		virtual bool Init() override;
 		virtual bool PostInit() override;
 		virtual std::span<const char *const> GetInstanceExtensions() const override;
@@ -179,6 +181,7 @@ namespace gamescope
 		std::thread m_SDLThread;
 		std::atomic<SDLInitState> m_eSDLInit = { SDLInitState::SDLInit_Waiting };
 
+		std::atomic<bool> m_sdlLatch = { false };
 		std::atomic<bool> m_bApplicationGrabbed = { false };
 		std::atomic<bool> m_bApplicationVisible = { false };
 		std::atomic<std::shared_ptr<INestedHints::CursorInfo>> m_pApplicationCursor;
@@ -336,6 +339,17 @@ namespace gamescope
 		return true;
 	}
 
+	void CSDLBackend::releaseLatch()
+	{
+		m_sdlLatch = true;
+		m_sdlLatch.notify_one();
+	}
+
+	void CSDLBackend::latchWait()
+	{
+		m_sdlLatch.wait(false);
+	}
+	
 	std::span<const char *const> CSDLBackend::GetInstanceExtensions() const
 	{
 		return std::span<const char *const>{ m_pszInstanceExtensions.begin(), m_pszInstanceExtensions.end() };
@@ -587,6 +601,7 @@ namespace gamescope
 
 		static uint32_t fake_timestamp = 0;
 
+		latchWait();
 		SDL_Event event;
 		while( SDL_WaitEvent( &event ) )
 		{

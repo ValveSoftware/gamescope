@@ -165,6 +165,9 @@ namespace gamescope
     public:
         virtual ~IBackend() {}
 
+	virtual void latchWait() { return; }
+    	virtual void releaseLatch() { return; } //currently only used by sdl
+
         virtual bool Init() = 0;
         virtual bool PostInit() = 0;
         virtual std::span<const char *const> GetInstanceExtensions() const = 0;
