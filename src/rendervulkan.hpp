@@ -73,6 +73,10 @@ enum EStreamColorspace : int
 #include <vulkan/vulkan.h>
 #include <drm_fourcc.h>
 
+extern std::atomic<uint64_t> g_currentPresentWaitId;
+
+extern std::atomic<bool> g_presentThreadShouldExit;
+
 struct VulkanRenderer_t
 {
 	struct wlr_renderer base;

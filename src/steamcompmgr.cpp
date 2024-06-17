@@ -5857,6 +5857,14 @@ steamcompmgr_exit(void)
 		}
 	}
 
+    //request the present_wait thread to exit
+    //needed to avoid getting a segfault at exit due to race condition:
+    g_presentThreadShouldExit.store(true, std::memory_order_release);
+    g_currentPresentWaitId = 0; //present thread will check if it should exit if this is zero
+    g_currentPresentWaitId.notify_all();
+    g_presentThreadShouldExit.wait(true); //present thread will toggle this atomic when it sees the exit request
+                                          //this allows us to wait for present thread to close before deleting the backend
+
     gamescope::IBackend::Set( nullptr );
 
     wlserver_lock();

@@ -2694,7 +2694,8 @@ bool acquire_next_image( void )
 }
 
 
-static std::atomic<uint64_t> g_currentPresentWaitId = {0u};
+inline std::atomic<uint64_t> g_currentPresentWaitId = {0u};
+inline std::atomic<bool> g_presentThreadShouldExit = {false};
 static std::mutex present_wait_lock;
 
 extern void mangoapp_output_update( uint64_t vblanktime );
@@ -2718,6 +2719,10 @@ static void present_wait_thread_func( void )
 				uint64_t vblanktime = get_time_in_nanos();
 				GetVBlankTimer().MarkVBlank( vblanktime, true );
 				mangoapp_output_update( vblanktime );
+			} else if ( g_presentThreadShouldExit.load(std::memory_order_acquire)) {
+				g_presentThreadShouldExit = 0;
+				g_presentThreadShouldExit.notify_all();
+				return;
 			}
 		}
 	}
