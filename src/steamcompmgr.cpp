@@ -4857,11 +4857,11 @@ handle_selection_request(xwayland_ctx_t *ctx, XSelectionRequestEvent *ev)
 	{
 		Atom targetList[] = {
 			ctx->atoms.targets,
-			XA_STRING,
+			ctx->atoms.utf8StringAtom,
 		};
 
 		XChangeProperty(ctx->dpy, ev->requestor, ev->property, XA_ATOM, 32, PropModeReplace,
-				(unsigned char *)&targetList, 2);
+				(unsigned char *)&targetList, sizeof(targetList) / sizeof(targetList[0]));
 		response.xselection.property = ev->property;
 		response.xselection.target = ev->target;
 	}
