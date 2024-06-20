@@ -1,4 +1,5 @@
 #pragma once
+#include "tracy_include.h"
 
 namespace gamescope
 {

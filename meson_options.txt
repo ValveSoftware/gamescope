@@ -8,3 +8,19 @@ option('enable_gamescope',           type : 'boolean', value : true, description
 option('enable_gamescope_wsi_layer', type : 'boolean', value : true, description: 'Build Gamescope layer')
 option('enable_openvr_support',      type : 'boolean', value : true, description: 'OpenVR Integrations')
 option('benchmark', type: 'feature', description: 'Benchmark tools')
+option('gpuvis', type: 'boolean', value: true, description: 'Build with gpuvis tracing [default: true]')
+option('tracy_enable', type: 'boolean', value: false, description: 'Build with tracy profiler integration. Note: it is recommended to build gamescope w/ optimizations enabled when using Tracy [default: false]')
+
+option('tracy_on_demand', type: 'boolean', value: true, description: 'Only start profiling w/ tracy after establishing connection w/ profiling server [default: true]. This slightly increases runtime overhead. If tracy_on_demand is off, Tracy will collect and save profiling events from gamescope even before it connects to a profiler server. That means that if tracy_on_demand is off, Tracy will create a backlog of profiler events until you either connect to the profiler server, close gamescope, or run out of storage.')  
+
+option('tracy_only_localhost', type: 'boolean', value: true, description: 'Only allow tracy to connect to LOCALHOST profiler server(s). If set to false, then allow tracy to connect to remote profiler server(s). [default: true]')
+
+option('tracy_collect_callstacks', type: 'boolean', value: false, description: 'Capture call stacks in certain hot sections of code. (this option does not collect callstacks from *all* of the instrumented code, it only does so for sections that are both small & frequently run) [default: false] Does finer-grained profiling at the cost of extra runtime overhead.')
+
+option('tracy_callstack_depth', type: 'integer', value: 4, description: 'Recursive call stack capture depth for tracy. [default: 4] No effect if tracy_collect_callstacks=false.')
+
+option('tracy_no_sampling', type : 'boolean', value : true, description : 'Disable automatic call stack sampling. Does not effect callstack collection from instrumented code enabled w/ tracy_collect_callstacks. [default: true]')
+
+option('tracy_no_system_tracing', type : 'boolean', value : true, description : 'Disable systrace sampling [default: true]')
+
+option('tracy_debuginfod', type : 'boolean', value : true, description : 'Enable debuginfod support [default: true]')

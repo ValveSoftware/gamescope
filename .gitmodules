@@ -19,3 +19,6 @@
 [submodule "thirdparty/SPIRV-Headers"]
 	path = thirdparty/SPIRV-Headers
 	url = https://github.com/KhronosGroup/SPIRV-Headers/
+[submodule "thirdparty/tracy"]
+	path = thirdparty/tracy
+	url = https://github.com/wolfpld/tracy.git
