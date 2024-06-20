@@ -180,7 +180,16 @@ gamescope_version = vcs_tag(
   )
 
 if pipewire_dep.found()
-  executable( 'gamescopestream', 'gamescopestream.cpp', protocols_client_src, dependencies: [ pipewire_dep, dep_wayland, libdecor_dep ], install: true )
+  executable(
+    'gamescopestream',
+    'gamescopestream.cpp', gamescope_version, protocols_client_src,
+    dependencies: [
+      pipewire_dep,
+      dep_wayland,
+      libdecor_dep
+    ],
+    install: true
+  )
 endif
 
 benchmark_dep = dependency('benchmark', required: get_option('benchmark'), disabler: true)
