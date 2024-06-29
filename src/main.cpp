@@ -144,6 +144,12 @@ const struct option *gamescope_options = (struct option[]){
 	// Steam Deck options
 	{ "mura-map", required_argument, nullptr, 0 },
 
+	// Pointer options
+	{ "tap-to-click", no_argument, nullptr, 0 },
+	{ "tap-to-drag", no_argument, nullptr, 0 },
+	{ "drag-lock", no_argument, nullptr, 0 },
+	{ "natural-scrolling", required_argument, nullptr, 0 },
+
 	{} // keep last
 };
 
@@ -255,6 +261,16 @@ const char usage[] =
 	"Steam Deck options:\n"
 	"  --mura-map                     Set the mura compensation map to use for the display. Takes in a path to the mura map.\n"
 	"\n"
+	"Libinput Pointer options:\n"
+	"  --tap-to-click                 enable tap-to-click feature for pointer devices\n"
+	"  --tap-and-drag                 enable tap-and-drag feature for pointer devices\n"
+	"  --drag-lock                    enable drag-lock feature for pointer devices\n"
+	"  --natural-scrolling            enable natural scrolling for ...\n"
+	"                                     none => No pointer device\n"
+	"                                     touchpad => Only for touchpad\n"
+	"                                     mouse => Only for mouse\n"
+	"                                     all => All pointer device\n"
+	"\n"
 	"Keyboard shortcuts:\n"
 	"  Super + F                      toggle fullscreen\n"
 	"  Super + N                      toggle nearest neighbour filtering\n"
@@ -311,6 +327,11 @@ float g_flMaxWindowScale = FLT_MAX;
 
 uint32_t g_preferVendorID = 0;
 uint32_t g_preferDeviceID = 0;
+
+bool g_tapToClick = false;
+bool g_tapAndDrag = false;
+bool g_dragLock = false;
+SelectedPointerType g_naturalScrolling = SelectedPointerType::NONE;
 
 pthread_t g_mainThread;
 
@@ -427,6 +448,25 @@ static enum gamescope::GamescopeBackend parse_backend_name(const char *str)
 	} else {
 		fprintf( stderr, "gamescope: invalid value for --backend\n" );
 		exit(1);
+	}
+}
+
+static SelectedPointerType parse_natural_scrolling(const char *str)
+{
+	if (!str || !*str) {
+		return SelectedPointerType::NONE;
+	}
+	if (!strcmp(str, "all")) {
+		return SelectedPointerType::ALL;
+	} else if (!strcmp(str, "touchpad")) {
+		return SelectedPointerType::TOUCHPAD;
+	} else if (!strcmp(str, "mouse")) {
+		return SelectedPointerType::MOUSE;
+	} else if (!strcmp(str, "none")) {
+		return SelectedPointerType::NONE;
+	} else {
+		fprintf( stderr, "gamescope: invalid value for --natural-scrolling\n" );
+		return SelectedPointerType::NONE;
 	}
 }
 
@@ -806,6 +846,14 @@ int main(int argc, char **argv)
 					g_nCursorScaleHeight = atoi(optarg);
 				} else if (strcmp(opt_name, "mangoapp") == 0) {
 					g_bLaunchMangoapp = true;
+				} else if (strcmp(opt_name, "tap-to-click") == 0) {
+					g_tapToClick = true;
+				} else if (strcmp(opt_name, "tap-and-drag") == 0) {
+					g_tapAndDrag = true;
+				} else if (strcmp(opt_name, "drag-lock") == 0) {
+					g_dragLock = true;
+				} else if (strcmp(opt_name, "natural-scrolling") == 0) {
+					g_naturalScrolling = parse_natural_scrolling( optarg );
 				}
 				break;
 			case '?':
