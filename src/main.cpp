@@ -665,7 +665,7 @@ static void UpdateCompatEnvVars()
 	// A sane default here.
 	setenv( "GAMESCOPE_NV12_COLORSPACE", "k_EStreamColorspace_BT601", 0 );
 
-	if ( g_bLaunchMangoapp )
+	if ( g_bLaunchMangoapp && !getenv("MANGOHUD_CONFIGFILE") )
 	{
 		char szMangoConfigPath[ PATH_MAX ];
 		int nMangoConfigFd = gamescope::MakeTempFile( szMangoConfigPath, gamescope::k_szGamescopeTempMangoappTemplate );
