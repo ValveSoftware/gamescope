@@ -1,6 +1,3 @@
-[submodule "subprojects/wlroots"]
-	path = subprojects/wlroots
-	url = https://github.com/Joshua-Ashton/wlroots.git
 [submodule "subprojects/libliftoff"]
 	path = subprojects/libliftoff
 	url = https://gitlab.freedesktop.org/emersion/libliftoff.git
@@ -19,3 +16,7 @@
 [submodule "thirdparty/SPIRV-Headers"]
 	path = thirdparty/SPIRV-Headers
 	url = https://github.com/KhronosGroup/SPIRV-Headers/
+[submodule "subprojects/wlroots"]
+	path = subprojects/wlroots
+	url = https://gitlab.freedesktop.org/wlroots/wlroots.git
+	branch = master

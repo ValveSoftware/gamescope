@@ -2,6 +2,16 @@
 
 #pragma once
 
+//two function prototypes from wlr/types/wlr_linux_drm_syncobj_v1.h would cause linker errors 
+//due to c++ vs c linkage weirdness
+//need to ignore the prototypes from the header, and instead use versions w/ 'extern "C"' :
+#define wlr_linux_drm_syncobj_v1_get_surface_state wlr_linux_drm_syncobj_v1_get_surface_state_C_LINKAGE
+#define wlr_linux_drm_syncobj_manager_v1_create wlr_linux_drm_syncobj_manager_v1_create_C_LINKAGE
+#include <wlr/types/wlr_linux_drm_syncobj_v1.h>
+
+#undef wlr_linux_drm_syncobj_v1_get_surface_state
+#undef wlr_linux_drm_syncobj_manager_v1_create
+
 #include <wayland-server-core.h>
 #include <atomic>
 #include <vector>
@@ -42,8 +52,8 @@ struct wlserver_vk_swapchain_feedback
 
 struct GamescopeTimelinePoint
 {
-	struct wlr_render_timeline *pTimeline = nullptr;
-	uint64_t ulPoint = 0;
+	decltype(wlr_linux_drm_syncobj_surface_v1_state::acquire_timeline) pTimeline = nullptr;
+	decltype(wlr_linux_drm_syncobj_surface_v1_state::acquire_point) ulPoint = 0;
 
 	void Release();
 };

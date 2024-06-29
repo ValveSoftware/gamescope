@@ -25,7 +25,6 @@
 #include <wlr/backend/multi.h>
 #include <wlr/interfaces/wlr_keyboard.h>
 #include <wlr/render/wlr_renderer.h>
-#include <wlr/render/timeline.h>
 #include <wlr/types/wlr_compositor.h>
 #include <wlr/types/wlr_keyboard.h>
 #include <wlr/types/wlr_pointer.h>
@@ -37,7 +36,7 @@
 #include <wlr/types/wlr_xdg_shell.h>
 #include <wlr/types/wlr_relative_pointer_v1.h>
 #include <wlr/types/wlr_pointer_constraints_v1.h>
-#include <wlr/types/wlr_linux_drm_syncobj_v1.h>
+#include <wlr/render/drm_syncobj.h>
 #include <wlr/types/wlr_layer_shell_v1.h>
 #include <wlr/util/region.h>
 #include "wlr_end.hpp"
@@ -69,6 +68,11 @@
 #include <algorithm>
 #include <list>
 #include <set>
+
+extern "C" {
+   __attribute__((visibility("hidden"))) struct wlr_linux_drm_syncobj_surface_v1_state * wlr_linux_drm_syncobj_v1_get_surface_state(struct wlr_surface *wlr_surface);
+   __attribute__((visibility("hidden"))) struct wlr_linux_drm_syncobj_manager_v1 *wlr_linux_drm_syncobj_manager_v1_create(struct wl_display *display, uint32_t version, int drm_fd);
+}
 
 static LogScope wl_log("wlserver");
 
@@ -119,7 +123,7 @@ void GamescopeTimelinePoint::Release()
 
 	//fprintf( stderr, "Release: %lu\n", ulPoint );
 	drmSyncobjTimelineSignal( pTimeline->drm_fd, &pTimeline->handle, &ulPoint, 1 );
-	wlr_render_timeline_unref( pTimeline );
+	wlr_drm_syncobj_timeline_unref( pTimeline );
 }
 
 //
@@ -131,7 +135,7 @@ void GamescopeTimelinePoint::Release()
 
 static std::optional<GamescopeAcquireTimelineState> TimelinePointToEventFd( const std::optional<GamescopeTimelinePoint>& oPoint )
 {
-	if (!oPoint)
+	if (!oPoint  || !(oPoint->pTimeline) )
 		return std::nullopt;
 
 	uint64_t uSignalledPoint = 0;
@@ -182,8 +186,8 @@ std::optional<ResListEntry_t> PrepareCommit( struct wlr_surface *surf, struct wl
 
 	const auto& pFeedback = wlserver_surface_swapchain_feedback(surf);
 
-	wlr_linux_drm_syncobj_surface_v1_state *pSyncState =
-		wlr_linux_drm_syncobj_v1_get_surface_state( wlserver.wlr.drm_syncobj_manager_v1, surf );
+	struct wlr_linux_drm_syncobj_surface_v1_state *pSyncState =
+		wlr_linux_drm_syncobj_v1_get_surface_state( surf );
 
 	auto oAcquirePoint = !pSyncState ? std::nullopt : std::optional<GamescopeTimelinePoint> {
 			std::in_place_t{},
@@ -200,7 +204,7 @@ std::optional<ResListEntry_t> PrepareCommit( struct wlr_surface *surf, struct wl
 		}
 
 		oReleasePoint.emplace(
-			  wlr_render_timeline_ref( pSyncState->release_timeline ),
+			  wlr_drm_syncobj_timeline_ref( pSyncState->release_timeline ),
 			  pSyncState->release_point 
 		);
 	}
