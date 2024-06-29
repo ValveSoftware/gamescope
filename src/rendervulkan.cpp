@@ -1431,8 +1431,10 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z)
 	insertBarrier();
 
 	VkDescriptorSet descriptorSet = m_device->descriptorSet();
-
-	std::array<VkWriteDescriptorSet, 7> writeDescriptorSets;
+	
+	bool bYcbcr = m_target->isYcbcr();
+	size_t wDescLen = 6 + (bYcbcr ? 1 : 0);
+	VkWriteDescriptorSet writeDescriptorSets[wDescLen];
 	std::array<VkDescriptorImageInfo, VKR_SAMPLER_SLOTS> imageDescriptors = {};
 	std::array<VkDescriptorImageInfo, VKR_SAMPLER_SLOTS> ycbcrImageDescriptors = {};
 	std::array<VkDescriptorImageInfo, VKR_TARGET_SLOTS> targetDescriptors = {};
@@ -1479,18 +1481,21 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z)
 		.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 		.pImageInfo = imageDescriptors.data(),
 	};
+	
+	size_t offset = 3;
+	if (bYcbcr) {
+		writeDescriptorSets[++offset] = {
+			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+			.dstSet = descriptorSet,
+			.dstBinding = 4,
+			.dstArrayElement = 0,
+			.descriptorCount = ycbcrImageDescriptors.size(),
+			.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+			.pImageInfo = ycbcrImageDescriptors.data(),
+		};
+	}
 
-	writeDescriptorSets[4] = {
-		.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-		.dstSet = descriptorSet,
-		.dstBinding = 4,
-		.dstArrayElement = 0,
-		.descriptorCount = ycbcrImageDescriptors.size(),
-		.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-		.pImageInfo = ycbcrImageDescriptors.data(),
-	};
-
-	writeDescriptorSets[5] = {
+	writeDescriptorSets[++offset] = {
 		.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 		.dstSet = descriptorSet,
 		.dstBinding = 5,
@@ -1500,7 +1505,7 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z)
 		.pImageInfo = shaperLutDescriptor.data(),
 	};
 
-	writeDescriptorSets[6] = {
+	writeDescriptorSets[++offset] = {
 		.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 		.dstSet = descriptorSet,
 		.dstBinding = 6,
@@ -1517,8 +1522,8 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z)
 	for (uint32_t i = 0; i < VKR_SAMPLER_SLOTS; i++)
 	{
 		imageDescriptors[i].sampler = m_device->sampler(m_samplerState[i]);
-		imageDescriptors[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-		ycbcrImageDescriptors[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+		imageDescriptors[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+		ycbcrImageDescriptors[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 		if (m_boundTextures[i] == nullptr)
 			continue;
 
@@ -1550,7 +1555,7 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z)
 		lut3DDescriptor[i].imageView = m_lut3D[i] ? m_lut3D[i]->srgbView() : VK_NULL_HANDLE;
 	}
 
-	if (!m_target->isYcbcr())
+	if (!bYcbcr)
 	{
 		targetDescriptors[0].imageView = m_target->srgbView();
 		targetDescriptors[0].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
@@ -1564,7 +1569,7 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z)
 		targetDescriptors[1].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 	}
 
-	m_device->vk.UpdateDescriptorSets(m_device->device(), writeDescriptorSets.size(), writeDescriptorSets.data(), 0, nullptr);
+	m_device->vk.UpdateDescriptorSets(m_device->device(), wDescLen, writeDescriptorSets, 0, nullptr);
 
 	m_device->vk.CmdBindDescriptorSets(m_cmdBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_device->pipelineLayout(), 0, 1, &descriptorSet, 0, nullptr);
 
