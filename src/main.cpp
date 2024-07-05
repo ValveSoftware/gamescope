@@ -145,11 +145,17 @@ const struct option *gamescope_options = (struct option[]){
 	// Steam Deck options
 	{ "mura-map", required_argument, nullptr, 0 },
 
-	// Pointer options
+	// Libinput options
 	{ "tap-to-click", no_argument, nullptr, 0 },
 	{ "tap-to-drag", no_argument, nullptr, 0 },
 	{ "drag-lock", no_argument, nullptr, 0 },
+	{ "middle-emulation", no_argument, nullptr, 0 },
+	{ "disable-while-typing", no_argument, nullptr, 0 },
+	{ "disable-while-trackpointing", no_argument, nullptr, 0 },
+	{ "left-handed", no_argument, nullptr, 0 },
 	{ "natural-scrolling", required_argument, nullptr, 0 },
+	{ "pointer-accel-profile", required_argument, nullptr, 0 },
+	{ "pointer-accel-speed", required_argument, nullptr, 0 },
 
 	{} // keep last
 };
@@ -266,11 +272,19 @@ const char usage[] =
 	"  --tap-to-click                 enable tap-to-click feature for pointer devices\n"
 	"  --tap-and-drag                 enable tap-and-drag feature for pointer devices\n"
 	"  --drag-lock                    enable drag-lock feature for pointer devices\n"
+	"  --middle-emulation             enable middle button emulation for pointer devices\n"
+	"  --left-handed                  enable left handed mode for pointer devices\n"
+	"  --disable-while-typing         disable pointer devices while typing\n"
+	"  --disable-while-trackpointing  disable pointer devices while trackpointing\n"
 	"  --natural-scrolling            enable natural scrolling for ...\n"
-	"                                     none => No pointer device\n"
-	"                                     touchpad => Only for touchpad\n"
-	"                                     mouse => Only for mouse\n"
+	"                                     none => No pointer device (default)\n"
+	"                                     touchpad => Only touchpad\n"
+	"                                     mouse => Only mouse\n"
 	"                                     all => All pointer device\n"
+	"  --pointer-accel-profile        set acceleration profile for pointer devices to ...\n"
+	"                                     adaptive => takes the current speed of the device into account when deciding on acceleration (default)\n"
+	"                                     flat => simply a constant factor applied to all device deltas, regardless of the speed of motion\n"
+	"  --pointer-accel-speed          set acceleration speed for pointer devices within [-1, 1] (default 0)\n"
 	"\n"
 	"Keyboard shortcuts:\n"
 	"  Super + F                      toggle fullscreen\n"
@@ -324,7 +338,13 @@ uint32_t g_preferDeviceID = 0;
 bool g_tapToClick = false;
 bool g_tapAndDrag = false;
 bool g_dragLock = false;
+bool g_middleEmu = false;
+bool g_leftHanded = false;
+bool g_dwt = false;
+bool g_dwtp = false;
 SelectedPointerType g_naturalScrolling = SelectedPointerType::NONE;
+PointerAccelProfileType g_accelProfile = PointerAccelProfileType::ADAPTIVE;
+double g_accelSpeed = false;
 
 pthread_t g_mainThread;
 
@@ -472,6 +492,19 @@ static SelectedPointerType parse_selected_pointer_type(const char* str)
         return SelectedPointerType::MOUSE;
     else
 	 	return SelectedPointerType::NONE;
+}
+
+static PointerAccelProfileType parse_pointer_accel_profile(const char* str)
+{
+    if (!str || !*str)
+        return PointerAccelProfileType::ADAPTIVE;
+
+    if (!strcmp(str, "adaptive"))
+        return PointerAccelProfileType::ADAPTIVE;
+    else if (!strcmp(str, "flat"))
+        return PointerAccelProfileType::FLAT;
+    else
+        return PointerAccelProfileType::ADAPTIVE;
 }
 
 static void handle_signal( int sig )
@@ -795,8 +828,20 @@ int main(int argc, char **argv)
 					g_tapAndDrag = true;
 				} else if (strcmp(opt_name, "drag-lock") == 0) {
 					g_dragLock = true;
+				} else if (strcmp(opt_name, "middle-emulation") == 0) {
+					g_middleEmu = true;
+				} else if (strcmp(opt_name, "left-handed") == 0) {
+					g_leftHanded = true;
+				} else if (strcmp(opt_name, "disable-while-typing") == 0) {
+					g_dwt = true;
+				} else if (strcmp(opt_name, "disable-while-trackpointing") == 0) {
+					g_dwtp = true;
 				} else if (strcmp(opt_name, "natural-scrolling") == 0) {
 					g_naturalScrolling = parse_selected_pointer_type( optarg );
+				} else if (strcmp(opt_name, "pointer-accel-profile") == 0) {
+					g_accelProfile = parse_pointer_accel_profile( optarg );
+				} else if (strcmp(opt_name, "pointer-accel-speed") == 0) {
+					g_accelSpeed = atof( optarg );
 				}
 				break;
 			case '?':
