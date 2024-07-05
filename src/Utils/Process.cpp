@@ -18,6 +18,7 @@
 #include <sys/procctl.h>
 #endif
 
+#include <pthread.h>
 #include <stdlib.h>
 #include <dirent.h>
 #include <unistd.h>
@@ -472,7 +473,7 @@ namespace gamescope::Process
         struct sched_param newSched{};
         sched_getparam( 0, &newSched );
         newSched.sched_priority = sched_get_priority_min( SCHED_RR );
-        if ( sched_setscheduler( 0, SCHED_RR, &newSched ) )
+        if ( pthread_setschedparam( pthread_self(), SCHED_RR, &newSched ) )
         {
             s_ProcessLog.errorf_errno( "Failed to set realtime scheduling." );
             return false;
@@ -491,7 +492,7 @@ namespace gamescope::Process
         if ( !g_oOldSchedulerInfo )
             return;
 
-        if ( sched_setscheduler( 0, g_oOldSchedulerInfo->nPolicy, &g_oOldSchedulerInfo->SchedParam ) )
+        if ( pthread_setschedparam( pthread_self(), g_oOldSchedulerInfo->nPolicy, &g_oOldSchedulerInfo->SchedParam ) )
         {
             s_ProcessLog.errorf_errno( "Failed to restore from realtime scheduling." );
             return;
