@@ -21,6 +21,7 @@
 #include <pthread.h>
 #include <stdlib.h>
 #include <dirent.h>
+#include <limits.h>
 #include <unistd.h>
 #include <sys/types.h>
 #include <signal.h>
