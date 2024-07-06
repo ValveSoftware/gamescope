@@ -15,7 +15,7 @@ layout(
 
 vec4 sampleLayer(uint layerIdx, vec2 uv) {
     if ((c_ycbcrMask & (1 << layerIdx)) != 0)
-        return srgbToLinear(sampleLayer(s_ycbcr_samplers[layerIdx], layerIdx, uv, false));
+        return sampleLayer(s_ycbcr_samplers[layerIdx], layerIdx, uv, false);
     return sampleLayer(s_samplers[layerIdx], layerIdx, uv, true);
 }
 

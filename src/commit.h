@@ -1,6 +1,6 @@
 #include "steamcompmgr_shared.hpp"
 
-struct commit_t final : public gamescope::IWaitable, public gamescope::RcObject
+struct commit_t final : public gamescope::RcObject, public gamescope::IWaitable
 {
 	commit_t();
     ~commit_t();
@@ -21,8 +21,7 @@ struct commit_t final : public gamescope::IWaitable, public gamescope::RcObject
 	void SetReleasePoint( const std::optional<GamescopeTimelinePoint>& oReleasePoint );
 
 	struct wlr_buffer *buf = nullptr;
-	gamescope::Rc<gamescope::IBackendFb> pBackendFb;
-	std::shared_ptr<CVulkanTexture> vulkanTex;
+	gamescope::Rc<CVulkanTexture> vulkanTex;
 	uint64_t commitID = 0;
 	bool done = false;
 	bool async = false;

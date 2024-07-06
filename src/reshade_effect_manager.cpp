@@ -931,7 +931,7 @@ bool ReshadeEffectPipeline::init(CVulkanDevice *device, const ReshadeEffectKey &
 
     // Create Textures
     {
-        m_rt = std::make_shared<CVulkanTexture>();
+        m_rt = new CVulkanTexture();
         CVulkanTexture::createFlags flags;
         flags.bSampled = true;
         flags.bStorage = true;
@@ -943,10 +943,10 @@ bool ReshadeEffectPipeline::init(CVulkanDevice *device, const ReshadeEffectKey &
 
     for (const auto& tex : m_module->textures)
     {
-        std::shared_ptr<CVulkanTexture> texture;
+        gamescope::Rc<CVulkanTexture> texture;
         if (tex.semantic.empty())
         {
-            texture = std::make_shared<CVulkanTexture>();
+            texture = new CVulkanTexture();
             CVulkanTexture::createFlags flags;
             flags.bSampled = true;
             // Always need storage.
@@ -1081,7 +1081,7 @@ bool ReshadeEffectPipeline::init(CVulkanDevice *device, const ReshadeEffectKey &
     {
         for (const auto& sampler : m_module->samplers)
         {
-            std::shared_ptr<CVulkanTexture> tex;
+            gamescope::Rc<CVulkanTexture> tex;
 
             tex = findTexture(sampler.texture_name);
             if (!tex)
@@ -1318,7 +1318,7 @@ bool ReshadeEffectPipeline::init(CVulkanDevice *device, const ReshadeEffectKey &
 
             for (int i = 0; i < 8; i++)
             {
-                std::shared_ptr<CVulkanTexture> rt;
+                gamescope::Rc<CVulkanTexture> rt;
                 if (i == 0 && pass.render_target_names[0].empty())
                     rt = m_rt;
                 else if (pass.render_target_names[i].empty())
@@ -1538,7 +1538,7 @@ void ReshadeEffectPipeline::update()
         uniform->update(m_mappedPtr);
 }
 
-uint64_t ReshadeEffectPipeline::execute(std::shared_ptr<CVulkanTexture> inImage, std::shared_ptr<CVulkanTexture> *outImage)
+uint64_t ReshadeEffectPipeline::execute(gamescope::Rc<CVulkanTexture> inImage, gamescope::Rc<CVulkanTexture> *outImage)
 {
     CVulkanDevice *device = m_device;
     this->update();
@@ -1633,7 +1633,7 @@ uint64_t ReshadeEffectPipeline::execute(std::shared_ptr<CVulkanTexture> inImage,
     if (m_rt)
         m_cmdBuffer->discardImage(m_rt.get());
 
-    std::shared_ptr<CVulkanTexture> lastRT;
+    gamescope::Rc<CVulkanTexture> lastRT;
 
     auto& technique = m_module->techniques[m_key.techniqueIdx];
     uint32_t passIdx = 0;
@@ -1652,7 +1652,7 @@ uint64_t ReshadeEffectPipeline::execute(std::shared_ptr<CVulkanTexture> inImage,
 
         m_cmdBuffer->insertBarrier();
 
-        std::array<std::shared_ptr<CVulkanTexture>, 8> rts{};
+        std::array<gamescope::Rc<CVulkanTexture>, 8> rts{};
 
         if (!pass.cs_entry_point.empty())
         {
@@ -1746,7 +1746,7 @@ uint64_t ReshadeEffectPipeline::execute(std::shared_ptr<CVulkanTexture> inImage,
     return device->submitInternal(&*m_cmdBuffer);
 }
 
-std::shared_ptr<CVulkanTexture> ReshadeEffectPipeline::findTexture(std::string_view name)
+gamescope::Rc<CVulkanTexture> ReshadeEffectPipeline::findTexture(std::string_view name)
 {
     for (size_t i = 0; i < m_module->textures.size(); i++)
     {

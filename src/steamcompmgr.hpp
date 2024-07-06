@@ -104,7 +104,7 @@ private:
 	int m_x = 0, m_y = 0;
 	int m_hotspotX = 0, m_hotspotY = 0;
 
-	std::shared_ptr<CVulkanTexture> m_texture;
+	gamescope::OwningRc<CVulkanTexture> m_texture;
 	bool m_dirty;
 	bool m_imageEmpty;
 

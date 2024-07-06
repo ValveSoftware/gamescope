@@ -12,8 +12,9 @@
 
 #include "main.hpp"
 #include "pipewire.hpp"
-#include "pipewire_requested_size.hpp"
 #include "log.hpp"
+
+#include <spa/debug/format.h>
 
 static LogScope pwr_log("pipewire");
 
@@ -34,7 +35,6 @@ static uint32_t s_nOutputWidth;
 static uint32_t s_nOutputHeight;
 
 static void destroy_buffer(struct pipewire_buffer *buffer) {
-	assert(!buffer->copying);
 	assert(buffer->buffer == nullptr);
 
 	switch (buffer->type) {
@@ -55,6 +55,11 @@ static void destroy_buffer(struct pipewire_buffer *buffer) {
 	}
 
 	delete buffer;
+}
+
+void pipewire_destroy_buffer(struct pipewire_buffer *buffer)
+{
+	destroy_buffer(buffer);
 }
 
 static void calculate_capture_size()
@@ -93,6 +98,7 @@ static void build_format_params(struct spa_pod_builder *builder, spa_video_forma
 		SPA_FORMAT_VIDEO_size, SPA_POD_Rectangle(&size),
 		SPA_FORMAT_VIDEO_framerate, SPA_POD_Fraction(&framerate),
 		SPA_FORMAT_VIDEO_requested_size, SPA_POD_CHOICE_RANGE_Rectangle( &min_requested_size, &min_requested_size, &max_requested_size ),
+		SPA_FORMAT_VIDEO_gamescope_focus_appid, SPA_POD_CHOICE_RANGE_Long( 0ll, 0ll, INT32_MAX ),
 		0);
 	if (format == SPA_VIDEO_FORMAT_NV12) {
 		spa_pod_builder_add(builder,
@@ -121,6 +127,7 @@ static void build_format_params(struct spa_pod_builder *builder, spa_video_forma
 		SPA_FORMAT_VIDEO_size, SPA_POD_Rectangle(&size),
 		SPA_FORMAT_VIDEO_framerate, SPA_POD_Fraction(&framerate),
 		SPA_FORMAT_VIDEO_requested_size, SPA_POD_CHOICE_RANGE_Rectangle( &min_requested_size, &min_requested_size, &max_requested_size ),
+		SPA_FORMAT_VIDEO_gamescope_focus_appid, SPA_POD_CHOICE_RANGE_Long( 0ll, 0ll, INT32_MAX ),
 		0);
 	if (format == SPA_VIDEO_FORMAT_NV12) {
 		spa_pod_builder_add(builder,
@@ -135,6 +142,9 @@ static void build_format_params(struct spa_pod_builder *builder, spa_video_forma
 			0);
 	}
 	params.push_back((const struct spa_pod *) spa_pod_builder_pop(builder, &obj_frame));
+
+//	for (auto& param : params)
+//		spa_debug_format(2, nullptr, param);
 }
 
 
@@ -167,7 +177,7 @@ static void request_buffer(struct pipewire_state *state)
 
 static void copy_buffer(struct pipewire_state *state, struct pipewire_buffer *buffer)
 {
-	std::shared_ptr<CVulkanTexture> &tex = buffer->texture;
+	gamescope::OwningRc<CVulkanTexture> &tex = buffer->texture;
 	assert(tex != nullptr);
 
 	struct pw_buffer *pw_buffer = buffer->buffer;
@@ -325,16 +335,18 @@ static void stream_handle_param_changed(void *data, uint32_t id, const struct sp
 	if (param == nullptr || id != SPA_PARAM_Format)
 		return;
 
-	struct spa_rectangle requested_size = { 0, 0 };
+	struct spa_gamescope gamescope_info{};
 
-	int ret = spa_format_video_raw_parse_with_requested_size(param, &state->video_info, &requested_size);
+	int ret = spa_format_video_raw_parse_with_gamescope(param, &state->video_info, &gamescope_info);
 	if (ret < 0) {
 		pwr_log.errorf("spa_format_video_raw_parse failed");
 		return;
 	}
-	s_nRequestedWidth = requested_size.width;
-	s_nRequestedHeight = requested_size.height;
+	s_nRequestedWidth = gamescope_info.requested_size.width;
+	s_nRequestedHeight = gamescope_info.requested_size.height;
 	calculate_capture_size();
+
+	state->gamescope_info = gamescope_info;
 
 	int bpp = 4;
 	if (state->video_info.format == SPA_VIDEO_FORMAT_NV12) {
@@ -438,6 +450,7 @@ static void stream_handle_add_buffer(void *user_data, struct pw_buffer *pw_buffe
 	struct pipewire_buffer *buffer = new pipewire_buffer();
 	buffer->buffer = pw_buffer;
 	buffer->video_info = state->video_info;
+	buffer->gamescope_info = state->gamescope_info;
 
 	bool is_dmabuf = (spa_data->type & (1 << SPA_DATA_DmaBuf)) != 0;
 	bool is_memfd = (spa_data->type & (1 << SPA_DATA_MemFd)) != 0;
@@ -474,7 +487,7 @@ static void stream_handle_add_buffer(void *user_data, struct pw_buffer *pw_buffe
 
 	uint32_t drmFormat = spa_format_to_drm(state->video_info.format);
 
-	buffer->texture = std::make_shared<CVulkanTexture>();
+	buffer->texture = new CVulkanTexture();
 	CVulkanTexture::createFlags screenshotImageFlags;
 	screenshotImageFlags.bMappable = true;
 	screenshotImageFlags.bTransferDst = true;
@@ -571,8 +584,6 @@ static void stream_handle_remove_buffer(void *data, struct pw_buffer *pw_buffer)
 
 	if (!buffer->copying) {
 		destroy_buffer(buffer);
-	} else {
-		nudge_pipewire();
 	}
 }
 
@@ -718,6 +729,12 @@ bool init_pipewire(void)
 uint32_t get_pipewire_stream_node_id(void)
 {
 	return pipewire_state.stream_node_id;
+}
+
+bool pipewire_is_streaming()
+{
+	struct pipewire_state *state = &pipewire_state;
+	return state->streaming;
 }
 
 struct pipewire_buffer *dequeue_pipewire_buffer(void)

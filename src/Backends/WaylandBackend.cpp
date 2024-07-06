@@ -4,10 +4,11 @@
 #include "vblankmanager.hpp"
 #include "steamcompmgr.hpp"
 #include "edid.h"
-#include "defer.hpp"
+#include "Utils/Defer.h"
 #include "convar.h"
 #include "refresh_rate.h"
 #include "waitable.h"
+#include "Utils/TempFiles.h"
 
 #include <cstring>
 #include <unordered_map>
@@ -30,6 +31,7 @@
 #include <pointer-constraints-unstable-v1-client-protocol.h>
 #include <relative-pointer-unstable-v1-client-protocol.h>
 #include <fractional-scale-v1-client-protocol.h>
+#include <xdg-toplevel-icon-v1-client-protocol.h>
 #include "wlr_end.hpp"
 
 #include "drm_include.h"
@@ -40,7 +42,7 @@ extern bool g_bForceHDR10OutputDebug;
 extern bool g_bBorderlessOutputWindow;
 extern bool g_bAllowVRR;
 
-extern bool alwaysComposite;
+extern gamescope::ConVar<bool> cv_composite_force;
 extern bool g_bColorSliderInUse;
 extern bool fadingOut;
 extern std::string g_reshade_effect;
@@ -73,6 +75,7 @@ namespace gamescope
 
     gamescope::ConVar<bool> cv_wayland_mouse_warp_without_keyboard_focus( "wayland_mouse_warp_without_keyboard_focus", true, "Should we only forward mouse warps to the app when we have keyboard focus?" );
     gamescope::ConVar<bool> cv_wayland_mouse_relmotion_without_keyboard_focus( "wayland_mouse_relmotion_without_keyboard_focus", false, "Should we only forward mouse relative motion to the app when we have keyboard focus?" );
+    gamescope::ConVar<bool> cv_wayland_use_modifiers( "wayland_use_modifiers", true, "Use DMA-BUF modifiers?" );
 
     class CWaylandConnector;
     class CWaylandPlane;
@@ -143,6 +146,7 @@ namespace gamescope
         int32_t nDstHeight;
         GamescopeAppTextureColorspace eColorspace;
         bool bOpaque;
+        uint32_t uFractionalScale;
     };
 
     inline WaylandPlaneState ClipPlane( const WaylandPlaneState &state )
@@ -178,6 +182,7 @@ namespace gamescope
 
         wl_surface *GetSurface() const { return m_pSurface; }
         libdecor_frame *GetFrame() const { return m_pFrame; }
+        xdg_toplevel *GetXdgToplevel() const;
 
         std::optional<WaylandPlaneState> GetCurrentState() { std::unique_lock lock( m_PlaneStateLock ); return m_oCurrentPlaneState; }
 
@@ -527,10 +532,13 @@ namespace gamescope
         wp_presentation *GetPresentation() const { return m_pPresentation; }
         frog_color_management_factory_v1 *GetFrogColorManagementFactory() const { return m_pFrogColorMgmtFactory; }
         wp_fractional_scale_manager_v1 *GetFractionalScaleManager() const { return m_pFractionalScaleManager; }
+        xdg_toplevel_icon_manager_v1 *GetToplevelIconManager() const { return m_pToplevelIconManager; }
         libdecor *GetLibDecor() const { return m_pLibDecor; }
 
         void SetFullscreen( bool bFullscreen ); // Thread safe, can be called from the input thread.
         void UpdateFullscreenState();
+
+        bool SupportsFormat( uint32_t uDRMFormat ) const;
 
         void SetHostCompositorIsCurrentlyVRR( bool bActive ) { m_bHostCompositorIsCurrentlyVRR = bActive; }
 
@@ -578,13 +586,14 @@ namespace gamescope
         wp_viewporter *m_pViewporter = nullptr;
         wl_region *m_pFullRegion = nullptr;
         Rc<CWaylandFb> m_BlackFb;
-        std::shared_ptr<CWaylandFb> m_pOwnedBlackFb;
-        std::shared_ptr<CVulkanTexture> m_pBlackTexture;
+        OwningRc<CWaylandFb> m_pOwnedBlackFb;
+        OwningRc<CVulkanTexture> m_pBlackTexture;
         wp_presentation *m_pPresentation = nullptr;
         frog_color_management_factory_v1 *m_pFrogColorMgmtFactory = nullptr;
         zwp_pointer_constraints_v1 *m_pPointerConstraints = nullptr;
         zwp_relative_pointer_manager_v1 *m_pRelativePointerManager = nullptr;
         wp_fractional_scale_manager_v1 *m_pFractionalScaleManager = nullptr;
+        xdg_toplevel_icon_manager_v1 *m_pToplevelIconManager = nullptr;
 
         std::unordered_map<wl_output *, WaylandOutputInfo> m_pOutputs;
 
@@ -598,6 +607,7 @@ namespace gamescope
         zwp_relative_pointer_v1 *m_pRelativePointer = nullptr;
 
         std::unordered_map<uint32_t, std::vector<uint64_t>> m_FormatModifiers;
+        std::unordered_set<uint32_t> m_ModifierlessFormats;
         std::unordered_map<uint32_t, wl_buffer *> m_ImportedFbs;
 
         uint32_t m_uPointerEnterSerial = 0;
@@ -904,7 +914,7 @@ namespace gamescope
             }
 
             // Fraction with denominator of 120 per. spec
-            const uint32_t uScale = GetScale();
+            const uint32_t uScale = oState->uFractionalScale;
 
             wp_viewport_set_source(
                 m_pViewport,
@@ -955,9 +965,17 @@ namespace gamescope
         wl_surface_commit( m_pSurface );
     }
 
+    xdg_toplevel *CWaylandPlane::GetXdgToplevel() const
+    {
+        if ( !m_pFrame )
+            return nullptr;
+
+        return libdecor_frame_get_xdg_toplevel( m_pFrame );
+    }
+
     void CWaylandPlane::Present( const FrameInfo_t::Layer_t *pLayer )
     {
-        CWaylandFb *pWaylandFb = pLayer && pLayer->pBackendFb != nullptr ? static_cast<CWaylandFb*>( pLayer->pBackendFb.get() ) : nullptr;
+        CWaylandFb *pWaylandFb = pLayer && pLayer->tex != nullptr ? static_cast<CWaylandFb*>( pLayer->tex->GetBackendFb() ) : nullptr;
         wl_buffer *pBuffer = pWaylandFb ? pWaylandFb->GetHostBuffer() : nullptr;
 
         if ( pBuffer )
@@ -978,6 +996,7 @@ namespace gamescope
                     .nDstHeight  = int32_t( pLayer->tex->height() / double( pLayer->scale.y ) ),
                     .eColorspace = pLayer->colorspace,
                     .bOpaque     = pLayer->zpos == g_zposBase,
+                    .uFractionalScale = GetScale(),
                 } ) );
         }
         else
@@ -1223,7 +1242,7 @@ namespace gamescope
         if ( m_pSinglePixelBufferManager )
         {
             wl_buffer *pBlackBuffer = wp_single_pixel_buffer_manager_v1_create_u32_rgba_buffer( m_pSinglePixelBufferManager, 0, 0, 0, ~0u );
-            m_pOwnedBlackFb = std::make_shared<CWaylandFb>( this, pBlackBuffer, nullptr );
+            m_pOwnedBlackFb = new CWaylandFb( this, pBlackBuffer, nullptr );
             m_BlackFb = m_pOwnedBlackFb.get();
         }
         else
@@ -1270,15 +1289,15 @@ namespace gamescope
     void CWaylandBackend::GetPreferredOutputFormat( VkFormat *pPrimaryPlaneFormat, VkFormat *pOverlayPlaneFormat ) const
     {
         VkFormat u8BitFormat = VK_FORMAT_UNDEFINED;
-        if ( m_FormatModifiers.contains( DRM_FORMAT_ARGB8888 ) )
+        if ( SupportsFormat( DRM_FORMAT_ARGB8888 ) )
             u8BitFormat = VK_FORMAT_B8G8R8A8_UNORM;
-        else if ( m_FormatModifiers.contains( DRM_FORMAT_ABGR8888 ) )
+        else if ( SupportsFormat( DRM_FORMAT_ABGR8888 ) )
             u8BitFormat = VK_FORMAT_R8G8B8A8_UNORM;
 
         VkFormat u10BitFormat = VK_FORMAT_UNDEFINED;
-        if ( m_FormatModifiers.contains( DRM_FORMAT_ABGR2101010 ) )
+        if ( SupportsFormat( DRM_FORMAT_ABGR2101010 ) )
             u10BitFormat = VK_FORMAT_A2B10G10R10_UNORM_PACK32;
-        else if ( m_FormatModifiers.contains( DRM_FORMAT_ARGB2101010 ) )
+        else if ( SupportsFormat( DRM_FORMAT_ARGB2101010 ) )
             u10BitFormat = VK_FORMAT_A2R10G10B10_UNORM_PACK32;
 
         assert( u8BitFormat != VK_FORMAT_UNDEFINED );
@@ -1311,7 +1330,7 @@ namespace gamescope
 
             bool bNeedsCompositeFromFilter = (g_upscaleFilter == GamescopeUpscaleFilter::NEAREST || g_upscaleFilter == GamescopeUpscaleFilter::PIXEL) && !bLayer0ScreenSize;
 
-            bNeedsFullComposite |= alwaysComposite;
+            bNeedsFullComposite |= cv_composite_force;
             bNeedsFullComposite |= pFrameInfo->useFSRLayer0;
             bNeedsFullComposite |= pFrameInfo->useNISLayer0;
             bNeedsFullComposite |= pFrameInfo->blurLayer0;
@@ -1342,7 +1361,8 @@ namespace gamescope
                 {
                     m_BlackFb->OnCompositorAcquire();
 
-                    m_Planes[uCurrentPlane++].Present(
+                    CWaylandPlane *pPlane = &m_Planes[uCurrentPlane++];
+                    pPlane->Present(
                         WaylandPlaneState
                         {
                             .pBuffer     = m_BlackFb->GetHostBuffer(),
@@ -1352,6 +1372,7 @@ namespace gamescope
                             .nDstHeight  = int32_t( g_nOutputHeight ),
                             .eColorspace = GAMESCOPE_APP_TEXTURE_COLORSPACE_PASSTHRU,
                             .bOpaque     = true,
+                            .uFractionalScale = pPlane->GetScale(),
                         } );
                 }
 
@@ -1377,7 +1398,6 @@ namespace gamescope
                 compositeLayer.zpos = g_zposBase;
 
                 compositeLayer.tex = vulkan_get_last_output_image( false, false );
-                compositeLayer.pBackendFb = compositeLayer.tex->GetBackendFb();
                 compositeLayer.applyColorMgmt = false;
 
                 compositeLayer.filter = GamescopeUpscaleFilter::NEAREST;
@@ -1385,6 +1405,9 @@ namespace gamescope
                 compositeLayer.colorspace = pFrameInfo->outputEncodingEOTF == EOTF_PQ ? GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ : GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB;
 
                 m_Planes[0].Present( &compositeLayer );
+
+                for ( int i = 1; i < 8; i++ )
+                    m_Planes[i].Present( nullptr );
             }
         }
 
@@ -1478,10 +1501,16 @@ namespace gamescope
 
     bool CWaylandBackend::UsesModifiers() const
     {
-        return true;
+        if ( !cv_wayland_use_modifiers )
+            return false;
+
+        return !m_FormatModifiers.empty();
     }
     std::span<const uint64_t> CWaylandBackend::GetSupportedModifiers( uint32_t uDrmFormat ) const
     {
+        if ( !UsesModifiers() )
+            return std::span<const uint64_t>{};
+
         auto iter = m_FormatModifiers.find( uDrmFormat );
         if ( iter == m_FormatModifiers.end() )
             return std::span<const uint64_t>{};
@@ -1563,18 +1592,10 @@ namespace gamescope
     // INestedHints
     ///////////////////
 
-    static int CreateShmBuffer( uint32_t uSize )
+    static int CreateShmBuffer( uint32_t uSize, void *pData )
     {
-        static constexpr char szTemplate[] = "/gamescope-shared-XXXXXX";
-
-        const char *pXDGPath = getenv( "XDG_RUNTIME_DIR" );
-        if ( !pXDGPath || !*pXDGPath )
-            return -1;
-
-        char szPath[ PATH_MAX ];
-        snprintf( szPath, PATH_MAX, "%s%s", pXDGPath, szTemplate );
-
-        int nFd = mkostemp( szPath, O_CLOEXEC );
+        char szShmBufferPath[ PATH_MAX ];
+        int nFd = MakeTempFile( szShmBufferPath, k_szGamescopeTempShmTemplate );
         if ( nFd < 0 )
             return -1;
 
@@ -1582,6 +1603,16 @@ namespace gamescope
         {
             close( nFd );
             return -1;
+        }
+
+        if ( pData )
+        {
+            void *pMappedData = mmap( nullptr, uSize, PROT_READ | PROT_WRITE, MAP_SHARED, nFd, 0 );
+            if ( pMappedData == MAP_FAILED )
+                return -1;
+            defer( munmap( pMappedData, uSize ) );
+
+            memcpy( pMappedData, pData, uSize );
         }
 
         return nFd;
@@ -1648,10 +1679,46 @@ namespace gamescope
     }
     void CWaylandBackend::SetIcon( std::shared_ptr<std::vector<uint32_t>> uIconPixels )
     {
-        // Oh gee, it'd be so cool if we had something to do this...
-        // *cough cough*
-        // *cough cough*
-        // @_@ c'mon guys
+        if ( !m_pToplevelIconManager )
+            return;
+
+        if ( uIconPixels && uIconPixels->size() >= 3 )
+        {
+            xdg_toplevel_icon_v1 *pIcon = xdg_toplevel_icon_manager_v1_create_icon( m_pToplevelIconManager );
+            if ( !pIcon )
+            {
+                xdg_log.errorf( "Failed to create xdg_toplevel_icon_v1" );
+                return;
+            }
+            defer( xdg_toplevel_icon_v1_destroy( pIcon ) );
+
+            const uint32_t uWidth  = ( *uIconPixels )[0];
+            const uint32_t uHeight = ( *uIconPixels )[1];
+
+            const uint32_t uStride = uWidth * 4;
+            const uint32_t uSize   = uStride * uHeight;
+            int32_t nFd = CreateShmBuffer( uSize, &( *uIconPixels )[2] );
+            if ( nFd < 0 )
+            {
+                xdg_log.errorf( "Failed to create/map shm buffer" );
+                return;
+            }
+            defer( close( nFd ) );
+
+            wl_shm_pool *pPool = wl_shm_create_pool( m_pShm, nFd, uSize );
+            defer( wl_shm_pool_destroy( pPool ) );
+
+            wl_buffer *pBuffer = wl_shm_pool_create_buffer( pPool, 0, uWidth, uHeight, uStride, WL_SHM_FORMAT_ARGB8888 );
+            defer( wl_buffer_destroy( pBuffer ) );
+
+            xdg_toplevel_icon_v1_add_buffer( pIcon, pBuffer, 1 );
+
+            xdg_toplevel_icon_manager_v1_set_icon( m_pToplevelIconManager, m_Planes[0].GetXdgToplevel(), pIcon );
+        }
+        else
+        {
+            xdg_toplevel_icon_manager_v1_set_icon( m_pToplevelIconManager, m_Planes[0].GetXdgToplevel(), nullptr );
+        }
     }
 
     std::shared_ptr<INestedHints::CursorInfo> CWaylandBackend::GetHostCursor()
@@ -1672,16 +1739,10 @@ namespace gamescope
         uint32_t uStride = info->uWidth * 4;
         uint32_t uSize = uStride * info->uHeight;
 
-        int32_t nFd = CreateShmBuffer( uSize );
+        int32_t nFd = CreateShmBuffer( uSize, info->pPixels.data() );
         if ( nFd < 0 )
             return nullptr;
         defer( close( nFd ) );
-
-        void *pData = mmap( nullptr, uSize, PROT_READ | PROT_WRITE, MAP_SHARED, nFd, 0 );
-        if ( pData == MAP_FAILED )
-            return nullptr;
-
-        memcpy( pData, info->pPixels.data(), uSize );
 
         wl_shm_pool *pPool = wl_shm_create_pool( m_pShm, nFd, uSize );
         defer( wl_shm_pool_destroy( pPool ) );
@@ -1742,6 +1803,13 @@ namespace gamescope
 
             g_bFullscreen = m_bDesiredFullscreenState;
         }
+    }
+
+    bool CWaylandBackend::SupportsFormat( uint32_t uDRMFormat ) const
+    {
+        return UsesModifiers()
+            ? m_FormatModifiers.contains( uDRMFormat )
+            : m_ModifierlessFormats.contains( uDRMFormat );
     }
 
     /////////////////////
@@ -1823,6 +1891,10 @@ namespace gamescope
         {
             m_pShm = (wl_shm *)wl_registry_bind( pRegistry, uName, &wl_shm_interface, 1u );
         }
+        else if ( !strcmp( pInterface, xdg_toplevel_icon_manager_v1_interface.name ) )
+        {
+            m_pToplevelIconManager = (xdg_toplevel_icon_manager_v1 *)wl_registry_bind( pRegistry, uName, &xdg_toplevel_icon_manager_v1_interface, 1u );
+        }
     }
 
     void CWaylandBackend::Wayland_Modifier( zwp_linux_dmabuf_v1 *pDmabuf, uint32_t uFormat, uint32_t uModifierHi, uint32_t uModifierLo )
@@ -1831,6 +1903,8 @@ namespace gamescope
         //xdg_log.infof( "Modifier: %s (0x%" PRIX32 ") %lx", drmGetFormatName( uFormat ), uFormat, ulModifier );
         if ( ulModifier != DRM_FORMAT_MOD_INVALID )
             m_FormatModifiers[uFormat].emplace_back( ulModifier );
+        else
+            m_ModifierlessFormats.emplace( uFormat );
     }
 
     // Output
@@ -2247,8 +2321,10 @@ namespace gamescope
         if ( !oState )
             return;
 
-        double flX = ( wl_fixed_to_double( fSurfaceX ) + oState->nDestX ) / g_nOutputWidth;
-        double flY = ( wl_fixed_to_double( fSurfaceY ) + oState->nDestY ) / g_nOutputHeight;
+        uint32_t uScale = oState->uFractionalScale;
+
+        double flX = ( wl_fixed_to_double( fSurfaceX ) * uScale / 120.0 + oState->nDestX ) / g_nOutputWidth;
+        double flY = ( wl_fixed_to_double( fSurfaceY ) * uScale / 120.0 + oState->nDestY ) / g_nOutputHeight;
 
         wlserver_lock();
         wlserver_touchmotion( flX, flY, 0, ++m_uFakeTimestamp );
@@ -2285,13 +2361,13 @@ namespace gamescope
         assert( uAxis == WL_POINTER_AXIS_VERTICAL_SCROLL || uAxis == WL_POINTER_AXIS_HORIZONTAL_SCROLL );
 
         // Vertical is first in the wl_pointer_axis enum, flip y,x -> x,y
-        m_flScrollAccum[ !uAxis ] += nValue120 / 120.0f;
+        m_flScrollAccum[ !uAxis ] += nValue120 / 120.0;
     }
     void CWaylandInputThread::Wayland_Pointer_Frame( wl_pointer *pPointer )
     {
         defer( m_uAxisSource = WL_POINTER_AXIS_SOURCE_WHEEL );
-        double x = m_flScrollAccum[0];
-        double y = m_flScrollAccum[1];
+        double flX = m_flScrollAccum[0];
+        double flY = m_flScrollAccum[1];
         m_flScrollAccum[0] = 0.0;
         m_flScrollAccum[1] = 0.0;
 
@@ -2301,8 +2377,11 @@ namespace gamescope
         if ( m_uAxisSource != WL_POINTER_AXIS_SOURCE_WHEEL )
             return;
 
+        if ( flX == 0.0 && flY == 0.0 )
+            return;
+
         wlserver_lock();
-        wlserver_mousewheel( x, y, ++m_uFakeTimestamp );
+        wlserver_mousewheel( flX, flY, ++m_uFakeTimestamp );
         wlserver_unlock();
     }
 

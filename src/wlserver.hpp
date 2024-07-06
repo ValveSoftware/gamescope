@@ -10,7 +10,10 @@
 #include <map>
 #include <set>
 #include <list>
+#include <unordered_map>
 #include <optional>
+
+#include <pixman-1/pixman.h>
 
 #include "vulkan_include.h"
 
@@ -89,7 +92,7 @@ public:
 
 	std::vector<ResListEntry_t>& retrieve_commits();
 
-	void handle_override_window_content( struct wl_client *client, struct wl_resource *resource, struct wlr_surface *surface, uint32_t x11_window );
+	void handle_override_window_content( struct wl_client *client, struct wl_resource *gamescope_swapchain_resource, struct wlr_surface *surface, uint32_t x11_window );
 	void destroy_content_override( struct wlserver_x11_surface_info *x11_surface, struct wlr_surface *surf);
 	void destroy_content_override(struct wlserver_content_override *co);
 
@@ -141,10 +144,15 @@ struct wlserver_t {
 	
 	struct wlr_surface *mouse_focus_surface;
 	struct wlr_surface *kb_focus_surface;
+	std::unordered_map<struct wlr_surface *, std::pair<int, int>> current_dropdown_surfaces;
 	double mouse_surface_cursorx = 0.0f;
 	double mouse_surface_cursory = 0.0f;
+	bool mouse_constraint_requires_warp = false;
+	pixman_region32_t confine;
+	struct wlr_pointer_constraint_v1 *mouse_constraint = nullptr;
 	uint64_t ulLastMovedCursorTime = 0;
 	bool bCursorHidden = true;
+	bool bCursorHasImage = true;
 	
 	bool button_held[ WLSERVER_BUTTON_COUNT ];
 	std::set <uint32_t> touch_down_ids;
@@ -159,16 +167,21 @@ struct wlserver_t {
 	struct wl_listener new_input_method;
 
 	struct wlr_xdg_shell *xdg_shell;
+	struct wlr_layer_shell_v1 *layer_shell_v1;
 	struct wlr_relative_pointer_manager_v1 *relative_pointer_manager;
 	struct wlr_pointer_constraints_v1 *constraints;
 	struct wl_listener new_xdg_surface;
 	struct wl_listener new_xdg_toplevel;
+	struct wl_listener new_layer_shell_surface;
+	struct wl_listener new_pointer_constraint;
 	std::vector<std::shared_ptr<steamcompmgr_win_t>> xdg_wins;
 	std::atomic<bool> xdg_dirty;
 	std::mutex xdg_commit_lock;
 	std::vector<ResListEntry_t> xdg_commit_queue;
 
 	std::vector<wl_resource*> gamescope_controls;
+
+	std::atomic<bool> bWaylandServerRunning = { false };
 };
 
 extern struct wlserver_t wlserver;
@@ -213,17 +226,19 @@ void wlserver_lock(void);
 void wlserver_unlock(bool flush = true);
 bool wlserver_is_lock_held(void);
 
-void wlserver_keyboardfocus( struct wlr_surface *surface );
+void wlserver_keyboardfocus( struct wlr_surface *surface, bool bConstrain = true );
 void wlserver_key( uint32_t key, bool press, uint32_t time );
 
 void wlserver_mousefocus( struct wlr_surface *wlrsurface, int x = 0, int y = 0 );
+void wlserver_clear_dropdowns();
+void wlserver_notify_dropdown( struct wlr_surface *wlrsurface, int nX, int nY );
 void wlserver_mousemotion( double x, double y, uint32_t time );
 void wlserver_mousehide();
 void wlserver_mousewarp( double x, double y, uint32_t time, bool bSynthetic );
 void wlserver_mousebutton( int button, bool press, uint32_t time );
 void wlserver_mousewheel( double x, double y, uint32_t time );
 
-void wlserver_touchmotion( double x, double y, int touch_id, uint32_t time );
+void wlserver_touchmotion( double x, double y, int touch_id, uint32_t time, bool bAlwaysWarpCursor = false );
 void wlserver_touchdown( double x, double y, int touch_id, uint32_t time );
 void wlserver_touchup( int touch_id, uint32_t time );
 

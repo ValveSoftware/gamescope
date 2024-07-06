@@ -19,5 +19,7 @@ namespace gamescope
     private:
         eis *m_pEis = nullptr;
         int m_nFd = -1;
+
+        double m_flScrollAccum[2]{};
     };
 }

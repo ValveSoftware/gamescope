@@ -21,6 +21,9 @@ protocols = [
 	wl_protocol_dir / 'unstable/relative-pointer/relative-pointer-unstable-v1.xml',
 	wl_protocol_dir / 'staging/fractional-scale/fractional-scale-v1.xml',
 
+	# Wayland Protocols not yet in a release.
+	'xdg-toplevel-icon-v1.xml',
+
 	# Frog protocols
 	'frog-color-management-v1.xml',
 
@@ -30,6 +33,10 @@ protocols = [
 	'gamescope-input-method.xml',
 	'gamescope-control.xml',
 	'gamescope-swapchain.xml',
+	'gamescope-private.xml',
+
+	# wlroots protocols
+	'wlr-layer-shell-unstable-v1.xml',
 ]
 
 protocols_client_src = []

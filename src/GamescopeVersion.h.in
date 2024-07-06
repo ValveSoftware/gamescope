@@ -1,0 +1,6 @@
+#pragma once
+
+namespace gamescope
+{
+    static constexpr const char k_szGamescopeVersion[] = "@VCS_TAG@";
+}

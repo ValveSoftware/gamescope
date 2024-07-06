@@ -116,8 +116,8 @@ namespace gamescope
             this->IncRef();
         }
 
-        template <typename Tx>
-        Rc( const Rc<Tx, Public>& other )
+        template <typename Tx, bool Publicx>
+        Rc( const Rc<Tx, Publicx>& other )
             : m_pObject{ other.m_pObject }
         {
             this->IncRef();
@@ -194,6 +194,8 @@ namespace gamescope
 
         bool operator == ( std::nullptr_t ) const { return m_pObject == nullptr; }
         bool operator != ( std::nullptr_t ) const { return m_pObject != nullptr; }
+
+        operator bool() const { return m_pObject != nullptr; }
 
     private:
         T* m_pObject = nullptr;

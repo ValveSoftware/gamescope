@@ -5,7 +5,6 @@
 #include <atomic>
 #include <stdint.h>
 #include <memory>
-#include <map>
 #include <unordered_map>
 #include <array>
 #include <bitset>
@@ -112,7 +111,7 @@ inline GamescopeAppTextureColorspace VkColorSpaceToGamescopeAppTextureColorSpace
 		default:
 		case VK_COLOR_SPACE_SRGB_NONLINEAR_KHR:
 			// We will use image view conversions for these 8888 formats.
-			if (ToSrgbVulkanFormat(format) != ToLinearVulkanFormat(format) || format == VK_FORMAT_G8_B8R8_2PLANE_420_UNORM)
+			if (ToSrgbVulkanFormat(format) != ToLinearVulkanFormat(format))
 				return GAMESCOPE_APP_TEXTURE_COLORSPACE_LINEAR;
 			return GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB;
 
@@ -124,7 +123,7 @@ inline GamescopeAppTextureColorspace VkColorSpaceToGamescopeAppTextureColorSpace
 	}
 }
 
-class CVulkanTexture
+class CVulkanTexture : public gamescope::RcObject
 {
 public:
 	struct createFlags {
@@ -157,8 +156,11 @@ public:
 		VkImageType imageType;
 	};
 
-	bool BInit( uint32_t width, uint32_t height, uint32_t depth, uint32_t drmFormat, createFlags flags, wlr_dmabuf_attributes *pDMA = nullptr, uint32_t contentWidth = 0, uint32_t contentHeight = 0, CVulkanTexture *pExistingImageToReuseMemory = nullptr );
+	bool BInit( uint32_t width, uint32_t height, uint32_t depth, uint32_t drmFormat, createFlags flags, wlr_dmabuf_attributes *pDMA = nullptr, uint32_t contentWidth = 0, uint32_t contentHeight = 0, CVulkanTexture *pExistingImageToReuseMemory = nullptr, gamescope::OwningRc<gamescope::IBackendFb> pBackendFb = nullptr );
 	bool BInitFromSwapchain( VkImage image, uint32_t width, uint32_t height, VkFormat format );
+
+	uint32_t IncRef();
+	uint32_t DecRef();
 
 	inline VkImageView view( bool linear ) { return linear ? m_linearView : m_srgbView; }
 	inline VkImageView linearView() { return m_linearView; }
@@ -269,8 +271,8 @@ struct FrameInfo_t
 	BlurMode blurLayer0;
 	int blurRadius;
 
-	std::shared_ptr<CVulkanTexture> shaperLut[EOTF_Count];
-	std::shared_ptr<CVulkanTexture> lut3D[EOTF_Count];
+	gamescope::Rc<CVulkanTexture> shaperLut[EOTF_Count];
+	gamescope::Rc<CVulkanTexture> lut3D[EOTF_Count];
 
 	bool allowVRR;
 	bool applyOutputColorMgmt; // drm only
@@ -279,8 +281,7 @@ struct FrameInfo_t
 	int layerCount;
 	struct Layer_t
 	{
-		std::shared_ptr<CVulkanTexture> tex;
-		gamescope::Rc<gamescope::IBackendFb> pBackendFb;
+		gamescope::Rc<CVulkanTexture> tex;
 		int zpos;
 
 		vec2_t offset;
@@ -365,6 +366,7 @@ struct FrameInfo_t
 };
 
 extern uint32_t g_uCompositeDebug;
+extern gamescope::ConVar<uint32_t> cv_composite_debug;
 
 namespace CompositeDebugFlag
 {
@@ -382,14 +384,14 @@ bool vulkan_init(VkInstance instance, VkSurfaceKHR surface);
 bool vulkan_init_formats(void);
 bool vulkan_make_output();
 
-std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_dmabuf( struct wlr_dmabuf_attributes *pDMA );
-std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_bits( uint32_t width, uint32_t height, uint32_t contentWidth, uint32_t contentHeight, uint32_t drmFormat, CVulkanTexture::createFlags texCreateFlags, void *bits );
-std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struct wlr_buffer *buf );
+gamescope::OwningRc<CVulkanTexture> vulkan_create_texture_from_dmabuf( struct wlr_dmabuf_attributes *pDMA, gamescope::OwningRc<gamescope::IBackendFb> pBackendFb );
+gamescope::OwningRc<CVulkanTexture> vulkan_create_texture_from_bits( uint32_t width, uint32_t height, uint32_t contentWidth, uint32_t contentHeight, uint32_t drmFormat, CVulkanTexture::createFlags texCreateFlags, void *bits );
+gamescope::OwningRc<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struct wlr_buffer *buf, gamescope::OwningRc<gamescope::IBackendFb> pBackendFb );
 
-std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTexture> pScreenshotTexture, bool partial, std::shared_ptr<CVulkanTexture> pOutputOverride = nullptr, bool increment = true );
+std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamescope::Rc<CVulkanTexture> pScreenshotTexture, bool partial, gamescope::Rc<CVulkanTexture> pOutputOverride = nullptr, bool increment = true );
 void vulkan_wait( uint64_t ulSeqNo, bool bReset );
-std::shared_ptr<CVulkanTexture> vulkan_get_last_output_image( bool partial, bool defer );
-std::shared_ptr<CVulkanTexture> vulkan_acquire_screenshot_texture(uint32_t width, uint32_t height, bool exportable, uint32_t drmFormat, EStreamColorspace colorspace = k_EStreamColorspace_Unknown);
+gamescope::Rc<CVulkanTexture> vulkan_get_last_output_image( bool partial, bool defer );
+gamescope::Rc<CVulkanTexture> vulkan_acquire_screenshot_texture(uint32_t width, uint32_t height, bool exportable, uint32_t drmFormat, EStreamColorspace colorspace = k_EStreamColorspace_Unknown);
 
 void vulkan_present_to_window( void );
 
@@ -401,13 +403,13 @@ bool acquire_next_image( void );
 bool vulkan_primary_dev_id(dev_t *id);
 bool vulkan_supports_modifiers(void);
 
-std::shared_ptr<CVulkanTexture> vulkan_create_1d_lut(uint32_t size);
-std::shared_ptr<CVulkanTexture> vulkan_create_3d_lut(uint32_t width, uint32_t height, uint32_t depth);
-void vulkan_update_luts(const std::shared_ptr<CVulkanTexture>& lut1d, const std::shared_ptr<CVulkanTexture>& lut3d, void* lut1d_data, void* lut3d_data);
+gamescope::Rc<CVulkanTexture> vulkan_create_1d_lut(uint32_t size);
+gamescope::Rc<CVulkanTexture> vulkan_create_3d_lut(uint32_t width, uint32_t height, uint32_t depth);
+void vulkan_update_luts(const gamescope::Rc<CVulkanTexture>& lut1d, const gamescope::Rc<CVulkanTexture>& lut3d, void* lut1d_data, void* lut3d_data);
 
-std::shared_ptr<CVulkanTexture> vulkan_get_hacky_blank_texture();
+gamescope::Rc<CVulkanTexture> vulkan_get_hacky_blank_texture();
 
-std::optional<uint64_t> vulkan_screenshot( const struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTexture> pScreenshotTexture );
+std::optional<uint64_t> vulkan_screenshot( const struct FrameInfo_t *frameInfo, gamescope::Rc<CVulkanTexture> pScreenshotTexture, gamescope::Rc<CVulkanTexture> pYUVOutTexture );
 
 struct wlr_renderer *vulkan_renderer_create( void );
 
@@ -461,8 +463,8 @@ struct gamescope_color_mgmt_luts
 	uint16_t lut3d[s_nLutEdgeSize3d*s_nLutEdgeSize3d*s_nLutEdgeSize3d*4];
 	uint16_t lut1d[s_nLutSize1d*4];
 
-	std::shared_ptr<CVulkanTexture> vk_lut3d;
-	std::shared_ptr<CVulkanTexture> vk_lut1d;
+	gamescope::Rc<CVulkanTexture> vk_lut3d;
+	gamescope::Rc<CVulkanTexture> vk_lut1d;
 
 	bool HasLuts() const
 	{
@@ -499,21 +501,21 @@ struct VulkanOutput_t
 	VkFence acquireFence;
 
 	uint32_t nOutImage; // swapchain index in nested mode, or ping/pong between two RTs
-	std::vector<std::shared_ptr<CVulkanTexture>> outputImages;
-	std::vector<std::shared_ptr<CVulkanTexture>> outputImagesPartialOverlay;
-	std::shared_ptr<CVulkanTexture> temporaryHackyBlankImage;
+	std::vector<gamescope::OwningRc<CVulkanTexture>> outputImages;
+	std::vector<gamescope::OwningRc<CVulkanTexture>> outputImagesPartialOverlay;
+	gamescope::OwningRc<CVulkanTexture> temporaryHackyBlankImage;
 
 	VkFormat outputFormat = VK_FORMAT_UNDEFINED;
 	VkFormat outputFormatOverlay = VK_FORMAT_UNDEFINED;
 
-	std::array<std::shared_ptr<CVulkanTexture>, 2> pScreenshotImages;
+	std::array<gamescope::OwningRc<CVulkanTexture>, 2> pScreenshotImages;
 
 	// NIS and FSR
-	std::shared_ptr<CVulkanTexture> tmpOutput;
+	gamescope::OwningRc<CVulkanTexture> tmpOutput;
 
 	// NIS
-	std::shared_ptr<CVulkanTexture> nisScalerImage;
-	std::shared_ptr<CVulkanTexture> nisUsmImage;
+	gamescope::OwningRc<CVulkanTexture> nisScalerImage;
+	gamescope::OwningRc<CVulkanTexture> nisUsmImage;
 };
 
 
@@ -834,7 +836,7 @@ protected:
 	VkSemaphore m_scratchTimelineSemaphore;
 	std::atomic<uint64_t> m_submissionSeqNo = { 0 };
 	std::vector<std::unique_ptr<CVulkanCmdBuffer>> m_unusedCmdBufs;
-	std::map<uint64_t, std::unique_ptr<CVulkanCmdBuffer>> m_pendingCmdBufs;
+	std::unordered_map<uint64_t, std::unique_ptr<CVulkanCmdBuffer>> m_pendingCmdBufs;
 };
 
 struct TextureState
@@ -869,20 +871,20 @@ public:
 	void reset();
 	void begin();
 	void end();
-	void bindTexture(uint32_t slot, std::shared_ptr<CVulkanTexture> texture);
-	void bindColorMgmtLuts(uint32_t slot, const std::shared_ptr<CVulkanTexture>& lut1d, const std::shared_ptr<CVulkanTexture>& lut3d);
+	void bindTexture(uint32_t slot, gamescope::Rc<CVulkanTexture> texture);
+	void bindColorMgmtLuts(uint32_t slot, gamescope::Rc<CVulkanTexture> lut1d, gamescope::Rc<CVulkanTexture> lut3d);
 	void setTextureStorage(bool storage);
 	void setTextureSrgb(uint32_t slot, bool srgb);
 	void setSamplerNearest(uint32_t slot, bool nearest);
 	void setSamplerUnnormalized(uint32_t slot, bool unnormalized);
-	void bindTarget(std::shared_ptr<CVulkanTexture> target);
+	void bindTarget(gamescope::Rc<CVulkanTexture> target);
 	void clearState();
 	template<class PushData, class... Args>
 	void uploadConstants(Args&&... args);
 	void bindPipeline(VkPipeline pipeline);
 	void dispatch(uint32_t x, uint32_t y = 1, uint32_t z = 1);
-	void copyImage(std::shared_ptr<CVulkanTexture> src, std::shared_ptr<CVulkanTexture> dst);
-	void copyBufferToImage(VkBuffer buffer, VkDeviceSize offset, uint32_t stride, std::shared_ptr<CVulkanTexture> dst);
+	void copyImage(gamescope::Rc<CVulkanTexture> src, gamescope::Rc<CVulkanTexture> dst);
+	void copyBufferToImage(VkBuffer buffer, VkDeviceSize offset, uint32_t stride, gamescope::Rc<CVulkanTexture> dst);
 
 
 	void prepareSrcImage(CVulkanTexture *image);
@@ -902,7 +904,7 @@ private:
 	uint32_t m_queueFamily;
 
 	// Per Use State
-	std::unordered_map<CVulkanTexture *, std::shared_ptr<CVulkanTexture>> m_textureRefs;
+	std::vector<gamescope::Rc<CVulkanTexture>> m_textureRefs;
 	std::unordered_map<CVulkanTexture *, TextureState> m_textureState;
 
 	// Draw State
@@ -922,7 +924,7 @@ VkFormat DRMFormatToVulkan( uint32_t nDRMFormat, bool bSrgb );
 bool DRMFormatHasAlpha( uint32_t nDRMFormat );
 uint32_t DRMFormatGetBPP( uint32_t nDRMFormat );
 
-std::shared_ptr<CVulkanTexture> vulkan_create_flat_texture( uint32_t width, uint32_t height, uint8_t r, uint8_t g, uint8_t b, uint8_t a );
+gamescope::OwningRc<CVulkanTexture> vulkan_create_flat_texture( uint32_t width, uint32_t height, uint8_t r, uint8_t g, uint8_t b, uint8_t a );
 
 bool vulkan_supports_hdr10();
 

@@ -27,7 +27,7 @@
 
 #include "backend.h"
 #include "color_helpers.h"
-#include "defer.hpp"
+#include "Utils/Defer.h"
 #include "drm_include.h"
 #include "edid.h"
 #include "gamescope_shared.h"
@@ -58,12 +58,27 @@ extern int g_nPreferredOutputWidth;
 extern int g_nPreferredOutputHeight;
 
 gamescope::ConVar<bool> cv_drm_single_plane_optimizations( "drm_single_plane_optimizations", true, "Whether or not to enable optimizations for single plane usage." );
+
 gamescope::ConVar<bool> cv_drm_debug_disable_shaper_and_3dlut( "drm_debug_disable_shaper_and_3dlut", false, "Shaper + 3DLUT chicken bit. (Force disable/DEFAULT, no logic change)" );
 gamescope::ConVar<bool> cv_drm_debug_disable_degamma_tf( "drm_debug_disable_degamma_tf", false, "Degamma chicken bit. (Forces DEGAMMA_TF to DEFAULT, does not affect other logic)" );
 gamescope::ConVar<bool> cv_drm_debug_disable_regamma_tf( "drm_debug_disable_regamma_tf", false, "Regamma chicken bit. (Forces REGAMMA_TF to DEFAULT, does not affect other logic)" );
 gamescope::ConVar<bool> cv_drm_debug_disable_output_tf( "drm_debug_disable_output_tf", false, "Force default (identity) output TF, affects other logic. Not a property directly." );
 gamescope::ConVar<bool> cv_drm_debug_disable_blend_tf( "drm_debug_disable_blend_tf", false, "Blending chicken bit. (Forces BLEND_TF to DEFAULT, does not affect other logic)" );
+gamescope::ConVar<bool> cv_drm_debug_disable_ctm( "drm_debug_disable_ctm", false, "CTM chicken bit. (Forces CTM off, does not affect other logic)" );
+gamescope::ConVar<bool> cv_drm_debug_disable_color_encoding( "drm_debug_disable_color_encoding", false, "YUV Color Encoding chicken bit. (Forces COLOR_ENCODING to DEFAULT, does not affect other logic)" );
+gamescope::ConVar<bool> cv_drm_debug_disable_color_range( "drm_debug_disable_color_range", false, "YUV Color Range chicken bit. (Forces COLOR_RANGE to DEFAULT, does not affect other logic)" );
 gamescope::ConVar<bool> cv_drm_debug_disable_explicit_sync( "drm_debug_disable_explicit_sync", false, "Force disable explicit sync on the DRM backend." );
+gamescope::ConVar<bool> cv_drm_debug_disable_in_fence_fd( "drm_debug_disable_in_fence_fd", false, "Force disable IN_FENCE_FD being set to avoid over-synchronization on the DRM backend." );
+
+// HACK:
+// Workaround for AMDGPU bug on SteamOS 3.6 right now.
+// Using a Shaper or 3D LUT results in the commit failing, and we really want
+// NV12 direct scanout so we can get GFXOFF.
+// The compromise here is that colors may look diff to when we composite due to
+// lack of 3D LUT, etc.
+// TODO: Come back to me on the kernel side after figuring out what broke
+// since we moved to the upstream properites and a bunch of work happened.
+gamescope::ConVar<bool> cv_drm_hack_nv12_color_mgmt_fix( "drm_hack_nv12_color_mgmt_fix", true, "If using NV12, disable explicit degamma + shaper + 3D LUT" );
 
 namespace gamescope
 {
@@ -495,7 +510,7 @@ struct DRMPresentCtx
 	uint64_t ulPendingFlipCount = 0;
 };
 
-extern bool alwaysComposite;
+extern gamescope::ConVar<bool> cv_composite_force;
 extern bool g_bColorSliderInUse;
 extern bool fadingOut;
 extern std::string g_reshade_effect;
@@ -1171,7 +1186,7 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 		return false;
 	if ( liftoff_device_register_all_planes( drm->lo_device ) < 0 )
 		return false;
-
+	
 	drm_log.infof("Connectors:");
 	for ( auto &iter : drm->connectors )
 	{
@@ -2343,17 +2358,21 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 	{
 		if ( i < frameInfo->layerCount )
 		{
-			if ( frameInfo->layers[ i ].pBackendFb == nullptr )
+			const FrameInfo_t::Layer_t *pLayer = &frameInfo->layers[ i ];
+			gamescope::CDRMFb *pDrmFb = static_cast<gamescope::CDRMFb *>( pLayer->tex ? pLayer->tex->GetBackendFb() : nullptr );
+
+			if ( pDrmFb == nullptr )
 			{
 				drm_verbose_log.errorf("drm_prepare_liftoff: layer %d has no FB", i );
 				return -EINVAL;
 			}
 
-			gamescope::CDRMFb *pDrmFb = static_cast<gamescope::CDRMFb *>( frameInfo->layers[ i ].pBackendFb.get() );
+			const int nFence = cv_drm_debug_disable_in_fence_fd ? -1 : g_nAlwaysSignalledSyncFile;
+
 
 			liftoff_layer_set_property( drm->lo_layers[ i ], "FB_ID", pDrmFb->GetFbId());
-			liftoff_layer_set_property( drm->lo_layers[ i ], "IN_FENCE_FD", g_nAlwaysSignalledSyncFile);
-			drm->m_FbIdsInRequest.emplace_back( frameInfo->layers[ i ].pBackendFb );
+			liftoff_layer_set_property( drm->lo_layers[ i ], "IN_FENCE_FD", nFence );
+			drm->m_FbIdsInRequest.emplace_back( pDrmFb );
 
 			liftoff_layer_set_property( drm->lo_layers[ i ], "zpos", entry.layerState[i].zpos );
 			liftoff_layer_set_property( drm->lo_layers[ i ], "alpha", frameInfo->layers[ i ].opacity * 0xffff);
@@ -2390,14 +2409,23 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 
 			if ( frameInfo->layers[i].applyColorMgmt )
 			{
-				if ( entry.layerState[i].ycbcr )
+				bool bYCbCr = entry.layerState[i].ycbcr;
+
+				if ( !cv_drm_debug_disable_color_encoding && bYCbCr )
 				{
 					liftoff_layer_set_property( drm->lo_layers[ i ], "COLOR_ENCODING", entry.layerState[i].colorEncoding );
-					liftoff_layer_set_property( drm->lo_layers[ i ], "COLOR_RANGE",    entry.layerState[i].colorRange );
 				}
 				else
 				{
 					liftoff_layer_unset_property( drm->lo_layers[ i ], "COLOR_ENCODING" );
+				}
+
+				if ( !cv_drm_debug_disable_color_range && bYCbCr )
+				{
+					liftoff_layer_set_property( drm->lo_layers[ i ], "COLOR_RANGE",    entry.layerState[i].colorRange );
+				}
+				else
+				{
 					liftoff_layer_unset_property( drm->lo_layers[ i ], "COLOR_RANGE" );
 				}
 
@@ -2406,7 +2434,7 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 					amdgpu_transfer_function degamma_tf = colorspace_to_plane_degamma_tf( entry.layerState[i].colorspace );
 					amdgpu_transfer_function shaper_tf = colorspace_to_plane_shaper_tf( entry.layerState[i].colorspace );
 
-					if ( entry.layerState[i].ycbcr )
+					if ( bYCbCr )
 					{
 						// JoshA: Based on the Steam In-Home Streaming Shader,
 						// it looks like Y is actually sRGB, not HDTV G2.4
@@ -2420,12 +2448,20 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 						shaper_tf = AMDGPU_TRANSFER_FUNCTION_BT709_INV_OETF;
 					}
 
-					if (!cv_drm_debug_disable_degamma_tf)
+					bool bUseDegamma = !cv_drm_debug_disable_degamma_tf;
+					if ( bYCbCr && cv_drm_hack_nv12_color_mgmt_fix )
+						bUseDegamma = false;
+
+					if ( bUseDegamma )
 						liftoff_layer_set_property( drm->lo_layers[ i ], "AMD_PLANE_DEGAMMA_TF", degamma_tf );
 					else
 						liftoff_layer_set_property( drm->lo_layers[ i ], "AMD_PLANE_DEGAMMA_TF", 0 );
 
-					if ( !cv_drm_debug_disable_shaper_and_3dlut )
+					bool bUseShaperAnd3DLUT = !cv_drm_debug_disable_shaper_and_3dlut;
+					if ( bYCbCr && cv_drm_hack_nv12_color_mgmt_fix )
+						bUseShaperAnd3DLUT = false;
+
+					if ( bUseShaperAnd3DLUT )
 					{
 						liftoff_layer_set_property( drm->lo_layers[ i ], "AMD_PLANE_SHAPER_LUT", drm->pending.shaperlut_id[ ColorSpaceToEOTFIndex( entry.layerState[i].colorspace ) ]->GetBlobValue() );
 						liftoff_layer_set_property( drm->lo_layers[ i ], "AMD_PLANE_SHAPER_TF", shaper_tf );
@@ -2459,7 +2495,7 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 				else
 					liftoff_layer_set_property( drm->lo_layers[ i ], "AMD_PLANE_BLEND_TF", AMDGPU_TRANSFER_FUNCTION_DEFAULT );
 
-				if (frameInfo->layers[i].ctm != nullptr)
+				if (!cv_drm_debug_disable_ctm && frameInfo->layers[i].ctm != nullptr)
 					liftoff_layer_set_property( drm->lo_layers[ i ], "AMD_PLANE_CTM", frameInfo->layers[i].ctm->GetBlobValue() );
 				else
 					liftoff_layer_set_property( drm->lo_layers[ i ], "AMD_PLANE_CTM", 0 );
@@ -2485,7 +2521,36 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 		}
 	}
 
-	int ret = liftoff_output_apply( drm->lo_output, drm->req, drm->flags );
+	struct liftoff_output_apply_options lo_options = {
+		.timeout_ns = std::numeric_limits<int64_t>::max()
+	};
+
+	int ret = liftoff_output_apply( drm->lo_output, drm->req, drm->flags, &lo_options);
+
+	// The NVIDIA 555 series drivers started advertising DRM_CAP_SYNCOBJ, but do
+	// not support IN_FENCE_FD. However, there is no way to hide the IN_FENCE_FD
+	// property in a DRM-KMS driver, so the driver returns EPERM when an
+	// application sets IN_FENCE_FD. To work around this, the first time a
+	// commit fails with -EPERM, try it again with the IN_FENCE_FD property
+	// reset to its default value. If this succeeds, disable use of the
+	// IN_FENCE_FD property.
+	static bool attempted_in_fence_fallback = false;
+	if ( ret == -EPERM && !attempted_in_fence_fallback && !cv_drm_debug_disable_in_fence_fd )
+	{
+		attempted_in_fence_fallback = true;
+		for ( int i = 0; i < frameInfo->layerCount; i++ )
+		{
+			liftoff_layer_set_property( drm->lo_layers[ i ], "IN_FENCE_FD", -1 );
+		}
+
+		ret = liftoff_output_apply( drm->lo_output, drm->req, drm->flags, &lo_options );
+
+		if ( ret == 0 )
+		{
+			// IN_FENCE_FD isn't actually supported. Avoid it in the future.
+			cv_drm_debug_disable_in_fence_fd  = true;
+		}
+	}
 
 	if ( ret == 0 )
 	{
@@ -3129,7 +3194,7 @@ namespace gamescope
 			bool bNeedsCompositeFromFilter = (g_upscaleFilter == GamescopeUpscaleFilter::NEAREST || g_upscaleFilter == GamescopeUpscaleFilter::PIXEL) && !bLayer0ScreenSize;
 
 			bool bNeedsFullComposite = false;
-			bNeedsFullComposite |= alwaysComposite;
+			bNeedsFullComposite |= cv_composite_force;
 			bNeedsFullComposite |= bWasFirstFrame;
 			bNeedsFullComposite |= pFrameInfo->useFSRLayer0;
 			bNeedsFullComposite |= pFrameInfo->useNISLayer0;
@@ -3274,7 +3339,6 @@ namespace gamescope
 				baseLayer->zpos = g_zposBase;
 
 				baseLayer->tex = vulkan_get_last_output_image( false, false );
-				baseLayer->pBackendFb = baseLayer->tex->GetBackendFb();
 				baseLayer->applyColorMgmt = false;
 
 				baseLayer->filter = GamescopeUpscaleFilter::NEAREST;
@@ -3300,7 +3364,6 @@ namespace gamescope
 					overlayLayer->zpos = g_zposOverlay;
 
 					overlayLayer->tex = vulkan_get_last_output_image( true, bDefer );
-					overlayLayer->pBackendFb = overlayLayer->tex->GetBackendFb();
 					overlayLayer->applyColorMgmt = g_ColorMgmt.pending.enabled;
 
 					overlayLayer->filter = GamescopeUpscaleFilter::NEAREST;

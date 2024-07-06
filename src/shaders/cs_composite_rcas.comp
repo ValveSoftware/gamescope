@@ -43,7 +43,7 @@ void FsrRcasInputF(inout float r, inout float g, inout float b) {}
 
 vec4 sampleLayer(uint layerIdx, vec2 uv) {
     if ((c_ycbcrMask & (1 << layerIdx)) != 0)
-        return srgbToLinear(sampleLayerEx(s_ycbcr_samplers[layerIdx], layerIdx - 1, layerIdx, uv, false));
+        return sampleLayerEx(s_ycbcr_samplers[layerIdx], layerIdx - 1, layerIdx, uv, false);
     return sampleLayerEx(s_samplers[layerIdx], layerIdx - 1, layerIdx, uv, true);
 }
 

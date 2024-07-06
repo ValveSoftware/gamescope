@@ -10,6 +10,11 @@ project(
   ],
 )
 
+fallbacks = get_option('force_fallback_for')
+if not (fallbacks.contains('wlroots') and fallbacks.contains('libliftoff') and fallbacks.contains('vkroots'))
+  error('!!!"force_fallback_for" is missing entries!!!\n\tPlease do not remove entries from force_fallback_for if you are packaging the project.\n\tWe pull in these projects at specific commits/forks/builds for a reason.\n\tIf you are not packaging, remove this line to continue.')
+endif
+
 add_project_arguments([
   '-DWLR_USE_UNSTABLE',
 ], language: 'cpp')
@@ -45,7 +50,7 @@ dep_wayland = dependency('wayland-client')
 vulkan_dep = dependency('vulkan')
 
 if get_option('enable_openvr_support')
-  openvr_dep = dependency('openvr', version: '>= 2', required : false)
+  openvr_dep = dependency('openvr', version: '>= 2.7', required : false)
   if not openvr_dep.found()
     cmake = import('cmake')
     openvr_var = cmake.subproject_options()

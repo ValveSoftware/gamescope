@@ -20,7 +20,7 @@ thread_dep = dependency('threads')
 cap_dep = dependency('libcap', required: get_option('rt_cap'))
 epoll_dep = dependency('epoll-shim', required: false)
 glm_dep = dependency('glm')
-sdl_dep = dependency('SDL2', required: get_option('sdl2_backend'))
+sdl2_dep = dependency('SDL2', required: get_option('sdl2_backend'))
 stb_dep = dependency('stb')
 avif_dep = dependency('libavif', version: '>=1.0.0', required: get_option('avif_screenshots'))
 
@@ -93,13 +93,18 @@ reshade_include = include_directories([
 required_wlroots_features = ['xwayland']
 
 src = [
+  'Backends/HeadlessBackend.cpp',
+  'Backends/WaylandBackend.cpp',
+  'Utils/TempFiles.cpp',
+  'Utils/Version.cpp',
+  'Utils/Process.cpp',
+  'BufferMemo.cpp',
   'steamcompmgr.cpp',
   'convar.cpp',
   'commit.cpp',
   'color_helpers.cpp',
   'main.cpp',
   'edid.cpp',
-  'headless.cpp',
   'wlserver.cpp',
   'vblankmanager.cpp',
   'rendervulkan.cpp',
@@ -108,18 +113,18 @@ src = [
   'mangoapp.cpp',
   'reshade_effect_manager.cpp',
   'backend.cpp',
-  'wayland_backend.cpp',
+  'x11cursor.cpp',
   'InputEmulation.cpp',
 ]
 
 gamescope_cpp_args = []
 if drm_dep.found()
-  src += 'drm.cpp'
+  src += 'Backends/DRMBackend.cpp'
   src += 'modegen.cpp'
   required_wlroots_features += 'libinput_backend'
   liftoff_dep = dependency(
     'libliftoff',
-    version: ['>= 0.4.0', '< 0.5.0'],
+    version: ['>= 0.5.0', '< 0.6.0'],
     fallback: ['libliftoff', 'liftoff'],
     default_options: ['default_library=static'],
   )
@@ -127,12 +132,12 @@ else
   liftoff_dep = dependency('', required: false)
 endif
 
-if sdl_dep.found()
-  src += 'sdlwindow.cpp'
+if sdl2_dep.found()
+  src += 'Backends/SDLBackend.cpp'
 endif
 
 gamescope_cpp_args += '-DHAVE_DRM=@0@'.format(drm_dep.found().to_int())
-gamescope_cpp_args += '-DHAVE_SDL2=@0@'.format(sdl_dep.found().to_int())
+gamescope_cpp_args += '-DHAVE_SDL2=@0@'.format(sdl2_dep.found().to_int())
 gamescope_cpp_args += '-DHAVE_AVIF=@0@'.format(avif_dep.found().to_int())
 gamescope_cpp_args += '-DHAVE_LIBCAP=@0@'.format(cap_dep.found().to_int())
 gamescope_cpp_args += '-DHAVE_LIBEIS=@0@'.format(eis_dep.found().to_int())
@@ -146,7 +151,7 @@ if pipewire_dep.found()
 endif
 
 if openvr_dep.found()
-  src += 'vr_session.cpp'
+  src += 'Backends/OpenVRBackend.cpp'
 endif
 
 foreach feat : required_wlroots_features
@@ -155,14 +160,19 @@ foreach feat : required_wlroots_features
   endif
 endforeach
 
+gamescope_version = vcs_tag(
+  command : ['git', 'describe', '--always', '--tags', '--dirty=+'],
+  input   : 'GamescopeVersion.h.in',
+  output  : 'GamescopeVersion.h')
+
   executable(
     'gamescope',
-    src, reshade_src,
+    src, reshade_src, gamescope_version,
     include_directories : [reshade_include],
     dependencies: [
       dep_wayland, dep_x11, dep_xdamage, dep_xcomposite, dep_xrender, dep_xext, dep_xfixes,
       dep_xxf86vm, dep_xres, glm_dep, drm_dep, wayland_server,
-      xkbcommon, thread_dep, sdl_dep, wlroots_dep,
+      xkbcommon, thread_dep, sdl2_dep, wlroots_dep,
       vulkan_dep, liftoff_dep, dep_xtst, dep_xmu, cap_dep, epoll_dep, pipewire_dep, librt_dep,
       stb_dep, displayinfo_dep, openvr_dep, dep_xcursor, avif_dep, dep_xi,
       libdecor_dep, eis_dep,
@@ -171,8 +181,15 @@ endforeach
     cpp_args: gamescope_cpp_args,
   )
 
+if pipewire_dep.found()
+  executable( 'gamescopestream', ['Apps/gamescopestream.cpp', 'log.cpp', 'Utils/Process.cpp'], gamescope_version, protocols_client_src, dependencies: [ pipewire_dep, dep_wayland, libdecor_dep ], install: true )
+endif
+
+executable('gamescopereaper', ['Utils/Process.cpp', 'Apps/gamescopereaper.cpp', 'log.cpp'], gamescope_version, install:true )
 
 benchmark_dep = dependency('benchmark', required: get_option('benchmark'), disabler: true)
 executable('gamescope_color_microbench', ['color_bench.cpp', 'color_helpers.cpp'], dependencies:[benchmark_dep, glm_dep])
 
 executable('gamescope_color_tests', ['color_tests.cpp', 'color_helpers.cpp'], dependencies:[glm_dep])
+
+executable('gamescopectl', ['Apps/gamescopectl.cpp', 'convar.cpp', 'log.cpp', 'Utils/Version.cpp', 'Utils/Process.cpp'], gamescope_version, protocols_client_src, dependencies: [dep_wayland], install:true )

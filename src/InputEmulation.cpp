@@ -1,6 +1,6 @@
 #if HAVE_LIBEIS
 
-#include <libei-1.0/libeis.h>
+#include <libeis.h>
 #include <stdio.h>
 
 #include "InputEmulation.h"
@@ -77,7 +77,7 @@ namespace gamescope
                     eis_seat_configure_capability( pSeat, EIS_DEVICE_CAP_POINTER );
                     eis_seat_configure_capability( pSeat, EIS_DEVICE_CAP_POINTER_ABSOLUTE );
                     eis_seat_configure_capability( pSeat, EIS_DEVICE_CAP_KEYBOARD );
-                    eis_seat_configure_capability( pSeat, EIS_DEVICE_CAP_TOUCH );
+                    //eis_seat_configure_capability( pSeat, EIS_DEVICE_CAP_TOUCH );
                     eis_seat_configure_capability( pSeat, EIS_DEVICE_CAP_BUTTON );
                     eis_seat_configure_capability( pSeat, EIS_DEVICE_CAP_SCROLL );
                     eis_seat_add( pSeat );
@@ -98,33 +98,61 @@ namespace gamescope
                     eis_client *pClient = eis_event_get_client( pEisEvent );
                     eis_seat *pSeat = eis_event_get_seat( pEisEvent );
 
-                    eis_device *pVirtualInput = eis_seat_new_device( pSeat );
-                    eis_device_configure_name( pVirtualInput, "Gamescope Virtual Input" );
-                    eis_device_configure_capability( pVirtualInput, EIS_DEVICE_CAP_POINTER );
-		            eis_device_configure_capability( pVirtualInput, EIS_DEVICE_CAP_POINTER_ABSOLUTE );
-                    eis_device_configure_capability( pVirtualInput, EIS_DEVICE_CAP_BUTTON );
-                    eis_device_configure_capability( pVirtualInput, EIS_DEVICE_CAP_SCROLL );
-                    eis_device_configure_capability( pVirtualInput, EIS_DEVICE_CAP_KEYBOARD );
-                    // Can add this someday if we want it.
-                    //eis_device_configure_capability( pVirtualInput, EIS_DEVICE_CAP_TOUCH );
+                    bool bWantsDevice = eis_event_seat_has_capability( pEisEvent, EIS_DEVICE_CAP_POINTER ) || 
+                                        eis_event_seat_has_capability( pEisEvent, EIS_DEVICE_CAP_POINTER_ABSOLUTE ) ||
+                                        eis_event_seat_has_capability( pEisEvent, EIS_DEVICE_CAP_BUTTON ) ||
+                                        eis_event_seat_has_capability( pEisEvent, EIS_DEVICE_CAP_SCROLL ) ||
+                                        eis_event_seat_has_capability( pEisEvent, EIS_DEVICE_CAP_KEYBOARD );
 
-                    eis_region *pVirtualInputRegion = eis_device_new_region( pVirtualInput );
-                    eis_region_set_mapping_id( pVirtualInputRegion, "Mr. Worldwide" );
-                    eis_region_set_size( pVirtualInputRegion, INT32_MAX, INT32_MAX );
-                    eis_region_set_offset( pVirtualInputRegion, 0, 0 );
-                    eis_region_add( pVirtualInputRegion );
+                    bool bHasDevice = eis_client_get_user_data( pClient ) != nullptr;
 
-                    eis_device_add( pVirtualInput );
-                    eis_device_resume( pVirtualInput );
-                    if ( !eis_client_is_sender( pClient ) )
-                        eis_device_start_emulating( pVirtualInput, ++s_uSequence );
+                    if ( bWantsDevice && !bHasDevice )
+                    {
+                        eis_device *pVirtualInput = eis_seat_new_device( pSeat );
+                        eis_device_configure_name( pVirtualInput, "Gamescope Virtual Input" );
+                        eis_device_configure_capability( pVirtualInput, EIS_DEVICE_CAP_POINTER );
+                        eis_device_configure_capability( pVirtualInput, EIS_DEVICE_CAP_POINTER_ABSOLUTE );
+                        eis_device_configure_capability( pVirtualInput, EIS_DEVICE_CAP_BUTTON );
+                        eis_device_configure_capability( pVirtualInput, EIS_DEVICE_CAP_SCROLL );
+                        eis_device_configure_capability( pVirtualInput, EIS_DEVICE_CAP_KEYBOARD );
+                        // Can add this someday if we want it.
+                        //eis_device_configure_capability( pVirtualInput, EIS_DEVICE_CAP_TOUCH );
+
+                        eis_region *pVirtualInputRegion = eis_device_new_region( pVirtualInput );
+                        eis_region_set_mapping_id( pVirtualInputRegion, "Mr. Worldwide" );
+                        eis_region_set_size( pVirtualInputRegion, INT32_MAX, INT32_MAX );
+                        eis_region_set_offset( pVirtualInputRegion, 0, 0 );
+                        eis_region_add( pVirtualInputRegion );
+                        // We don't want this anymore, but pVirtualInput can own it
+                        eis_region_unref( pVirtualInputRegion );
+
+                        eis_device_add( pVirtualInput );
+                        eis_device_resume( pVirtualInput );
+                        if ( !eis_client_is_sender( pClient ) )
+                            eis_device_start_emulating( pVirtualInput, ++s_uSequence );
+
+                        // We have a ref on pVirtualInput, store that in pClient's userdata so we can remove device later.
+                        eis_client_set_user_data( pClient, (void *) pVirtualInput );
+                    }
+                    else if ( !bWantsDevice && bHasDevice )
+                    {
+                        eis_device *pDevice = (eis_device *) eis_client_get_user_data( pClient );
+                        eis_device_remove( pDevice );
+                        eis_device_unref( pDevice );
+                        eis_client_set_user_data( pClient, nullptr );
+                    }
                 }
                 break;
 
                 case EIS_EVENT_DEVICE_CLOSED:
                 {
+                    eis_client *pClient = eis_event_get_client( pEisEvent );
                     eis_device *pDevice = eis_event_get_device( pEisEvent );
+
+                    // Remove the device from our tracking on the client.
                     eis_device_remove( pDevice );
+                    eis_device_unref( pDevice );
+                    eis_client_set_user_data( pClient, nullptr );
                 }
                 break;
 
@@ -167,6 +195,13 @@ namespace gamescope
                 }
                 break;
 
+                case EIS_EVENT_SCROLL_DISCRETE:
+                {
+                    m_flScrollAccum[0] += eis_event_scroll_get_discrete_dx( pEisEvent ) / 120.0;
+                    m_flScrollAccum[1] += eis_event_scroll_get_discrete_dy( pEisEvent ) / 120.0;
+                }
+                break;
+
                 case EIS_EVENT_KEYBOARD_KEY:
                 {
                     wlserver_lock();
@@ -186,7 +221,17 @@ namespace gamescope
 
                 case EIS_EVENT_FRAME:
                 {
-                    // Not used currently, maybe we want to accum scroll?
+                    double flScrollX = m_flScrollAccum[0];
+                    double flScrollY = m_flScrollAccum[1];
+                    m_flScrollAccum[0] = 0.0;
+                    m_flScrollAccum[1] = 0.0;
+
+                    if ( flScrollX == 0.0 && flScrollY == 0.0 )
+                        break;
+
+                    wlserver_lock();
+                    wlserver_mousewheel( flScrollX, flScrollY, ++s_uSequence );
+                    wlserver_unlock();
                 }
                 break;
 
@@ -196,6 +241,8 @@ namespace gamescope
                 }
                 break;
             }
+
+            eis_event_unref( pEisEvent );
         }
     }
 }

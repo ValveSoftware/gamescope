@@ -275,12 +275,6 @@ namespace gamescope
 				.ulWakeupTime = m_TimerFDSchedule.ulScheduledWakeupPoint,
 			};
 
-			if ( vblank_debug )
-			{
-				uint64_t ulNow = get_time_in_nanos();
-				g_VBlankLog.infof( "TimerFD Wakeup: %lu\n", ulNow );
-			}
-
 			gpuvis_trace_printf( "vblank timerfd wakeup" );
 
 			ITimerWaitable::DisarmTimer();
@@ -337,7 +331,7 @@ namespace gamescope
 			if ( ulDrawTime > s_ulLastOffset )
 				g_VBlankLog.infof( " !! missed vblank " );
 
-			g_VBlankLog.infof( "redZone: %.2fms decayRate: %lu%% - rollingMaxDrawTime: %.2fms lastDrawTime: %.2fms lastOffset: %.2fms - drawTime: %.2fms offset: %.2fms\n",
+			g_VBlankLog.infof( "redZone: %.2fms decayRate: %lu%% - rollingMaxDrawTime: %.2fms lastDrawTime: %.2fms lastOffset: %.2fms - drawTime: %.2fms offset: %.2fms",
 				ulRedZone / 1'000'000.0,
 				m_ulVBlankRateOfDecayPercentage,
 				m_ulRollingMaxDrawTime / 1'000'000.0,

@@ -13,7 +13,7 @@ class ReshadeUniform;
 struct ReshadeCombinedImageSampler
 {
     VkSampler sampler;
-    std::shared_ptr<CVulkanTexture> texture;
+    gamescope::Rc<CVulkanTexture> texture;
 };
 
 struct ReshadeEffectKey
@@ -48,12 +48,12 @@ public:
 
     bool init(CVulkanDevice *device, const ReshadeEffectKey &key);
     void update();
-    uint64_t execute(std::shared_ptr<CVulkanTexture> inImage, std::shared_ptr<CVulkanTexture> *outImage);
+    uint64_t execute(gamescope::Rc<CVulkanTexture> inImage, gamescope::Rc<CVulkanTexture> *outImage);
 
     const ReshadeEffectKey& key() const { return m_key; }
     reshadefx::module *module() { return m_module.get(); }
 
-    std::shared_ptr<CVulkanTexture> findTexture(std::string_view name);
+    gamescope::Rc<CVulkanTexture> findTexture(std::string_view name);
 
 private:
     ReshadeEffectKey m_key;
@@ -61,8 +61,8 @@ private:
 
 	std::unique_ptr<reshadefx::module> m_module;
     std::vector<VkPipeline> m_pipelines;
-    std::vector<std::shared_ptr<CVulkanTexture>> m_textures;
-    std::shared_ptr<CVulkanTexture> m_rt;
+    std::vector<gamescope::OwningRc<CVulkanTexture>> m_textures;
+    gamescope::OwningRc<CVulkanTexture> m_rt;
     std::vector<ReshadeCombinedImageSampler> m_samplers;
     std::vector<std::shared_ptr<ReshadeUniform>> m_uniforms;
 

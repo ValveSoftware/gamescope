@@ -50,7 +50,7 @@ void main()
         vec4 layerColor;
         // YCBCR technically has incorrect blending here but... meh.
         if ((c_ycbcrMask & (1 << i)) != 0)
-            layerColor = srgbToLinear(gaussian_blur(s_ycbcr_samplers[i], i, pos, u_blur_radius, false, false));
+            layerColor = gaussian_blur(s_ycbcr_samplers[i], i, pos, u_blur_radius, false, false);
         else
             layerColor = gaussian_blur(s_samplers[i], i, pos, u_blur_radius, false, true);
 
