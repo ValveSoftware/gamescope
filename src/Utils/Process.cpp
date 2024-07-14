@@ -268,7 +268,7 @@ namespace gamescope::Process
 
             int nFd = *onFd;
 
-            bool bExcluded = std::find( nExcludedFds.begin(), nExcludedFds.end(), nFd ) != nExcludedFds.end();
+            bool bExcluded = std::ranges::any_of( nExcludedFds.begin(), nExcludedFds.end(), [nFd](const int fd){ return fd == nFd;} );
             if ( bExcluded )
                 continue;
 
