@@ -369,7 +369,12 @@ static void wlserver_handle_key(struct wl_listener *listener, void *data)
 		keysym == XKB_KEY_XF86AudioLowerVolume ||
 		keysym == XKB_KEY_XF86AudioRaiseVolume ||
 		keysym == XKB_KEY_XF86PowerOff;
-	if ( ( event->state == WL_KEYBOARD_KEY_STATE_PRESSED || event->state == WL_KEYBOARD_KEY_STATE_RELEASED ) && forbidden_key )
+
+	// Check for steam keys (ctrl + 1/2)
+	bool is_steam_shortcut = (keyboard->wlr->modifiers.depressed & WLR_MODIFIER_CTRL) && (keysym == XKB_KEY_1 ||
+																						 keysym == XKB_KEY_2);
+
+	if ( ( event->state == WL_KEYBOARD_KEY_STATE_PRESSED || event->state == WL_KEYBOARD_KEY_STATE_RELEASED ) && (forbidden_key || is_steam_shortcut) )
 	{
 		// Always send volume+/- to root server only, to avoid it reaching the game.
 		struct wlr_surface *old_kb_surf = wlserver.kb_focus_surface;
@@ -378,6 +383,9 @@ static void wlserver_handle_key(struct wl_listener *listener, void *data)
 		{
 			wlserver_keyboardfocus( new_kb_surf, false );
 			wlr_seat_set_keyboard( wlserver.wlr.seat, keyboard->wlr );
+			// Send modifiers to steam for steam shortcuts to work
+			if (is_steam_shortcut)
+				wlr_seat_keyboard_notify_modifiers(wlserver.wlr.seat, &keyboard->wlr->modifiers);
 			wlr_seat_keyboard_notify_key( wlserver.wlr.seat, event->time_msec, event->keycode, event->state );
 			wlserver_keyboardfocus( old_kb_surf, false );
 			return;
