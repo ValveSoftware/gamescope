@@ -1863,7 +1863,10 @@ namespace gamescope
 
     void CWaylandBackend::UpdateFullscreenState()
     {
-        if ( m_bDesiredFullscreenState != g_bFullscreen )
+        if ( !m_bVisible )
+            g_bFullscreen = false;
+
+        if ( m_bDesiredFullscreenState != g_bFullscreen && m_bVisible )
         {
             if ( m_bDesiredFullscreenState )
                 libdecor_frame_set_fullscreen( m_Planes[0].GetFrame(), nullptr );
