@@ -613,7 +613,7 @@ static void UpdateCompatEnvVars()
 	setenv( "GAMESCOPE_NV12_COLORSPACE", "k_EStreamColorspace_BT601", 0 );
 
 	const char *pszMangoConfigPath = getenv( "MANGOHUD_CONFIGFILE" );
-	if ( g_bLaunchMangoapp && ( !pszMangoConfigPath || !*pszMangoConfigPath ) )
+	if ( (g_bLaunchMangoapp && steamMode) && ( !pszMangoConfigPath || !*pszMangoConfigPath ) )
 	{
 		char szMangoConfigPath[ PATH_MAX ];
 		FILE *pMangoConfigFile = gamescope::MakeTempFile( szMangoConfigPath, gamescope::k_szGamescopeTempMangoappTemplate, "w", true );
