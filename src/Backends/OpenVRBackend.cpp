@@ -893,7 +893,11 @@ namespace gamescope
                 vr::VROverlay()->ClearOverlayTexture( GetPrimaryPlane()->GetOverlayThumbnail() );
             }
         }
-		virtual std::shared_ptr<INestedHints::CursorInfo> GetHostCursor() override
+        virtual void SetSelection( std::shared_ptr<std::string> szContents, GamescopeSelection eSelection ) override
+        {
+            // Do nothing.
+        }
+        virtual std::shared_ptr<INestedHints::CursorInfo> GetHostCursor() override
         {
             return nullptr;
         }

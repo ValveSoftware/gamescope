@@ -11,6 +11,7 @@
 
 #include "SDL_clipboard.h"
 #include "SDL_events.h"
+#include "gamescope_shared.h"
 #include "main.hpp"
 #include "wlserver.hpp"
 #include <SDL.h>
@@ -162,7 +163,8 @@ namespace gamescope
         virtual void SetVisible( bool bVisible ) override;
         virtual void SetTitle( std::shared_ptr<std::string> szTitle ) override;
         virtual void SetIcon( std::shared_ptr<std::vector<uint32_t>> uIconPixels ) override;
-		virtual std::shared_ptr<INestedHints::CursorInfo> GetHostCursor() override;
+        virtual void SetSelection( std::shared_ptr<std::string> szContents, GamescopeSelection eSelection ) override;
+        virtual std::shared_ptr<INestedHints::CursorInfo> GetHostCursor() override;
 	protected:
 		virtual void OnBackendBlobDestroyed( BackendBlob *pBlob ) override;
 	private:
@@ -496,7 +498,13 @@ namespace gamescope
 		m_pApplicationIcon = uIconPixels;
 		PushUserEvent( GAMESCOPE_SDL_EVENT_ICON );
 	}
-
+	void CSDLBackend::SetSelection( std::shared_ptr<std::string> szContents, GamescopeSelection eSelection )
+	{
+		if (eSelection == GAMESCOPE_SELECTION_CLIPBOARD)
+			SDL_SetClipboardText(szContents->c_str());
+		else if (eSelection == GAMESCOPE_SELECTION_PRIMARY)
+			SDL_SetPrimarySelectionText(szContents->c_str());
+	}
 	std::shared_ptr<INestedHints::CursorInfo> CSDLBackend::GetHostCursor()
 	{
 		return GetX11HostCursor();

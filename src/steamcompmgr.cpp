@@ -29,6 +29,7 @@
  *   says above. Not that I can really do anything about it
  */
 
+#include "gamescope_shared.h"
 #include "xwayland_ctx.hpp"
 #include <X11/X.h>
 #include <X11/Xlib.h>
@@ -4918,13 +4919,14 @@ handle_selection_notify(xwayland_ctx_t *ctx, XSelectionEvent *ev)
 				&actual_type, &actual_format, &nitems, &bytes_after, &data);
 		if (data) {
 			const char *contents = (const char *) data;
+			auto szContents = std::make_shared<std::string>(contents);
 			defer( XFree( data ); );
 
 			if (ev->selection == ctx->atoms.clipboard)
 			{
 				if ( GetBackend()->GetNestedHints() )
 				{
-					//GetBackend()->GetNestedHints()->SetSelection()
+					GetBackend()->GetNestedHints()->SetSelection( szContents, GAMESCOPE_SELECTION_CLIPBOARD );
 				}
 				else
 				{
@@ -4935,7 +4937,7 @@ handle_selection_notify(xwayland_ctx_t *ctx, XSelectionEvent *ev)
 			{
 				if ( GetBackend()->GetNestedHints() )
 				{
-					//GetBackend()->GetNestedHints()->SetSelection()
+					GetBackend()->GetNestedHints()->SetSelection( szContents, GAMESCOPE_SELECTION_PRIMARY );
 				}
 				else
 				{

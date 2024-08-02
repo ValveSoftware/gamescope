@@ -127,6 +127,7 @@ namespace gamescope
         virtual void SetVisible( bool bVisible ) = 0;
         virtual void SetTitle( std::shared_ptr<std::string> szTitle ) = 0;
         virtual void SetIcon( std::shared_ptr<std::vector<uint32_t>> uIconPixels ) = 0;
+        virtual void SetSelection( std::shared_ptr<std::string> szContents, GamescopeSelection eSelection ) = 0;
         virtual std::shared_ptr<CursorInfo> GetHostCursor() = 0;
     };
 

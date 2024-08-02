@@ -545,6 +545,7 @@ namespace gamescope
         virtual void SetVisible( bool bVisible ) override;
         virtual void SetTitle( std::shared_ptr<std::string> szTitle ) override;
         virtual void SetIcon( std::shared_ptr<std::vector<uint32_t>> uIconPixels ) override;
+        virtual void SetSelection( std::shared_ptr<std::string> szContents, GamescopeSelection eSelection ) override;
         virtual std::shared_ptr<INestedHints::CursorInfo> GetHostCursor() override;
     protected:
         virtual void OnBackendBlobDestroyed( BackendBlob *pBlob ) override;
@@ -1975,6 +1976,10 @@ namespace gamescope
         {
             xdg_toplevel_icon_manager_v1_set_icon( m_pToplevelIconManager, m_Planes[0].GetXdgToplevel(), nullptr );
         }
+    }
+    void CWaylandBackend::SetSelection( std::shared_ptr<std::string> szContents, GamescopeSelection eSelection )
+    {
+        // Do nothing
     }
 
     std::shared_ptr<INestedHints::CursorInfo> CWaylandBackend::GetHostCursor()
