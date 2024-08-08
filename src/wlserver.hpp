@@ -165,9 +165,9 @@ struct wlserver_t {
 		return mouse_constraint.load( std::memory_order_relaxed ) != nullptr;
 	}
 
-	uint64_t ulLastMovedCursorTime = 0;
-	bool bCursorHidden = true;
-	bool bCursorHasImage = true;
+	std::atomic<uint64_t> ulLastMovedCursorTime = 0;
+	std::atomic<char> bCursorHidden = true;
+	std::atomic<bool> bCursorHasImage = true;
 	
 	bool button_held[ WLSERVER_BUTTON_COUNT ];
 	std::set <uint32_t> touch_down_ids;
