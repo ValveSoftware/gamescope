@@ -78,7 +78,7 @@ namespace gamescope
         // m_bArmed is atomic so can still be .wait()'ed
         // on/read outside.
         // Does not cover m_ulLastVBlank, this is just atomic.
-        std::mutex m_ScheduleMutex;
+        TracyLockable(std::mutex, m_ScheduleMutex);
         VBlankScheduleTime m_TimerFDSchedule{};
 
         std::thread m_NudgeThread;

@@ -93,6 +93,7 @@
 #include "BufferMemo.h"
 #include "Utils/Process.h"
 #include "Utils/Algorithm.h"
+#include "Utils/Version.h"
 
 #include "wlr_begin.hpp"
 #include "wlr/types/wlr_pointer_constraints_v1.h"
@@ -778,7 +779,7 @@ extern float g_flMaxWindowScale;
 
 bool			synchronize;
 
-std::mutex g_SteamCompMgrXWaylandServerMutex;
+TracyLockable(std::mutex, g_SteamCompMgrXWaylandServerMutex);
 
 gamescope::VBlankTime g_SteamCompMgrVBlankTime = {};
 
@@ -1015,7 +1016,7 @@ class sem
 public:
 	void wait( void )
 	{
-		std::unique_lock<std::mutex> lock(mtx);
+		std::unique_lock lock(mtx);
 
 		while(count == 0){
 			cv.wait(lock);
@@ -1025,19 +1026,23 @@ public:
 
 	void signal( void )
 	{
-		std::unique_lock<std::mutex> lock(mtx);
+		std::unique_lock lock(mtx);
 		count++;
 		cv.notify_one();
 	}
 
 private:
-	std::mutex mtx;
+	TracyLockable(std::mutex, mtx);
+#ifdef TRACY_ENABLE
+	std::condition_variable_any cv;
+#else
 	std::condition_variable cv;
+#endif
 	int count = 0;
 };
 
 sem statsThreadSem;
-std::mutex statsEventQueueLock;
+TracyLockable(std::mutex, statsEventQueueLock);
 std::vector< std::string > statsEventQueue;
 
 std::string statsThreadPath;
@@ -1072,7 +1077,7 @@ wait:
 
 retry:
 	{
-		std::unique_lock< std::mutex > lock( statsEventQueueLock );
+		std::unique_lock lock( statsEventQueueLock );
 
 		if( statsEventQueue.empty() )
 		{
@@ -1102,7 +1107,7 @@ static inline void stats_printf( const char* format, ...)
 
 	{
 		{
-			std::unique_lock< std::mutex > lock( statsEventQueueLock );
+			std::unique_lock lock( statsEventQueueLock );
 
 			if( statsEventQueue.size() > 50 )
 			{
@@ -1875,6 +1880,7 @@ static void
 paint_window(steamcompmgr_win_t *w, steamcompmgr_win_t *scaleW, struct FrameInfo_t *frameInfo,
 			  MouseCursor *cursor, PaintWindowFlags flags = 0, float flOpacityScale = 1.0f, steamcompmgr_win_t *fit = nullptr )
 {
+	ZoneScopedN("paint_window");
 	uint32_t sourceWidth, sourceHeight;
 	int drawXOffset = 0, drawYOffset = 0;
 	float currentScaleRatio_x = 1.0;
@@ -1891,6 +1897,7 @@ paint_window(steamcompmgr_win_t *w, steamcompmgr_win_t *scaleW, struct FrameInfo
 			// pick up that buffer we've been holding onto if we have one.
 			if ( g_HeldCommits[ HELD_COMMIT_BASE ] != nullptr )
 			{
+				ZoneScopedN("paint_window -> paint_cached_base_layer");
 				paint_cached_base_layer( g_HeldCommits[ HELD_COMMIT_BASE ], g_CachedPlanes[ HELD_COMMIT_BASE ], frameInfo, flOpacityScale, true );
 				return;
 			}
@@ -1899,6 +1906,7 @@ paint_window(steamcompmgr_win_t *w, steamcompmgr_win_t *scaleW, struct FrameInfo
 		{
 			if ( g_bPendingFade )
 			{
+				ZoneScopedN("paint_window -> pending fade");
 				fadeOutStartTime = get_time_in_milliseconds();
 				g_bPendingFade = false;
 			}
@@ -2101,6 +2109,7 @@ static void update_touch_scaling( const struct FrameInfo_t *frameInfo )
 #if HAVE_PIPEWIRE
 static void paint_pipewire()
 {
+	ZoneScopedN("paint_pipewire");
 	static struct pipewire_buffer *s_pPipewireBuffer = nullptr;
 
 	// If the stream stopped/changed, and the underlying pw_buffer was thus
@@ -2218,6 +2227,8 @@ bool ShouldDrawCursor()
 static void
 paint_all(bool async)
 {
+	ZoneScopedN("paint_all");
+
 	gamescope_xwayland_server_t *root_server = wlserver_get_xwayland_server(0);
 	xwayland_ctx_t *root_ctx = root_server->ctx.get();
 
@@ -2533,17 +2544,19 @@ paint_all(bool async)
 			frameInfo.lut3D[i] = g_ColorMgmtLuts[i].vk_lut3d;
 		}
 	}
-
-	if ( GetBackend()->Present( &frameInfo, async ) != 0 )
 	{
-		return;
+		ZoneScopedN("paint_all() -> Present( &frameInfo, async )");
+		if ( GetBackend()->Present( &frameInfo, async ) != 0 )
+		{
+			return;
+		}
 	}
-
 	std::optional<gamescope::GamescopeScreenshotInfo> oScreenshotInfo =
 		gamescope::CScreenshotManager::Get().ProcessPendingScreenshot();
 
 	if ( oScreenshotInfo )
 	{
+		ZoneScopedN("paint_all() -> screenshot");
 		std::filesystem::path path = std::filesystem::path{ oScreenshotInfo->szScreenshotPath };
 
 		uint32_t drmCaptureFormat = DRM_FORMAT_INVALID;
@@ -2859,6 +2872,7 @@ paint_all(bool async)
 
 	gpuvis_trace_end_ctx_printf( paintID, "paint_all" );
 	gpuvis_trace_printf( "paint_all %i layers", (int)frameInfo.layerCount );
+	ZoneTextF( "paint_all %i layers", (int)frameInfo.layerCount );
 }
 
 /* Get prop from window
@@ -3334,6 +3348,7 @@ found:;
 
 void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win_t* > &vecPossibleFocusWindows )
 {
+	ZoneScopedN("xwayland_ctx_t::DetermineAndApplyFocus()");
 	xwayland_ctx_t *ctx = this;
 
 	steamcompmgr_win_t *inputFocus = NULL;
@@ -3398,7 +3413,7 @@ void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win
 					sizeof(wmState) / sizeof(wmState[0]));
 
 		gpuvis_trace_printf( "determine_and_apply_focus focus %lu", ctx->focus.focusWindow->xwayland().id );
-
+		ZoneTextF( "determine_and_apply_focus focus %lu", ctx->focus.focusWindow->xwayland().id );
 		if ( debugFocus == true )
 		{
 			xwm_log.debugf( "determine_and_apply_focus focus %lu", ctx->focus.focusWindow->xwayland().id );
@@ -4625,6 +4640,7 @@ destroy_win(xwayland_ctx_t *ctx, Window id, bool gone, bool fade)
 static void
 damage_win(xwayland_ctx_t *ctx, XDamageNotifyEvent *de)
 {
+	ZoneScopedN("damage_win()");
 	steamcompmgr_win_t	*w = find_win(ctx, de->drawable);
 	steamcompmgr_win_t *focus = ctx->focus.focusWindow;
 
@@ -4655,6 +4671,7 @@ damage_win(xwayland_ctx_t *ctx, XDamageNotifyEvent *de)
 	}
 
 	gpuvis_trace_printf( "damage_win win %lx appID %u", w->xwayland().id, w->appID );
+	ZoneTextF( "damage_win win %lx appID %u", w->xwayland().id, w->appID );
 }
 
 static void
@@ -5836,7 +5853,7 @@ error(Display *dpy, XErrorEvent *ev)
 	return 0;
 }
 
-[[noreturn]] static void
+MAYBE_NORETURN static void
 steamcompmgr_exit(void)
 {
 	g_ImageWaiter.Shutdown();
@@ -5878,7 +5895,7 @@ steamcompmgr_exit(void)
     wlserver_shutdown();
     wlserver_unlock(false);
 
-	pthread_exit(NULL);
+	PTHREAD_EXIT(NULL);
 }
 
 static int
@@ -5886,6 +5903,7 @@ handle_io_error(Display *dpy)
 {
 	xwm_log.errorf("X11 I/O error");
 	steamcompmgr_exit();
+	return 1;
 }
 
 static bool
@@ -5970,6 +5988,7 @@ register_systray(xwayland_ctx_t *ctx)
 
 bool handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint64_t commitID, uint64_t earliestPresentTime, uint64_t earliestLatchTime )
 {
+	ZoneScopedN("handle_done_commit()");
 	bool bFoundWindow = false;
 	uint32_t j;
 	for ( j = 0; j < w->commit_queue.size(); j++ )
@@ -5977,6 +5996,9 @@ bool handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint64_t co
 		if ( w->commit_queue[ j ]->commitID == commitID )
 		{
 			gpuvis_trace_printf( "commit %lu done", w->commit_queue[ j ]->commitID );
+			static constinit char msg[12 + sizeof(uint64_t)+1];
+			[[maybe_unused]] int msgSz = sprintf(msg, "commit %lu done\n", w->commit_queue[ j ]->commitID);
+			TracyMessageC(msg, msgSz, TRACY_COLOR(LightSteelBlue));
 			w->commit_queue[ j ]->done = true;
 			w->commit_queue[ j ]->earliest_present_time = earliestPresentTime;
 			w->commit_queue[ j ]->present_margin = earliestPresentTime - earliestLatchTime;
@@ -6045,7 +6067,7 @@ bool handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint64_t co
 // TODO: Merge these two functions.
 void handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank, uint64_t vblank_idx )
 {
-	std::lock_guard<std::mutex> lock( ctx->doneCommits.listCommitsDoneLock );
+	std::lock_guard lock( ctx->doneCommits.listCommitsDoneLock );
 
 	uint64_t next_refresh_time = g_SteamCompMgrVBlankTime.schedule.ulTargetVBlank;
 
@@ -6102,7 +6124,7 @@ void handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank, uint64_t vb
 
 void handle_done_commits_xdg( bool vblank, uint64_t vblank_idx )
 {
-	std::lock_guard<std::mutex> lock( g_steamcompmgr_xdg_done_commits.listCommitsDoneLock );
+	std::lock_guard lock( g_steamcompmgr_xdg_done_commits.listCommitsDoneLock );
 
 	uint64_t next_refresh_time = g_SteamCompMgrVBlankTime.schedule.ulTargetVBlank;
 
@@ -6325,8 +6347,14 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 			newCommit->SetFence( fence, mango_nudge, doneCommits );
 			if ( bKnownReady )
 				newCommit->Signal();
-			else
+			else {
+				ZoneScopedN("g_ImageWaiter.AddWaitable()");
+				//ZoneTextF("commit=%lu, win=%lx", newCommit->commitID, w->type == steamcompmgr_win_type_t::XWAYLAND ? w->xwayland().id : 0 );
+				TracyFiberEnter(sl_img_waiter_fiber);
+				TRACY_FIBER_ZONE_START(g_zone_img_waiter, "wait for commit");
 				g_ImageWaiter.AddWaitable( newCommit.get() );
+				TracyFiberLeave;
+			}
 		}
 
 		w->commit_queue.push_back( std::move(newCommit) );
@@ -6378,6 +6406,12 @@ handle_xfixes_selection_notify( xwayland_ctx_t *ctx, XFixesSelectionNotifyEvent 
 
 void xwayland_ctx_t::Dispatch()
 {
+#ifdef TRACY_COLLECT_CALLSTACKS
+	ZoneScopedNC("xwayland_ctx_t::Dispatch", TRACY_CALLSTACK_DEPTH);
+#else
+	ZoneScopedN("xwayland_ctx_t::Dispatch");
+#endif
+
 	xwayland_ctx_t *ctx = this;
 
 	MouseCursor *cursor = ctx->cursor.get();
@@ -7162,8 +7196,10 @@ void LaunchNestedChildren( char **ppPrimaryChildArgv )
 }
 
 void
-steamcompmgr_main(int argc, char **argv)
+steamcompmgr_main(int argc, char **argv) TRACY_TRY
 {
+	[[maybe_unused]] auto sv_version = gamescope::GetVersion();
+	TracyAppInfo(sv_version.data(), sv_version.size());
 	int	readyPipeFD = -1;
 
 	// Reset getopt() state
@@ -7266,7 +7302,7 @@ steamcompmgr_main(int argc, char **argv)
 
 	init_runtime_info();
 
-	std::unique_lock<std::mutex> xwayland_server_guard(g_SteamCompMgrXWaylandServerMutex);
+	std::unique_lock xwayland_server_guard(g_SteamCompMgrXWaylandServerMutex);
 
 	// Initialize any xwayland ctxs we have
 	{
@@ -7328,6 +7364,8 @@ steamcompmgr_main(int argc, char **argv)
 
 	for (;;)
 	{
+		ZoneScoped;
+		
 		vblank = false;
 
 		{
@@ -7339,8 +7377,10 @@ steamcompmgr_main(int argc, char **argv)
 					server->ctx->Dispatch();
 			}
 		}
-
-		g_SteamCompMgrWaiter.PollEvents();
+		{
+			ZoneScopedN("g_SteamCompMgrWaiter.PollEvents()");
+			g_SteamCompMgrWaiter.PollEvents();
+		}
 
 		if ( std::optional<gamescope::VBlankTime> pendingVBlank = GetVBlankTimer().ProcessVBlank() )
 		{
@@ -7351,6 +7391,10 @@ steamcompmgr_main(int argc, char **argv)
 		if ( g_bRun == false )
 		{
 			break;
+		}
+		
+		if (vblank) {
+			FrameMarkStart(sl_steamcompmgr_name);
 		}
 
 		bool flush_root = false;
@@ -7694,6 +7738,10 @@ steamcompmgr_main(int argc, char **argv)
 			nIgnoredOverlayRepaints = 0;
 		}
 
+		if (vblank) {
+			FrameMarkEnd(sl_steamcompmgr_name);
+		}
+
 #if HAVE_PIPEWIRE
 		if ( vblank && pipewire_is_streaming() )
 			paint_pipewire();
@@ -7734,6 +7782,7 @@ steamcompmgr_main(int argc, char **argv)
 
 	steamcompmgr_exit();
 }
+TRACY_CATCH
 
 void steamcompmgr_send_frame_done_to_focus_window()
 {

@@ -10,6 +10,7 @@
 #include <bitset>
 #include <mutex>
 #include <optional>
+#include <source_location>
 
 #include "main.hpp"
 
@@ -17,6 +18,11 @@
 #include "backend.h"
 
 #include "shaders/descriptor_set_constants.h"
+
+namespace tracy { //forward declaration
+	class VkCtx;
+	class VkCtxScope;
+}
 
 class CVulkanCmdBuffer;
 
@@ -721,7 +727,7 @@ public:
 	VkSampler sampler(SamplerState key);
 	VkPipeline pipeline(ShaderType type, uint32_t layerCount = 1, uint32_t ycbcrMask = 0, uint32_t blur_layers = 0, uint32_t colorspace_mask = 0, uint32_t output_eotf = EOTF_Gamma22, bool itm_enable = false);
 	int32_t findMemoryType( VkMemoryPropertyFlags properties, uint32_t requiredTypeBits );
-	std::unique_ptr<CVulkanCmdBuffer> commandBuffer();
+	inline std::unique_ptr<CVulkanCmdBuffer> __attribute__((hot,visibility("internal"))) commandBuffer([[maybe_unused]] const std::source_location& loc = std::source_location::current());
 	uint64_t submit( std::unique_ptr<CVulkanCmdBuffer> cmdBuf);
 	uint64_t submitInternal( CVulkanCmdBuffer* cmdBuf );
 	void wait(uint64_t sequence, bool reset = true);
@@ -821,7 +827,7 @@ protected:
 	std::unordered_map< SamplerState, VkSampler > m_samplerCache;
 	std::array<VkShaderModule, SHADER_TYPE_COUNT> m_shaderModules;
 	std::unordered_map<PipelineInfo_t, VkPipeline> m_pipelineMap;
-	std::mutex m_pipelineMutex;
+	TracyLockable(std::mutex, m_pipelineMutex);
 
 	// currently just one set, no need to double buffer because we
 	// vkQueueWaitIdle after each submit.
@@ -896,13 +902,28 @@ public:
 
 	VkQueue queue() { return m_queue; }
 	uint32_t queueFamily() { return m_queueFamily; }
-
+	
+protected:
+	friend class CVulkanDevice;
+#ifdef TRACY_ENABLE
+	inline std::optional<tracy::VkCtxScope>& gpuZoneHolder() {return m_gpuZoneHolder;}
+	inline tracy::VkCtx*& tracyCtx() {return m_tracyCtx;}
+	inline tracy::VkCtx* popCtx() {
+		return std::exchange(m_tracyCtx, nullptr);
+	}
+#endif
+	
 private:
 	VkCommandBuffer m_cmdBuffer;
 	CVulkanDevice *m_device;
 
 	VkQueue m_queue;
 	uint32_t m_queueFamily;
+
+#ifdef TRACY_ENABLE
+	tracy::VkCtx* m_tracyCtx;
+	std::optional<tracy::VkCtxScope> m_gpuZoneHolder;
+#endif
 
 	// Per Use State
 	std::vector<gamescope::Rc<CVulkanTexture>> m_textureRefs;

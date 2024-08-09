@@ -250,7 +250,7 @@ namespace gamescope
 
 		static CScreenshotManager &Get();
 	private:
-		std::mutex m_ScreenshotInfoMutex;
+		TracyLockable(std::mutex, m_ScreenshotInfoMutex);
 		std::optional<GamescopeScreenshotInfo> m_ScreenshotInfo;
 	};
 

@@ -54,7 +54,7 @@ struct CommitDoneEntry_t
 
 struct CommitDoneList_t
 {
-	std::mutex listCommitsDoneLock;
+	TracyLockable(std::mutex, listCommitsDoneLock);
 	std::vector< CommitDoneEntry_t > listCommitsDone;
 };
 
@@ -65,7 +65,7 @@ struct xwayland_ctx_t final : public gamescope::IWaitable
 
 	// Not used for most of steamcompmgr thread. Just to sync whenever
 	// wlserver wants it.
-	std::mutex list_mutex;
+	TracyLockable(std::mutex, list_mutex);
 	steamcompmgr_win_t				*list;
 	int				scr;
 	Window			root;

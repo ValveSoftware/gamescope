@@ -258,7 +258,7 @@ namespace gamescope
         bool m_bNeedsDecorCommit = false;
         uint32_t m_uFractionalScale = 120;
 
-        std::mutex m_PlaneStateLock;
+        TracyLockable(std::mutex, m_PlaneStateLock);
         std::optional<WaylandPlaneState> m_oCurrentPlaneState;
     };
     const wl_surface_listener CWaylandPlane::s_SurfaceListener =
@@ -961,6 +961,7 @@ namespace gamescope
 
     void CWaylandPlane::Present( std::optional<WaylandPlaneState> oState )
     {
+    		ZoneScopedN("CWaylandPlane::Present( std::optional<WaylandPlaneState> oState )");
         {
             std::unique_lock lock( m_PlaneStateLock );
             m_oCurrentPlaneState = oState;
@@ -1049,6 +1050,7 @@ namespace gamescope
 
     void CWaylandPlane::Commit()
     {
+    		ZoneScopedN("CWaylandPlane::Commit()");
         if ( m_bNeedsDecorCommit )
         {
             CommitLibDecor( nullptr );
@@ -1068,6 +1070,7 @@ namespace gamescope
 
     void CWaylandPlane::Present( const FrameInfo_t::Layer_t *pLayer )
     {
+    		ZoneScopedN("CWaylandPlane::Present( const FrameInfo_t::Layer_t *pLayer )");
         CWaylandFb *pWaylandFb = pLayer && pLayer->tex != nullptr ? static_cast<CWaylandFb*>( pLayer->tex->GetBackendFb() ) : nullptr;
         wl_buffer *pBuffer = pWaylandFb ? pWaylandFb->GetHostBuffer() : nullptr;
 
@@ -1575,6 +1578,7 @@ namespace gamescope
 
         if ( !m_bVisible )
         {
+        		ZoneScopedN("CWaylandBackend::Present(): m_bVisible=false");
             uint32_t uCurrentPlane = 0;
             for ( int i = 0; i < 8 && uCurrentPlane < 8; i++ )
                 m_Planes[uCurrentPlane++].Present( nullptr );
@@ -1605,6 +1609,7 @@ namespace gamescope
 
             if ( !bNeedsFullComposite )
             {
+            		ZoneScopedN("CWaylandBackend::Present(): bNeedsFullComposite=false");
                 bool bNeedsBacking = true;
                 if ( pFrameInfo->layerCount >= 1 )
                 {
@@ -1637,6 +1642,7 @@ namespace gamescope
             }
             else
             {
+            		ZoneScopedN("CWaylandBackend::Present(): bNeedsFullComposite=true");
                 std::optional oCompositeResult = vulkan_composite( (FrameInfo_t *)pFrameInfo, nullptr, false );
 
                 if ( !oCompositeResult )
@@ -1645,7 +1651,10 @@ namespace gamescope
                     return -EINVAL;
                 }
 
-                vulkan_wait( *oCompositeResult, true );
+								{
+									ZoneScopedN("CWaylandBackend::Present(): vulkan_wait");
+                	vulkan_wait( *oCompositeResult, true );
+								}
 
                 FrameInfo_t::Layer_t compositeLayer{};
                 compositeLayer.scale.x = 1.0;

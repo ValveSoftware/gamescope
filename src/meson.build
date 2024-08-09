@@ -40,6 +40,48 @@ displayinfo_dep = dependency(
 
 libdecor_dep = dependency('libdecor-0')
 
+tracy_public_deps = []
+tracy_public_args = []
+if get_option('tracy_enable')
+	tracy_public_args += ['-DTRACY_ENABLE', '-DTRACY_FIBERS', '-DTRACY_VK_USE_SYMBOL_TABLE', '-DTRACY_LIBBACKTRACE_ELF_DYNLOAD_SUPPORT']
+	
+	if get_option('tracy_on_demand')
+		tracy_public_args += ['-DTRACY_ON_DEMAND']
+	endif
+	
+	if get_option('tracy_only_localhost')
+		tracy_public_args += ['-DTRACY_ONLY_LOCALHOST']
+	endif
+	
+	if get_option('tracy_collect_callstacks')
+		tracy_public_args += ['-DTRACY_COLLECT_CALLSTACKS']
+	endif
+	
+	if get_option('tracy_no_sampling')
+		tracy_public_args += ['-DTRACY_NO_SAMPLING']
+	endif
+	
+	if get_option('tracy_no_system_tracing')
+		tracy_public_args += ['-DTRACY_NO_SYSTEM_TRACING']
+	endif
+	
+	if get_option('tracy_debuginfod')
+		tracy_public_args += ['-DTRACY_DEBUGINFOD']
+  		tracy_public_deps += dependency('libdebuginfod')
+  	endif
+	tracy_public_args += ['-DTRACY_CALLSTACK_DEPTH=@0@'.format(get_option('tracy_callstack_depth'))]
+endif
+
+tracy_source = ['../thirdparty/tracy/public/TracyClient.cpp']
+tracy_include = include_directories(['../thirdparty/tracy/public', '../thirdparty/tracy/public/tracy'])
+
+tracy_dep = declare_dependency(
+	compile_args: ['-Wno-sign-compare'] + tracy_public_args,
+	dependencies: tracy_public_deps,
+	include_directories: tracy_include,
+	sources: tracy_source
+)
+
 glsl_compiler = find_program('glslang', 'glslangValidator', native: true)
 
 # Use --depfile to rebuild shaders when included files have changed. Sadly debian based
@@ -115,6 +157,7 @@ src = [
   'backend.cpp',
   'x11cursor.cpp',
   'InputEmulation.cpp',
+  'tracy_string_literals.cpp',
 ]
 
 gamescope_cpp_args = []
@@ -168,8 +211,9 @@ gamescope_version = vcs_tag(
   executable(
     'gamescope',
     src, reshade_src, gamescope_version,
-    include_directories : [reshade_include],
+    include_directories : [reshade_include, tracy_include],
     dependencies: [
+      tracy_dep,
       dep_wayland, dep_x11, dep_xdamage, dep_xcomposite, dep_xrender, dep_xext, dep_xfixes,
       dep_xxf86vm, dep_xres, glm_dep, drm_dep, wayland_server,
       xkbcommon, thread_dep, sdl2_dep, wlroots_dep,

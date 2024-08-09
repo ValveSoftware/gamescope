@@ -90,7 +90,7 @@ struct wlserver_content_override {
 	struct wl_resource *gamescope_swapchain;
 };
 
-std::mutex g_wlserver_xdg_shell_windows_lock;
+TracyLockable(std::mutex, g_wlserver_xdg_shell_windows_lock);
 
 static struct wl_list pending_surfaces = {0};
 
@@ -111,7 +111,7 @@ std::vector<ResListEntry_t>& gamescope_xwayland_server_t::retrieve_commits()
 	commits.reserve(16);
 
 	{
-		std::lock_guard<std::mutex> lock( wayland_commit_lock );
+		std::lock_guard lock( wayland_commit_lock );
 		commits.swap(wayland_commit_queue);
 	}
 	return commits;
@@ -256,7 +256,7 @@ void gamescope_xwayland_server_t::wayland_commit(struct wlr_surface *surf, struc
 		return;
 
 	{
-		std::lock_guard<std::mutex> lock( wayland_commit_lock );
+		std::lock_guard lock( wayland_commit_lock );
 		wayland_commit_queue.emplace_back( std::move( *oEntry ) );
 	}
 
@@ -278,7 +278,7 @@ void wlserver_xdg_commit(struct wlr_surface *surf, struct wlr_buffer *buf)
 		return;
 
 	{
-		std::lock_guard<std::mutex> lock( wlserver.xdg_commit_lock );
+		std::lock_guard lock( wlserver.xdg_commit_lock );
 		wlserver.xdg_commit_queue.push_back( std::move( *oEntry ) );
 	}
 
@@ -286,6 +286,7 @@ void wlserver_xdg_commit(struct wlr_surface *surf, struct wlr_buffer *buf)
 }
 
 void xwayland_surface_commit(struct wlr_surface *wlr_surface) {
+	ZoneScopedN("xwayland_surface_commit()");
 	wlr_surface->current.committed = 0;
 
 	wlserver_x11_surface_info *wlserver_x11_surface_info = get_wl_surface_info(wlr_surface)->x11_surface;
@@ -318,6 +319,7 @@ void xwayland_surface_commit(struct wlr_surface *wlr_surface) {
 	struct wlr_buffer *buf = wlr_buffer_lock( tex->buf );
 
 	gpuvis_trace_printf( "xwayland_surface_commit wlr_surface %p", wlr_surface );
+	ZoneTextF("xwayland_surface_commit wlr_surface %p", wlr_surface);
 
 	if (wlserver_x11_surface_info)
 	{
@@ -1210,12 +1212,38 @@ static void create_gamescope_control( void )
 
 static void gamescope_private_execute( struct wl_client *client, struct wl_resource *resource, const char *cvar_name, const char *value )
 {
+#ifdef TRACY_ENABLE
+
+	const size_t cvar_len = strlen(cvar_name);
+	//printf("cvar_len = %lu\n", cvar_len);
+	const size_t value_len = strlen(value);
+	//printf("value_len = %lu\n", value_len);
+
+	const size_t combined_len = cvar_len+value_len+1;
+	char*__restrict__ combined_str = static_cast<char*__restrict__>(alloca(combined_len));
+	memcpy(reinterpret_cast<void*__restrict__>(combined_str), reinterpret_cast<const void*>(cvar_name), cvar_len);
+	combined_str[cvar_len]=' ';
+	memcpy(reinterpret_cast<void*__restrict__>(combined_str+cvar_len+1), reinterpret_cast<const void*>(value), value_len);
+#if 0
+	for (size_t i = 0; i < combined_len; i++) {
+		printf("i = %lu, combined_str[i] = %c\n", i, combined_str[i]);
+	}
+#endif
+	
+	TracyMessage(combined_str, combined_len);
+#endif
+	
 	std::vector<std::string_view> args;
 	args.emplace_back( cvar_name );
 	args.emplace_back( value );
-	if ( gamescope::ConCommand::Exec( std::span<std::string_view>{ args } ) )
+	
+	TracyMessage(combined_str, combined_len);
+	
+	if ( gamescope::ConCommand::Exec( std::span<std::string_view>{ args } ) ) {
 		gamescope_private_send_command_executed( resource );
+	}
 }
+
 
 static void gamescope_private_handle_destroy( struct wl_client *client, struct wl_resource *resource )
 {
@@ -1941,7 +1969,7 @@ bool wlserver_init( void ) {
 	return true;
 }
 
-pthread_mutex_t waylock = PTHREAD_MUTEX_INITIALIZER;
+TracyPthreadLockable(pthread_mutex_t, waylock, PTHREAD_MUTEX_INITIALIZER);
 
 bool wlserver_is_lock_held(void)
 {
@@ -1966,18 +1994,18 @@ void wlserver_unlock(bool flush)
 	pthread_mutex_unlock(&waylock);
 }
 
-extern std::mutex g_SteamCompMgrXWaylandServerMutex;
+extern LockableBase(std::mutex) g_SteamCompMgrXWaylandServerMutex;
 
 static int g_wlserverNudgePipe[2] = {-1, -1};
 
-void wlserver_run(void)
+void wlserver_run(void) TRACY_TRY
 {
 	pthread_setname_np( pthread_self(), "gamescope-wl" );
 
 	if ( pipe2( g_wlserverNudgePipe, O_CLOEXEC | O_NONBLOCK ) != 0 )
 	{
 		wl_log.errorf_errno( "wlserver: pipe2 failed" );
-		exit( 1 );
+		EXIT( 1 );
 	}
 
 	struct pollfd pollfds[2] = {
@@ -1996,6 +2024,7 @@ void wlserver_run(void)
 
 	while ( !g_bShutdownWLServer )
 	{
+		ZoneScoped;
 		int ret = poll( pollfds, 2, -1 );
 
 		if ( ret < 0 ) {
@@ -2042,7 +2071,7 @@ void wlserver_run(void)
 #endif
 
 	// Released when steamcompmgr closes.
-	std::unique_lock<std::mutex> xwayland_server_guard(g_SteamCompMgrXWaylandServerMutex);
+	std::unique_lock xwayland_server_guard(g_SteamCompMgrXWaylandServerMutex);
 	// We need to shutdown Xwayland before disconnecting all clients, otherwise
 	// wlroots will restart it automatically.
 	wlserver_lock();
@@ -2052,6 +2081,7 @@ void wlserver_run(void)
     wlserver.display = NULL;
 	wlserver_unlock(false);
 }
+TRACY_CATCH
 
 void wlserver_shutdown()
 {
@@ -2930,7 +2960,7 @@ std::vector<ResListEntry_t> wlserver_xdg_commit_queue()
 {
 	std::vector<ResListEntry_t> commits;
 	{
-		std::lock_guard<std::mutex> lock( wlserver.xdg_commit_lock );
+		std::lock_guard lock( wlserver.xdg_commit_lock );
 		commits = std::move(wlserver.xdg_commit_queue);
 	}
 	return commits;

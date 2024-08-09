@@ -51,7 +51,7 @@ namespace gamescope
         void MemoizeBuffer( wlr_buffer *pBuffer, OwningRc<CVulkanTexture> pTexture );
         void UnmemoizeBuffer( wlr_buffer *pBuffer );
     private:
-        mutable std::mutex m_mutBufferMemos;
+        mutable TracyLockable(std::mutex, m_mutBufferMemos);
         std::unordered_map<wlr_buffer *, CBufferMemo> m_BufferMemos;
     };
 
