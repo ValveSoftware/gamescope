@@ -2133,7 +2133,7 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 		return false;
 	}
 
-	if ( flags.bMappable == true )
+	if ( flags.bMappable == true && tiling != VK_IMAGE_TILING_OPTIMAL )
 	{
 		assert( tiling != VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT );
 		const VkImageSubresource image_subresource = {
@@ -2220,7 +2220,7 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 			};
 			assert( dmabuf.n_planes <= 4 );
 
-			for ( int i = 0; i < dmabuf.n_planes; i++ )
+			for ( int i = 0; i < dmabuf.n_planes && tiling != VK_IMAGE_TILING_OPTIMAL; i++ )
 			{
 				const VkImageSubresource subresource = {
 					.aspectMask = planeAspects[i],
@@ -2243,16 +2243,18 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 		}
 		else
 		{
-			const VkImageSubresource subresource = {
-				.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-			};
-			VkSubresourceLayout subresourceLayout = {};
-			g_device.vk.GetImageSubresourceLayout( g_device.device(), m_vkImage, &subresource, &subresourceLayout );
-
+			if (tiling != VK_IMAGE_TILING_OPTIMAL) {
+				const VkImageSubresource subresource = {
+					.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+				};
+				VkSubresourceLayout subresourceLayout = {};
+				g_device.vk.GetImageSubresourceLayout( g_device.device(), m_vkImage, &subresource, &subresourceLayout );
+				dmabuf.stride[0] = subresourceLayout.rowPitch;
+			}
+			
 			dmabuf.n_planes = 1;
 			dmabuf.modifier = DRM_FORMAT_MOD_INVALID;
 			dmabuf.offset[0] = 0;
-			dmabuf.stride[0] = subresourceLayout.rowPitch;
 		}
 
 		m_dmabuf = dmabuf;
