@@ -541,6 +541,29 @@ static bool IsInDebugSession()
 	return nTracePid != 0;
 }
 #endif
+namespace gamescope {
+	int32_t ConvertHztomHz( const char* refreshHz ) {
+		const char* separators = ".,";
+		size_t ulWholeNumLen = strcspn(refreshHz, separators);
+		char* numStr = strndup(refreshHz, ulWholeNumLen);
+		uint64_t ulWholeNum = (uint64_t) atol(numStr);
+		free(numStr);
+
+		size_t ulSeparatorsLen = strspn(refreshHz+ulWholeNumLen, separators);
+		size_t ulStrLen = strlen(refreshHz);
+		size_t ulDecStart = ulWholeNumLen + ulSeparatorsLen;
+		if (ulSeparatorsLen > 0ul && ulStrLen >= ulDecStart)  {
+			const char* decStr = refreshHz + ulDecStart;
+			size_t ulDecLen = ulStrLen - ulDecStart;
+			uint64_t ulDecDenom = (uint64_t)lrintf(exp10f((int32_t)ulDecLen));
+			uint64_t ulMultiplied = ulWholeNum * 1'000lu * ulDecDenom + (uint64_t)atol(decStr) * 1'000lu; //don't divide the decimal part by its denominator(/number of decimal places) first, instead multiply the wholeNum by the number of decimal places, and then divide the result of adding the multiplied wholeNum & decimal parts.
+			//This, along with doing all intermediate calculations w/ 64-bit unsigned ints, ensures there's no precision loss.
+			return (int32_t)(ulMultiplied/ulDecDenom);
+		}
+		
+		return (int32_t)(ulWholeNum*1'000lu);
+	}
+}
 
 bool steamMode = false;
 bool g_bLaunchMangoapp = false;
@@ -684,7 +707,7 @@ int main(int argc, char **argv)
 				g_nNestedHeight = atoi( optarg );
 				break;
 			case 'r':
-				g_nNestedRefresh = gamescope::ConvertHztomHz( atoi( optarg ) );
+				g_nNestedRefresh = gamescope::ConvertHztomHz( optarg );
 				break;
 			case 'W':
 				g_nPreferredOutputWidth = atoi( optarg );
@@ -693,7 +716,7 @@ int main(int argc, char **argv)
 				g_nPreferredOutputHeight = atoi( optarg );
 				break;
 			case 'o':
-				g_nNestedUnfocusedRefresh = gamescope::ConvertHztomHz( atoi( optarg ) );
+				g_nNestedUnfocusedRefresh = gamescope::ConvertHztomHz( optarg );
 				break;
 			case 'm':
 				g_flMaxWindowScale = atof( optarg );

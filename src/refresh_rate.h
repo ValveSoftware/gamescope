@@ -4,6 +4,9 @@
 
 namespace gamescope
 {
+    int32_t ConvertHztomHz( const char* refreshHz ); //function definition in main.cpp
+    //function definition not included here, because having the function definition here gave me linker errors - sharkautarch
+
     constexpr int32_t ConvertHztomHz( int32_t nRefreshHz )
     {
         return nRefreshHz * 1'000;
