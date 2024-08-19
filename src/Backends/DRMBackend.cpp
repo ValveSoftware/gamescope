@@ -475,11 +475,11 @@ struct drm_t {
 
 	// FBs currently queued to go on screen.
 	// May be accessed by page flip handler thread and req thread, thus mutex.
-	std::mutex m_QueuedFbIdsMutex;
+	TracyDoubleLockable(std::mutex, m_QueuedFbIdsMutex);
 	std::vector<gamescope::Rc<gamescope::IBackendFb>> m_QueuedFbIds;
 	// FBs currently on screen.
 	// Accessed only on page flip handler thread.
-	std::mutex m_mutVisibleFbIds;
+	TracyDoubleLockable(std::mutex, m_mutVisibleFbIds);
 	std::vector<gamescope::Rc<gamescope::IBackendFb>> m_VisibleFbIds;
 
 	std::atomic < uint32_t > uPendingFlipCount = { 0 };
@@ -708,7 +708,7 @@ static void page_flip_handler(int fd, unsigned int frame, unsigned int sec, unsi
 	ulLastVBlankTime = vblanktime;
 
 	{
-		std::scoped_lock lock{ g_DRM.m_QueuedFbIdsMutex, g_DRM.m_mutVisibleFbIds };
+		TracyScopedLock( lock, g_DRM.m_QueuedFbIdsMutex, g_DRM.m_mutVisibleFbIds );
 		// Swap and clear from queue -> visible to avoid allocations.
 		g_DRM.m_VisibleFbIds.swap( g_DRM.m_QueuedFbIds );
 		g_DRM.m_QueuedFbIds.clear();
@@ -3250,10 +3250,12 @@ namespace gamescope
 			bool bDoComposite = true;
 			if ( !bNeedsFullComposite && !bWantsPartialComposite )
 			{
+				ZoneScopedNMS("CDRMBackend::Present(): drm_prepare()");
 				int ret = drm_prepare( &g_DRM, bAsync, pFrameInfo );
-				if ( ret == 0 )
+				if ( ret == 0 ) {
 					bDoComposite = false;
-				else if ( ret == -EACCES )
+					TracyMessageL("CDRMBackend::Present(): bDoComposite=false");
+				} else if ( ret == -EACCES )
 					return 0;
 			}
 
@@ -3303,6 +3305,7 @@ namespace gamescope
 				{
 					if ( pFrameInfo->layers[i - 1].colorspace != pFrameInfo->layers[i].colorspace )
 					{
+						TracyMessageL("CDRMBackend::Present(): bNeedsFullComposite = true");
 						bNeedsFullComposite = true;
 						break;
 					}
@@ -3320,6 +3323,7 @@ namespace gamescope
 			// from our frameinfo to composite.
 			if ( !bNeedsFullComposite )
 			{
+				TracyMessageL("CDRMBackend::Present(): Partial Composition");
 				for ( int i = 1; i < compositeFrameInfo.layerCount; i++ )
 					compositeFrameInfo.layers[i - 1] = compositeFrameInfo.layers[i];
 				compositeFrameInfo.layerCount -= 1;
@@ -3348,8 +3352,11 @@ namespace gamescope
 				xwm_log.errorf("vulkan_composite failed");
 				return -EINVAL;
 			}
-
-			vulkan_wait( *oCompositeResult, true );
+			
+			{
+				ZoneScopedN("CDRMBackend::Present(): vulkan_wait"); 
+				vulkan_wait( *oCompositeResult, true );
+			}
 
 			FrameInfo_t presentCompFrameInfo = {};
 			presentCompFrameInfo.allowVRR = pFrameInfo->allowVRR;
@@ -3433,8 +3440,12 @@ namespace gamescope
 				m_bWasPartialCompsiting = true;
 			}
 
-			int ret = drm_prepare( &g_DRM, bAsync, &presentCompFrameInfo );
-
+			int ret;
+			{
+				ZoneScopedNMS("CDRMBackend::Present(): partial/full composition: drm_prepare()");
+			 	ret = drm_prepare( &g_DRM, bAsync, &presentCompFrameInfo );
+			}
+			
 			// Happens when we're VT-switched away
 			if ( ret == -EACCES )
 				return 0;
@@ -3450,8 +3461,10 @@ namespace gamescope
 				xwm_log.errorf("Failed to prepare 1-layer flip (%s), trying again with previous mode if modeset needed", strerror( -ret ));
 
 				// Try once again to in case we need to fall back to another mode.
-				ret = drm_prepare( &g_DRM, bAsync, &compositeFrameInfo );
-
+				{
+					ZoneScopedNMS("CDRMBackend::Present(): partial/full composition: running drm_prepare() again (previous one failed)");
+					ret = drm_prepare( &g_DRM, bAsync, &compositeFrameInfo );
+				}
 				// Happens when we're VT-switched away
 				if ( ret == -EACCES )
 					return 0;
@@ -3649,6 +3662,7 @@ namespace gamescope
 
 		int Commit( const FrameInfo_t *pFrameInfo )
 		{
+			ZoneScopedN("CDRMBackend::Commit()");
 			drm_t *drm = &g_DRM;
 			int ret = 0;
 
@@ -3679,10 +3693,16 @@ namespace gamescope
 
 			drm_log.debugf("flip commit %" PRIu64, (uint64_t)m_PresentFeedback.m_uQueuedPresents);
 			gpuvis_trace_printf( "flip commit %" PRIu64, (uint64_t)m_PresentFeedback.m_uQueuedPresents );
+			ZoneTextF( "flip commit %" PRIu64, (uint64_t)m_PresentFeedback.m_uQueuedPresents );
 
-			ret = drmModeAtomicCommit(drm->fd, drm->req, drm->flags, &m_PresentCtxs[uCurrentPresentCtx] );
+			{
+				ZoneScopedN("CDRMBackend::Commit(): drmModeAtomicCommit()");
+				ret = drmModeAtomicCommit(drm->fd, drm->req, drm->flags, &m_PresentCtxs[uCurrentPresentCtx] );
+			}
+	
 			if ( ret != 0 )
 			{
+				ZoneScopedN("CDRMBackend::Commit(): flip error");
 				drm_log.errorf_errno( "flip error" );
 
 				if ( ret != -EBUSY && ret != -EACCES )
@@ -3711,6 +3731,7 @@ namespace gamescope
 
 				return ret;
 			} else {
+				ZoneScopedN("CDRMBackend::Commit(): flip success (plumbing queue)");
 				// Our request went through!
 				// Clear what we swapped with (what was previously queued)
 				drm->m_FbIdsInRequest.clear();

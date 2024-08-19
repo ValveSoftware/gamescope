@@ -23,6 +23,10 @@ LogScope g_VBlankLog("vblank");
 
 namespace gamescope
 {
+#ifdef TRACY_ENABLE
+	alignas(std::atomic_ref<bool>::required_alignment) static inline bool frameToggleFlag{false};
+#endif
+
 	ConVar<bool> vblank_debug( "vblank_debug", false, "Enable vblank debug spew to stderr." );
 
 	CVBlankTimer::CVBlankTimer()
@@ -35,10 +39,14 @@ namespace gamescope
 			// Majority of backends fall down this optimal
 			// timerfd path, vs nudge thread.
 			g_VBlankLog.infof( "Using timerfd." );
+			[[maybe_unused]] static constexpr char msg[] = "Using timerfd."; 
+			TracyAppInfo(const_cast<const char *>(msg), sizeof(msg)); 
 		}
 		else
 		{
 			g_VBlankLog.infof( "Using nudge thread." );
+			[[maybe_unused]] static constexpr char msg[] = "Using nudge thread."; 
+			TracyAppInfo(const_cast<const char *>(msg), sizeof(msg)); 
 
 			if ( pipe2( m_nNudgePipe, O_CLOEXEC | O_NONBLOCK ) != 0 )
 			{
@@ -230,6 +238,12 @@ namespace gamescope
 		if ( bPreemptive && m_bArmed )
 			return;
 
+#ifdef TRACY_ENABLE
+		if ( UsingTimerFD() && !std::exchange(frameToggleFlag,true)) {
+			FrameMarkStart(sl_vblankFrameName);
+		}
+#endif
+
 		m_bArmed = true;
 		m_bArmed.notify_all();
 
@@ -261,7 +275,6 @@ namespace gamescope
 			if ( !m_bArmed.exchange( false ) )
 				return;
 
-
 			m_PendingVBlank = VBlankTime
 			{
 				.schedule = m_TimerFDSchedule,
@@ -278,6 +291,10 @@ namespace gamescope
 			gpuvis_trace_printf( "vblank timerfd wakeup" );
 
 			ITimerWaitable::DisarmTimer();
+#ifdef TRACY_ENABLE
+			if (std::exchange(frameToggleFlag, false))
+				FrameMarkEnd(sl_vblankFrameName);
+#endif
 		}
 		else
 		{
@@ -292,12 +309,14 @@ namespace gamescope
 						continue;
 
 					g_VBlankLog.errorf_errno( "Failed to read nudge pipe. Pre-emptively re-arming." );
+					TracyMessageL("Nudge pipe had less data than sizeof( VBlankTime ). Pre-emptively re-arming.");
 					ArmNextVBlank( true );
 					return;
 				}
 				else if ( ret != sizeof( VBlankTime ) )
 				{
 					g_VBlankLog.errorf( "Nudge pipe had less data than sizeof( VBlankTime ). Pre-emptively re-arming." );
+					TracyMessageL("Nudge pipe had less data than sizeof( VBlankTime ). Pre-emptively re-arming.");
 					ArmNextVBlank( true );
 					return;
 				}
@@ -311,12 +330,19 @@ namespace gamescope
 			if ( ulDiff > 1'000'000ul )
 			{
 				gpuvis_trace_printf( "Ignoring stale vblank... Pre-emptively re-arming." );
+				TracyMessageL("Ignoring stale vblank... Pre-emptively re-arming.");
 				ArmNextVBlank( true );
 				return;
 			}
 
 			gpuvis_trace_printf( "got vblank" );
 			m_PendingVBlank = time;
+
+#ifdef TRACY_ENABLE
+			std::atomic_ref refFrameToggleFlag{frameToggleFlag};
+			if (refFrameToggleFlag.exchange(false))
+				FrameMarkEnd(sl_vblankFrameName);
+#endif
 		}
 	}
 
@@ -375,11 +401,20 @@ namespace gamescope
 				if ( ret <= 0 )
 				{
 					g_VBlankLog.errorf_errno( "Nudge write failed" );
+					TracyMessageL("Nudge write failed");
 				}
 				else
 				{
 					gpuvis_trace_printf( "sent vblank (nudge thread)" );
+					TracyMessageL("sent vblank (nudge thread)");
 				}
+				
+#ifdef TRACY_ENABLE
+				std::atomic_ref refFrameToggleFlag{frameToggleFlag};
+				if (!refFrameToggleFlag.exchange(true)) {
+					FrameMarkStart(sl_vblankFrameName);
+				}
+#endif
 			}
 		}
 	}

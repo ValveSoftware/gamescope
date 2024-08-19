@@ -6,7 +6,7 @@ project(
   default_options: [
     'cpp_std=c++20',
     'warning_level=2',
-    'force_fallback_for=wlroots,libliftoff,vkroots',
+    'force_fallback_for=wlroots,libliftoff,vkroots,tracy',
   ],
 )
 
@@ -18,6 +18,12 @@ endif
 add_project_arguments([
   '-DWLR_USE_UNSTABLE',
 ], language: 'cpp')
+
+if not get_option('gpuvis')
+	add_project_arguments([
+  		'-DGPUVIS_TRACE_UTILS_DISABLE',
+	], language: 'cpp')
+endif
 
 cppc = meson.get_compiler('cpp')
 

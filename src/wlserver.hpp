@@ -98,7 +98,7 @@ private:
 	bool xwayland_ready = false;
 	_XDisplay *dpy = NULL;
 
-	std::mutex wayland_commit_lock;
+	TracyLockable(std::mutex, wayland_commit_lock);
 	std::vector<ResListEntry_t> wayland_commit_queue;
 };
 
@@ -181,7 +181,7 @@ struct wlserver_t {
 	struct wl_listener new_pointer_constraint;
 	std::vector<std::shared_ptr<steamcompmgr_win_t>> xdg_wins;
 	std::atomic<bool> xdg_dirty;
-	std::mutex xdg_commit_lock;
+	TracyLockable(std::mutex, xdg_commit_lock);
 	std::vector<ResListEntry_t> xdg_commit_queue;
 
 	std::vector<wl_resource*> gamescope_controls;

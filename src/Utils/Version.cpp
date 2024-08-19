@@ -11,4 +11,9 @@ namespace gamescope
     {
         console_log.infof( "%s version %s", Process::GetProcessName(), gamescope::k_szGamescopeVersion );
     }
+    
+    std::string_view GetVersion()
+    {
+    	return std::string_view{gamescope::k_szGamescopeVersion};
+    }
 }

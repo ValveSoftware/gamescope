@@ -1146,7 +1146,7 @@ void CVulkanDevice::compileAllPipelines()
 
 					VkPipeline newPipeline = compilePipeline(layerCount, ycbcrMask, info.shaderType, blur_layers, info.compositeDebug, info.colorspaceMask, info.outputEOTF, info.itmEnable);
 					{
-						std::lock_guard<std::mutex> lock(m_pipelineMutex);
+						std::lock_guard lock(m_pipelineMutex);
 						PipelineInfo_t key = {info.shaderType, layerCount, ycbcrMask, blur_layers, info.compositeDebug};
 						auto result = m_pipelineMap.emplace(std::make_pair(key, newPipeline));
 						if (!result.second)
@@ -1166,7 +1166,7 @@ VkPipeline CVulkanDevice::pipeline(ShaderType type, uint32_t layerCount, uint32_
 	if ( g_bSteamIsActiveWindow )
 		effective_debug &= ~(CompositeDebugFlag::Heatmap | CompositeDebugFlag::Heatmap_MSWCG | CompositeDebugFlag::Heatmap_Hard);
 
-	std::lock_guard<std::mutex> lock(m_pipelineMutex);
+	std::lock_guard lock(m_pipelineMutex);
 	PipelineInfo_t key = {type, layerCount, ycbcrMask, blur_layers, effective_debug, colorspace_mask, output_eotf, itm_enable};
 	auto search = m_pipelineMap.find(key);
 	if (search == m_pipelineMap.end())
@@ -1198,9 +1198,26 @@ int32_t CVulkanDevice::findMemoryType( VkMemoryPropertyFlags properties, uint32_
 	return -1;
 }
 
-std::unique_ptr<CVulkanCmdBuffer> CVulkanDevice::commandBuffer()
+std::unique_ptr<CVulkanCmdBuffer> CVulkanDevice::commandBuffer([[maybe_unused]] const std::source_location& loc)
 {
-	std::unique_ptr<CVulkanCmdBuffer> cmdBuffer;
+	auto finalize_buf = [&, this]<bool bIsRecycled>(std::unique_ptr<CVulkanCmdBuffer> cmdBuf) {
+		//using this lambda allows for Return Value Optimization w/o duplicating code
+		if constexpr (bIsRecycled) {
+			m_unusedCmdBufs.pop_back();
+		}
+		cmdBuf->begin();
+
+#ifdef TRACY_ENABLE
+
+		static constinit tracy::SourceLocationData source_data{};
+		assert( !cmdBuf->gpuZoneHolder() );	
+		source_data = tracy::SourceLocationData(loc.function_name(), loc.function_name(), loc.file_name(), loc.line());
+		
+		cmdBuf->gpuZoneHolder().emplace(cmdBuf->tracyCtx(), &source_data, cmdBuf->rawBuffer(), true);
+#endif
+		return cmdBuf;
+	};
+
 	if (m_unusedCmdBufs.empty())
 	{
 		VkCommandBuffer rawCmdBuffer;
@@ -1218,20 +1235,19 @@ std::unique_ptr<CVulkanCmdBuffer> CVulkanDevice::commandBuffer()
 			return nullptr;
 		}
 
-		cmdBuffer = std::make_unique<CVulkanCmdBuffer>(this, rawCmdBuffer, queue(), queueFamily());
+		return finalize_buf.operator()<false>(std::make_unique<CVulkanCmdBuffer>(this, rawCmdBuffer, queue(), queueFamily()));
 	}
 	else
 	{
-		cmdBuffer = std::move(m_unusedCmdBufs.back());
-		m_unusedCmdBufs.pop_back();
+		return finalize_buf.operator()<true>(std::move(m_unusedCmdBufs.back()));
 	}
-
-	cmdBuffer->begin();
-	return cmdBuffer;
 }
 
 uint64_t CVulkanDevice::submitInternal( CVulkanCmdBuffer* cmdBuffer )
 {
+#ifdef TRACY_ENABLE
+	TracyVkCollect(cmdBuffer->tracyCtx(), cmdBuffer->rawBuffer());
+#endif
 	cmdBuffer->end();
 
 	// The seq no of the last submission.
@@ -1470,13 +1486,26 @@ void CVulkanDevice::resetCmdBuffers(uint64_t sequence)
 	m_pendingCmdBufs.erase(m_pendingCmdBufs.begin(), ++last);
 }
 
+
+
 CVulkanCmdBuffer::CVulkanCmdBuffer(CVulkanDevice *parent, VkCommandBuffer cmdBuffer, VkQueue queue, uint32_t queueFamily)
 	: m_cmdBuffer(cmdBuffer), m_device(parent), m_queue(queue), m_queueFamily(queueFamily)
+#ifdef TRACY_ENABLE 
+	, m_tracyCtx{tracy::CreateVkContext(parent->instance(), parent->physDev(), parent->device(), queue, cmdBuffer, g_pfn_vkGetInstanceProcAddr, parent->vk.GetDeviceProcAddr, true)}
+#endif
 {
 }
 
 CVulkanCmdBuffer::~CVulkanCmdBuffer()
 {
+#ifdef TRACY_ENABLE
+	vk_log.infof("~CVulkanCmdBuffer()");
+	if (m_tracyCtx) {
+		TracyVkDestroy(m_tracyCtx);
+		m_tracyCtx=nullptr;
+	}
+#endif
+
 	m_device->vk.FreeCommandBuffers(m_device->device(), m_device->commandPool(), 1, &m_cmdBuffer);
 }
 
@@ -1505,6 +1534,10 @@ void CVulkanCmdBuffer::begin()
 void CVulkanCmdBuffer::end()
 {
 	insertBarrier(true);
+#ifdef TRACY_ENABLE
+	TracyVkCollect(m_tracyCtx, m_cmdBuffer);
+	m_gpuZoneHolder.reset();
+#endif
 	vk_check( m_device->vk.EndCommandBuffer(m_cmdBuffer) );
 }
 
@@ -1727,6 +1760,9 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z)
 	m_device->vk.CmdDispatch(m_cmdBuffer, x, y, z);
 
 	markDirty(m_target);
+#ifdef TRACY_ENABLE
+	TracyVkCollect(m_tracyCtx, m_cmdBuffer);
+#endif
 }
 
 void CVulkanCmdBuffer::copyImage(gamescope::Rc<CVulkanTexture> src, gamescope::Rc<CVulkanTexture> dst)
@@ -2848,21 +2884,29 @@ bool vulkan_init_formats()
 
 bool acquire_next_image( void )
 {
-	VkResult res = g_device.vk.AcquireNextImageKHR( g_device.device(), g_output.swapChain, UINT64_MAX, VK_NULL_HANDLE, g_output.acquireFence, &g_output.nOutImage );
-	if ( res != VK_SUCCESS && res != VK_SUBOPTIMAL_KHR )
-		return false;
-	if ( g_device.vk.WaitForFences( g_device.device(), 1, &g_output.acquireFence, false, UINT64_MAX ) != VK_SUCCESS )
-		return false;
-	return g_device.vk.ResetFences( g_device.device(), 1, &g_output.acquireFence ) == VK_SUCCESS;
+	ZoneScopedNMS("acquire_next_image");
+	{
+		VkResult res = g_device.vk.AcquireNextImageKHR( g_device.device(), g_output.swapChain, UINT64_MAX, VK_NULL_HANDLE, g_output.acquireFence, &g_output.nOutImage );
+		if ( res != VK_SUCCESS && res != VK_SUBOPTIMAL_KHR )
+			return false;
+		ZoneScopedN("WaitForFences");
+		{
+			if ( g_device.vk.WaitForFences( g_device.device(), 1, &g_output.acquireFence, false, UINT64_MAX ) != VK_SUCCESS )
+				return false;
+			ZoneScopedN("ResetFences");
+			return g_device.vk.ResetFences( g_device.device(), 1, &g_output.acquireFence ) == VK_SUCCESS;
+		}
+	}
 }
 
 
 static std::atomic<uint64_t> g_currentPresentWaitId = {0u};
-static std::mutex present_wait_lock;
+static TracyLockable(std::mutex, present_wait_lock);
 
 extern void mangoapp_output_update( uint64_t vblanktime );
 static void present_wait_thread_func( void )
 {
+	TracyCSetThreadName("present_wait");
 	uint64_t present_wait_id = 0;
 
 	while (true)
@@ -2879,6 +2923,7 @@ static void present_wait_thread_func( void )
 			{
 				g_device.vk.WaitForPresentKHR( g_device.device(), g_output.swapChain, present_wait_id, 1'000'000'000lu );
 				uint64_t vblanktime = get_time_in_nanos();
+				TracyMessageL("present_wait_thread_func -> MarkVBlank()");
 				GetVBlankTimer().MarkVBlank( vblanktime, true );
 				mangoapp_output_update( vblanktime );
 			}
@@ -2920,6 +2965,7 @@ void vulkan_update_swapchain_hdr_metadata( VulkanOutput_t *pOutput )
 
 void vulkan_present_to_window( void )
 {
+	ZoneScopedNMS("vulkan_present_to_window");
 	static uint64_t s_lastPresentId = 0;
 
 	uint64_t presentId = ++s_lastPresentId;
@@ -2937,6 +2983,7 @@ void vulkan_present_to_window( void )
 	{
 		// Only way to clear hdr metadata for a swapchain in Vulkan
 		// is to recreate the swapchain.
+		TracyMessageL("vulkan_present_to_window(): remaking swapchain");
 		g_output.swapchainHDRMetadata = nullptr;
 		vulkan_remake_swapchain();
 	}
@@ -2961,11 +3008,15 @@ void vulkan_present_to_window( void )
 		g_currentPresentWaitId = presentId;
 		g_currentPresentWaitId.notify_all();
 	}
-	else
+	else {
+		TracyMessageL("vulkan_present_to_window(): remaking swapchain");
 		vulkan_remake_swapchain();
+	}
 
-	while ( !acquire_next_image() )
+	while ( !acquire_next_image() ) {
+		TracyMessageL("vulkan_present_to_window(): remaking swapchain");
 		vulkan_remake_swapchain();
+	}
 }
 
 gamescope::Rc<CVulkanTexture> vulkan_create_1d_lut(uint32_t size)
@@ -3180,6 +3231,7 @@ bool vulkan_make_swapchain( VulkanOutput_t *pOutput )
 
 bool vulkan_remake_swapchain( void )
 {
+	ZoneScopedN("vulkan_remake_swapchain");
 	std::unique_lock lock(present_wait_lock);
 	g_currentPresentWaitId = 0;
 	g_currentPresentWaitId.notify_all();
@@ -3511,7 +3563,6 @@ gamescope::OwningRc<CVulkanTexture> vulkan_create_texture_from_bits( uint32_t wi
 	memcpy( g_device.uploadBufferData(size), bits, size );
 
 	auto cmdBuffer = g_device.commandBuffer();
-
 	cmdBuffer->copyBufferToImage(g_device.uploadBuffer(), 0, 0, pTex.get());
 	// TODO: Sync this copyBufferToImage.
 
@@ -3866,6 +3917,7 @@ extern uint32_t g_reshade_technique_idx;
 
 std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamescope::Rc<CVulkanTexture> pPipewireTexture, bool partial, gamescope::Rc<CVulkanTexture> pOutputOverride, bool increment, std::unique_ptr<CVulkanCmdBuffer> pInCommandBuffer )
 {
+	ZoneScopedN("vulkan_composite");
 	EOTF outputTF = frameInfo->outputEncodingEOTF;
 	if (!frameInfo->applyOutputColorMgmt)
 		outputTF = EOTF_Count; //Disable blending stuff.
@@ -4096,6 +4148,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 
 void vulkan_wait( uint64_t ulSeqNo, bool bReset )
 {
+	ZoneScopedNMS("vulkan_wait");
 	return g_device.wait( ulSeqNo, bReset );
 }
 

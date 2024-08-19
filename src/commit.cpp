@@ -51,17 +51,23 @@ int commit_t::GetFD()
 
 void commit_t::OnPollIn()
 {
+		TracyFiberEnter(sl_img_waiter_fiber);
     gpuvis_trace_end_ctx_printf( commitID, "wait fence" );
 
     {
         std::unique_lock lock( m_WaitableCommitStateMutex );
-        if ( !CloseFenceInternal() )
+        if ( !CloseFenceInternal() ) {
+        		TRACY_FIBER_ZONE_END(g_zone_img_waiter);
+	      		TracyFiberLeave;
             return;
+        }
     }
 
     Signal();
 
     nudge_steamcompmgr();
+    TRACY_FIBER_ZONE_END(g_zone_img_waiter);
+    TracyFiberLeave;
 }
 
 void commit_t::Signal()
@@ -79,7 +85,7 @@ void commit_t::Signal()
     // Instead of looping over all the windows like before.
     // When we get the new IWaitable stuff in there.
     {
-        std::unique_lock< std::mutex > lock( m_pDoneCommits->listCommitsDoneLock );
+        std::unique_lock lock( m_pDoneCommits->listCommitsDoneLock );
         m_pDoneCommits->listCommitsDone.push_back( CommitDoneEntry_t{
             .winSeq = win_seq,
             .commitID = commitID,

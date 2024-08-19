@@ -9,8 +9,9 @@
 
 #include <functional>
 #include <mutex>
-
+#include "tracy_include.h"
 #include "log.hpp"
+#include "Utils/Defer.h"
 
 extern LogScope g_WaitableLog;
 
@@ -457,7 +458,8 @@ namespace gamescope
 
                 if constexpr ( UseTracking() )
                 {
-                    std::scoped_lock lock( m_AddedWaitablesMutex, m_RemovedWaitablesMutex );
+                    TracyScopedLock( lock, m_AddedWaitablesMutex, m_RemovedWaitablesMutex );
+
                     for ( auto& pRemoved : m_RemovedWaitables )
                         std::erase( m_AddedWaitables, pRemoved );
                     m_RemovedWaitables.clear();
@@ -476,10 +478,10 @@ namespace gamescope
         // of objects (eg. shared_ptr) could be too short.
         // Eg. RemoveWaitable but still processing events, or about
         // to start processing events.
-        std::mutex m_AddedWaitablesMutex;
+        TracyDoubleLockable(std::mutex, m_AddedWaitablesMutex);
         std::vector<WaitableType> m_AddedWaitables;
 
-        std::mutex m_RemovedWaitablesMutex;        
+        TracyDoubleLockable(std::mutex, m_RemovedWaitablesMutex);        
         std::vector<WaitableType> m_RemovedWaitables;
     };
 
