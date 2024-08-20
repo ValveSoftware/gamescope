@@ -817,9 +817,13 @@ int main(int argc, char **argv)
 	if ( eCurrentBackend == gamescope::GamescopeBackend::Auto )
 	{
 		if ( g_pOriginalWaylandDisplay != NULL )
-			eCurrentBackend = gamescope::GamescopeBackend::Wayland;
-		else if ( g_pOriginalDisplay != NULL )
-			eCurrentBackend = gamescope::GamescopeBackend::SDL;
+			// Additional check if the current GPU supports Vulkan DRM modifiers
+			// Fallback to SDL if not supported (e.g Older AMD GPUs like Polaris 10/20)
+			if ( vulkan_supports_modifiers() ) 
+				eCurrentBackend = gamescope::GamescopeBackend::Wayland;
+			else
+				eCurrentBackend = gamescope::GamescopeBackend::SDL;
+
 		else
 			eCurrentBackend = gamescope::GamescopeBackend::DRM;
 	}
