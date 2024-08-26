@@ -1,6 +1,7 @@
 #pragma once
 
 #include "rendervulkan.hpp"
+#include "wlserver.hpp"
 #include <optional>
 
 namespace reshadefx
@@ -94,3 +95,5 @@ private:
 };
 
 extern ReshadeEffectManager g_reshadeManager;
+
+void create_reshade_effect_manager_wl(struct wlserver_t *wlserver);

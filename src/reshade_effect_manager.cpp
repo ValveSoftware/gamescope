@@ -1,5 +1,6 @@
 #include <cstring>
 #include <variant>
+#include <unordered_map>
 
 #include "reshade_effect_manager.hpp"
 #include "log.hpp"
@@ -9,16 +10,32 @@
 #include "effect_parser.hpp"
 #include "effect_codegen.hpp"
 #include "effect_preprocessor.hpp"
+#include "gamescope-reshade-protocol.h"
 
 #include "reshade_api_format.hpp"
+#include "convar.h"
 
 #include <stb_image.h>
 #define STB_IMAGE_RESIZE_IMPLEMENTATION
 #include <stb_image_resize.h>
 
+#include <mutex>
 #include <unistd.h>
 #include <sys/types.h>
 #include <pwd.h>
+#include <iostream>
+
+// Fix the wl_array_for_each macro to work with C++. This is based on the
+// original from `wayland-util.h` in the Wayland client library.
+#undef wl_array_for_each
+#define wl_array_for_each(pos, data, size) \
+	for (pos = (decltype(pos))data; (const char *)pos < ((const char *)data + size); (pos)++)
+
+static char* g_reshadeEffectPath = nullptr;
+static struct wl_resource *g_effectRequestedByClientResource = nullptr;
+static auto g_runtimeUniforms = std::unordered_map<std::string, uint8_t*>();
+static std::mutex g_runtimeUniformsMutex;
+static bool g_isNewEffect = false;
 
 const char *homedir;
 
@@ -170,6 +187,21 @@ public:
     DepthUniform(reshadefx::uniform_info uniformInfo);
     virtual void update(void* mappedBuffer) override;
     virtual ~DepthUniform();
+};
+
+class RuntimeUniform : public ReshadeUniform
+{
+public:
+    RuntimeUniform(reshadefx::uniform_info uniformInfo);
+    void virtual update(void* mappedBuffer) override;
+    virtual ~RuntimeUniform();
+
+private:
+    uint32_t offset;
+    uint32_t size;
+    std::string name;
+    reshadefx::type type;
+    std::variant<std::monostate, std::vector<float>, std::vector<int32_t>, std::vector<uint32_t>> defaultValue;
 };
 
 class DataUniform : public ReshadeUniform
@@ -471,6 +503,100 @@ DepthUniform::~DepthUniform()
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
+RuntimeUniform::RuntimeUniform(reshadefx::uniform_info uniformInfo)
+    : ReshadeUniform(uniformInfo)
+{
+    offset = uniformInfo.offset;
+    size   = uniformInfo.size;
+    type   = uniformInfo.type;
+    name   = std::find_if(uniformInfo.annotations.begin(), uniformInfo.annotations.end(), [](const auto& a) { return a.name == "source"; })->value.string_data;
+
+    if (auto defaultValueAnnotation =
+            std::find_if(uniformInfo.annotations.begin(), uniformInfo.annotations.end(), [](const auto& a) { return a.name == "defaultValue"; });
+        defaultValueAnnotation != uniformInfo.annotations.end())
+    {
+        reshadefx::constant value = defaultValueAnnotation->value;
+        if (type.is_floating_point()) {
+            defaultValue = std::vector<float>(value.as_float, value.as_float + type.components());
+            reshade_log.debugf("Found float* runtime uniform %s of size %d\n", name.c_str(), type.components());
+        } else if (type.is_boolean()) {
+            defaultValue = std::vector<uint32_t>(value.as_uint, value.as_uint + type.components());
+            reshade_log.debugf("Found bool* runtime uniform %s of size %d\n", name.c_str(), type.components());
+        } else if (type.is_numeric()) {
+            if (type.is_signed()) {
+                defaultValue = std::vector<int32_t>(value.as_int, value.as_int + type.components());
+                reshade_log.debugf("Found int32_t* runtime uniform %s of size %d\n", name.c_str(), type.components());
+            } else {
+                defaultValue = std::vector<uint32_t>(value.as_uint, value.as_uint + type.components());
+                reshade_log.debugf("Found uint32_t* runtime uniform %s of size %d\n", name.c_str(), type.components());
+            }
+        } else {
+            reshade_log.errorf("Tried to create a runtime uniform variable of an unsupported type\n");
+        }
+    }
+}
+void RuntimeUniform::update(void* mappedBuffer)
+{
+    std::variant<std::monostate, std::vector<float>, std::vector<int32_t>, std::vector<uint32_t>> value;
+    uint8_t* wl_value = nullptr;
+
+    std::lock_guard<std::mutex> lock(g_runtimeUniformsMutex);
+    auto it = g_runtimeUniforms.find(name);
+    if (it != g_runtimeUniforms.end()) {
+        wl_value = it->second;
+    }
+
+    if (wl_value) {
+        if (type.is_floating_point()) {
+            value = std::vector<float>();
+            float *float_value = nullptr;
+            wl_array_for_each(float_value, wl_value, type.components() * sizeof(float)) {
+                std::get<std::vector<float>>(value).push_back(*float_value);
+            }
+        } else if (type.is_boolean()) {
+            // convert to a uint32_t vector, that's how the reshade uniform code understands booleans
+            value = std::vector<uint32_t>();
+            uint8_t *bool_value = nullptr;
+            wl_array_for_each(bool_value, wl_value, type.components() * sizeof(uint8_t)) {
+                std::get<std::vector<uint32_t>>(value).push_back(*bool_value);
+            }
+        } else if (type.is_numeric()) {
+            if (type.is_signed()) {
+                value = std::vector<int32_t>();
+                int32_t *int_value = nullptr;
+                wl_array_for_each(int_value, wl_value, type.components() * sizeof(int32_t)) {
+                    std::get<std::vector<int32_t>>(value).push_back(*int_value);
+                }
+            } else {
+                value = std::vector<uint32_t>();
+                uint32_t *uint_value = nullptr;
+                wl_array_for_each(uint_value, wl_value, type.components() * sizeof(uint32_t)) {
+                    std::get<std::vector<uint32_t>>(value).push_back(*uint_value);
+                }
+            }
+        }
+    }
+
+    if (std::holds_alternative<std::monostate>(value)) {
+        value = defaultValue;
+    }
+
+    if (std::holds_alternative<std::vector<float>>(value)) {
+        std::vector<float>& vec = std::get<std::vector<float>>(value);
+        std::memcpy((uint8_t*) mappedBuffer + offset, vec.data(), vec.size() * sizeof(float));
+    } else if (std::holds_alternative<std::vector<int32_t>>(value)) {
+        std::vector<int32_t>& vec = std::get<std::vector<int32_t>>(value);
+        std::memcpy((uint8_t*) mappedBuffer + offset, vec.data(), vec.size() * sizeof(int32_t));
+    } else if (std::holds_alternative<std::vector<uint32_t>>(value)) {
+        std::vector<uint32_t>& vec = std::get<std::vector<uint32_t>>(value);
+        std::memcpy((uint8_t*) mappedBuffer + offset, vec.data(), vec.size() * sizeof(uint32_t));
+    }
+}
+RuntimeUniform::~RuntimeUniform()
+{
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
 DataUniform::DataUniform(reshadefx::uniform_info uniformInfo)
     : ReshadeUniform(uniformInfo)
 {
@@ -541,9 +667,9 @@ static std::vector<std::shared_ptr<ReshadeUniform>> createReshadeUniforms(const 
             {
                 uniforms.push_back(std::make_shared<DepthUniform>(uniform));
             }
-            else
+            else if (!source.empty())
             {
-                reshade_log.errorf("Unknown uniform source: %s", source.c_str());
+                uniforms.push_back(std::make_shared<RuntimeUniform>(uniform));
             }
         }
     }
@@ -1534,6 +1660,11 @@ bool ReshadeEffectPipeline::init(CVulkanDevice *device, const ReshadeEffectKey &
 
 void ReshadeEffectPipeline::update()
 {
+    if (g_isNewEffect && g_effectRequestedByClientResource && g_reshadeEffectPath) {
+        gamescope_reshade_send_effect_ready(g_effectRequestedByClientResource, g_reshadeEffectPath);
+        g_isNewEffect = false;
+    }
+
     for (auto& uniform : m_uniforms)
         uniform->update(m_mappedPtr);
 }
@@ -1793,3 +1924,76 @@ ReshadeEffectPipeline* ReshadeEffectManager::pipeline(const ReshadeEffectKey &ke
 
 ReshadeEffectManager g_reshadeManager;
 
+struct wlserver_reshade_effect_manager {
+	struct wl_global *global;
+	struct wlserver_t *server;
+};
+
+static void handle_destroy(struct wl_client *client, struct wl_resource *resource)
+{
+	wl_resource_destroy(resource);
+}
+
+static void handle_set_uniform_variable(struct wl_client *client,
+                                        struct wl_resource *resource,
+                                        const char *key,
+                                        struct wl_array *value) 
+{
+    std::lock_guard<std::mutex> lock(g_runtimeUniformsMutex);
+
+    uint8_t* data_copy = new uint8_t[value->size];
+    std::memcpy(data_copy, value->data, value->size);
+    auto it = g_runtimeUniforms.find(key);
+    if (it != g_runtimeUniforms.end()) {
+        delete[] it->second;
+    }
+    
+    g_runtimeUniforms[std::string(key)] = data_copy;
+    force_repaint();
+}
+
+static void handle_set_effect(struct wl_client *client,
+                              struct wl_resource *resource,
+                              const char *path) 
+{
+    g_runtimeUniforms.clear();
+    if (g_reshadeEffectPath) free(g_reshadeEffectPath);
+    g_reshadeEffectPath = strdup(path);
+    g_isNewEffect = true;
+    g_effectRequestedByClientResource = resource;
+}
+
+static void handle_enable_effect(struct wl_client *client,
+                                 struct wl_resource *resource) 
+{
+    if (g_reshadeEffectPath) gamescope_set_reshade_effect(g_reshadeEffectPath);
+}
+
+static void handle_disable_effect(struct wl_client *client,
+                                  struct wl_resource *resource) 
+{
+    gamescope_set_reshade_effect(nullptr);
+}
+
+static const struct gamescope_reshade_interface manager_impl = {
+    .destroy = handle_destroy,
+    .set_effect = handle_set_effect,
+    .enable_effect = handle_enable_effect,
+    .set_uniform_variable = handle_set_uniform_variable,
+    .disable_effect = handle_disable_effect
+};
+
+static void manager_bind(struct wl_client *client, void *data, uint32_t version, uint32_t id)
+{
+    struct wlserver_reshade_effect_manager *manager = (struct wlserver_reshade_effect_manager *)data;
+
+    struct wl_resource *resource = wl_resource_create(client, &gamescope_reshade_interface, version, id);
+    wl_resource_set_implementation(resource, &manager_impl, manager, nullptr);
+}
+
+void create_reshade_effect_manager_wl(struct wlserver_t *wlserver) 
+{
+    struct wlserver_reshade_effect_manager *manager = new wlserver_reshade_effect_manager();
+    manager->server = wlserver;
+    manager->global = wl_global_create(wlserver->display, &gamescope_reshade_interface, 1, manager, &manager_bind);
+}

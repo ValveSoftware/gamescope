@@ -147,6 +147,7 @@ extern pid_t focusWindow_pid;
 
 void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_server);
 void gamescope_set_selection(std::string contents, GamescopeSelection eSelection);
+void gamescope_set_reshade_effect(std::string effect_path);
 
 MouseCursor *steamcompmgr_get_current_cursor();
 MouseCursor *steamcompmgr_get_server_cursor(uint32_t serverId);

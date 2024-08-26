@@ -2946,6 +2946,23 @@ std::string get_string_prop( xwayland_ctx_t *ctx, Window win, Atom prop )
 	return value;
 }
 
+void set_string_prop( xwayland_ctx_t *ctx, Window win, Atom prop, const std::string &value )
+{
+	if ( value.empty() )
+		XDeleteProperty( ctx->dpy, win, prop );
+	else {
+		XTextProperty text_property =
+		{
+			.value = ( unsigned char * )value.c_str(),
+			.encoding = ctx->atoms.utf8StringAtom,
+			.format = 8,
+			.nitems = strlen( value.c_str() )
+		};
+		XSetTextProperty( ctx->dpy, ctx->root, &text_property, prop);
+	}
+	XFlush( ctx->dpy );
+}
+
 static bool
 win_has_game_id( steamcompmgr_win_t *w )
 {
@@ -4865,6 +4882,12 @@ void gamescope_set_selection(std::string contents, GamescopeSelection eSelection
 	{
 		x11_set_selection_owner(server->ctx.get(), contents, eSelection);
 	}
+}
+
+void gamescope_set_reshade_effect(std::string effect_path)
+{
+	gamescope_xwayland_server_t *server = wlserver_get_xwayland_server(0);
+	set_string_prop(server->ctx.get(), server->ctx->ourWindow, server->ctx->atoms.gamescopeReshadeEffect, effect_path);
 }
 
 static void
@@ -7821,7 +7844,7 @@ steamcompmgr_main(int argc, char **argv)
 
 		// If we are running behind, allow tearing.
 
-		const bool bForceRepaint = g_bForceRepaint.exchange(false);
+		const bool bForceRepaint = vblank && g_bForceRepaint.exchange(false);
 		const bool bForceSyncFlip = bForceRepaint || is_fading_out();
 
 		// If we are compositing, always force sync flips because we currently wait

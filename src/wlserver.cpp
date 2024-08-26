@@ -57,6 +57,7 @@
 #include "steamcompmgr.hpp"
 #include "log.hpp"
 #include "ime.hpp"
+#include "reshade_effect_manager.hpp"
 #include "xwayland_ctx.hpp"
 #include "refresh_rate.h"
 #include "InputEmulation.h"
@@ -1736,6 +1737,8 @@ bool wlserver_init( void ) {
 	wl_signal_add( &wlserver.wlr.compositor->events.new_surface, &new_surface_listener );
 
 	create_ime_manager( &wlserver );
+
+	create_reshade_effect_manager_wl( &wlserver );
 
 	create_gamescope_xwayland();
 

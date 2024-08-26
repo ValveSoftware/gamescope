@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="gamescope_reshade">
+
+  <copyright>
+    Copyright © 2024 Wayne Heaney
+
+    Permission is hereby granted, free of charge, to any person obtaining a
+    copy of this software and associated documentation files (the "Software"),
+    to deal in the Software without restriction, including without limitation
+    the rights to use, copy, modify, merge, publish, distribute, sublicense,
+    and/or sell copies of the Software, and to permit persons to whom the
+    Software is furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice (including the next
+    paragraph) shall be included in all copies or substantial portions of the
+    Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+    THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+    DEALINGS IN THE SOFTWARE.
+  </copyright>
+
+  <description summary="gamescope-specific reshade integration">
+    This protocol allows applications to load and interact with a reshade FX shader in gamescope.
+  </description>
+
+  <interface name="gamescope_reshade" version="1">
+    <request name="destroy" type="destructor"></request>
+    
+    <request name="set_effect">
+      <description summary="set the path to the reshade FX file">        
+        The effect will be disabled to allow an opportunity to set uniform variables before enabling it.
+      </description>
+      <arg name="path" type="string" summary="Path to the FX file"></arg>
+    </request>
+
+    <event name="effect_ready">
+      <description summary="alerts when the requested effect is ready">
+        This event alerts the client when an effect has been enabled.
+      </description>
+      <arg name="effect_path" type="string" summary="Path to the FX file"/>
+    </event>
+
+    <request name="enable_effect">
+      <description summary="turn on the effect">
+        Enables the effect that was previously loaded by set_effect.
+      </description>
+    </request>
+
+    <request name="set_uniform_variable">
+      <description summary="set a uniform variable for the currently loaded effect">        
+        Set the value of a uniform variable. Can be called before or after enabling the effect.
+      </description>
+      <arg name="key" type="string" summary="Name of the uniform variable"></arg>
+      <arg name="value" type="array" summary="Value of the uniform variable"></arg>
+    </request>
+
+    <request name="disable_effect">
+      <description summary="turn off the effect">
+        Disables the effect that was previously enabled by enable_effect.
+      </description>
+    </request>
+  </interface>
+</protocol>
