@@ -207,6 +207,21 @@ struct steamcompmgr_win_t {
 		else
 			return nullptr;
 	}
+
+	gamescope::VirtualConnectorKey_t GetVirtualConnectorKey( gamescope::VirtualConnectorStrategy eStrategy )
+	{
+		switch ( eStrategy )
+		{
+		default:
+		case gamescope::VirtualConnectorStrategies::SingleApplication:
+		case gamescope::VirtualConnectorStrategies::SteamControlled:
+			return 0;
+		case gamescope::VirtualConnectorStrategies::PerAppId:
+			return static_cast<gamescope::VirtualConnectorKey_t>( this->appID );
+		case gamescope::VirtualConnectorStrategies::PerWindow:
+			return static_cast<gamescope::VirtualConnectorKey_t>( this->seq );
+		}
+	}
 };
 
 namespace gamescope

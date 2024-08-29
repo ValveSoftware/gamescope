@@ -92,6 +92,7 @@ const struct option *gamescope_options = (struct option[]){
 	// openvr options
 #if HAVE_OPENVR
 	{ "vr-overlay-key", required_argument, nullptr, 0 },
+	{ "vr-app-overlay-key", required_argument, nullptr, 0 },
 	{ "vr-overlay-explicit-name", required_argument, nullptr, 0 },
 	{ "vr-overlay-default-name", required_argument, nullptr, 0 },
 	{ "vr-overlay-icon", required_argument, nullptr, 0 },
@@ -104,6 +105,7 @@ const struct option *gamescope_options = (struct option[]){
 	{ "vr-overlay-physical-curvature", required_argument, nullptr, 0 },
 	{ "vr-overlay-physical-pre-curve-pitch", required_argument, nullptr, 0 },
 	{ "vr-scroll-speed", required_argument, nullptr, 0 },
+	{ "vr-session-manager", no_argument, nullptr, 0 },
 #endif
 
 	// wlserver options
@@ -113,6 +115,7 @@ const struct option *gamescope_options = (struct option[]){
 	{ "cursor", required_argument, nullptr, 0 },
 	{ "cursor-hotspot", required_argument, nullptr, 0 },
 	{ "cursor-scale-height", required_argument, nullptr, 0 },
+	{ "virtual-connector-strategy", required_argument, nullptr, 0 },
 	{ "ready-fd", required_argument, nullptr, 'R' },
 	{ "stats-path", required_argument, nullptr, 'T' },
 	{ "hide-cursor-delay", required_argument, nullptr, 'C' },
@@ -190,6 +193,7 @@ const char usage[] =
 	"  --force-orientation            rotate the internal display (left, right, normal, upsidedown)\n"
 	"  --force-windows-fullscreen     force windows inside of gamescope to be the size of the nested display (fullscreen)\n"
 	"  --cursor-scale-height          if specified, sets a base output height to linearly scale the cursor against.\n"
+	"  --virtual-connector-strategy   Specifies how we should make virtual connectors.\n"
 	"  --hdr-enabled                  enable HDR output (needs Gamescope WSI layer enabled for support from clients)\n"
 	"                                 If this is not set, and there is a HDR client, it will be tonemapped SDR.\n"
 	"  --sdr-gamut-wideness           Set the 'wideness' of the gamut for SDR comment. 0 - 1.\n"
@@ -220,6 +224,7 @@ const char usage[] =
 #if HAVE_OPENVR
 	"VR mode options:\n"
 	"  --vr-overlay-key                         Sets the SteamVR overlay key to this string\n"
+	"  --vr-app-overlay-key						Sets the SteamVR overlay key to use for child apps\n"
 	"  --vr-overlay-explicit-name               Force the SteamVR overlay name to always be this string\n"
 	"  --vr-overlay-default-name                Sets the fallback SteamVR overlay name when there is no window title\n"
 	"  --vr-overlay-icon                        Sets the SteamVR overlay icon to this file\n"
@@ -721,6 +726,8 @@ int main(int argc, char **argv)
 				break;
 			case 'e':
 				steamMode = true;
+				if ( gamescope::cv_backend_virtual_connector_strategy == gamescope::VirtualConnectorStrategies::SingleApplication )
+					gamescope::cv_backend_virtual_connector_strategy = gamescope::VirtualConnectorStrategies::SteamControlled;
 				break;
 			case 0: // long options without a short option
 				opt_name = gamescope_options[opt_index].name;
@@ -763,7 +770,7 @@ int main(int argc, char **argv)
 				} else if (strcmp(opt_name, "force-grab-cursor") == 0) {
 					g_bForceRelativeMouse = true;
 				} else if (strcmp(opt_name, "display-index") == 0) {
-					g_nNestedDisplayIndex = atoi( optarg );
+					g_nNestedDisplayIndex = atoi( optarg );	
 				} else if (strcmp(opt_name, "adaptive-sync") == 0) {
 					cv_adaptive_sync = true;
 				} else if (strcmp(opt_name, "expose-wayland") == 0) {
@@ -774,6 +781,17 @@ int main(int argc, char **argv)
 					g_nCursorScaleHeight = atoi(optarg);
 				} else if (strcmp(opt_name, "mangoapp") == 0) {
 					g_bLaunchMangoapp = true;
+				} else if (strcmp(opt_name, "virtual-connector-strategy") == 0) {
+					for ( uint32_t i = 0; i < gamescope::VirtualConnectorStrategies::Count; i++ )
+					{
+						gamescope::VirtualConnectorStrategy eStrategy =
+							static_cast<gamescope::VirtualConnectorStrategy>( i );
+						if ( optarg == gamescope::VirtualConnectorStrategyToString( eStrategy ) )
+						{
+							gamescope::cv_backend_virtual_connector_strategy = eStrategy;
+								
+						}
+					}
 				}
 				break;
 			case '?':

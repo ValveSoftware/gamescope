@@ -136,7 +136,6 @@ void nudge_steamcompmgr( void );
 void force_repaint( void );
 
 extern void mangoapp_update( uint64_t visible_frametime, uint64_t app_frametime_ns, uint64_t latency_ns );
-gamescope_xwayland_server_t *steamcompmgr_get_focused_server();
 struct wlr_surface *steamcompmgr_get_server_input_surface( size_t idx );
 wlserver_vk_swapchain_feedback* steamcompmgr_get_base_layer_swapchain_feedback();
 

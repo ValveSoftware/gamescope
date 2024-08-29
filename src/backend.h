@@ -13,16 +13,74 @@
 #include <memory>
 #include <optional>
 #include <atomic>
+#include <variant>
 
 struct wlr_buffer;
 struct wlr_dmabuf_attributes;
 
 struct FrameInfo_t;
 
+extern bool steamMode;
+
 namespace gamescope
 {
     struct VBlankScheduleTime;
     class BackendBlob;
+    class INestedHints;
+
+    namespace VirtualConnectorStrategies
+    {
+        enum VirtualConnectorStrategy : uint32_t
+        {
+            SingleApplication,
+            SteamControlled,
+            PerAppId,
+            PerWindow,
+
+            Count,
+        };
+    }
+    using VirtualConnectorStrategy = VirtualConnectorStrategies::VirtualConnectorStrategy;
+    using VirtualConnectorKey_t = uint64_t;
+    extern ConVar<VirtualConnectorStrategy> cv_backend_virtual_connector_strategy;
+
+    static constexpr bool VirtualConnectorStrategyIsSingleOutput( VirtualConnectorStrategy eStrategy )
+    {
+        return eStrategy == VirtualConnectorStrategies::SingleApplication || eStrategy == VirtualConnectorStrategies::SteamControlled;
+    }
+
+    static inline bool VirtualConnectorIsSingleOutput()
+    {
+        return VirtualConnectorStrategyIsSingleOutput( cv_backend_virtual_connector_strategy );
+    }
+
+    static inline bool VirtualConnectorInSteamPerAppState()
+    {
+        return steamMode && cv_backend_virtual_connector_strategy == gamescope::VirtualConnectorStrategies::PerAppId;
+    }
+
+    static inline bool VirtualConnectorKeyIsSteam( VirtualConnectorKey_t ulKey )
+    {
+        return VirtualConnectorInSteamPerAppState() && ulKey == 769;
+    }
+
+    static inline std::string_view VirtualConnectorStrategyToString( VirtualConnectorStrategy eStrategy )
+    {
+        switch ( eStrategy )
+        {
+            case VirtualConnectorStrategies::SingleApplication: return "SingleApplication";
+            case VirtualConnectorStrategies::SteamControlled: return "SteamControlled";
+            case VirtualConnectorStrategies::PerAppId: return "PerAppId";
+            case VirtualConnectorStrategies::PerWindow: return "PerWindow";
+            default:
+                return "Unknown";
+        }
+    }
+
+    enum class InputType
+    {
+        Mouse,
+    };
 
     namespace TouchClickModes
     {
@@ -82,6 +140,19 @@ namespace gamescope
         uint32_t uRefresh; // Hz
     };
 
+    struct BackendPresentFeedback
+    {
+    public:
+        uint64_t CurrentPresentsInFlight() const { return TotalPresentsQueued() - TotalPresentsCompleted(); }
+
+        // Across the lifetime of the backend.
+        uint64_t TotalPresentsQueued() const { return m_uQueuedPresents.load(); }
+        uint64_t TotalPresentsCompleted() const { return m_uCompletedPresents.load(); }
+
+        std::atomic<uint64_t> m_uQueuedPresents = { 0u };
+        std::atomic<uint64_t> m_uCompletedPresents = { 0u };
+    };
+
     class IBackendConnector
     {
     public:
@@ -92,6 +163,7 @@ namespace gamescope
         virtual bool SupportsHDR() const = 0;
         virtual bool IsHDRActive() const = 0;
         virtual const BackendConnectorHDRInfo &GetHDRInfo() const = 0;
+        virtual bool IsVRRActive() const = 0;
         virtual std::span<const BackendMode> GetModes() const = 0;
 
         virtual bool SupportsVRR() const = 0;
@@ -107,6 +179,39 @@ namespace gamescope
         virtual const char *GetName() const = 0;
         virtual const char *GetMake() const = 0;
         virtual const char *GetModel() const = 0;
+
+        virtual int Present( const FrameInfo_t *pFrameInfo, bool bAsync ) = 0;
+        virtual VBlankScheduleTime FrameSync() = 0;
+        virtual BackendPresentFeedback& PresentationFeedback() = 0;
+
+        virtual uint64_t GetVirtualConnectorKey() const = 0;
+
+        virtual INestedHints *GetNestedHints() = 0;
+    };
+
+    class CBaseBackendConnector : public IBackendConnector
+    {
+    public:
+        CBaseBackendConnector()
+        {
+        }
+        CBaseBackendConnector( uint64_t ulVirtualConnectorKey )
+            : m_ulVirtualConnectorKey{ ulVirtualConnectorKey }
+        {
+        }
+
+        virtual ~CBaseBackendConnector()
+        {
+
+        }
+
+        virtual VBlankScheduleTime FrameSync() override;
+        virtual BackendPresentFeedback& PresentationFeedback() override { return m_PresentFeedback; }
+        virtual uint64_t GetVirtualConnectorKey() const override { return m_ulVirtualConnectorKey; }
+        virtual INestedHints *GetNestedHints() override { return nullptr; }
+    protected:
+        uint64_t m_ulVirtualConnectorKey = 0;
+        BackendPresentFeedback m_PresentFeedback{};
     };
 
     class INestedHints
@@ -128,20 +233,6 @@ namespace gamescope
         virtual void SetVisible( bool bVisible ) = 0;
         virtual void SetTitle( std::shared_ptr<std::string> szTitle ) = 0;
         virtual void SetIcon( std::shared_ptr<std::vector<uint32_t>> uIconPixels ) = 0;
-        virtual std::shared_ptr<CursorInfo> GetHostCursor() = 0;
-    };
-
-    struct BackendPresentFeedback
-    {
-    public:
-        uint64_t CurrentPresentsInFlight() const { return TotalPresentsQueued() - TotalPresentsCompleted(); }
-
-        // Across the lifetime of the backend.
-        uint64_t TotalPresentsQueued() const { return m_uQueuedPresents.load(); }
-        uint64_t TotalPresentsCompleted() const { return m_uCompletedPresents.load(); }
-
-        std::atomic<uint64_t> m_uQueuedPresents = { 0u };
-        std::atomic<uint64_t> m_uCompletedPresents = { 0u };
     };
 
     class IBackendFb : public IRcObject
@@ -181,7 +272,6 @@ namespace gamescope
         virtual void GetPreferredOutputFormat( VkFormat *pPrimaryPlaneFormat, VkFormat *pOverlayPlaneFormat ) const = 0;
         virtual bool ValidPhysicalDevice( VkPhysicalDevice pVkPhysicalDevice ) const = 0;
 
-        virtual int Present( const FrameInfo_t *pFrameInfo, bool bAsync ) = 0;
         virtual void DirtyState( bool bForce = false, bool bForceModeset = false ) = 0;
         virtual bool PollState() = 0;
 
@@ -207,9 +297,6 @@ namespace gamescope
         virtual IBackendConnector *GetCurrentConnector() = 0;
         virtual IBackendConnector *GetConnector( GamescopeScreenType eScreenType ) = 0;
 
-        // Might want to move this to connector someday, but it lives in CRTC.
-        virtual bool IsVRRActive() const = 0;
-
         virtual bool SupportsPlaneHardwareCursor() const = 0;
         virtual bool SupportsTearing() const = 0;
 
@@ -230,21 +317,20 @@ namespace gamescope
         virtual bool IsVisible() const = 0;
         virtual glm::uvec2 CursorSurfaceSize( glm::uvec2 uvecSize ) const = 0;
 
-        virtual INestedHints *GetNestedHints() = 0;
-
         // This will move to the connector and be deprecated soon.
         virtual bool HackTemporarySetDynamicRefresh( int nRefresh ) = 0;
         virtual void HackUpdatePatchedEdid() = 0;
 
         virtual bool NeedsFrameSync() const = 0;
-        virtual VBlankScheduleTime FrameSync() = 0;
-
-        // TODO: Make me const someday.
-        virtual BackendPresentFeedback& PresentationFeedback() = 0;
 
         virtual TouchClickMode GetTouchClickMode() = 0;
 
         virtual void DumpDebugInfo() = 0;
+
+        virtual bool UsesVirtualConnectors() = 0;
+        virtual std::shared_ptr<IBackendConnector> CreateVirtualConnector( uint64_t ulVirtualConnectorKey ) = 0;
+
+        virtual void NotifyPhysicalInput( InputType eInputType ) = 0;
 
         static IBackend *Get();
         template <typename T>
@@ -262,21 +348,19 @@ namespace gamescope
     class CBaseBackend : public IBackend
     {
     public:
-        virtual INestedHints *GetNestedHints() override;
-
         virtual bool HackTemporarySetDynamicRefresh( int nRefresh ) override { return false; }
         virtual void HackUpdatePatchedEdid() override {}
 
         virtual bool NeedsFrameSync() const override;
-        virtual VBlankScheduleTime FrameSync() override;
-
-        virtual BackendPresentFeedback& PresentationFeedback() override { return m_PresentFeedback; }
 
         virtual TouchClickMode GetTouchClickMode() override;
 
         virtual void DumpDebugInfo() override;
-    protected:
-        BackendPresentFeedback m_PresentFeedback{};
+
+        virtual bool UsesVirtualConnectors() override;
+        virtual std::shared_ptr<IBackendConnector> CreateVirtualConnector( uint64_t ulVirtualConnectorKey ) override;
+
+        virtual void NotifyPhysicalInput( InputType eInputType ) override {}
     };
 
     // This is a blob of data that may be associated with

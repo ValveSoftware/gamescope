@@ -8,7 +8,7 @@ extern int g_nPreferredOutputHeight;
 
 namespace gamescope
 {
-    class CHeadlessConnector final : public IBackendConnector
+    class CHeadlessConnector final : public CBaseBackendConnector
     {
     public:
         CHeadlessConnector()
@@ -38,6 +38,10 @@ namespace gamescope
         {
             return m_HDRInfo;
         }
+		virtual bool IsVRRActive() const override
+		{
+			return false;
+		}
         virtual std::span<const BackendMode> GetModes() const override
         {
             return std::span<const BackendMode>{};
@@ -80,6 +84,11 @@ namespace gamescope
         {
             return "Virtual Display";
         }
+
+		virtual int Present( const FrameInfo_t *pFrameInfo, bool bAsync ) override
+		{
+            return 0;
+		}
 
     private:
         BackendConnectorHDRInfo m_HDRInfo{};
@@ -157,11 +166,6 @@ namespace gamescope
 			return true;
 		}
 
-		virtual int Present( const FrameInfo_t *pFrameInfo, bool bAsync ) override
-		{
-            return 0;
-		}
-
 		virtual void DirtyState( bool bForce, bool bForceModeset ) override
 		{
 		}
@@ -200,11 +204,6 @@ namespace gamescope
 				return &m_Connector;
 
 			return nullptr;
-		}
-
-		virtual bool IsVRRActive() const override
-		{
-			return false;
 		}
 
 		virtual bool SupportsPlaneHardwareCursor() const override

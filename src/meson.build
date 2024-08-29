@@ -116,7 +116,10 @@ src = [
   'backend.cpp',
   'x11cursor.cpp',
   'InputEmulation.cpp',
+  'LibInputHandler.cpp',
 ]
+
+libinput_dep = dependency('libinput', required: true)
 
 gamescope_cpp_args = []
 if drm_dep.found()
@@ -176,7 +179,7 @@ gamescope_version = vcs_tag(
       xkbcommon, thread_dep, sdl2_dep, wlroots_dep,
       vulkan_dep, liftoff_dep, dep_xtst, dep_xmu, cap_dep, epoll_dep, pipewire_dep, librt_dep,
       stb_dep, displayinfo_dep, openvr_dep, dep_xcursor, avif_dep, dep_xi,
-      libdecor_dep, eis_dep,
+      libdecor_dep, eis_dep, libinput_dep,
     ],
     install: true,
     cpp_args: gamescope_cpp_args,

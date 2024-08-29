@@ -100,7 +100,7 @@ namespace gamescope
 		const int nRefreshRate = GetRefresh();
 		const uint64_t ulRefreshInterval = mHzToRefreshCycle( nRefreshRate );
 
-		bool bVRR = GetBackend()->IsVRRActive();
+		bool bVRR = GetBackend()->GetCurrentConnector() && GetBackend()->GetCurrentConnector()->IsVRRActive();
 		uint64_t ulOffset = 0;
 		if ( !bVRR )
 		{
@@ -358,7 +358,22 @@ namespace gamescope
 			if ( !m_bRunning )
 				return;
 
-			VBlankScheduleTime schedule = GetBackend()->FrameSync();
+			VBlankScheduleTime schedule;
+			if ( GetBackend()->GetCurrentConnector() )
+			{
+				schedule = GetBackend()->GetCurrentConnector()->FrameSync();
+			}
+			else
+			{
+				// If we don't currently have a connector, make up some dummy refresh cycle.
+				sleep_for_nanos( mHzToRefreshCycle( g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh ) );
+        		uint64_t ulNow = get_time_in_nanos();
+				schedule = VBlankScheduleTime
+				{
+					.ulTargetVBlank  = ulNow + 3'000'000,
+					.ulScheduledWakeupPoint = ulNow,
+				};
+			}
 
 			const uint64_t ulWakeupTime = get_time_in_nanos();
 			{

@@ -1833,9 +1833,11 @@ bool wlserver_init( void ) {
 		char szEISocket[ 64 ];
 		snprintf( szEISocket, sizeof( szEISocket ), "%s-ei", wlserver.wl_display_name );
 
-		g_InputServer = std::make_unique<gamescope::GamescopeInputServer>();
-		if ( g_InputServer->Init( szEISocket ) )
+		std::unique_ptr<gamescope::GamescopeInputServer> pInputServer = std::make_unique<gamescope::GamescopeInputServer>();
+		if ( pInputServer->Init( szEISocket ) )
 		{
+			g_InputServer = std::move( pInputServer );
+
 			setenv( "LIBEI_SOCKET", szEISocket, 1 );
 			g_LibEisWaiter.AddWaitable( g_InputServer.get() );
 			wl_log.infof( "Successfully initialized libei for input emulation!" );
