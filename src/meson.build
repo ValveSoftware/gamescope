@@ -161,10 +161,22 @@ foreach feat : required_wlroots_features
   endif
 endforeach
 
-gamescope_version = vcs_tag(
-  command : ['git', 'describe', '--always', '--tags', '--dirty=+'],
-  input   : 'GamescopeVersion.h.in',
-  output  : 'GamescopeVersion.h')
+cc = meson.get_compiler('c')
+compiler_name = cc.get_id()
+compiler_version = cc.version()
+
+vcs_tag_cmd = ['git', 'describe', '--always', '--tags', '--dirty=+']
+vcs_tag = run_command(vcs_tag_cmd).stdout().strip()
+version_tag = vcs_tag + ' (' + compiler_name + ' ' + compiler_version + ')'
+
+gamescope_version_conf = configuration_data()
+gamescope_version_conf.set('VCS_TAG', version_tag)
+
+gamescope_version = configure_file(
+  input : 'GamescopeVersion.h.in',
+  output : 'GamescopeVersion.h',
+  configuration : gamescope_version_conf
+)
 
   executable(
     'gamescope',
