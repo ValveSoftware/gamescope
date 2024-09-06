@@ -70,16 +70,6 @@ gamescope::ConVar<bool> cv_drm_debug_disable_color_range( "drm_debug_disable_col
 gamescope::ConVar<bool> cv_drm_debug_disable_explicit_sync( "drm_debug_disable_explicit_sync", false, "Force disable explicit sync on the DRM backend." );
 gamescope::ConVar<bool> cv_drm_debug_disable_in_fence_fd( "drm_debug_disable_in_fence_fd", false, "Force disable IN_FENCE_FD being set to avoid over-synchronization on the DRM backend." );
 
-// HACK:
-// Workaround for AMDGPU bug on SteamOS 3.6 right now.
-// Using a Shaper or 3D LUT results in the commit failing, and we really want
-// NV12 direct scanout so we can get GFXOFF.
-// The compromise here is that colors may look diff to when we composite due to
-// lack of 3D LUT, etc.
-// TODO: Come back to me on the kernel side after figuring out what broke
-// since we moved to the upstream properites and a bunch of work happened.
-gamescope::ConVar<bool> cv_drm_hack_nv12_color_mgmt_fix( "drm_hack_nv12_color_mgmt_fix", true, "If using NV12, disable explicit degamma + shaper + 3D LUT" );
-
 namespace gamescope
 {
 	std::tuple<int32_t, int32_t, int32_t> GetKernelVersion()
@@ -2457,23 +2447,17 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 						//
 						// Doing LINEAR/DEFAULT here introduces banding so... this is the best way.
 						// (sRGB DEGAMMA does NOT work on YUV planes!)
-						degamma_tf = AMDGPU_TRANSFER_FUNCTION_BT709_OETF;
-						shaper_tf = AMDGPU_TRANSFER_FUNCTION_BT709_INV_OETF;
+						degamma_tf = AMDGPU_TRANSFER_FUNCTION_BT709_INV_OETF;
+						shaper_tf = AMDGPU_TRANSFER_FUNCTION_BT709_OETF;
 					}
 
 					bool bUseDegamma = !cv_drm_debug_disable_degamma_tf;
-					if ( bYCbCr && cv_drm_hack_nv12_color_mgmt_fix )
-						bUseDegamma = false;
-
 					if ( bUseDegamma )
 						liftoff_layer_set_property( drm->lo_layers[ i ], "AMD_PLANE_DEGAMMA_TF", degamma_tf );
 					else
 						liftoff_layer_set_property( drm->lo_layers[ i ], "AMD_PLANE_DEGAMMA_TF", 0 );
 
 					bool bUseShaperAnd3DLUT = !cv_drm_debug_disable_shaper_and_3dlut;
-					if ( bYCbCr && cv_drm_hack_nv12_color_mgmt_fix )
-						bUseShaperAnd3DLUT = false;
-
 					if ( bUseShaperAnd3DLUT )
 					{
 						liftoff_layer_set_property( drm->lo_layers[ i ], "AMD_PLANE_SHAPER_LUT", drm->pending.shaperlut_id[ ColorSpaceToEOTFIndex( entry.layerState[i].colorspace ) ]->GetBlobValue() );
