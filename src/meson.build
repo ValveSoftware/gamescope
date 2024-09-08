@@ -166,7 +166,7 @@ compiler_name = cc.get_id()
 compiler_version = cc.version()
 
 vcs_tag_cmd = ['git', 'describe', '--always', '--tags', '--dirty=+']
-vcs_tag = run_command(vcs_tag_cmd).stdout().strip()
+vcs_tag = run_command(vcs_tag_cmd, check: false).stdout().strip()
 version_tag = vcs_tag + ' (' + compiler_name + ' ' + compiler_version + ')'
 
 gamescope_version_conf = configuration_data()
