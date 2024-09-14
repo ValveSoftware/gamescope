@@ -58,7 +58,6 @@
 #include "steamcompmgr.hpp"
 #include "log.hpp"
 #include "ime.hpp"
-#include "reshade_effect_manager.hpp"
 #include "xwayland_ctx.hpp"
 #include "refresh_rate.h"
 #include "InputEmulation.h"

@@ -1949,5 +1949,5 @@ void reshade_effect_manager_enable_effect()
 
 void reshade_effect_manager_disable_effect() 
 {
-    gamescope_set_reshade_effect(nullptr);
+    gamescope_clear_reshade_effect();
 }

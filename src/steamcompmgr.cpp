@@ -2955,20 +2955,22 @@ std::string get_string_prop( xwayland_ctx_t *ctx, Window win, Atom prop )
 	return value;
 }
 
-void set_string_prop( xwayland_ctx_t *ctx, Window win, Atom prop, const std::string &value )
+void set_string_prop( xwayland_ctx_t *ctx, Atom prop, const std::string &value )
 {
-	if ( value.empty() )
-		XDeleteProperty( ctx->dpy, win, prop );
-	else {
-		XTextProperty text_property =
-		{
-			.value = ( unsigned char * )value.c_str(),
-			.encoding = ctx->atoms.utf8StringAtom,
-			.format = 8,
-			.nitems = strlen( value.c_str() )
-		};
-		XSetTextProperty( ctx->dpy, ctx->root, &text_property, prop);
-	}
+	XTextProperty text_property =
+	{
+		.value = ( unsigned char * )value.c_str(),
+		.encoding = ctx->atoms.utf8StringAtom,
+		.format = 8,
+		.nitems = strlen( value.c_str() )
+	};
+	XSetTextProperty( ctx->dpy, ctx->root, &text_property, prop);
+	XFlush( ctx->dpy );
+}
+
+void clear_prop( xwayland_ctx_t *ctx, Atom prop )
+{
+	XDeleteProperty( ctx->dpy, ctx->root, prop );
 	XFlush( ctx->dpy );
 }
 
@@ -4896,7 +4898,12 @@ void gamescope_set_selection(std::string contents, GamescopeSelection eSelection
 void gamescope_set_reshade_effect(std::string effect_path)
 {
 	gamescope_xwayland_server_t *server = wlserver_get_xwayland_server(0);
-	set_string_prop(server->ctx.get(), server->ctx->ourWindow, server->ctx->atoms.gamescopeReshadeEffect, effect_path);
+	set_string_prop(server->ctx.get(), server->ctx->atoms.gamescopeReshadeEffect, effect_path);
+}
+
+void gamescope_clear_reshade_effect() {
+	gamescope_xwayland_server_t *server = wlserver_get_xwayland_server(0);
+	clear_prop(server->ctx.get(), server->ctx->atoms.gamescopeReshadeEffect);
 }
 
 static void

@@ -77,7 +77,7 @@ Gamescope supports a subset of Reshade effects/shaders using the `--reshade-effe
 
 This provides an easy way to do shader effects (ie. CRT shader, film grain, debugging HDR with histograms, etc) on top of whatever is being displayed in Gamescope without having to hook into the underlying process.
 
-There is currently no way to set the value of uniforms/options, they will just be their initializer values currently.
+Uniform/shader options can be modified programmatically via the `gamescope-reshade` wayland interface. Otherwise, they will just use their initializer values.
 
 Using Reshade effects will increase latency as there will be work performed on the general gfx + compute queue as opposed to only using the realtime async compute queue which can run in tandem with the game's gfx work.
 
