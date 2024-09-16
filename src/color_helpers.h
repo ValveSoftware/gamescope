@@ -11,6 +11,56 @@
 #include <glm/vec3.hpp> // glm::vec3
 #include <glm/mat3x3.hpp> // glm::mat3
 #include <glm/gtx/component_wise.hpp>
+/////////////////////////////////////////////////////////
+//  Stuff for using structured bindings with glm::vec: //
+/////////////////////////////////////////////////////////
+namespace std
+{ 
+#define MK_TUPLE_SIZE(size, type) \
+  template<> \
+  struct tuple_size< ::glm::vec<size, type, glm::defaultp> > : \
+    std::integral_constant<size_t, size> { }
+  
+# define MK_TUPLE_ELEMENT(size) \
+  template<std::size_t I, class T> \
+  struct tuple_element<I, ::glm::vec<size, T, glm::defaultp>> : std::type_identity<T> {}
+
+  MK_TUPLE_SIZE(2, int);
+  MK_TUPLE_SIZE(2, float);
+  MK_TUPLE_SIZE(2, unsigned);
+  
+  MK_TUPLE_SIZE(3, int);
+  MK_TUPLE_SIZE(3, float);
+  MK_TUPLE_SIZE(3, unsigned);
+  
+  MK_TUPLE_SIZE(4, int);
+  MK_TUPLE_SIZE(4, float);
+  MK_TUPLE_SIZE(4, unsigned);
+
+  MK_TUPLE_ELEMENT(2);
+  MK_TUPLE_ELEMENT(3);
+  MK_TUPLE_ELEMENT(4);
+}
+
+namespace glm {
+# define INSTANTIATE(qualifier) \
+  template< std::size_t I > \
+  auto qualifier \
+  get( auto qualifier v ) noexcept { \
+    if constexpr (I == 0) return v.x; \
+    if constexpr (I == 1) return v.y; \
+    if constexpr (I == 2) return v.z; \
+    if constexpr (I == 3) return v.w; \
+  }
+  
+  INSTANTIATE(&)
+  INSTANTIATE(const&)
+  INSTANTIATE(&&)
+  INSTANTIATE(const&&)
+}
+/////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////
+
 
 // Color utils
 inline int quantize( float fVal, float fMaxVal )

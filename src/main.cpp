@@ -269,8 +269,7 @@ const char usage[] =
 
 std::atomic< bool > g_bRun{true};
 
-int g_nNestedWidth = 0;
-int g_nNestedHeight = 0;
+glm::ivec2 g_ivNestedResolution {};
 int g_nNestedRefresh = 0;
 int g_nNestedUnfocusedRefresh = 0;
 int g_nNestedDisplayIndex = 0;
@@ -678,10 +677,10 @@ int main(int argc, char **argv)
 		const char *opt_name;
 		switch (o) {
 			case 'w':
-				g_nNestedWidth = atoi( optarg );
+				g_ivNestedResolution.x = atoi( optarg );
 				break;
 			case 'h':
-				g_nNestedHeight = atoi( optarg );
+				g_ivNestedResolution.y = atoi( optarg );
 				break;
 			case 'r':
 				g_nNestedRefresh = gamescope::ConvertHztomHz( atoi( optarg ) );
@@ -918,18 +917,17 @@ int main(int argc, char **argv)
 		}
 	}
 
-	if ( g_nNestedHeight == 0 )
+	if ( g_ivNestedResolution.y == 0 )
 	{
-		if ( g_nNestedWidth != 0 )
+		if ( g_ivNestedResolution.x != 0 )
 		{
 			fprintf( stderr, "Cannot specify -w without -h\n" );
 			return 1;
 		}
-		g_nNestedWidth = g_nOutputWidth;
-		g_nNestedHeight = g_nOutputHeight;
+		g_ivNestedResolution = glm::ivec2 { g_nOutputWidth, g_nOutputHeight };
 	}
-	if ( g_nNestedWidth == 0 )
-		g_nNestedWidth = g_nNestedHeight * 16 / 9;
+	if ( g_ivNestedResolution.x == 0 )
+		g_ivNestedResolution.x = g_ivNestedResolution.y * 16 / 9;
 
 	if ( !wlserver_init() )
 	{

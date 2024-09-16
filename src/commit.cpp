@@ -7,11 +7,35 @@
 
 extern gamescope::CAsyncWaiter<gamescope::Rc<commit_t>> g_ImageWaiter;
 
+uint64_t commit_t::getCommitID()
+{
+    static uint64_t maxCommmitID = 1;
+    return maxCommmitID++;
+}
+
 commit_t::commit_t()
 {
-    static uint64_t maxCommmitID = 0;
-    commitID = ++maxCommmitID;
+    commitID = getCommitID();;
 }
+
+commit_t::commit_t(std::in_place_t tag, ResListEntry_t& reslistentry, struct wlr_buffer* buf, bool is_steam, uint64_t seq)
+  : RcObject(tag),
+    buf{buf}, 
+    async{reslistentry.async}, 
+    fifo{reslistentry.fifo},
+    is_steam{is_steam}, 
+    feedback( reslistentry.feedback 
+              ? std::optional<wlserver_vk_swapchain_feedback>(std::in_place_t{}, *reslistentry.feedback) 
+              : std::nullopt ),
+    win_seq{seq},
+    surf{reslistentry.surf}, 
+    presentation_feedbacks{std::move(reslistentry.presentation_feedbacks)},
+    present_id{reslistentry.present_id}, 
+    desired_present_time{reslistentry.desired_present_time}
+{
+    commitID = getCommitID();
+}
+
 commit_t::~commit_t()
 {
     {
@@ -126,7 +150,7 @@ void commit_t::SetFence( int nFence, bool bMangoNudge, CommitDoneList_t *pDoneCo
     m_pDoneCommits = pDoneCommits;
 }
 
-void calc_scale_factor(float &out_scale_x, float &out_scale_y, float sourceWidth, float sourceHeight);
+glm::vec2 calc_scale_factor(float sourceWidth, float sourceHeight);
 
 bool commit_t::ShouldPreemptivelyUpscale()
 {
@@ -143,11 +167,7 @@ bool commit_t::ShouldPreemptivelyUpscale()
     if ( !vulkanTex )
         return false;
 
-    float flScaleX = 1.0f;
-    float flScaleY = 1.0f;
-    // I wish this function was more programatic with its inputs, but it does do exactly what we want right now...
-    // It should also return a std::pair or a glm uvec
-    calc_scale_factor( flScaleX, flScaleY, vulkanTex->width(), vulkanTex->height() );
+    glm::vec2 flScale = calc_scale_factor( vulkanTex->width(), vulkanTex->height() );
 
-    return !close_enough( flScaleX, 1.0f ) || !close_enough( flScaleY, 1.0f );
+    return !close_enough( flScale.x, 1.0f ) || !close_enough( flScale.y, 1.0f );
 }

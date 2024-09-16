@@ -6,8 +6,9 @@
 #include <wlr/render/dmabuf.h>
 #include "wlr_end.hpp"
 
-extern uint32_t currentOutputWidth;
-extern uint32_t currentOutputHeight;
+#include <glm/fwd.hpp>
+
+extern glm::uvec2 currentOutputResolution;
 
 unsigned int get_time_in_milliseconds(void);
 uint64_t get_time_in_nanos();

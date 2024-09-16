@@ -35,10 +35,8 @@
 #include <X11/Xcursor/Xcursor.h>
 #include <X11/extensions/xfixeswire.h>
 #include <X11/extensions/XInput2.h>
-#include <cstdint>
 #include <memory>
 #include <thread>
-#include <condition_variable>
 #include <mutex>
 #include <atomic>
 #include <vector>
@@ -47,33 +45,26 @@
 #include <iostream>
 #include <fstream>
 #include <string>
-#include <queue>
 #include <filesystem>
 #include <variant>
 #include <unordered_set>
+#include <semaphore>
 
 #include <assert.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <fcntl.h>
-#include <sys/poll.h>
-#include <sys/time.h>
-#include <sys/wait.h>
 #include <sys/types.h>
 #if defined(__linux__)
 #include <sys/prctl.h>
 #elif defined(__DragonFly__) || defined(__FreeBSD__)
 #include <sys/procctl.h>
 #endif
-#include <sys/socket.h>
-#include <sys/resource.h>
 #include <time.h>
 #include <unistd.h>
 #include <getopt.h>
-#include <spawn.h>
 #include <signal.h>
-#include <linux/input-event-codes.h>
 #include <X11/Xmu/CurUtil.h>
 #include "waitable.h"
 
@@ -94,9 +85,7 @@
 #include "Utils/Process.h"
 #include "Utils/Algorithm.h"
 
-#include "wlr_begin.hpp"
 #include "wlr/types/wlr_pointer_constraints_v1.h"
-#include "wlr_end.hpp"
 
 #if HAVE_AVIF
 #include "avif/avif.h"
@@ -190,8 +179,7 @@ timespec nanos_to_timespec( uint64_t ulNanos )
 	return ts;
 }
 
-static void
-update_runtime_info();
+static void update_runtime_info();
 
 gamescope::ConVar<bool> cv_adaptive_sync( "adaptive_sync", false, "Whether or not adaptive sync is enabled if available." );
 gamescope::ConVar<bool> cv_adaptive_sync_ignore_overlay( "adaptive_sync_ignore_overlay", false, "Whether or not to ignore overlay planes for pushing commits with adaptive sync." );
@@ -694,11 +682,6 @@ extern bool g_bForceRelativeMouse;
 
 CommitDoneList_t g_steamcompmgr_xdg_done_commits;
 
-struct ignore {
-	struct ignore	*next;
-	unsigned long	sequence;
-};
-
 gamescope::CAsyncWaiter<gamescope::Rc<commit_t>> g_ImageWaiter{ "gamescope_img" };
 
 gamescope::CWaiter g_SteamCompMgrWaiter;
@@ -735,7 +718,7 @@ struct global_focus_t : public focus_t
 } global_focus;
 
 
-uint32_t		currentOutputWidth, currentOutputHeight;
+glm::uvec2		currentOutputResolution;
 bool			currentHDROutput = false;
 bool			currentHDRForce = false;
 
@@ -743,7 +726,7 @@ std::vector< uint32_t > vecFocuscontrolAppIDs;
 
 bool			gameFocused;
 
-unsigned int 	gamesRunningCount;
+unsigned int 	gamesRunningCount; //this is associated w/ gamesRunningAtom, but isn't used for anything
 
 float			overscanScaleRatio = 1.0;
 float			zoomScaleRatio = 1.0;
@@ -769,8 +752,6 @@ static gamescope::ConCommand cc_debug_force_repaint( "debug_force_repaint", "For
 unsigned long	damageSequence = 0;
 
 uint64_t		cursorHideTime = 10'000ul * 1'000'000ul;
-
-bool			gotXError = false;
 
 unsigned int	fadeOutStartTime = 0;
 
@@ -970,7 +951,6 @@ bool g_bPendingFade = false;
 
 unsigned int	frameCounter;
 unsigned int	lastSampledFrameTime;
-float			currentFrameRate;
 
 static bool		debugFocus = false;
 static bool		drawDebugInfo = false;
@@ -1013,46 +993,18 @@ namespace gamescope
 	});
 }
 
-
 static std::atomic<bool> g_bForceRepaint{false};
 
 extern int g_nCursorScaleHeight;
 
-// poor man's semaphore
-class sem
-{
-public:
-	void wait( void )
-	{
-		std::unique_lock<std::mutex> lock(mtx);
-
-		while(count == 0){
-			cv.wait(lock);
-		}
-		count--;
-	}
-
-	void signal( void )
-	{
-		std::unique_lock<std::mutex> lock(mtx);
-		count++;
-		cv.notify_one();
-	}
-
-private:
-	std::mutex mtx;
-	std::condition_variable cv;
-	int count = 0;
-};
-
-sem statsThreadSem;
+std::counting_semaphore statsThreadSem {0};
 std::mutex statsEventQueueLock;
 std::vector< std::string > statsEventQueue;
 
 std::string statsThreadPath;
 int			statsPipeFD = -1;
 
-bool statsThreadRun;
+std::atomic<bool> statsThreadRun{false}; //semi-protected by statsThreadSem (on x86[_64]), but should use acquire-release or seq_cst ordering to ensure safety (opting for seq_cst default, since we're only doing loads at runtime, & for x86_64 & aarch64, seq_cst loads have the same overhead as acquire loads)
 
 void statsThreadMain( void )
 {
@@ -1070,7 +1022,7 @@ void statsThreadMain( void )
 	}
 
 wait:
-	statsThreadSem.wait();
+	statsThreadSem.acquire();
 
 	if ( statsThreadRun == false )
 	{
@@ -1121,7 +1073,7 @@ static inline void stats_printf( const char* format, ...)
 
 			statsEventQueue.push_back( eventstr );
 
-			statsThreadSem.signal();
+			statsThreadSem.release();
 		}
 	}
 }
@@ -1217,32 +1169,9 @@ static steamcompmgr_win_t * find_win( xwayland_ctx_t *ctx, struct wlr_surface *s
 
 static gamescope::CBufferMemoizer s_BufferMemos;
 
-// This really needs cleanup, this function is so silly...
-static gamescope::Rc<commit_t>
-import_commit (
-	steamcompmgr_win_t *w,
-	struct wlr_surface *surf,
-	struct wlr_buffer *buf,
-	bool async,
-	std::shared_ptr<wlserver_vk_swapchain_feedback> swapchain_feedback,
-	std::vector<struct wl_resource*> presentation_feedbacks,
-	std::optional<uint32_t> present_id,
-	uint64_t desired_present_time,
-	bool fifo )
+static gamescope::Rc<commit_t> import_commit(steamcompmgr_win_t *w, struct wlr_buffer* buf, ResListEntry_t& reslistentry)
 {
-	gamescope::Rc<commit_t> commit = new commit_t;
-
-	commit->win_seq = w->seq;
-	commit->surf = surf;
-	commit->buf = buf;
-	commit->async = async;
-	commit->fifo = fifo;
-	commit->is_steam = window_is_steam( w );
-	commit->presentation_feedbacks = std::move(presentation_feedbacks);
-	if (swapchain_feedback)
-		commit->feedback = *swapchain_feedback;
-	commit->present_id = present_id;
-	commit->desired_present_time = desired_present_time;
+	gamescope::Rc<commit_t> commit = gamescope::make_rc<commit_t>(reslistentry, buf, window_is_steam( w ), w->seq);
 
 	if ( gamescope::OwningRc<CVulkanTexture> pTexture = s_BufferMemos.LookupVulkanTexture( buf ) )
 	{
@@ -1340,58 +1269,49 @@ window_is_fullscreen( steamcompmgr_win_t *w )
 	return w && ( window_is_steam( w ) || w->isFullscreen );
 }
 
-void calc_scale_factor_scaler(float &out_scale_x, float &out_scale_y, float sourceWidth, float sourceHeight)
+glm::vec2 calc_scale_factor_scaler(float sourceWidth, float sourceHeight)
 {
-	float XOutputRatio = currentOutputWidth / (float)g_nNestedWidth;
-	float YOutputRatio = currentOutputHeight / (float)g_nNestedHeight;
-	float outputScaleRatio = std::min(XOutputRatio, YOutputRatio);
+	auto sourceDimensions = glm::vec2 {sourceWidth, sourceHeight};
+	auto nestedResolution = glm::vec2 { g_ivNestedResolution };
+	auto outputRatio = (glm::vec2)currentOutputResolution / nestedResolution;
 
-	float XRatio = (float)g_nNestedWidth / sourceWidth;
-	float YRatio = (float)g_nNestedHeight / sourceHeight;
+	glm::vec2 ratios = nestedResolution / sourceDimensions;
 
 	if (g_upscaleScaler == GamescopeUpscaleScaler::STRETCH)
 	{
-		out_scale_x = XRatio * XOutputRatio;
-		out_scale_y = YRatio * YOutputRatio;
-		return;
+		return ratios * outputRatio;
 	}
 
-	if (g_upscaleScaler != GamescopeUpscaleScaler::FILL)
-	{
-		out_scale_x = std::min(XRatio, YRatio);
-		out_scale_y = std::min(XRatio, YRatio);
-	}
-	else
-	{
-		out_scale_x = std::max(XRatio, YRatio);
-		out_scale_y = std::max(XRatio, YRatio);
+	glm::vec2 out_scale;
+	if (g_upscaleScaler != GamescopeUpscaleScaler::FILL) {
+		out_scale = glm::vec2{ glm::min(ratios.x, ratios.y) };
+	} else {
+		out_scale = glm::vec2{ glm::max(ratios.x, ratios.y) };
 	}
 
 	if (g_upscaleScaler == GamescopeUpscaleScaler::AUTO)
 	{
-		out_scale_x = std::min(g_flMaxWindowScale, out_scale_x);
-		out_scale_y = std::min(g_flMaxWindowScale, out_scale_y);
+		out_scale = glm::min(out_scale, g_flMaxWindowScale);
 	}
 
-	out_scale_x *= outputScaleRatio;
-	out_scale_y *= outputScaleRatio;
+	float flOutputScaleRatio = std::min(outputRatio.x, outputRatio.y);
+	out_scale *= flOutputScaleRatio;
 
 	if (g_upscaleScaler == GamescopeUpscaleScaler::INTEGER)
 	{
-		if (out_scale_x > 1.0f)
+		if (out_scale.x > 1.0f)
 		{
 			// x == y here always.
-			out_scale_x = out_scale_y = floor(out_scale_x);
+			out_scale.x = out_scale.y = floor(out_scale.x);
 		}
 	}
+	
+	return out_scale;
 }
 
-void calc_scale_factor(float &out_scale_x, float &out_scale_y, float sourceWidth, float sourceHeight)
+glm::vec2 calc_scale_factor(float sourceWidth, float sourceHeight)
 {
-	calc_scale_factor_scaler(out_scale_x, out_scale_y, sourceWidth, sourceHeight);
-
-	out_scale_x *= globalScaleRatio;
-	out_scale_y *= globalScaleRatio;
+	return calc_scale_factor_scaler(sourceWidth, sourceHeight) * globalScaleRatio;
 }
 
 /**
@@ -1743,8 +1663,8 @@ void MouseCursor::paint(steamcompmgr_win_t *window, steamcompmgr_win_t *fit, str
 	if ( fit )
 	{
 		// If we have an override window, try to fit it in as long as it won't make our scale go below 1.0.
-		sourceWidth = std::max<uint32_t>( sourceWidth, clamp<int>( fit->GetGeometry().nX + fit->GetGeometry().nWidth, 0, currentOutputWidth ) );
-		sourceHeight = std::max<uint32_t>( sourceHeight, clamp<int>( fit->GetGeometry().nY + fit->GetGeometry().nHeight, 0, currentOutputHeight ) );
+		sourceWidth = std::max<uint32_t>( sourceWidth, clamp<int>( fit->GetGeometry().nX + fit->GetGeometry().nWidth, 0, currentOutputResolution.x ) );
+		sourceHeight = std::max<uint32_t>( sourceHeight, clamp<int>( fit->GetGeometry().nY + fit->GetGeometry().nHeight, 0, currentOutputResolution.y ) );
 	}
 
 	float cursor_scale = 1.0f;
@@ -1757,23 +1677,21 @@ void MouseCursor::paint(steamcompmgr_win_t *window, steamcompmgr_win_t *fit, str
 	cursor_scale = std::max(cursor_scale, 1.0f);
 
 	float scaledX, scaledY;
-	float currentScaleRatio_x = 1.0;
-	float currentScaleRatio_y = 1.0;
 	int cursorOffsetX, cursorOffsetY;
 
-	calc_scale_factor(currentScaleRatio_x, currentScaleRatio_y, sourceWidth, sourceHeight);
+	glm::vec2 currentScaleRatio = calc_scale_factor(sourceWidth, sourceHeight);
 
-	cursorOffsetX = (currentOutputWidth - sourceWidth * currentScaleRatio_x) / 2.0f;
-	cursorOffsetY = (currentOutputHeight - sourceHeight * currentScaleRatio_y) / 2.0f;
+	cursorOffsetX = (currentOutputResolution.x - sourceWidth * currentScaleRatio.x) / 2.0f;
+	cursorOffsetY = (currentOutputResolution.y - sourceHeight * currentScaleRatio.y) / 2.0f;
 
 	// Actual point on scaled screen where the cursor hotspot should be
-	scaledX = (winX - window->GetGeometry().nX) * currentScaleRatio_x + cursorOffsetX;
-	scaledY = (winY - window->GetGeometry().nY) * currentScaleRatio_y + cursorOffsetY;
+	scaledX = (winX - window->GetGeometry().nX) * currentScaleRatio.x + cursorOffsetX;
+	scaledY = (winY - window->GetGeometry().nY) * currentScaleRatio.y + cursorOffsetY;
 
 	if ( zoomScaleRatio != 1.0 )
 	{
-		scaledX += ((sourceWidth / 2) - winX) * currentScaleRatio_x;
-		scaledY += ((sourceHeight / 2) - winY) * currentScaleRatio_y;
+		scaledX += ((sourceWidth / 2) - winX) * currentScaleRatio.x;
+		scaledY += ((sourceHeight / 2) - winY) * currentScaleRatio.y;
 	}
 
 	// Apply the cursor offset inside the texture using the display scale
@@ -1887,8 +1805,6 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
 {
 	uint32_t sourceWidth, sourceHeight;
 	int drawXOffset = 0, drawYOffset = 0;
-	float currentScaleRatio_x = 1.0;
-	float currentScaleRatio_y = 1.0;
 
 	// Exit out if we have no window or
 	// no commit.
@@ -1926,8 +1842,8 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
 	}
 	else if ( flags & PaintWindowFlag::NoScale )
 	{
-		sourceWidth = currentOutputWidth;
-		sourceHeight = currentOutputHeight;
+		sourceWidth = currentOutputResolution.x;
+		sourceHeight = currentOutputResolution.y;
 	}
 	else
 	{
@@ -1951,37 +1867,38 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
 		if ( fit )
 		{
 			// If we have an override window, try to fit it in as long as it won't make our scale go below 1.0.
-			sourceWidth = std::max<uint32_t>( sourceWidth, clamp<int>( fit->GetGeometry().nX + fit->GetGeometry().nWidth, 0, currentOutputWidth ) );
-			sourceHeight = std::max<uint32_t>( sourceHeight, clamp<int>( fit->GetGeometry().nY + fit->GetGeometry().nHeight, 0, currentOutputHeight ) );
+			sourceWidth = std::max<uint32_t>( sourceWidth, clamp<int>( fit->GetGeometry().nX + fit->GetGeometry().nWidth, 0, currentOutputResolution.x ) );
+			sourceHeight = std::max<uint32_t>( sourceHeight, clamp<int>( fit->GetGeometry().nY + fit->GetGeometry().nHeight, 0, currentOutputResolution.y ) );
 		}
 	}
 
 	bool offset = ( ( w->GetGeometry().nX || w->GetGeometry().nY ) && w != scaleW );
 
-	if (sourceWidth != currentOutputWidth || sourceHeight != currentOutputHeight || offset || globalScaleRatio != 1.0f)
+  glm::vec2 currentScaleRatio{1.0f, 1.0f};
+	if (sourceWidth != currentOutputResolution.x || sourceHeight != currentOutputResolution.y || offset || globalScaleRatio != 1.0f)
 	{
-		calc_scale_factor(currentScaleRatio_x, currentScaleRatio_y, sourceWidth, sourceHeight);
+		currentScaleRatio = calc_scale_factor(sourceWidth, sourceHeight);
 
-		drawXOffset = ((int)currentOutputWidth - (int)sourceWidth * currentScaleRatio_x) / 2.0f;
-		drawYOffset = ((int)currentOutputHeight - (int)sourceHeight * currentScaleRatio_y) / 2.0f;
+		drawXOffset = ((int)currentOutputResolution.x - (int)sourceWidth * currentScaleRatio.x) / 2.0f;
+		drawYOffset = ((int)currentOutputResolution.y - (int)sourceHeight * currentScaleRatio.y) / 2.0f;
 
 		if ( w != scaleW )
 		{
-			drawXOffset += w->GetGeometry().nX * currentScaleRatio_x;
-			drawYOffset += w->GetGeometry().nY * currentScaleRatio_y;
+			drawXOffset += w->GetGeometry().nX * currentScaleRatio.x;
+			drawYOffset += w->GetGeometry().nY * currentScaleRatio.y;
 		}
 
 		if ( zoomScaleRatio != 1.0 )
 		{
-			drawXOffset += (((int)sourceWidth / 2) - cursor->x()) * currentScaleRatio_x;
-			drawYOffset += (((int)sourceHeight / 2) - cursor->y()) * currentScaleRatio_y;
+			drawXOffset += (((int)sourceWidth / 2) - cursor->x()) * currentScaleRatio.x;
+			drawYOffset += (((int)sourceHeight / 2) - cursor->y()) * currentScaleRatio.y;
 		}
 	}
 
 	layer->opacity = ( (w->isOverlay || w->isExternalOverlay) ? w->opacity / (float)OPAQUE : 1.0f ) * flOpacityScale;
 
-	layer->scale.x = 1.0 / currentScaleRatio_x;
-	layer->scale.y = 1.0 / currentScaleRatio_y;
+	layer->scale.x = 1.0 / currentScaleRatio.x;
+	layer->scale.y = 1.0 / currentScaleRatio.y;
 
 	if ( w != scaleW )
 	{
@@ -1990,19 +1907,18 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
 	}
 	else if (notificationMode)
 	{
-		int xOffset = 0, yOffset = 0;
+		glm::ivec2 offset {0, 0};
 
-		int width = w->GetGeometry().nWidth * currentScaleRatio_x;
-		int height = w->GetGeometry().nHeight * currentScaleRatio_y;
+		int width = w->GetGeometry().nWidth * currentScaleRatio.x;
+		int height = w->GetGeometry().nHeight * currentScaleRatio.y;
 
 		if (globalScaleRatio != 1.0f)
 		{
-			xOffset = (currentOutputWidth - currentOutputWidth * globalScaleRatio) / 2.0;
-			yOffset = (currentOutputHeight - currentOutputHeight * globalScaleRatio) / 2.0;
+			offset = (glm::ivec2) (((glm::vec2)currentOutputResolution - (glm::vec2)currentOutputResolution * globalScaleRatio) / 2.0f);
 		}
 
-		layer->offset.x = (currentOutputWidth - xOffset - width) * -1.0f;
-		layer->offset.y = (currentOutputHeight - yOffset - height) * -1.0f;
+		layer->offset.x = (currentOutputResolution.x - offset.x - width) * -1.0f;
+		layer->offset.y = (currentOutputResolution.y - offset.y - height) * -1.0f;
 	}
 	else
 	{
@@ -2037,7 +1953,7 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
 	if (layer->filter == GamescopeUpscaleFilter::PIXEL)
 	{
 		// Don't bother doing more expensive filtering if we are sharp + integer.
-		if (float_is_integer(currentScaleRatio_x) && float_is_integer(currentScaleRatio_y))
+		if (float_is_integer(currentScaleRatio.x) && float_is_integer(currentScaleRatio.y))
 			layer->filter = GamescopeUpscaleFilter::NEAREST;
 	}
 
@@ -2251,25 +2167,20 @@ paint_all(bool async)
 
 	paintID++;
 	gpuvis_trace_begin_ctx_printf( paintID, "paint_all" );
-	steamcompmgr_win_t	*w;
-	steamcompmgr_win_t	*overlay;
-	steamcompmgr_win_t *externalOverlay;
-	steamcompmgr_win_t	*notification;
-	steamcompmgr_win_t	*override;
-	steamcompmgr_win_t *input;
 
 	unsigned int currentTime = get_time_in_milliseconds();
 	bool fadingOut = ( currentTime - fadeOutStartTime < g_FadeOutDuration || g_bPendingFade ) && g_HeldCommits[HELD_COMMIT_FADE] != nullptr;
 
-	w = global_focus.focusWindow;
-	overlay = global_focus.overlayWindow;
-	externalOverlay = global_focus.externalOverlayWindow;
-	notification = global_focus.notificationWindow;
-	override = global_focus.overrideWindow;
-	input = global_focus.inputFocusWindow;
+	auto* w = global_focus.focusWindow;
+	auto* overlay = global_focus.overlayWindow;
+	auto* externalOverlay = global_focus.externalOverlayWindow;
+	auto* notification = global_focus.notificationWindow;
+	auto* override = global_focus.overrideWindow;
+	auto* input = global_focus.inputFocusWindow;
 
 	if (++frameCounter == 300)
 	{
+		static float currentFrameRate;
 		currentFrameRate = 300 * 1000.0f / (currentTime - lastSampledFrameTime);
 		lastSampledFrameTime = currentTime;
 		frameCounter = 0;
@@ -2798,12 +2709,12 @@ paint_all(bool async)
 				else if (pScreenshotTexture->format() == VK_FORMAT_B8G8R8A8_UNORM)
 				{
 					// Make our own copy of the image to remove the alpha channel.
-					auto imageData = std::vector<uint8_t>(currentOutputWidth * currentOutputHeight * 4);
+					auto imageData = std::vector<uint8_t>(currentOutputResolution.x * currentOutputResolution.y * 4);
 					const uint32_t comp = 4;
-					const uint32_t pitch = currentOutputWidth * comp;
-					for (uint32_t y = 0; y < currentOutputHeight; y++)
+					const uint32_t pitch = currentOutputResolution.x * comp;
+					for (uint32_t y = 0; y < currentOutputResolution.y; y++)
 					{
-						for (uint32_t x = 0; x < currentOutputWidth; x++)
+						for (uint32_t x = 0; x < currentOutputResolution.x; x++)
 						{
 							// BGR...
 							imageData[y * pitch + x * comp + 0] = mappedData[y * pScreenshotTexture->rowPitch() + x * comp + 2];
@@ -2812,7 +2723,7 @@ paint_all(bool async)
 							imageData[y * pitch + x * comp + 3] = 255;
 						}
 					}
-					if ( stbi_write_png( oScreenshotInfo->szScreenshotPath.c_str(), currentOutputWidth, currentOutputHeight, 4, imageData.data(), pitch ) )
+					if ( stbi_write_png( oScreenshotInfo->szScreenshotPath.c_str(), currentOutputResolution.x, currentOutputResolution.y, 4, imageData.data(), pitch ) )
 					{
 						xwm_log.infof( "Screenshot saved to %s", oScreenshotInfo->szScreenshotPath.c_str() );
 						bScreenshotSuccess = true;
@@ -3159,12 +3070,12 @@ static bool is_good_override_candidate( steamcompmgr_win_t *override, steamcompm
 static bool
 pick_primary_focus_and_override(focus_t *out, Window focusControlWindow, const std::vector<steamcompmgr_win_t*>& vecPossibleFocusWindows, bool globalFocus, const std::vector<uint32_t>& ctxFocusControlAppIDs)
 {
-	bool localGameFocused = false;
-	steamcompmgr_win_t *focus = NULL, *override_focus = NULL;
 
 	bool controlledFocus = focusControlWindow != None || !ctxFocusControlAppIDs.empty();
-	if ( controlledFocus )
-	{
+	auto selectFocusableWindow = [=]() -> std::optional<steamcompmgr_win_t*> {
+		if ( !controlledFocus )
+			return std::nullopt;
+		
 		if ( focusControlWindow != None )
 		{
 			for ( steamcompmgr_win_t *focusable_window : vecPossibleFocusWindows )
@@ -3174,9 +3085,7 @@ pick_primary_focus_and_override(focus_t *out, Window focusControlWindow, const s
 
 				if ( focusable_window->xwayland().id == focusControlWindow )
 				{
-					focus = focusable_window;
-					localGameFocused = true;
-					goto found;
+					return focusable_window;
 				}
 			}
 		}
@@ -3187,16 +3096,18 @@ pick_primary_focus_and_override(focus_t *out, Window focusControlWindow, const s
 			{
 				if ( focusable_window->appID == focusable_appid )
 				{
-					focus = focusable_window;
-					localGameFocused = true;
-					goto found;
+					return focusable_window;
 				}
 			}
 		}
+		
+		return std::nullopt;
+	};
+	
+	auto oFocusWin = selectFocusableWindow();
+	bool localGameFocused = !!oFocusWin;
 
-found:;
-	}
-
+	steamcompmgr_win_t* focus = localGameFocused ? *oFocusWin : nullptr;
 	if ( !focus && ( !globalFocus || !controlledFocus ) )
 	{
 		if ( !vecPossibleFocusWindows.empty() )
@@ -3206,6 +3117,7 @@ found:;
 		}
 	}
 
+	steamcompmgr_win_t* override_focus = nullptr;
 	auto resolveTransientOverrides = [&](bool maybe)
 	{
 		if ( !focus || focus->type != steamcompmgr_win_type_t::XWAYLAND )
@@ -3310,8 +3222,7 @@ found:;
 			out->focusWindow = focus;
 	}
 
-	if ( !override_focus && focus )
-	{
+	auto getOtherOverrideWindow = [=]() -> steamcompmgr_win_t* {
 		if ( controlledFocus )
 		{
 			for ( auto focusable_appid : ctxFocusControlAppIDs )
@@ -3322,26 +3233,26 @@ found:;
 					{
 						if ( win_maybe_a_dropdown( fake_override ) && is_good_override_candidate( fake_override, focus ) && fake_override->appID == focus->appID )
 						{
-							override_focus = fake_override;
-							goto found2;
+							return fake_override;
 						}
 					}
 				}
 			}
-		}
-		else
-		{
+		} else {
 			for ( steamcompmgr_win_t *fake_override : vecPossibleFocusWindows )
 			{
 				if ( win_maybe_a_dropdown( fake_override ) && is_good_override_candidate( fake_override, focus ) )
 				{
-					override_focus = fake_override;
-					goto found2;
+					return fake_override;
 				}
 			}	
 		}
-		
-		found2:;
+		return nullptr;
+	}; 
+
+	if ( !override_focus && focus )
+	{
+		override_focus = getOtherOverrideWindow();
 		resolveTransientOverrides( true );
 	}
 
@@ -3379,7 +3290,7 @@ void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win
 {
 	xwayland_ctx_t *ctx = this;
 
-	steamcompmgr_win_t *inputFocus = NULL;
+	steamcompmgr_win_t *inputFocus = nullptr;
 
 	steamcompmgr_win_t *prevFocusWindow = ctx->focus.focusWindow;
 	ctx->focus.overlayWindow = nullptr;
@@ -3421,7 +3332,7 @@ void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win
 
 	pick_primary_focus_and_override( &ctx->focus, ctx->focusControlWindow, vecPossibleFocusWindows, false, vecFocuscontrolAppIDs );
 
-	if ( inputFocus == NULL )
+	if ( inputFocus == nullptr )
 	{
 		inputFocus = ctx->focus.focusWindow;
 	}
@@ -4592,8 +4503,7 @@ static void circulate_request( xwayland_ctx_t *ctx, XCirculateRequestEvent *circ
 	XCirculateSubwindows( ctx->dpy, circulateRequest->window, circulateRequest->place );
 }
 
-static void
-finish_destroy_win(xwayland_ctx_t *ctx, Window id, bool gone)
+static void finish_destroy_win(xwayland_ctx_t *ctx, Window id, bool gone)
 {
 	steamcompmgr_win_t	**prev, *w;
 
@@ -4627,39 +4537,27 @@ finish_destroy_win(xwayland_ctx_t *ctx, Window id, bool gone)
 		}
 }
 
-static void
-destroy_win(xwayland_ctx_t *ctx, Window id, bool gone, bool fade)
+static void destroy_win(xwayland_ctx_t *ctx, Window id, bool gone)
 {
+	auto destroyBaseFocusWindows = [id, gone](auto& focus) {
+		for (std::reference_wrapper<steamcompmgr_win_t *> focusWin
+				 : (std::reference_wrapper<steamcompmgr_win_t*>[])
+				 { focus.focusWindow, focus.inputFocusWindow, focus.overlayWindow,
+					 focus.externalOverlayWindow, focus.notificationWindow, focus.overrideWindow })
+			if (x11_win(focusWin) == id && gone)
+				focusWin.get() = nullptr;
+	};
+
 	// Context
-	if (x11_win(ctx->focus.focusWindow) == id && gone)
-		ctx->focus.focusWindow = nullptr;
-	if (x11_win(ctx->focus.inputFocusWindow) == id && gone)
-		ctx->focus.inputFocusWindow = nullptr;
-	if (x11_win(ctx->focus.overlayWindow) == id && gone)
-		ctx->focus.overlayWindow = nullptr;
-	if (x11_win(ctx->focus.externalOverlayWindow) == id && gone)
-		ctx->focus.externalOverlayWindow = nullptr;
-	if (x11_win(ctx->focus.notificationWindow) == id && gone)
-		ctx->focus.notificationWindow = nullptr;
-	if (x11_win(ctx->focus.overrideWindow) == id && gone)
-		ctx->focus.overrideWindow = nullptr;
+	destroyBaseFocusWindows(ctx->focus);
 	if (ctx->currentKeyboardFocusWindow == id && gone)
 		ctx->currentKeyboardFocusWindow = None;
 
 	// Global Focus
-	if (x11_win(global_focus.focusWindow) == id && gone)
-		global_focus.focusWindow = nullptr;
-	if (x11_win(global_focus.inputFocusWindow) == id && gone)
-		global_focus.inputFocusWindow = nullptr;
-	if (x11_win(global_focus.overlayWindow) == id && gone)
-		global_focus.overlayWindow = nullptr;
-	if (x11_win(global_focus.notificationWindow) == id && gone)
-		global_focus.notificationWindow = nullptr;
-	if (x11_win(global_focus.overrideWindow) == id && gone)
-		global_focus.overrideWindow = nullptr;
+	destroyBaseFocusWindows(global_focus);
 	if (x11_win(global_focus.fadeWindow) == id && gone)
 		global_focus.fadeWindow = nullptr;
-		
+
 	MakeFocusDirty();
 
 	finish_destroy_win(ctx, id, gone);
@@ -4703,8 +4601,8 @@ damage_win(xwayland_ctx_t *ctx, XDamageNotifyEvent *de)
 static void
 handle_wl_surface_id(xwayland_ctx_t *ctx, steamcompmgr_win_t *w, uint32_t surfaceID)
 {
-	struct wlr_surface *current_surface = NULL;
-	struct wlr_surface *main_surface = NULL;
+	struct wlr_surface *current_surface = nullptr;
+	struct wlr_surface *main_surface = nullptr;
 
 	wlserver_lock();
 
@@ -4783,8 +4681,7 @@ handle_system_tray_opcode(xwayland_ctx_t *ctx, XClientMessageEvent *ev)
 {
 	long opcode = ev->data.l[1];
 
-	switch (opcode) {
-		case SYSTEM_TRAY_REQUEST_DOCK: {
+	if (opcode == SYSTEM_TRAY_REQUEST_DOCK) {
 			Window embed_id = ev->data.l[2];
 
 			/* At this point we're supposed to initiate the XEmbed lifecycle by
@@ -4796,9 +4693,7 @@ handle_system_tray_opcode(xwayland_ctx_t *ctx, XClientMessageEvent *ev)
 			if (w) {
 				w->isSysTrayIcon = true;
 			}
-			break;
-		}
-		default:
+	} else {
 			xwm_log.debugf("Unhandled _NET_SYSTEM_TRAY_OPCODE %ld", opcode);
 	}
 }
@@ -4964,9 +4859,8 @@ handle_selection_notify(xwayland_ctx_t *ctx, XSelectionEvent *ev)
 {
 	Atom actual_type;
 	int actual_format;
-	unsigned long nitems;
-	unsigned long bytes_after;
-	unsigned char *data = NULL;
+	unsigned long nitems, bytes_after;
+	unsigned char *data = nullptr;
 
 	XGetWindowProperty(ctx->dpy, ev->requestor, ev->property, 0, 0, False, AnyPropertyType,
 			&actual_type, &actual_format, &nitems, &bytes_after, &data);
@@ -4977,36 +4871,36 @@ handle_selection_notify(xwayland_ctx_t *ctx, XSelectionEvent *ev)
 	if (actual_type == ctx->atoms.utf8StringAtom && actual_format == 8) {
 		XGetWindowProperty(ctx->dpy, ev->requestor, ev->property, 0, bytes_after, False, AnyPropertyType,
 				&actual_type, &actual_format, &nitems, &bytes_after, &data);
-		if (data) {
-			const char *contents = (const char *) data;
-			defer( XFree( data ); );
+		if (!data)
+			return;
+		const char *contents = (const char *) data;
+		defer( XFree( data ); );
 
-			if (ev->selection == ctx->atoms.clipboard)
+		if (ev->selection == ctx->atoms.clipboard)
+		{
+			if ( GetBackend()->GetNestedHints() )
 			{
-				if ( GetBackend()->GetNestedHints() )
-				{
-					//GetBackend()->GetNestedHints()->SetSelection()
-				}
-				else
-				{
-					gamescope_set_selection( contents, GAMESCOPE_SELECTION_CLIPBOARD );
-				}
-			}
-			else if (ev->selection == ctx->atoms.primarySelection)
-			{
-				if ( GetBackend()->GetNestedHints() )
-				{
-					//GetBackend()->GetNestedHints()->SetSelection()
-				}
-				else
-				{
-					gamescope_set_selection( contents, GAMESCOPE_SELECTION_PRIMARY );
-				}
+				//GetBackend()->GetNestedHints()->SetSelection()
 			}
 			else
 			{
-				xwm_log.errorf( "Selection '%s' not supported.  Ignoring", XGetAtomName(ctx->dpy, ev->selection) );
+				gamescope_set_selection( contents, GAMESCOPE_SELECTION_CLIPBOARD );
 			}
+		}
+		else if (ev->selection == ctx->atoms.primarySelection)
+		{
+			if ( GetBackend()->GetNestedHints() )
+			{
+				//GetBackend()->GetNestedHints()->SetSelection()
+			}
+			else
+			{
+				gamescope_set_selection( contents, GAMESCOPE_SELECTION_PRIMARY );
+			}
+		}
+		else
+		{
+			xwm_log.errorf( "Selection '%s' not supported.  Ignoring", XGetAtomName(ctx->dpy, ev->selection) );
 		}
 	}
 }
@@ -5432,8 +5326,8 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 
 			if ( !allowSuperRes )
 			{
-				width = std::min<int>(width, currentOutputWidth);
-				height = std::min<int>(height, currentOutputHeight);
+				width = std::min<int>(width, currentOutputResolution.x);
+				height = std::min<int>(height, currentOutputResolution.y);
 			}
 
 			gamescope_xwayland_server_t *server = wlserver_get_xwayland_server( server_idx );
@@ -5798,45 +5692,21 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 		gamescope_xwayland_server_t *server = wlserver_get_xwayland_server(server_id);
 		if (server)
 		{
-			if (global_focus.focusWindow &&
-				global_focus.focusWindow->type == steamcompmgr_win_type_t::XWAYLAND &&
-				global_focus.focusWindow->xwayland().ctx == server->ctx.get())
-				global_focus.focusWindow = nullptr;
-
-			if (global_focus.inputFocusWindow &&
-				global_focus.inputFocusWindow->type == steamcompmgr_win_type_t::XWAYLAND &&
-				global_focus.inputFocusWindow->xwayland().ctx == server->ctx.get())
-				global_focus.inputFocusWindow = nullptr;
-
-			if (global_focus.overlayWindow &&
-				global_focus.overlayWindow->type == steamcompmgr_win_type_t::XWAYLAND &&
-				global_focus.overlayWindow->xwayland().ctx == server->ctx.get())
-				global_focus.overlayWindow = nullptr;
-
-			if (global_focus.externalOverlayWindow &&
-				global_focus.externalOverlayWindow->type == steamcompmgr_win_type_t::XWAYLAND &&
-				global_focus.externalOverlayWindow->xwayland().ctx == server->ctx.get())
-				global_focus.externalOverlayWindow = nullptr;
-
-			if (global_focus.notificationWindow &&
-				global_focus.notificationWindow->type == steamcompmgr_win_type_t::XWAYLAND &&
-				global_focus.notificationWindow->xwayland().ctx == server->ctx.get())
-				global_focus.notificationWindow = nullptr;
-
-			if (global_focus.overrideWindow &&
-				global_focus.overrideWindow->type == steamcompmgr_win_type_t::XWAYLAND &&
-				global_focus.overrideWindow->xwayland().ctx == server->ctx.get())
-				global_focus.overrideWindow = nullptr;
-
-			if (global_focus.keyboardFocusWindow &&
-				global_focus.keyboardFocusWindow->type == steamcompmgr_win_type_t::XWAYLAND &&
-				global_focus.keyboardFocusWindow->xwayland().ctx == server->ctx.get())
-				global_focus.keyboardFocusWindow = nullptr;
-
-			if (global_focus.fadeWindow &&
-				global_focus.fadeWindow->type == steamcompmgr_win_type_t::XWAYLAND &&
-				global_focus.fadeWindow->xwayland().ctx == server->ctx.get())
-				global_focus.fadeWindow = nullptr;
+			auto clearXwlWin = [](steamcompmgr_win_t*& win, xwayland_ctx_t* ctx) {
+				if (win && win->type == steamcompmgr_win_type_t::XWAYLAND
+						&& win->xwayland().ctx == ctx)
+							win = nullptr;
+			};
+			
+			#pragma GCC unroll 8
+			for (std::reference_wrapper<steamcompmgr_win_t *> win 
+					 : (std::reference_wrapper<steamcompmgr_win_t*>[])
+					 { global_focus.focusWindow, global_focus.inputFocusWindow, global_focus.overlayWindow,
+						 global_focus.externalOverlayWindow, global_focus.notificationWindow, global_focus.overrideWindow,
+						 global_focus.keyboardFocusWindow, global_focus.fadeWindow })
+			{
+				clearXwlWin(win, server->ctx.get());
+			}
 
 			if (global_focus.cursor &&
 				global_focus.cursor->getCtx() == server->ctx.get())
@@ -5886,13 +5756,6 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 	}
 }
 
-static int
-error(Display *dpy, XErrorEvent *ev)
-{
-	// Do nothing. XErrors are usually benign.
-	return 0;
-}
-
 [[noreturn]] static void
 steamcompmgr_exit(void)
 {
@@ -5914,7 +5777,7 @@ steamcompmgr_exit(void)
 	if ( statsThreadRun == true )
 	{
 		statsThreadRun = false;
-		statsThreadSem.signal();
+		statsThreadSem.release();
 	}
 
 	{
@@ -5938,24 +5801,17 @@ steamcompmgr_exit(void)
 	pthread_exit(NULL);
 }
 
-static int
-handle_io_error(Display *dpy)
-{
-	xwm_log.errorf("X11 I/O error");
-	steamcompmgr_exit();
-}
+
 
 static bool
 register_cm(xwayland_ctx_t *ctx)
 {
-	Window w;
-	Atom a;
 	static char net_wm_cm[] = "_NET_WM_CM_Sxx";
 
 	snprintf(net_wm_cm, sizeof(net_wm_cm), "_NET_WM_CM_S%d", ctx->scr);
-	a = XInternAtom(ctx->dpy, net_wm_cm, false);
+	Atom a = XInternAtom(ctx->dpy, net_wm_cm, false);
 
-	w = XGetSelectionOwner(ctx->dpy, a);
+	Window w = XGetSelectionOwner(ctx->dpy, a);
 	if (w != None)
 	{
 		XTextProperty tp;
@@ -6432,16 +6288,7 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 		return;
 	}
 
-	gamescope::Rc<commit_t> newCommit = import_commit(
-		w,
-		reslistentry.surf,
-		buf,
-		reslistentry.async,
-		std::move(reslistentry.feedback),
-		std::move(reslistentry.presentation_feedbacks),
-		reslistentry.present_id,
-		reslistentry.desired_present_time,
-		reslistentry.fifo );
+	gamescope::Rc<commit_t> newCommit = import_commit(w, buf, reslistentry);
 
 	int fence = -1;
 	if ( newCommit != nullptr )
@@ -6636,7 +6483,7 @@ void xwayland_ctx_t::Dispatch()
 				steamcompmgr_win_t * w = find_win(ctx, ev.xdestroywindow.window);
 
 				if (w && w->xwayland().id == ev.xdestroywindow.window)
-					destroy_win(ctx, ev.xdestroywindow.window, true, true);
+					destroy_win(ctx, ev.xdestroywindow.window, true);
 				break;
 			}
 			case MapNotify:
@@ -6695,7 +6542,7 @@ void xwayland_ctx_t::Dispatch()
 
 					if (w && w->xwayland().id == ev.xreparent.window)
 					{
-						destroy_win(ctx, ev.xreparent.window, false, true);
+						destroy_win(ctx, ev.xreparent.window, false);
 					}
 					else
 					{
@@ -6797,10 +6644,6 @@ const char* g_customCursorPath = nullptr;
 int g_customCursorHotspotX = 0;
 int g_customCursorHotspotY = 0;
 
-xwayland_ctx_t g_ctx;
-
-static bool setup_error_handlers = false;
-
 void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_server)
 {
 	assert(!xwayland_server->ctx);
@@ -6818,9 +6661,18 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 		exit(1);
 	}
 
+	static bool setup_error_handlers = false;
 	if (!setup_error_handlers)
 	{
+		static auto error = [](Display *dpy, XErrorEvent *ev) -> int {
+			// Do nothing. XErrors are usually benign.
+			return 0;
+		};
 		XSetErrorHandler(error);
+		static auto handle_io_error = [](Display *dpy) -> int {
+			xwm_log.errorf("X11 I/O error");
+			steamcompmgr_exit();
+		};
 		XSetIOErrorHandler(handle_io_error);
 		setup_error_handlers = true;
 	}
@@ -7164,7 +7016,7 @@ void update_vrr_atoms(xwayland_ctx_t *root_ctx, bool force, bool* needs_flush = 
 	// Keep this as a preference, starting with off.
 	if ( force )
 	{
-        bool wants_vrr = cv_adaptive_sync;
+    bool wants_vrr = cv_adaptive_sync;
 		uint32_t enabled_value = wants_vrr ? 1 : 0;
 		XChangeProperty(root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeVRREnabled, XA_CARDINAL, 32, PropModeReplace,
 			(unsigned char *)&enabled_value, 1 );
@@ -7224,18 +7076,15 @@ void steamcompmgr_check_xdg(bool vblank, uint64_t vblank_idx)
 {
 	if (wlserver_xdg_dirty())
 	{
-		if (global_focus.focusWindow && global_focus.focusWindow->type == steamcompmgr_win_type_t::XDG)
-			global_focus.focusWindow = nullptr;
-		if (global_focus.inputFocusWindow && global_focus.inputFocusWindow->type == steamcompmgr_win_type_t::XDG)
-			global_focus.inputFocusWindow = nullptr;
-		if (global_focus.overlayWindow && global_focus.overlayWindow->type == steamcompmgr_win_type_t::XDG)
-			global_focus.overlayWindow = nullptr;
-		if (global_focus.notificationWindow && global_focus.notificationWindow->type == steamcompmgr_win_type_t::XDG)
-			global_focus.notificationWindow = nullptr;
-		if (global_focus.overrideWindow && global_focus.overrideWindow->type == steamcompmgr_win_type_t::XDG)
-			global_focus.overrideWindow = nullptr;
-		if (global_focus.fadeWindow && global_focus.fadeWindow->type == steamcompmgr_win_type_t::XDG)
-			global_focus.fadeWindow = nullptr;
+		#pragma GCC unroll 6
+		for (std::reference_wrapper<steamcompmgr_win_t *> focusWin
+				 : (std::reference_wrapper<steamcompmgr_win_t*>[]) 
+				 { global_focus.focusWindow, global_focus.inputFocusWindow, global_focus.overlayWindow,
+					 global_focus.notificationWindow, global_focus.overrideWindow,
+					 global_focus.fadeWindow })
+			if (auto*& w = focusWin.get(); w && w->type == steamcompmgr_win_type_t::XDG)
+				w = nullptr;
+
 		g_steamcompmgr_xdg_wins = wlserver_get_xdg_shell_windows();
 		MakeFocusDirty();
 	}
@@ -7262,7 +7111,7 @@ void update_edid_prop()
 	if (!filename)
 		return;
 
-	gamescope_xwayland_server_t *server = NULL;
+	gamescope_xwayland_server_t *server = nullptr;
 	for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
 	{
 		XTextProperty text_property =
@@ -7487,8 +7336,7 @@ steamcompmgr_main(int argc, char **argv)
 	// Enable color mgmt by default.
 	g_ColorMgmt.pending.enabled = true;
 
-	currentOutputWidth = g_nPreferredOutputWidth;
-	currentOutputHeight = g_nPreferredOutputHeight;
+	currentOutputResolution = glm::uvec2 { g_nPreferredOutputWidth, g_nPreferredOutputHeight };
 
 	init_runtime_info();
 
@@ -7627,14 +7475,14 @@ steamcompmgr_main(int argc, char **argv)
 		// Pick our width/height for this potential frame, regardless of how it might change later
 		// At some point we might even add proper locking so we get real updates atomically instead
 		// of whatever jumble of races the below might cause over a couple of frames
-		if ( currentOutputWidth != g_nOutputWidth ||
-			 currentOutputHeight != g_nOutputHeight ||
+		if ( currentOutputResolution.x != g_nOutputWidth ||
+			 currentOutputResolution.y != g_nOutputHeight ||
 			 currentHDROutput != g_bOutputHDREnabled ||
 			 currentHDRForce != g_bForceHDRSupportDebug )
 		{
 			if ( steamMode && g_nXWaylandCount > 1 )
 			{
-				g_nNestedHeight = ( g_nNestedWidth * g_nOutputHeight ) / g_nOutputWidth;
+				g_ivNestedResolution.y = ( g_ivNestedResolution.x * g_nOutputHeight ) / g_nOutputWidth;
 				wlserver_lock();
 				// Update only Steam, the root ctx, with the new output size for now
 				wlserver_set_xwayland_server_mode( 0, g_nOutputWidth, g_nOutputHeight, g_nOutputRefresh );
@@ -7676,8 +7524,7 @@ steamcompmgr_main(int argc, char **argv)
 				}
 			}
 
-			currentOutputWidth = g_nOutputWidth;
-			currentOutputHeight = g_nOutputHeight;
+			currentOutputResolution = glm::uvec2 { g_nOutputWidth, g_nOutputHeight };
 			currentHDROutput = g_bOutputHDREnabled;
 			currentHDRForce = g_bForceHDRSupportDebug;
 
@@ -7954,24 +7801,21 @@ steamcompmgr_main(int argc, char **argv)
 				{
 					bShouldPaint = hasRepaint;
 
-					if ( bIsVBlankFromTimer )
+					if ( bIsVBlankFromTimer && hasRepaintNonBasePlane)
 					{
-						if ( hasRepaintNonBasePlane )
+						if ( nIgnoredOverlayRepaints >= cv_adaptive_sync_overlay_cycles )
 						{
-							if ( nIgnoredOverlayRepaints >= cv_adaptive_sync_overlay_cycles )
-							{
-								// If we hit vblank and we previously punted on drawing an overlay
-								// we should go ahead and draw now.
-								bShouldPaint = true;
-							}
-							else if ( !bShouldPaint )
-							{
-								// If we hit vblank (ie. fastest refresh cycle since last commit),
-								// and we aren't painting and we have a pending overlay, then:
-								// defer it until the next game update or next true vblank.
-								if ( !cv_adaptive_sync_ignore_overlay )
-									nIgnoredOverlayRepaints++;
-							}
+							// If we hit vblank and we previously punted on drawing an overlay
+							// we should go ahead and draw now.
+							bShouldPaint = true;
+						}
+						else if ( !bShouldPaint )
+						{
+							// If we hit vblank (ie. fastest refresh cycle since last commit),
+							// and we aren't painting and we have a pending overlay, then:
+							// defer it until the next game update or next true vblank.
+							if ( !cv_adaptive_sync_ignore_overlay )
+								nIgnoredOverlayRepaints++;
 						}
 					}
 
@@ -8038,34 +7882,6 @@ steamcompmgr_main(int argc, char **argv)
 	steamcompmgr_exit();
 }
 
-void steamcompmgr_send_frame_done_to_focus_window()
-{
-	struct timespec now;
-	clock_gettime(CLOCK_MONOTONIC, &now);
-
-	if ( global_focus.focusWindow && global_focus.focusWindow->xwayland().surface.main_surface )
-	{
-		wlserver_lock();
-		wlserver_send_frame_done( global_focus.focusWindow->xwayland().surface.main_surface , &now );
-		wlserver_unlock();		
-	}
-}
-
-gamescope_xwayland_server_t *steamcompmgr_get_focused_server()
-{
-	if (global_focus.inputFocusWindow != nullptr)
-	{
-		gamescope_xwayland_server_t *server = NULL;
-		for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
-		{
-			if (server->ctx->focus.inputFocusWindow == global_focus.inputFocusWindow)
-				return server;
-		}
-	}
-
-	return wlserver_get_xwayland_server(0);
-}
-
 struct wlr_surface *steamcompmgr_get_server_input_surface( size_t idx )
 {
 	gamescope_xwayland_server_t *server = wlserver_get_xwayland_server( idx );
@@ -8083,7 +7899,7 @@ struct wlserver_x11_surface_info *lookup_x11_surface_info_from_xid( gamescope_xw
 		return nullptr;
 
 	// Lookup children too so we can get the window
-	// and go back to it's top-level parent.
+	// and go back to its top-level parent.
 	// The xwayland bypass layer does this as we can have child windows
 	// that cover the whole parent.
 	std::unique_lock lock( xwayland_server->ctx->list_mutex );

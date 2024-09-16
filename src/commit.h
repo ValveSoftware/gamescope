@@ -17,8 +17,14 @@ struct UpscaledTexture_t
 
 struct commit_t final : public gamescope::RcObject, public gamescope::IWaitable, public gamescope::NonCopyable
 {
+ protected:
+	ENABLE_IN_PLACE_RC
+	explicit commit_t(std::in_place_t tag, ResListEntry_t& reslistentry, struct wlr_buffer* buf, bool is_steam, uint64_t seq);
+	
+	uint64_t getCommitID();
+ public:
 	commit_t();
-    ~commit_t();
+  ~commit_t();
 
 	GamescopeAppTextureColorspace colorspace() const;
 

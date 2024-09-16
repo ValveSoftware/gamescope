@@ -809,7 +809,7 @@ namespace gamescope
 
     bool CWaylandConnector::UpdateEdid()
     {
-        m_FakeEdid = GenerateSimpleEdid( g_nNestedWidth, g_nNestedHeight );
+        m_FakeEdid = GenerateSimpleEdid( g_ivNestedResolution.x, g_ivNestedResolution.y );
 
         return true;
     }
