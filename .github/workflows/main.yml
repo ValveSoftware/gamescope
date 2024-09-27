@@ -19,7 +19,7 @@ jobs:
             libxtst libxkbcommon libdrm libinput wayland-protocols benchmark \
             xorg-xwayland pipewire cmake \
             libavif libheif aom rav1e libdecor libxdamage
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
         with:
           submodules: recursive
       - name: Build with gcc
