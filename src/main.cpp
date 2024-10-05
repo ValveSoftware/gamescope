@@ -402,7 +402,7 @@ static enum GamescopeUpscaleFilter parse_upscaler_filter(const char *str)
 	}
 }
 
-static enum GamescopeDownscaleFilter parse_downscaling_filter(const char *str)
+static enum GamescopeDownscaleFilter parse_downscaler_filter(const char *str)
 {
 	std::stringstream ss{optarg};
 
@@ -415,7 +415,7 @@ static enum GamescopeDownscaleFilter parse_downscaling_filter(const char *str)
 		// Ovewrite default global parameters
 		g_bicubicParams.b = b;
 		g_bicubicParams.c = c;
-		// Set downscaling filters
+		// Set downscaler filters
 		return GamescopeDownscaleFilter::BICUBIC;
 	}
 
@@ -731,7 +731,7 @@ int main(int argc, char **argv)
 				g_wantedUpscaleFilter = parse_upscaler_filter(optarg);
 				break;
 			case 'D':
-				g_wantedDownscaleFilter = parse_downscaling_filter(optarg);
+				g_wantedDownscaleFilter = parse_downscaler_filter(optarg);
 				break;
 			case 'b':
 				g_bBorderlessOutputWindow = true;

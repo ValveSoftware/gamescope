@@ -889,16 +889,15 @@ bool CVulkanDevice::createShaders()
 	SHADER(BLUR_COND, cs_composite_blur_cond);
 	SHADER(BLUR_FIRST_PASS, cs_gaussian_blur_horizontal);
 	SHADER(RCAS, cs_composite_rcas);
+	SHADER(BICUBIC, cs_bicubic);
 	if (m_bSupportsFp16)
 	{
 		SHADER(EASU, cs_easu_fp16);
-		SHADER(BICUBIC, cs_bicubic);
 		SHADER(NIS, cs_nis_fp16);
 	}
 	else
 	{
 		SHADER(EASU, cs_easu);
-		SHADER(BICUBIC, cs_bicubic);
 		SHADER(NIS, cs_nis);
 	}
 	SHADER(RGB_TO_NV12, cs_rgb_to_nv12);

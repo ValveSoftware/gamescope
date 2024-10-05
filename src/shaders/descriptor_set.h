@@ -21,6 +21,7 @@ const int filter_nearest = 1;
 const int filter_fsr = 2;
 const int filter_nis = 3;
 const int filter_pixel = 4;
+const int filter_bicubic = 5;
 const int filter_from_view = 255;
 
 const int EOTF_Gamma22 = 0;
