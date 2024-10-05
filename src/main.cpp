@@ -5,6 +5,7 @@
 #include <mutex>
 #include <vector>
 #include <cstring>
+#include <sstream>
 #include <string>
 #if defined(__linux__)
 #include <sys/capability.h>
@@ -63,6 +64,7 @@ const struct option *gamescope_options = (struct option[]){
 	{ "output-height", required_argument, nullptr, 'H' },
 	{ "sharpness", required_argument, nullptr, 0 },
 	{ "fsr-sharpness", required_argument, nullptr, 0 },
+	{ "bicubic", optional_argument, nullptr, 'D' },
 	{ "rt", no_argument, nullptr, 0 },
 	{ "prefer-vk-device", required_argument, 0 },
 	{ "expose-wayland", no_argument, 0 },
@@ -288,11 +290,14 @@ bool g_bGrabbed = false;
 float g_mouseSensitivity = 1.0;
 
 GamescopeUpscaleFilter g_upscaleFilter = GamescopeUpscaleFilter::LINEAR;
+GamescopeDownscaleFilter g_downscaleFilter = GamescopeDownscaleFilter::LINEAR;
 GamescopeUpscaleScaler g_upscaleScaler = GamescopeUpscaleScaler::AUTO;
 
 GamescopeUpscaleFilter g_wantedUpscaleFilter = GamescopeUpscaleFilter::LINEAR;
+GamescopeDownscaleFilter g_wantedDownscaleFilter = GamescopeDownscaleFilter::LINEAR;
 GamescopeUpscaleScaler g_wantedUpscaleScaler = GamescopeUpscaleScaler::AUTO;
 int g_upscaleFilterSharpness = 2;
+GamescopeBicubicParams g_bicubicParams;
 
 gamescope::GamescopeModeGeneration g_eGamescopeModeGeneration = gamescope::GAMESCOPE_MODE_GENERATE_CVT;
 
@@ -395,6 +400,27 @@ static enum GamescopeUpscaleFilter parse_upscaler_filter(const char *str)
 		fprintf( stderr, "gamescope: invalid value for --filter\n" );
 		exit(1);
 	}
+}
+
+static enum GamescopeDownscaleFilter parse_downscaling_filter(const char *str)
+{
+	std::stringstream ss{optarg};
+
+	double b, c;
+	char comma;
+	if ((ss >> b >> comma >> c) && (comma == ',')) {
+		// clamp values
+		b = std::clamp(b, 0.0, 1.0);
+		c = std::clamp(c, 0.0, 1.0);
+		// Ovewrite default global parameters
+		g_bicubicParams.b = b;
+		g_bicubicParams.c = c;
+		// Set downscaling filters
+		return GamescopeDownscaleFilter::BICUBIC;
+	}
+
+	fprintf( stderr, "gamescope: invalid value for --bicubic\n" );
+	exit(1);
 }
 
 static enum gamescope::GamescopeBackend parse_backend_name(const char *str)
@@ -703,6 +729,9 @@ int main(int argc, char **argv)
 				break;
 			case 'F':
 				g_wantedUpscaleFilter = parse_upscaler_filter(optarg);
+				break;
+			case 'D':
+				g_wantedDownscaleFilter = parse_downscaling_filter(optarg);
 				break;
 			case 'b':
 				g_bBorderlessOutputWindow = true;

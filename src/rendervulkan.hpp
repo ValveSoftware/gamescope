@@ -269,6 +269,7 @@ struct FrameInfo_t
 {
 	bool useFSRLayer0;
 	bool useNISLayer0;
+	bool useBICUBICLayer0;
 	bool bFadingOut;
 	BlurMode blurLayer0;
 	int blurRadius;
@@ -530,6 +531,7 @@ enum ShaderType {
 	SHADER_TYPE_EASU,
 	SHADER_TYPE_RCAS,
 	SHADER_TYPE_NIS,
+	SHADER_TYPE_BICUBIC,
 	SHADER_TYPE_RGB_TO_NV12,
 
 	SHADER_TYPE_COUNT

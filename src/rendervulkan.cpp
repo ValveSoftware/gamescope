@@ -44,6 +44,7 @@
 #include "cs_composite_rcas.h"
 #include "cs_easu.h"
 #include "cs_easu_fp16.h"
+#include "cs_bicubic.h"
 #include "cs_gaussian_blur_horizontal.h"
 #include "cs_nis.h"
 #include "cs_nis_fp16.h"
@@ -52,6 +53,7 @@
 #define A_CPU
 #include "shaders/ffx_a.h"
 #include "shaders/ffx_fsr1.h"
+#include "shaders/bicubic.h"
 
 #include "reshade_effect_manager.hpp"
 
@@ -890,11 +892,13 @@ bool CVulkanDevice::createShaders()
 	if (m_bSupportsFp16)
 	{
 		SHADER(EASU, cs_easu_fp16);
+		SHADER(BICUBIC, cs_bicubic);
 		SHADER(NIS, cs_nis_fp16);
 	}
 	else
 	{
 		SHADER(EASU, cs_easu);
+		SHADER(BICUBIC, cs_bicubic);
 		SHADER(NIS, cs_nis);
 	}
 	SHADER(RGB_TO_NV12, cs_rgb_to_nv12);
@@ -1126,6 +1130,7 @@ void CVulkanDevice::compileAllPipelines()
 	SHADER(BLUR_FIRST_PASS, 1, 2, 1);
 	SHADER(RCAS, k_nMaxLayers, k_nMaxYcbcrMask_ToPreCompile, 1);
 	SHADER(EASU, 1, 1, 1);
+	SHADER(BICUBIC, 1, 1, 1);
 	SHADER(NIS, 1, 1, 1);
 	SHADER(RGB_TO_NV12, 1, 1, 1);
 #undef SHADER
@@ -3691,6 +3696,17 @@ struct EasuPushData_t
 	}
 };
 
+struct BicubicPushData_t
+{
+	uvec4_t Const0;
+	uvec4_t Const1;
+
+	BicubicPushData_t(float B, float C, uint32_t inputX, uint32_t inputY, uint32_t tempX, uint32_t tempY, uint32_t winX, uint32_t winY)
+	{
+		BicubicCon(&Const0.x, &Const1.x, B*10, C*10, inputX, inputY, tempX, tempY, winX, winY);
+	}
+};
+
 struct RcasPushData_t
 {
 	uvec2_t u_layer0Offset;
@@ -3900,7 +3916,53 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 	for (uint32_t i = 0; i < EOTF_Count; i++)
 		cmdBuffer->bindColorMgmtLuts(i, frameInfo->shaperLut[i], frameInfo->lut3D[i]);
 
-	if ( frameInfo->useFSRLayer0 )
+	if ( frameInfo->useBICUBICLayer0 )
+	{
+		// fprintf(stderr, "-- Use bicubic\n");
+		uint32_t inputX = frameInfo->layers[0].tex->width();
+		uint32_t inputY = frameInfo->layers[0].tex->height();
+
+		uint32_t tempX = frameInfo->layers[0].integerWidth();
+		uint32_t tempY = frameInfo->layers[0].integerHeight();
+
+		update_tmp_images(tempX, tempY);
+
+		cmdBuffer->bindPipeline( g_device.pipeline(SHADER_TYPE_BICUBIC, frameInfo->layerCount, frameInfo->ycbcrMask()));
+		// cmdBuffer->bindTarget(compositeImage);
+		cmdBuffer->bindTarget(g_output.tmpOutput);
+		cmdBuffer->bindTexture(0, frameInfo->layers[0].tex);
+		cmdBuffer->setTextureSrgb(0, true);
+		cmdBuffer->setSamplerUnnormalized(0, false);
+		cmdBuffer->setSamplerNearest(0, false);
+		cmdBuffer->uploadConstants<BicubicPushData_t>(g_bicubicParams.b
+				, g_bicubicParams.c
+				, inputX
+				, inputY
+				, tempX
+				, tempY
+				, currentOutputWidth
+				, currentOutputHeight
+		);
+
+		int pixelsPerGroup = 16;
+
+		cmdBuffer->dispatch(div_roundup(tempX, pixelsPerGroup), div_roundup(tempY, pixelsPerGroup));
+
+		struct FrameInfo_t bicFrameInfo = *frameInfo;
+		bicFrameInfo.layers[0].tex = g_output.tmpOutput;
+		bicFrameInfo.layers[0].scale.x = 1.0f;
+		bicFrameInfo.layers[0].scale.y = 1.0f;
+
+		cmdBuffer->bindPipeline( g_device.pipeline(SHADER_TYPE_BLIT, bicFrameInfo.layerCount, bicFrameInfo.ycbcrMask()));
+		bind_all_layers(cmdBuffer.get(), &bicFrameInfo);
+		cmdBuffer->bindTarget(compositeImage);
+		cmdBuffer->uploadConstants<BlitPushData_t>(&bicFrameInfo);
+
+		pixelsPerGroup = 8;
+
+		cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup));
+	}
+	else if ( frameInfo->useFSRLayer0 )
 	{
 		uint32_t inputX = frameInfo->layers[0].tex->width();
 		uint32_t inputY = frameInfo->layers[0].tex->height();
