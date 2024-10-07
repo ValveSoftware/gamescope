@@ -442,9 +442,7 @@ static enum GamescopeDownscaleFilter parse_downscaler_filter(const char *str)
 
 static void parse_filter(const char *str)
 {
-	fprintf(stderr, "str: %s\n", str);
 	if (std::string_view{str}.starts_with("bicubic")) {
-		fprintf(stderr, "Startswith\n");
 		g_wantedDownscaleFilter = parse_downscaler_filter(str);
 	} else {
 		g_wantedUpscaleFilter = parse_upscaler_filter(str);
