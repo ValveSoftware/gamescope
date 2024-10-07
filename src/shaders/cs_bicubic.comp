@@ -8,6 +8,7 @@
 
 #extension GL_GOOGLE_include_directive : require
 #extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+#extension GL_EXT_scalar_block_layout : require
 
 #include "descriptor_set.h"
 
@@ -18,7 +19,7 @@ layout(
 
 // Push constant is a mechanism in modern OpenGL that allows passing small amounts of frequently
 // updated data to the shader without needing to bind a buffer
-layout(push_constant)
+layout(binding = 0, scalar)
 uniform layers_t {
     uvec4 c0, c1;
 };
