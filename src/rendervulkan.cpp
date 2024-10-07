@@ -3917,7 +3917,6 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 
 	if ( frameInfo->useBICUBICLayer0 )
 	{
-		// fprintf(stderr, "-- Use bicubic\n");
 		uint32_t inputX = frameInfo->layers[0].tex->width();
 		uint32_t inputY = frameInfo->layers[0].tex->height();
 
@@ -3927,7 +3926,6 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 		update_tmp_images(tempX, tempY);
 
 		cmdBuffer->bindPipeline( g_device.pipeline(SHADER_TYPE_BICUBIC, frameInfo->layerCount, frameInfo->ycbcrMask()));
-		// cmdBuffer->bindTarget(compositeImage);
 		cmdBuffer->bindTarget(g_output.tmpOutput);
 		cmdBuffer->bindTexture(0, frameInfo->layers[0].tex);
 		cmdBuffer->setTextureSrgb(0, true);
