@@ -1,6 +1,8 @@
 #define COLOR_HELPERS_CPP
 #include "color_helpers_impl.h"
 
+FAST_MATH_ON
+
 #include <algorithm>
 #include <cstdint>
 #include <cmath>
@@ -214,7 +216,7 @@ inline void lerp_rgb(float* out, const float* a, const float* b, const float* c,
 
 inline float ClampAndSanitize( float a, float min, float max )
 {
-#ifndef __FAST_MATH__
+#if !( defined(__FAST_MATH__) || defined(__FINITE_MATH_ONLY__) )
     return std::isfinite( a ) ? std::min(std::max(min, a), max) : min;
 #else
     return std::min(std::max(min, a), max);
@@ -910,3 +912,5 @@ const glm::mat3 k_xyz_from_2020 = normalised_primary_matrix( displaycolorimetry_
 const glm::mat3 k_2020_from_xyz = glm::inverse( k_xyz_from_2020 );
 
 const glm::mat3 k_2020_from_709 = k_2020_from_xyz * k_xyz_from_709;
+
+FAST_MATH_OFF
