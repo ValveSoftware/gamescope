@@ -2059,7 +2059,7 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 		assert( drmFormat == pDMA->format );
 	}
 
-	if ( GetBackend()->UsesModifiers() && g_device.supportsModifiers() && pDMA && pDMA->modifier != DRM_FORMAT_MOD_INVALID )
+	if ( g_device.supportsModifiers() && pDMA && pDMA->modifier != DRM_FORMAT_MOD_INVALID )
 	{
 		VkExternalImageFormatProperties externalImageProperties = {
 			.sType = VK_STRUCTURE_TYPE_EXTERNAL_IMAGE_FORMAT_PROPERTIES,
@@ -2781,14 +2781,14 @@ bool vulkan_init_format(VkFormat format, uint32_t drmFormat)
 			uint64_t modifier = modifierProps[j].drmFormatModifier;
 
 			if ( !is_image_format_modifier_supported( format, drmFormat, modifier ) )
-			continue;
+				continue;
 
 			if ( ( modifierProps[j].drmFormatModifierTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT ) == 0 )
 			{
 				continue;
 			}
 
-			if ( !gamescope::Algorithm::Contains( GetBackend()->GetSupportedModifiers( drmFormat ), modifier ) )
+			if ( GetBackend()->UsesModifiers() && !gamescope::Algorithm::Contains( GetBackend()->GetSupportedModifiers( drmFormat ), modifier ) )
 				continue;
 
 			wlr_drm_format_set_add( &sampledDRMFormats, drmFormat, modifier );
@@ -2799,7 +2799,7 @@ bool vulkan_init_format(VkFormat format, uint32_t drmFormat)
 	}
 	else
 	{
-		if ( !GetBackend()->SupportsFormat( drmFormat ) )
+		if ( GetBackend()->UsesModifiers() && !GetBackend()->SupportsFormat( drmFormat ) )
 			return false;
 
 		wlr_drm_format_set_add( &sampledDRMFormats, drmFormat, DRM_FORMAT_MOD_INVALID );
