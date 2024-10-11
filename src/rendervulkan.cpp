@@ -3822,7 +3822,7 @@ std::optional<uint64_t> vulkan_screenshot( const struct FrameInfo_t *frameInfo, 
 	{
 		float scale = (float)pScreenshotTexture->width() / pYUVOutTexture->width();
 
-		CaptureConvertBlitData_t constants( scale, colorspace_to_conversion_from_srgb_matrix( pScreenshotTexture->streamColorspace() ) );
+		CaptureConvertBlitData_t constants( scale, colorspace_to_conversion_from_srgb_matrix( pYUVOutTexture->streamColorspace() ) );
 		constants.halfExtent[0] = pYUVOutTexture->width() / 2.0f;
 		constants.halfExtent[1] = pYUVOutTexture->height() / 2.0f;
 		cmdBuffer->uploadConstants<CaptureConvertBlitData_t>(constants);
@@ -4042,7 +4042,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 			float scale = (float)compositeImage->width() / pPipewireTexture->width();
 			if ( ycbcr )
 			{
-				CaptureConvertBlitData_t constants( scale, colorspace_to_conversion_from_srgb_matrix( compositeImage->streamColorspace() ) );
+				CaptureConvertBlitData_t constants( scale, colorspace_to_conversion_from_srgb_matrix( pPipewireTexture->streamColorspace() ) );
 				constants.halfExtent[0] = pPipewireTexture->width() / 2.0f;
 				constants.halfExtent[1] = pPipewireTexture->height() / 2.0f;
 				cmdBuffer->uploadConstants<CaptureConvertBlitData_t>(constants);
