@@ -78,7 +78,7 @@ static constexpr mat3x4 g_rgb2yuv_srgb_to_bt709_limited = {{
 static constexpr mat3x4 g_rgb2yuv_srgb_to_bt709_full = {{
   { 0.2126f, 0.7152f, 0.0722f, 0.0f },
   { -0.1146f, -0.3854f, 0.5000f, 0.5f },
-  { 0.5000f, -0.4542f, -0.0468f, 0.5f },
+  { 0.5000f, -0.4542f, -0.0458f, 0.5f },
 }};
 
 static const mat3x4& colorspace_to_conversion_from_srgb_matrix(EStreamColorspace colorspace) {
