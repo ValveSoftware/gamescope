@@ -536,6 +536,7 @@ extern GamescopePanelOrientation g_DesiredInternalOrientation;
 extern bool g_bForceDisableColorMgmt;
 
 static LogScope drm_log( "drm" );
+static LogScope liftoff_log_scope( "liftoff" );
 
 static std::unordered_map< std::string, std::string > pnps = {};
 
@@ -1094,6 +1095,27 @@ extern bool env_to_bool(const char *env);
 uint32_t g_uAlwaysSignalledSyncobj = 0;
 int g_nAlwaysSignalledSyncFile = -1;
 
+static void
+gamescope_liftoff_log_handler(enum liftoff_log_priority liftoff_priority, const char *fmt, va_list args)
+{
+	enum LogPriority priority = LOG_DEBUG;
+	
+	switch ( liftoff_priority )
+	{
+		case LIFTOFF_ERROR:
+			priority = LOG_ERROR;
+			break;
+		case LIFTOFF_DEBUG:
+			priority = LOG_DEBUG;
+			break;
+		case LIFTOFF_SILENT:
+			priority = LOG_SILENT;
+			break;
+	}
+
+	liftoff_log_scope.vlogf(priority, fmt, args);
+}
+
 bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 {
 	load_pnps();
@@ -1267,8 +1289,9 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 	std::thread flip_handler_thread( flip_handler_thread_run );
 	flip_handler_thread.detach();
 
-	if ( drm->bUseLiftoff )
-		liftoff_log_set_priority(g_bDebugLayers ? LIFTOFF_DEBUG : LIFTOFF_ERROR);
+	// Set log priority to the max, liftoff_log_scope will filter for us.
+	liftoff_log_set_priority(LIFTOFF_DEBUG);
+	liftoff_log_set_handler(gamescope_liftoff_log_handler);
 
 	hdr_output_metadata sdr_metadata;
 	memset(&sdr_metadata, 0, sizeof(sdr_metadata));
