@@ -97,4 +97,6 @@ if get_option('enable_gamescope')
 endif
 
 # Handle default script/config stuff
-meson.add_install_script('default_scripts_install.sh')
+if get_option('include_scripts')
+  meson.add_install_script('default_scripts_install.sh')
+endif
