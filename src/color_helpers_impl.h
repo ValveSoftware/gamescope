@@ -1,4 +1,8 @@
 #pragma once
+#include "Utils/Directives.h"
+
+FAST_MATH_ON
+
 #include "color_helpers.h"
 
 namespace rendervulkan {
@@ -18,3 +22,5 @@ namespace ns_color_tests {
 #ifdef COLOR_HELPERS_CPP
 REGISTER_LUT_EDGE_SIZE(rendervulkan::s_nLutEdgeSize3d);
 #endif
+
+FAST_MATH_OFF
