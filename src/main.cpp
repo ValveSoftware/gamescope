@@ -147,7 +147,7 @@ const struct option *gamescope_options = (struct option[]){
 
 	// Libinput options
 	{ "tap-to-click", no_argument, nullptr, 0 },
-	{ "tap-to-drag", no_argument, nullptr, 0 },
+	{ "tap-and-drag", no_argument, nullptr, 0 },
 	{ "drag-lock", no_argument, nullptr, 0 },
 	{ "middle-emulation", no_argument, nullptr, 0 },
 	{ "disable-while-typing", no_argument, nullptr, 0 },
