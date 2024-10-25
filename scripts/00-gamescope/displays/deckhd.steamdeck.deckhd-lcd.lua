@@ -1,3 +1,10 @@
+local steamdeck_dhd_colorimetry_spec = {
+    r = { x = 0.6396, y = 0.3300 },
+    g = { x = 0.2998, y = 0.5996 },
+    b = { x = 0.1503, y = 0.0595 },
+    w = { x = 0.3125, y = 0.3291 }
+}
+
 gamescope.config.known_displays.steamdeck_deckhd_lcd = {
     pretty_name = "Steam Deck DeckHD - Unofficial Screen Replacement",
     dynamic_refresh_rates = {
@@ -15,10 +22,9 @@ gamescope.config.known_displays.steamdeck_deckhd_lcd = {
         max_frame_average_luminance = 400,
         min_content_light_level = 0.5
     },
-    -- No colorimetry was provided in the original PR,
-    -- and I have no idea if their BIOS mod/whatever has colorimetry
-    -- in their edid.
-    -- Someone that works on this or uses this should go fix that.
+    colorimetry = steamdeck_dhd_colorimetry_spec,
+	--FIXME: Measure colorimetry parameters
+    --colorimetry = steamdeck_lcd_colorimetry_measured,
     dynamic_modegen = function(base_mode, refresh)
         debug("Generating mode "..refresh.."Hz for DeckHD")
         local mode = base_mode
