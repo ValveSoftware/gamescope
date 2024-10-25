@@ -23,7 +23,7 @@ gamescope.config.known_displays.steamdeck_deckhd_lcd = {
         min_content_light_level = 0.5
     },
     colorimetry = steamdeck_dhd_colorimetry_spec,
-	--FIXME: Measure colorimetry parameters
+    --FIXME: Measure colorimetry parameters
     --colorimetry = steamdeck_lcd_colorimetry_measured,
     dynamic_modegen = function(base_mode, refresh)
         debug("Generating mode "..refresh.."Hz for DeckHD")
