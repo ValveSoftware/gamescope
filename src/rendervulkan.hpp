@@ -5,6 +5,7 @@
 #include <atomic>
 #include <stdint.h>
 #include <memory>
+#include <map>
 #include <unordered_map>
 #include <array>
 #include <bitset>
@@ -863,7 +864,7 @@ protected:
 	VkSemaphore m_scratchTimelineSemaphore;
 	std::atomic<uint64_t> m_submissionSeqNo = { 0 };
 	std::vector<std::unique_ptr<CVulkanCmdBuffer>> m_unusedCmdBufs;
-	std::unordered_map<uint64_t, std::unique_ptr<CVulkanCmdBuffer>> m_pendingCmdBufs;
+	std::map<uint64_t, std::unique_ptr<CVulkanCmdBuffer>> m_pendingCmdBufs;
 };
 
 struct TextureState
