@@ -88,4 +88,4 @@ Pull requests for improving Reshade compatibility support are appreciated.
 
 ## Status of Gamescope Packages
 
-[![Packaging status](https://repology.org/badge/vertical-allrepos/gamescope.svg)](https://repology.org/project/gamescope/versions)
+[![Packaging status](https://repology.org/badge/vertical-allrepos/gamescope.svg?exclude_unsupported=1)](https://repology.org/project/gamescope/versions)
