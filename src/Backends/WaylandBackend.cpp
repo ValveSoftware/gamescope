@@ -1925,6 +1925,29 @@ namespace gamescope
             return;
 
         m_bVisible = bVisible;
+
+        // Surface must be re-mapped before using it again, and default
+        // properties should be recovered as the compositor resets the state
+        if (m_bVisible)
+        {
+            assert( !m_Planes[0].GetCurrentState() );
+            wl_surface_commit( m_Planes[0].GetSurface() );
+            wl_display_roundtrip( m_pDisplay );
+
+            libdecor_frame_set_title( m_Planes[0].GetFrame(), "Gamescope" );
+            libdecor_frame_set_app_id( m_Planes[0].GetFrame(), "gamescope" );
+
+            g_nOutputWidth = g_nPreferredOutputWidth;
+            g_nOutputHeight = g_nPreferredOutputHeight;
+            if ( g_nOutputHeight == 0 )
+                g_nOutputHeight = 720;
+            if ( g_nOutputWidth == 0 )
+                g_nOutputWidth = g_nOutputHeight * 16 / 9;
+
+            m_Planes[0].CommitLibDecor( nullptr );
+            wl_display_roundtrip( m_pDisplay );
+        }
+
         force_repaint();
     }
     void CWaylandBackend::SetTitle( std::shared_ptr<std::string> pAppTitle )
