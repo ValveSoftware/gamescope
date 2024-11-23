@@ -38,6 +38,8 @@
 
 #include "drm_include.h"
 
+#define WL_FRACTIONAL_SCALE_DENOMINATOR 120
+
 extern int g_nPreferredOutputWidth;
 extern int g_nPreferredOutputHeight;
 extern bool g_bForceHDR10OutputDebug;
@@ -61,6 +63,13 @@ auto CallWithAllButLast(Func pFunc, Args&&... args)
         return pFunc(std::get<idx>(std::forward<Tuple>(tuple))...);
     };
     return Forwarder(std::forward_as_tuple(args...), std::make_index_sequence<sizeof...(Args) - 1>());
+}
+
+static inline uint32_t WaylandScaleToPhysical( uint32_t pValue, uint32_t pFactor ) {
+    return pValue * pFactor / WL_FRACTIONAL_SCALE_DENOMINATOR;
+}
+static inline uint32_t WaylandScaleToLogical( uint32_t pValue, uint32_t pFactor ) {
+    return div_roundup( pValue * WL_FRACTIONAL_SCALE_DENOMINATOR, pFactor );
 }
 
 #define WAYLAND_NULL() []<typename... Args> ( void *pData, Args... args ) { }
@@ -1016,14 +1025,15 @@ namespace gamescope
                 wl_fixed_from_double( oState->flSrcHeight ) );
             wp_viewport_set_destination(
                 m_pViewport,
-                oState->nDstWidth  * 120 / uScale,
-                oState->nDstHeight * 120 / uScale);
+                WaylandScaleToLogical( oState->nDstWidth, uScale ),
+                WaylandScaleToLogical( oState->nDstHeight, uScale ) );
+
             if ( m_pSubsurface )
             {
                 wl_subsurface_set_position(
                     m_pSubsurface,
-                    oState->nDestX * 120 / uScale,
-                    oState->nDestY * 120 / uScale );
+                    WaylandScaleToLogical( oState->nDestX, uScale ),
+                    WaylandScaleToLogical( oState->nDestY, uScale ) );
             }
             // The x/y here does nothing? Why? What is it for...
             // Use the subsurface set_position thing instead.
@@ -1041,7 +1051,10 @@ namespace gamescope
 
     void CWaylandPlane::CommitLibDecor( libdecor_configuration *pConfiguration )
     {
-        libdecor_state *pState = libdecor_state_new( g_nOutputWidth, g_nOutputHeight );
+        int32_t uScale = GetScale();
+        libdecor_state *pState = libdecor_state_new(
+            WaylandScaleToLogical( g_nOutputWidth, uScale ),
+            WaylandScaleToLogical( g_nOutputHeight, uScale ) );
         libdecor_frame_commit( m_pFrame, pState, pConfiguration );
         libdecor_state_free( pState );
     }
@@ -1148,11 +1161,11 @@ namespace gamescope
         int nWidth, nHeight;
         if ( !libdecor_configuration_get_content_size( pConfiguration, m_pFrame, &nWidth, &nHeight ) )
         {
-            nWidth  = g_nOutputWidth  * 120 / uScale;
-            nHeight = g_nOutputHeight * 120 / uScale;
+            nWidth  = WaylandScaleToLogical( g_nOutputWidth, uScale );
+            nHeight = WaylandScaleToLogical( g_nOutputHeight, uScale );
         }
-        g_nOutputWidth  = nWidth  * uScale / 120;
-        g_nOutputHeight = nHeight * uScale / 120;
+        g_nOutputWidth  = WaylandScaleToPhysical( nWidth, uScale );
+        g_nOutputHeight = WaylandScaleToPhysical( nHeight, uScale );
 
         CommitLibDecor( pConfiguration );
 
