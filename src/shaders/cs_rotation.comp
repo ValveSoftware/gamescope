@@ -1,0 +1,53 @@
+#version 450
+
+#extension GL_GOOGLE_include_directive : require
+#extension GL_EXT_scalar_block_layout : require
+
+#include "descriptor_set.h"
+
+layout(
+    local_size_x = 8,
+    local_size_y = 8,
+    local_size_z = 1) in;
+
+#include "blit_push_data.h"
+#include "composite.h"
+
+vec4 sampleLayer(uint layerIdx, vec2 uv) {
+    if ((c_ycbcrMask & (1 << layerIdx)) != 0)
+        return sampleLayer(s_ycbcr_samplers[layerIdx], layerIdx, uv, false);
+    return sampleLayer(s_samplers[layerIdx], layerIdx, uv, true);
+}
+
+void main() {
+    uvec2 coord = uvec2(gl_GlobalInvocationID.x, gl_GlobalInvocationID.y);
+    uvec2 outSize = imageSize(dst);
+    float outWidth = outSize.y;
+    float outHeight = outSize.x;
+
+    vec2 uv = vec2(coord);
+    vec4 outputValue = vec4(255.0f);
+
+    if (c_layerCount > 0) {
+        outputValue = sampleLayer(0, uv) * u_opacity[0];
+    }
+
+    for (int i = 1; i < c_layerCount; i++) {
+        vec4 layerColor = sampleLayer(i, uv);
+        // wl_surfaces come with premultiplied alpha, so that's them being
+        // premultiplied by layerColor.a.
+        // We need to then multiply that by the layer's opacity to get to our
+        // final premultiplied state.
+        // For the other side of things, we need to multiply by (1.0f - (layerColor.a * opacity))
+        float opacity = u_opacity[i];
+        float layerAlpha = opacity * layerColor.a;
+        outputValue = layerColor * opacity + outputValue * (1.0f - layerAlpha);
+    }
+
+    outputValue.rgb = encodeOutputColor(outputValue.rgb);
+
+    // Rotate the pixel coordinates counter-clockwise by 90 degrees
+    ivec2 rotatedCoord = ivec2(coord.y, outWidth - coord.x - 1);
+
+    imageStore(dst, rotatedCoord, outputValue);
+}
