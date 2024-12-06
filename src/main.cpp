@@ -137,6 +137,7 @@ const struct option *gamescope_options = (struct option[]){
 	{ "composite-debug", no_argument, nullptr, 0 },
 	{ "disable-xres", no_argument, nullptr, 'x' },
 	{ "fade-out-duration", required_argument, nullptr, 0 },
+	{ "use-rotation-shader", required_argument, nullptr, 0 },
 	{ "force-orientation", required_argument, nullptr, 0 },
 	{ "force-external-orientation", required_argument, nullptr, 0 },
 	{ "force-panel-type", required_argument, nullptr, 0 },
@@ -205,6 +206,7 @@ const char usage[] =
 	"  --touch-gestures               enable touch gestures for Steam menus\n"
 	"  --xwayland-count               create N xwayland servers\n"
 	"  --prefer-vk-device             prefer Vulkan device for compositing (ex: 1002:7300)\n"
+	"  --use-rotation-shader		  use rotation shader for rotating the screen\n"
 	"  --force-orientation            rotate the internal display (left, right, normal, upsidedown)\n"
 	"  --force-external-orientation   rotate the external display (left, right, normal, upsidedown)\n"
 	"  --force-panel-type             force gamescope to treat the display as either internal or external\n"
@@ -374,6 +376,8 @@ static gamescope::GamescopeModeGeneration parse_gamescope_mode_generation( const
 		exit(1);
 	}
 }
+
+bool g_bUseRotationShader = false;
 
 GamescopePanelOrientation g_DesiredInternalOrientation = GAMESCOPE_PANEL_ORIENTATION_AUTO;
 static GamescopePanelOrientation force_orientation(const char *str)
@@ -866,6 +870,8 @@ int main(int argc, char **argv)
 					gamescope::cv_touch_click_mode = (gamescope::TouchClickMode) parse_integer( optarg, opt_name );
 				} else if (strcmp(opt_name, "generate-drm-mode") == 0) {
 					g_eGamescopeModeGeneration = parse_gamescope_mode_generation( optarg );
+				} else if (strcmp(opt_name, "use-rotation-shader") == 0) {
+					g_bUseRotationShader = true;
 				} else if (strcmp(opt_name, "force-orientation") == 0) {
 					g_DesiredInternalOrientation = force_orientation( optarg );
 				} else if (strcmp(opt_name, "force-external-orientation") == 0) {
