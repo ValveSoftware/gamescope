@@ -29,6 +29,7 @@ struct wlserver_vk_swapchain_feedback
 	VkCompositeAlphaFlagBitsKHR vk_composite_alpha;
 	VkSurfaceTransformFlagBitsKHR vk_pre_transform;
 	VkBool32 vk_clipped;
+	std::shared_ptr<std::string> vk_engine_name;
 
 	std::shared_ptr<gamescope::BackendBlob> hdr_metadata_blob;
 };

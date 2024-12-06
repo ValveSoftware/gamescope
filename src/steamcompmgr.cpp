@@ -927,6 +927,7 @@ int g_BlurRadius = 5;
 unsigned int g_BlurFadeStartTime = 0;
 
 pid_t focusWindow_pid;
+std::shared_ptr<std::string> focusWindow_engine = nullptr;
 
 focus_t g_steamcompmgr_xdg_focus;
 std::vector<std::shared_ptr<steamcompmgr_win_t>> g_steamcompmgr_xdg_wins;
@@ -6109,6 +6110,9 @@ bool handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint64_t co
 	uint32_t j;
 	for ( j = 0; j < w->commit_queue.size(); j++ )
 	{
+		if (w->commit_queue[ j ]->feedback.has_value())
+			w->engineName = w->commit_queue[ j ]->feedback->vk_engine_name;
+
 		if ( w->commit_queue[ j ]->commitID == commitID )
 		{
 			gpuvis_trace_printf( "commit %lu done", w->commit_queue[ j ]->commitID );
@@ -6146,6 +6150,8 @@ bool handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint64_t co
 					if ( !cv_paint_debug_pause_base_plane )
 						g_HeldCommits[ HELD_COMMIT_BASE ] = w->commit_queue[ j ];
 					hasRepaint = true;
+
+					focusWindow_engine = w->engineName;
 				}
 
 				if ( w == pFocus->overrideWindow )
