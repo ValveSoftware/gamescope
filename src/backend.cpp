@@ -16,34 +16,33 @@ namespace gamescope
     // IBackend
     /////////////
 
-    static IBackend *s_pBackend = nullptr;
+    static std::atomic<IBackend*> s_pBackend = nullptr;
 
     IBackend *IBackend::Get()
     {
         return s_pBackend;
     }
-
+    
+    
     bool IBackend::Set( IBackend *pBackend )
     {
-        if ( s_pBackend )
-        {
-            delete s_pBackend;
-            s_pBackend = nullptr;
-        }
+    		if ( s_pBackend ) {
+    			GetBackend()->IBackend::~IBackend();
+    		}
 
         if ( pBackend )
         {
             s_pBackend = pBackend;
-            if ( !s_pBackend->Init() )
+            if ( !GetBackend()->Init() )
             {
-                delete s_pBackend;
-                s_pBackend = nullptr;
+								s_pBackend = nullptr;
                 return false;
             }
         }
 
         return true;
     }
+    
 
     /////////////////
     // CBaseBackendFb
