@@ -874,6 +874,7 @@ gamescope::ConCommand cc_debug_set_fps_limit( "debug_set_fps_limit", "Set refres
 static int g_nRuntimeInfoFd = -1;
 
 bool g_bFSRActive = false;
+bool g_bBicubicActive = false;
 
 BlurMode g_BlurMode = BLUR_MODE_OFF;
 BlurMode g_BlurModeOld = BLUR_MODE_OFF;
@@ -2356,6 +2357,10 @@ paint_all(bool async)
 				paint_window(w, w, &frameInfo, global_focus.cursor, PaintWindowFlag::BasePlane | PaintWindowFlag::DrawBorders, 1.0f, override);
 
 				bool needsScaling = frameInfo.layers[0].scale.x < 0.999f && frameInfo.layers[0].scale.y < 0.999f;
+				// Temporarily allow upscaling as well
+				// bool needsDownScaling = frameInfo.layers[0].scale.x > 1.001f && frameInfo.layers[0].scale.y > 1.001f;
+				bool needsDownScaling = true;
+				frameInfo.useBICUBICLayer0 = g_downscaleFilter == GamescopeDownscaleFilter::BICUBIC && needsDownScaling;
 				frameInfo.useFSRLayer0 = g_upscaleFilter == GamescopeUpscaleFilter::FSR && needsScaling;
 				frameInfo.useNISLayer0 = g_upscaleFilter == GamescopeUpscaleFilter::NIS && needsScaling;
 			}
@@ -2488,10 +2493,12 @@ paint_all(bool async)
 		}
 
 		frameInfo.useFSRLayer0 = false;
+		frameInfo.useBICUBICLayer0 = false;
 		frameInfo.useNISLayer0 = false;
 	}
 
 	g_bFSRActive = frameInfo.useFSRLayer0;
+	g_bBicubicActive = frameInfo.useBICUBICLayer0;
 
 	g_bFirstFrame = false;
 
@@ -5412,6 +5419,9 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 			g_wantedUpscaleScaler = GamescopeUpscaleScaler::AUTO;
 			g_wantedUpscaleFilter = GamescopeUpscaleFilter::NIS;
 			break;
+		case 5:
+			g_wantedDownscaleFilter = GamescopeDownscaleFilter::BICUBIC;
+			break;
 		}
 		hasRepaint = true;
 	}
@@ -6964,6 +6974,7 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 	ctx->atoms.gamescopeLowLatency = XInternAtom( ctx->dpy, "GAMESCOPE_LOW_LATENCY", false );
 
 	ctx->atoms.gamescopeFSRFeedback = XInternAtom( ctx->dpy, "GAMESCOPE_FSR_FEEDBACK", false );
+	ctx->atoms.gamescopeBicubicFeedback = XInternAtom( ctx->dpy, "GAMESCOPE_BICUBIC_FEEDBACK", false );
 
 	ctx->atoms.gamescopeBlurMode = XInternAtom( ctx->dpy, "GAMESCOPE_BLUR_MODE", false );
 	ctx->atoms.gamescopeBlurRadius = XInternAtom( ctx->dpy, "GAMESCOPE_BLUR_RADIUS", false );
@@ -7219,6 +7230,7 @@ extern int g_nPreferredOutputWidth;
 extern int g_nPreferredOutputHeight;
 
 static bool g_bWasFSRActive = false;
+static bool g_bWasBicubicActive = false;
 
 bool g_bAppWantsHDRCached = false;
 
@@ -7610,6 +7622,16 @@ steamcompmgr_main(int argc, char **argv)
 			flush_root = true;
 		}
 
+		if ( g_bBicubicActive != g_bWasBicubicActive )
+		{
+			uint32_t active = g_bBicubicActive ? 1 : 0;
+			XChangeProperty( root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeBicubicFeedback, XA_CARDINAL, 32, PropModeReplace,
+					(unsigned char *)&active, 1 );
+
+			g_bWasBicubicActive = g_bBicubicActive;
+			flush_root = true;
+		}
+
 		if (global_focus.IsDirty())
 			determine_and_apply_focus();
 
@@ -7846,6 +7868,7 @@ steamcompmgr_main(int argc, char **argv)
 			g_bSteamIsActiveWindow = false;
 			g_upscaleScaler = g_wantedUpscaleScaler;
 			g_upscaleFilter = g_wantedUpscaleFilter;
+			g_downscaleFilter = g_wantedDownscaleFilter;
 		}
 
 		// If we're in the middle of a fade, then keep us
