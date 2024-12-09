@@ -74,6 +74,7 @@
 #include <getopt.h>
 #include <spawn.h>
 #include <signal.h>
+#include <mqueue.h>
 #include <linux/input-event-codes.h>
 #include <X11/Xmu/CurUtil.h>
 #include "waitable.h"
@@ -163,6 +164,8 @@ uint32_t g_reshade_technique_idx = 0;
 
 bool g_bSteamIsActiveWindow = false;
 bool g_bForceInternal = false;
+
+const char *g_sMangoappMqName = nullptr;
 
 static std::vector< steamcompmgr_win_t* > GetGlobalPossibleFocusWindows();
 static bool
@@ -5900,6 +5903,9 @@ steamcompmgr_exit(void)
 {
 	g_ImageWaiter.Shutdown();
 
+	if ( g_sMangoappMqName != nullptr )
+		mq_unlink( g_sMangoappMqName );
+
 	// Clean up any commits.
 	{
 		gamescope_xwayland_server_t *server = NULL;
@@ -7384,6 +7390,11 @@ void LaunchNestedChildren( char **ppPrimaryChildArgv )
 
 	if ( g_bLaunchMangoapp )
 	{
+		char szMangoappMqName[ NAME_MAX ];
+		snprintf( szMangoappMqName, sizeof( szMangoappMqName ), "/gamescope-mangoapp-%d", getpid() );
+		setenv( "MANGOAPP_MQ_NAME", szMangoappMqName, 0 );
+		g_sMangoappMqName = getenv( "MANGOAPP_MQ_NAME" );
+
 		char *ppMangoappArgv[] = { (char *)"mangoapp", NULL };
 		gamescope::Process::SpawnProcessInWatchdog( ppMangoappArgv, true );
 	}
