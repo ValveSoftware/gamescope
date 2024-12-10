@@ -636,8 +636,6 @@ namespace gamescope
         void Wayland_XXColorManager_SupportedPrimariesNamed( xx_color_manager_v3 *pXXColorManager, uint32_t uPrimaries );
         static const xx_color_manager_v3_listener s_XXColorManagerListener;
 
-        CWaylandInputThread m_InputThread;
-
         CWaylandConnector m_Connector;
         CWaylandPlane m_Planes[8];
 
@@ -699,6 +697,7 @@ namespace gamescope
         std::atomic<bool> m_bDesiredFullscreenState = { false };
 
         bool m_bHostCompositorIsCurrentlyVRR = false;
+        CWaylandInputThread m_InputThread;
     };
     const wl_registry_listener CWaylandBackend::s_RegistryListener =
     {
