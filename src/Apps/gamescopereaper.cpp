@@ -52,16 +52,22 @@ namespace gamescope
             std::getline(statFile, statLine);
             statFile.close();
 
-            std::istringstream iss(statLine);
+            size_t openParen = statLine.find('(');
+            size_t closeParen = statLine.find(')', openParen);
+            if (openParen == std::string::npos || closeParen == std::string::npos)
+                continue;
+
+            // Extract the PPID (4th field, after process name with parentheses)
+            size_t afterName = closeParen + 2; // After ") " (space after parentheses)
+            std::istringstream iss(statLine.substr(afterName));
             std::string token;
             int i = 0;
             pid_t ppid = 0;
 
-            // Extract the PPID (4th field in /proc/[pid]/stat)
             while (iss >> token)
             {
                 i++;
-                if (i == 4)
+                if (i == 3) // PPID is the 4th field, but we're offset because of the name
                 {
                     ppid = std::stoi(token);
                     break;
@@ -98,11 +104,11 @@ namespace gamescope
         pthread_setname_np(pthread_self(), "gamescope-reaper");
 
         static constexpr struct option k_ReaperOptions[] =
-            {
-                {"label", required_argument, nullptr, 0},
-                {"new-session-id", no_argument, nullptr, 0},
-                {"respawn", no_argument, nullptr, 0},
-            };
+        {
+            {"label", required_argument, nullptr, 0},
+            {"new-session-id", no_argument, nullptr, 0},
+            {"respawn", no_argument, nullptr, 0},
+        };
 
         bool bRespawn = false;
         bool bNewSession = false;
@@ -152,11 +158,11 @@ namespace gamescope
 
         Process::ResetSignals();
         std::array<int, 3> nExcludedFds =
-            {{
-                STDIN_FILENO,
-                STDOUT_FILENO,
-                STDERR_FILENO,
-            }};
+        {{
+            STDIN_FILENO,
+            STDOUT_FILENO,
+            STDERR_FILENO,
+        }};
         Process::CloseAllFds(nExcludedFds);
 
         if (bNewSession)
@@ -216,7 +222,8 @@ namespace gamescope
             return 1;
         }
     }
-}
+
+} // namespace gamescope
 
 int main(int argc, char **argv)
 {
