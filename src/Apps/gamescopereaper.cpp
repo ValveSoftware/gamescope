@@ -11,29 +11,98 @@
 #include <sys/resource.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <signal.h>
+#include <sys/types.h>
+#include <dirent.h>
+#include <fstream>
+#include <sstream>
+#include <vector>
+#include <string>
 
 namespace gamescope
 {
-    static LogScope s_ReaperLog( "reaper" );
+    static LogScope s_ReaperLog("reaper");
 
-    // Watches over a PID and waits for all the children to die.
-    // It sets itself up as a subreaper so any children get reparented ti oti.
-    // If the primary process dies, it kills all the children.
-    //
-    // Gamescope can have a lot of bad things happen to it, crashes, segfaults, whatever
-    // but we always want to make sure that we cleanly kill all of our children when we die.
-    // This child process attempts to stay alive as long as it can in order to fulfil Gamescope's
-    // dying wish -- to kill all of it's children.
-    int GamescopeReaperProcess( int argc, char **argv )
+    // Utility to get all child PIDs of a given parent PID, recursively.
+    std::vector<pid_t> GetChildPIDs(pid_t parentPid)
     {
-        pthread_setname_np( pthread_self(), "gamescope-reaper" );
+        std::vector<pid_t> childPids;
+        DIR *procDir = opendir("/proc");
+        if (!procDir)
+        {
+            s_ReaperLog.errorf_errno("Failed to open /proc directory.");
+            return childPids;
+        }
+
+        struct dirent *entry;
+        while ((entry = readdir(procDir)) != nullptr)
+        {
+            if (entry->d_type != DT_DIR)
+                continue;
+
+            pid_t pid = atoi(entry->d_name);
+            if (pid <= 0)
+                continue;
+
+            std::ifstream statFile(std::string("/proc/") + entry->d_name + "/stat");
+            if (!statFile.is_open())
+                continue;
+
+            std::string statLine;
+            std::getline(statFile, statLine);
+            statFile.close();
+
+            std::istringstream iss(statLine);
+            std::string token;
+            int i = 0;
+            pid_t ppid = 0;
+
+            // Extract the PPID (4th field in /proc/[pid]/stat)
+            while (iss >> token)
+            {
+                i++;
+                if (i == 4)
+                {
+                    ppid = std::stoi(token);
+                    break;
+                }
+            }
+
+            if (ppid == parentPid)
+            {
+                childPids.push_back(pid);
+
+                // Recursively find children of this child
+                std::vector<pid_t> grandChildren = GetChildPIDs(pid);
+                childPids.insert(childPids.end(), grandChildren.begin(), grandChildren.end());
+            }
+        }
+
+        closedir(procDir);
+        return childPids;
+    }
+
+    // Kill a process and all its children recursively
+    void KillProcessTree(pid_t pid, int signal)
+    {
+        std::vector<pid_t> childPids = GetChildPIDs(pid);
+        for (pid_t childPid : childPids)
+        {
+            kill(childPid, signal);
+        }
+        kill(pid, signal);
+    }
+
+    int GamescopeReaperProcess(int argc, char **argv)
+    {
+        pthread_setname_np(pthread_self(), "gamescope-reaper");
 
         static constexpr struct option k_ReaperOptions[] =
-        {
-            { "label", required_argument, nullptr, 0 },
-            { "new-session-id", no_argument, nullptr, 0 },
-            { "respawn", no_argument, nullptr, 0 },
-        };
+            {
+                {"label", required_argument, nullptr, 0},
+                {"new-session-id", no_argument, nullptr, 0},
+                {"respawn", no_argument, nullptr, 0},
+            };
 
         bool bRespawn = false;
         bool bNewSession = false;
@@ -41,138 +110,115 @@ namespace gamescope
 
         int nOptIndex = -1;
         int nOption = -1;
-        while ( ( nOption = getopt_long(argc, argv, "", k_ReaperOptions, &nOptIndex ) ) != -1 )
+        while ((nOption = getopt_long(argc, argv, "", k_ReaperOptions, &nOptIndex)) != -1)
         {
-            if ( nOption == '?' )
+            if (nOption == '?')
             {
-                s_ReaperLog.errorf( "Unknown option." );
+                s_ReaperLog.errorf("Unknown option.");
             }
-            assert( nOption == 0 );
+            assert(nOption == 0);
 
-            const char *pszOptionName = k_ReaperOptions[ nOptIndex ].name;
-            if ( !strcmp( pszOptionName, "label" ) )
+            const char *pszOptionName = k_ReaperOptions[nOptIndex].name;
+            if (!strcmp(pszOptionName, "label"))
             {
                 // Do nothing.
                 continue;
             }
-            else if ( !strcmp( pszOptionName, "respawn" ) )
+            else if (!strcmp(pszOptionName, "respawn"))
             {
                 bRespawn = true;
             }
-            else if ( !strcmp( pszOptionName, "new-session-id" ) )
+            else if (!strcmp(pszOptionName, "new-session-id"))
             {
                 bNewSession = true;
             }
         }
 
         int nSubCommandArgc = 0;
-        for ( int i = 0; i < argc; i++ )
+        for (int i = 0; i < argc; i++)
         {
-            if ( strcmp( "--", argv[ i ] ) == 0 && i + 1 < argc )
+            if (strcmp("--", argv[i]) == 0 && i + 1 < argc)
             {
                 nSubCommandArgc = i + 1;
                 break;
             }
         }
 
-        if ( nSubCommandArgc == 0 )
+        if (nSubCommandArgc == 0)
         {
-            s_ReaperLog.errorf( "No sub-command!" );
+            s_ReaperLog.errorf("No sub-command!");
             return 1;
         }
 
-        // Mirror some of the busy work we do in ProcessPreSpawn,
-        // in case someone else wants to use this utility.
         Process::ResetSignals();
         std::array<int, 3> nExcludedFds =
-        {{
-            STDIN_FILENO,
-            STDOUT_FILENO,
-            STDERR_FILENO,
-        }};
-        Process::CloseAllFds( nExcludedFds );
+            {{
+                STDIN_FILENO,
+                STDOUT_FILENO,
+                STDERR_FILENO,
+            }};
+        Process::CloseAllFds(nExcludedFds);
 
-        // We typically don't make a new sid, as we want to keep the same stdin/stdout
-        // Don't really care about it for pgroup reasons, as processes can leave those.
-        if ( bNewSession )
+        if (bNewSession)
             setsid();
 
-        // Set up a signal handler, so that SIGTERM, etc goes
-        // and kills all the children.
         struct sigaction reaperSignalHandler{};
-        reaperSignalHandler.sa_handler = []( int nSignal )
+        reaperSignalHandler.sa_handler = [](int nSignal)
         {
-            switch ( nSignal )
+            switch (nSignal)
             {
             case SIGHUP:
             case SIGINT:
             case SIGQUIT:
             case SIGTERM:
-                sigaction( SIGHUP, nullptr, nullptr );
-                sigaction( SIGINT, nullptr, nullptr );
-                sigaction( SIGQUIT, nullptr, nullptr );
-                sigaction( SIGTERM, nullptr, nullptr );
-
-                if ( s_bRun )
+                if (s_bRun)
                 {
-                    s_ReaperLog.infof( "Parent of gamescopereaper was killed. Killing children." );
-
+                    s_ReaperLog.infof("Parent of gamescopereaper was killed. Killing children.");
                     s_bRun = false;
-                    Process::KillAllChildren( getpid(), SIGTERM );
                 }
                 break;
             }
         };
-        sigaction( SIGHUP, &reaperSignalHandler, nullptr );
-        sigaction( SIGINT, &reaperSignalHandler, nullptr );
-        sigaction( SIGQUIT, &reaperSignalHandler, nullptr );
-        sigaction( SIGTERM, &reaperSignalHandler, nullptr );
+        sigaction(SIGHUP, &reaperSignalHandler, nullptr);
+        sigaction(SIGINT, &reaperSignalHandler, nullptr);
+        sigaction(SIGQUIT, &reaperSignalHandler, nullptr);
+        sigaction(SIGTERM, &reaperSignalHandler, nullptr);
 
-        // (Don't Lose) The Children
         Process::BecomeSubreaper();
-        Process::SetDeathSignal( SIGTERM );
+        Process::SetDeathSignal(SIGTERM);
 
-        pid_t nPrimaryChild = Process::SpawnProcess( &argv[ nSubCommandArgc ] );
-        assert( nPrimaryChild != 0 );
+        pid_t nPrimaryChild = Process::SpawnProcess(&argv[nSubCommandArgc]);
+        assert(nPrimaryChild != 0);
 
-        if ( nPrimaryChild > 0 )
+        if (nPrimaryChild > 0)
         {
-            // Wait for the primary child to die, then forward the death signal to
-            // all of the other children, if we aren't in a PID namespace.
-            Process::WaitForAllChildren( nPrimaryChild );
+            Process::WaitForAllChildren(nPrimaryChild);
 
-            if ( bRespawn )
+            if (bRespawn)
             {
-                while ( s_bRun )
+                while (s_bRun)
                 {
-                    s_ReaperLog.infof( "\"%s\" process shut down. Restarting.", argv[ nSubCommandArgc ] );
-
-                    nPrimaryChild = Process::SpawnProcess( &argv[ nSubCommandArgc ] );
-                    Process::WaitForAllChildren( nPrimaryChild );
+                    s_ReaperLog.infof("\"%s\" process shut down. Restarting.", argv[nSubCommandArgc]);
+                    nPrimaryChild = Process::SpawnProcess(&argv[nSubCommandArgc]);
+                    Process::WaitForAllChildren(nPrimaryChild);
                 }
             }
 
             s_bRun = false;
-            Process::KillAllChildren( getpid(), SIGTERM );
-            Process::WaitForAllChildren();
-
+            KillProcessTree(getpid(), SIGTERM);
             return 0;
         }
         else
         {
-            s_ReaperLog.errorf_errno( "Failed to create child process \"%s\" in reaper.", argv[ nSubCommandArgc ] );
-
+            s_ReaperLog.errorf_errno("Failed to create child process \"%s\" in reaper.", argv[nSubCommandArgc]);
             s_bRun = false;
-            Process::KillAllChildren( getpid(), SIGTERM );
-            Process::WaitForAllChildren();
-
+            KillProcessTree(getpid(), SIGTERM);
             return 1;
         }
     }
-
 }
 
-int main( int argc, char **argv )
+int main(int argc, char **argv)
 {
-    return gamescope::GamescopeReaperProcess( argc, argv );
+    return gamescope::GamescopeReaperProcess(argc, argv);
 }
