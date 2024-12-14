@@ -480,6 +480,15 @@ struct gamescope_color_mgmt_luts
 		bHasLut1D = false;
 		bHasLut3D = false;
 	}
+	~gamescope_color_mgmt_luts()
+	{
+		//need to set these to nullptr when destructing
+		//because otherwise, ASAN reports a use-after-free when the exit-time dtor runs 
+		//(first steamcompmgr_exit() destructs this class,
+		// then the class is destructed again w/ the exit-time dtor for static objects)
+		vk_lut3d = nullptr;
+		vk_lut1d = nullptr;
+	}
 };
 
 struct gamescope_color_mgmt_tracker_t

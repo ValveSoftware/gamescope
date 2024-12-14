@@ -16,34 +16,34 @@ namespace gamescope
     // IBackend
     /////////////
 
-    static IBackend *s_pBackend = nullptr;
+    static std::atomic<IBackend*> s_pBackend = nullptr;
 
     IBackend *IBackend::Get()
     {
         return s_pBackend;
     }
-
+    
+    
     bool IBackend::Set( IBackend *pBackend )
     {
-        if ( s_pBackend )
-        {
-            delete s_pBackend;
-            s_pBackend = nullptr;
-        }
+    		//FIXME: calling the backend's destructor sometimes hangs gamescope for wayland backend
+    		//if ( s_pBackend ) {
+    		//	std::destroy_at(GetBackend());
+    		//}
 
         if ( pBackend )
         {
             s_pBackend = pBackend;
-            if ( !s_pBackend->Init() )
+            if ( !GetBackend()->Init() )
             {
-                delete s_pBackend;
-                s_pBackend = nullptr;
+								s_pBackend = nullptr;
                 return false;
             }
         }
 
         return true;
     }
+    
 
     /////////////////
     // CBaseBackendFb
