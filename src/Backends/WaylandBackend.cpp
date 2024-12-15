@@ -2730,7 +2730,7 @@ namespace gamescope
         defer( close( nFd ) );
         assert( uFormat == WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1 );
 
-        char *pMap = (char *)mmap( nullptr, uSize, PROT_READ, MAP_SHARED, nFd, 0 );
+        char *pMap = (char *)mmap( nullptr, uSize, PROT_READ, MAP_PRIVATE, nFd, 0 );
         if ( !pMap || pMap == MAP_FAILED )
         {
             xdg_log.errorf( "Failed to map keymap fd." );
