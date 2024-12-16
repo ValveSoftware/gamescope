@@ -683,7 +683,7 @@ int main(int argc, char **argv)
 				g_nNestedHeight = atoi( optarg );
 				break;
 			case 'r':
-				g_nNestedRefresh = gamescope::ConvertHztomHz( atoi( optarg ) );
+				g_nNestedRefresh = gamescope::ConvertHztomHz( optarg );
 				break;
 			case 'W':
 				g_nPreferredOutputWidth = atoi( optarg );
@@ -692,7 +692,7 @@ int main(int argc, char **argv)
 				g_nPreferredOutputHeight = atoi( optarg );
 				break;
 			case 'o':
-				g_nNestedUnfocusedRefresh = gamescope::ConvertHztomHz( atoi( optarg ) );
+				g_nNestedUnfocusedRefresh = gamescope::ConvertHztomHz( optarg );
 				break;
 			case 'm':
 				g_flMaxWindowScale = atof( optarg );
