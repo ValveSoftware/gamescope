@@ -11,6 +11,7 @@ static bool inited = false;
 static int msgid = 0;
 extern bool g_bAppWantsHDRCached;
 extern uint32_t g_focusedBaseAppId;
+extern int g_sMangoappMqId;
 
 struct mangoapp_msg_header {
     long msg_type;  // Message queue ID, never change
@@ -36,8 +37,11 @@ struct mangoapp_msg_v1 {
 } __attribute__((packed)) mangoapp_msg_v1;
 
 void init_mangoapp(){
-    int key = ftok("mangoapp", 65);
+    // WARNING: "mangoapp" most likely isn't in the working directory so key will be -1 (0xffffffff)
+    // TODO: Stop using message queues
+    key_t key = ftok("mangoapp", 65);
     msgid = msgget(key, 0666 | IPC_CREAT);
+
     mangoapp_msg_v1.hdr.msg_type = 1;
     mangoapp_msg_v1.hdr.version = 1;
     mangoapp_msg_v1.fsrUpscale = 0;
@@ -60,7 +64,10 @@ void mangoapp_update( uint64_t visible_frametime, uint64_t app_frametime_ns, uin
     mangoapp_msg_v1.displayRefresh = (uint16_t) gamescope::ConvertmHzToHz( g_nOutputRefresh );
     mangoapp_msg_v1.bAppWantsHDR = g_bAppWantsHDRCached;
     mangoapp_msg_v1.bSteamFocused = g_focusedBaseAppId == 769;
+
     msgsnd(msgid, &mangoapp_msg_v1, sizeof(mangoapp_msg_v1) - sizeof(mangoapp_msg_v1.hdr.msg_type), IPC_NOWAIT);
+    if (g_sMangoappMqId > 0)
+      msgsnd(g_sMangoappMqId, &mangoapp_msg_v1, sizeof(mangoapp_msg_v1) - sizeof(mangoapp_msg_v1.hdr.msg_type), IPC_NOWAIT);
 }
 
 extern uint64_t g_uCurrentBasePlaneCommitID;
