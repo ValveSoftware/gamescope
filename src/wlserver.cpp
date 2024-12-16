@@ -1340,8 +1340,7 @@ bool wlsession_active()
 
 static void handle_session_active( struct wl_listener *listener, void *data )
 {
-	if (wlserver.wlr.session->active)
-		GetBackend()->DirtyState( true, true );
+	GetBackend()->DirtyState( wlserver.wlr.session->active, wlserver.wlr.session->active );
 	wl_log.infof( "Session %s", wlserver.wlr.session->active ? "resumed" : "paused" );
 }
 #endif
