@@ -40,6 +40,18 @@ enum class GamescopeUpscaleFilter : uint32_t
     FROM_VIEW = 0xF, // internal
 };
 
+enum class GamescopeDownscaleFilter : uint32_t
+{
+    LINEAR = 0,
+    BICUBIC,
+};
+
+struct GamescopeBicubicParams
+{
+	float b = 0.3f;
+	float c = 0.3f;
+};
+
 static constexpr bool DoesHardwareSupportUpscaleFilter( GamescopeUpscaleFilter eFilter )
 {
     // Could do nearest someday... AMDGPU DC supports custom tap placement to an extent.
@@ -57,10 +69,13 @@ enum class GamescopeUpscaleScaler : uint32_t
 };
 
 extern GamescopeUpscaleFilter g_upscaleFilter;
+extern GamescopeDownscaleFilter g_downscaleFilter;
 extern GamescopeUpscaleScaler g_upscaleScaler;
 extern GamescopeUpscaleFilter g_wantedUpscaleFilter;
+extern GamescopeDownscaleFilter g_wantedDownscaleFilter;
 extern GamescopeUpscaleScaler g_wantedUpscaleScaler;
 extern int g_upscaleFilterSharpness;
+extern GamescopeBicubicParams g_bicubicParams;
 
 extern bool g_bBorderlessOutputWindow;
 
