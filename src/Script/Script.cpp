@@ -130,7 +130,7 @@ namespace gamescope
         }
         else
         {
-            RunFolder( "/usr/share/gamescope/scripts", true );
+            RunFolder( SCRIPT_DIR, true );
             RunFolder( "/etc/gamescope/scripts", true );
         }
 
