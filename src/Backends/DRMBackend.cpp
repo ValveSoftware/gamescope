@@ -3370,10 +3370,12 @@ bool drm_set_mode( struct drm_t *drm, const drmModeModeInfo *mode )
 		g_nOutputWidth = mode->hdisplay;
 		g_nOutputHeight = mode->vdisplay;
 
-		if (g_bUseRotationShader) {
+		if (g_bUseRotationShader && drm->pConnector->GetScreenType() == gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL) {
 			g_bRotated = true;
 			g_nOutputWidth = mode->vdisplay;
 			g_nOutputHeight = mode->hdisplay;
+		} else {
+			g_bUseRotationShader = false;
 		}
 
 		break;
