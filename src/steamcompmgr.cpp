@@ -69,6 +69,7 @@
 #endif
 #include <sys/socket.h>
 #include <sys/resource.h>
+#include <sys/msg.h>
 #include <time.h>
 #include <unistd.h>
 #include <getopt.h>
@@ -165,6 +166,8 @@ uint32_t g_reshade_technique_idx = 0;
 
 bool g_bSteamIsActiveWindow = false;
 bool g_bForceInternal = false;
+
+int g_sMangoappMqId = -1;
 
 static std::vector< steamcompmgr_win_t* > GetGlobalPossibleFocusWindows();
 static bool
@@ -5902,6 +5905,9 @@ steamcompmgr_exit(void)
 {
 	g_ImageWaiter.Shutdown();
 
+	if ( g_sMangoappMqId > 0 )
+		msgctl( g_sMangoappMqId, IPC_RMID, NULL);
+
 	// Clean up any commits.
 	{
 		gamescope_xwayland_server_t *server = NULL;
@@ -7392,6 +7398,27 @@ void LaunchNestedChildren( char **ppPrimaryChildArgv )
 
 	if ( g_bLaunchMangoapp )
 	{
+		char szMangoappMqKey[ NAME_MAX ];
+		// Attempt to find a fresh message queue id
+		for ( int i = 0; i < 255; i++ ) {
+			key_t key = ftok( ".", i );
+			int res = msgget( key, 0666 | IPC_CREAT | IPC_EXCL );
+			if ( res == -1 ) {
+				switch ( errno ) {
+					case EEXIST:
+						continue;
+					default:
+						break;
+				}
+			}
+
+			// Success
+			g_sMangoappMqId = res;
+			snprintf( szMangoappMqKey, sizeof( szMangoappMqKey ), "%d", key );
+			setenv( "MANGOAPP_MQ_KEY", szMangoappMqKey, 0 );
+			break;
+		}
+
 		char *ppMangoappArgv[] = { (char *)"mangoapp", NULL };
 		gamescope::Process::SpawnProcessInWatchdog( ppMangoappArgv, true );
 	}
