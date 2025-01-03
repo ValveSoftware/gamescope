@@ -1,0 +1,177 @@
+// References
+// https://www.codeproject.com/Articles/236394/Bi-Cubic-and-Bi-Linear-Interpolation-with-GLSL
+// https://stackoverflow.com/questions/13501081/efficient-bicubic-filtering-code-in-glsl
+// https://web.archive.org/web/20180927181721/http://www.java-gaming.org/index.php?topic=35123.0
+// https://gist.github.com/TheRealMJP/c83b8c0f46b63f3a88a5986f4fa982b1
+
+#version 460
+
+#extension GL_GOOGLE_include_directive : require
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+#extension GL_EXT_scalar_block_layout : require
+
+#include "descriptor_set.h"
+
+layout(
+  local_size_x = 64,
+  local_size_y = 1,
+  local_size_z = 1) in;
+
+// Push constant is a mechanism in modern OpenGL that allows passing small amounts of frequently
+// updated data to the shader without needing to bind a buffer
+layout(binding = 0, scalar)
+uniform layers_t {
+    uvec4 c0, c1;
+};
+
+#define A_GPU 1
+#define A_GLSL 1
+#define A_HALF 1
+#include "ffx_a.h"
+#include "bicubic.h"
+
+// The Mitchell–Netravali filters or BC-splines
+// https://en.wikipedia.org/wiki/Mitchell%E2%80%93Netravali_filters
+// Conditionals are slow in GPU code, so to represent 0 <= f < 1 and 1 <= f < 2
+// the P(d) form shown in the wikipedia page is used
+vec4 mitchellNetravaliWeights(float f, float B, float C) 
+{
+    float w0 = ((12.0 - 9.0 * B - 6.0 * C) * pow(f, 3.0)) +
+               ((-18.0 + 12.0 * B + 6.0 * C) * pow(f, 2.0)) +
+               (6.0 - 2.0 * B);
+
+    float w1 = ((-B - 6.0 * C) * pow(f - 1.0, 3.0)) +
+               ((6.0 * B + 30.0 * C) * pow(f - 1.0, 2.0)) +
+               ((-12.0 * B - 48.0 * C) * (f - 1.0)) +
+               (8.0 * B + 24.0 * C);
+
+    float w2 = ((12.0 - 9.0 * B - 6.0 * C) * pow(1.0 - f, 3.0)) +
+               ((-18.0 + 12.0 * B + 6.0 * C) * pow(1.0 - f, 2.0)) +
+               (6.0 - 2.0 * B);
+
+    float w3 = ((-B - 6.0 * C) * pow(2.0 - f, 3.0)) +
+               ((6.0 * B + 30.0 * C) * pow(2.0 - f, 2.0)) +
+               ((-12.0 * B - 48.0 * C) * (2.0 - f)) +
+               (8.0 * B + 24.0 * C);
+
+    return vec4(w0, w1, w2, w3);
+}
+
+// https://stackoverflow.com/questions/13501081/efficient-bicubic-filtering-code-in-glsl
+// https://web.archive.org/web/20180927181721/http://www.java-gaming.org/index.php?topic=35123.0
+// This is an efficient method to implement bicubic filtering, it takes
+// advantage of the fact that the bilinear approach gives the weighted average
+// of a 2x2 area.
+vec4 textureBicubic(sampler2D splr, vec2 texCoords)
+{
+    vec2 texSize = textureSize(splr, 0);
+    vec2 invTexSize = 1.0 / texSize;
+
+    // Converts normalized coordinates into pixel-space coordinate
+    // Example: If texCoords is (0.5, 0.5), and the texture size is (1920, 1080), the result will be
+    // (960, 540)—the center of the texture in pixel space.
+    // Subtracting 0.5 ensures that you're sampling from the center of the texel rather than its corner
+    // Example: Assume we have a 3x3 texture and texCoords = (0.5, 0.5):
+    //  [0,0][1,0][2,0]
+    //  [0,1][1,1][2,1]
+    //  [0,2][1,2][2,2]
+    //  texCoords * texSize - 0.5 maps to (1.5, 1.5), which is between (1,1) and (2,2), then
+    //  subtracts 0.5 to move it to (1.0, 1.0)—the center of the texel
+    texCoords = texCoords * texSize - 0.5;
+
+    // Get B and C that were pushed from the user input (or default values)
+    float B = c1[2] / 10.0f;
+    float C = c1[3] / 10.0f;
+
+    // Get the fractional part of the coordinates
+    // They are used in Mitchell Netravali's strategy to calculate the interpolation weights,
+    // i.e., how much influence the neighboring vertices have on the final pixel value
+    vec2 fxy = fract(texCoords);
+    texCoords -= fxy;
+
+    // Calculate bicubic weights
+    // These weights represent how much influence each neighboring texel in the 4x4 grid will have
+    // on the final interpolated pixel value
+    vec4 xweights = mitchellNetravaliWeights(fxy.x, B, C);
+    vec4 yweights = mitchellNetravaliWeights(fxy.y, B, C);
+
+    // Modify the current texture coordinates to have an offset in texels for each coordinate
+    // E.g. texCoords + vec(-1.0, 0.0) is a texel to the left
+    //      texCoords + vec(1.0, 0.0) is a texel to the right
+    //      texCoords + vec(0.0, 1.0) is a texel downwards
+    //      texCoords + vec(0.0, -1.0) is a texel upwards
+    vec4 offsetTexels = texCoords.xxyy;
+    offsetTexels += vec2 (-1.0, +1.0).xyxy;
+    // Normalize weights to range between (0,1)
+    // vec4 sumWeights = vec4(xweights.xz + xweights.yw, yweights.xz + yweights.yw);
+    // vec4 normalizedWeights = vec4 (xweights.yw, yweights.yw) / sumWeights;
+    vec4 sumWeights = vec4(xweights.x + xweights.y, xweights.z + xweights.w, yweights.x + yweights.y, yweights.z + yweights.w);
+    vec4 normalizedWeights = vec4 (xweights.y, xweights.w, yweights.y, yweights.w) / sumWeights;
+    // Use the weights to influence the sampling position inside each texel
+    // Each texel has a size from (0,1)
+    vec4 offsetSampler = offsetTexels + normalizedWeights;
+    // Go back to normalized space
+    offsetSampler *= invTexSize.xxyy;
+    // Perform the sampling
+    vec4 sample0 = texture(splr, offsetSampler.xz);
+    vec4 sample1 = texture(splr, offsetSampler.yz);
+    vec4 sample2 = texture(splr, offsetSampler.xw);
+    vec4 sample3 = texture(splr, offsetSampler.yw);
+
+    // Now we perform linear interpolation in the selected points
+    // The mix(a, b, t) function in GLSL performs linear interpolation between a and b based on the
+    // parameter t, t is between 0 and 1
+    // https://registry.khronos.org/OpenGL-Refpages/gl4/html/mix.xhtml
+
+    // Here we want to normalize sx and sy to between 0 and 1 (t value)
+    float sx = sumWeights.x / (sumWeights.x + sumWeights.y);
+    float sy = sumWeights.z / (sumWeights.z + sumWeights.w);
+
+    return mix(
+       mix(sample3, sample2, sx), mix(sample1, sample0, sx)
+    , sy);
+}
+
+void bicPass(uvec2 pos)
+{
+    // Retrieve pushed values
+    AF2 inputRenderedSize = AF2_AU2(c0.xy);
+    AF2 inputCurrentSize = AF2_AU2(c0.zw);
+    AF2 outputTargetSize = AF2_AU2(c1.xy);
+
+    // ARcpF1(x) == 1.0 / x
+    // scaleFactor is the division between the rendered image and the size it should have at the end
+    // E.g.: Rendered 1920x1080, window size is 960x540, then scaleFactor is 2x2
+    AF2 scaleFactor = inputRenderedSize * vec2(ARcpF1(inputCurrentSize.x), ARcpF1(inputCurrentSize.y));
+
+    // The parameter pos of this function is used to iterate over the output image (e.g. 960x540)
+    // The position of the processed pixel should be taken from the rendered image (e.g. 1920x1080)
+    // 10x10 in the output, corresponds to 20x20 in the original image
+    AF2 positionPixel=AF2(pos)*scaleFactor;
+
+    // Normalize the image space to be between [0,1]
+    positionPixel=positionPixel*vec2(ARcpF1(inputRenderedSize.x),ARcpF1(inputRenderedSize.y));
+
+    // Apply the bicubic algorithm in the normalized pixel position
+    vec4 bicPass = textureBicubic(s_samplers[0], positionPixel);
+
+    imageStore(dst, ivec2(pos), bicPass);
+}
+
+
+void main()
+{
+    // AMD recommends to use this swizzle and to process 4 pixel per invocation
+    // for better cache utilisation
+    uvec2 pos = ARmp8x8(gl_LocalInvocationID.x) + uvec2(gl_WorkGroupID.x << 4u, gl_WorkGroupID.y << 4u);
+
+    bicPass(pos);
+    pos.x += 8u;
+    bicPass(pos);
+    pos.y += 8u;
+    bicPass(pos);
+    pos.x -= 8u;
+    bicPass(pos);
+}
+
+/* vim: set expandtab ft=cpp fdm=marker ts=4 sw=4 tw=100 et :*/

@@ -7,6 +7,7 @@
 #include <mutex>
 #include <vector>
 #include <cstring>
+#include <sstream>
 #include <string>
 #if defined(__linux__)
 #include <sys/capability.h>
@@ -290,11 +291,14 @@ bool g_bGrabbed = false;
 float g_mouseSensitivity = 1.0;
 
 GamescopeUpscaleFilter g_upscaleFilter = GamescopeUpscaleFilter::LINEAR;
+GamescopeDownscaleFilter g_downscaleFilter = GamescopeDownscaleFilter::LINEAR;
 GamescopeUpscaleScaler g_upscaleScaler = GamescopeUpscaleScaler::AUTO;
 
 GamescopeUpscaleFilter g_wantedUpscaleFilter = GamescopeUpscaleFilter::LINEAR;
+GamescopeDownscaleFilter g_wantedDownscaleFilter = GamescopeDownscaleFilter::LINEAR;
 GamescopeUpscaleScaler g_wantedUpscaleScaler = GamescopeUpscaleScaler::AUTO;
 int g_upscaleFilterSharpness = 2;
+GamescopeBicubicParams g_bicubicParams;
 
 gamescope::GamescopeModeGeneration g_eGamescopeModeGeneration = gamescope::GAMESCOPE_MODE_GENERATE_CVT;
 
@@ -396,6 +400,54 @@ static enum GamescopeUpscaleFilter parse_upscaler_filter(const char *str)
 	} else {
 		fprintf( stderr, "gamescope: invalid value for --filter\n" );
 		exit(1);
+	}
+}
+
+static enum GamescopeDownscaleFilter parse_downscaler_filter(const char *str)
+{
+	std::string_view arg{str};
+
+	// If the string is just 'bicubic' use default values
+	if ( arg == "bicubic" ) {
+		return GamescopeDownscaleFilter::BICUBIC;
+	}
+
+	// Arguments start after ':'
+	if ( auto search = arg.find(':'); search == std::string::npos ) {
+		fprintf( stderr, "gamescope: invalid argument for --filter=bicubic:float,float\n" );
+		exit(1);
+	} else {
+		arg = std::string_view(arg.data() + search + 1);
+	}
+
+	// Push arguments to stream
+	std::stringstream ss;
+	ss << arg;
+
+	// Validate arguments from stream
+	double b, c;
+	char comma;
+	if ((ss >> b >> comma >> c) && (comma == ',')) {
+		// clamp values
+		b = std::clamp(b, 0.0, 1.0);
+		c = std::clamp(c, 0.0, 1.0);
+		// Ovewrite default global parameters
+		g_bicubicParams.b = b;
+		g_bicubicParams.c = c;
+		// Set downscaler filters
+		return GamescopeDownscaleFilter::BICUBIC;
+	}
+
+	fprintf( stderr, "gamescope: invalid value for --filter\n" );
+	exit(1);
+}
+
+static void parse_filter(const char *str)
+{
+	if (std::string_view{str}.starts_with("bicubic")) {
+		g_wantedDownscaleFilter = parse_downscaler_filter(str);
+	} else {
+		g_wantedUpscaleFilter = parse_upscaler_filter(str);
 	}
 }
 
@@ -701,7 +753,7 @@ int main(int argc, char **argv)
 				g_wantedUpscaleScaler = parse_upscaler_scaler(optarg);
 				break;
 			case 'F':
-				g_wantedUpscaleFilter = parse_upscaler_filter(optarg);
+				parse_filter(optarg);
 				break;
 			case 'b':
 				g_bBorderlessOutputWindow = true;
