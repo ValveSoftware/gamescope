@@ -426,6 +426,116 @@ static void wlserver_handle_touch_motion(struct wl_listener *listener, void *dat
 	wlserver_touchmotion( event->x, event->y, event->touch_id, event->time_msec );
 }
 
+static void wlserver_set_libinput_pointer(struct wlr_input_device *device)
+{
+#ifdef HAVE_DRM
+	if (device->type != WLR_INPUT_DEVICE_POINTER || !wlr_input_device_is_libinput(device))
+		return;
+
+	struct libinput_device* libinput_device = wlr_libinput_get_device_handle(device);
+
+	if (g_tapToClick) {
+		libinput_device_config_tap_set_enabled(libinput_device, LIBINPUT_CONFIG_TAP_ENABLED);
+	} else {
+		libinput_device_config_tap_set_enabled(libinput_device, LIBINPUT_CONFIG_TAP_DISABLED);
+	}
+	if (g_tapAndDrag) {
+		libinput_device_config_tap_set_drag_enabled(libinput_device, LIBINPUT_CONFIG_DRAG_ENABLED);
+	} else {
+		libinput_device_config_tap_set_drag_enabled(libinput_device, LIBINPUT_CONFIG_DRAG_DISABLED);
+	}
+	if (g_dragLock) {
+		libinput_device_config_tap_set_drag_lock_enabled(libinput_device, LIBINPUT_CONFIG_DRAG_LOCK_ENABLED);
+	} else {
+		libinput_device_config_tap_set_drag_lock_enabled(libinput_device, LIBINPUT_CONFIG_DRAG_LOCK_DISABLED);
+	}
+	if (libinput_device_config_middle_emulation_is_available(libinput_device)) {
+		if (g_middleEmu) {
+			libinput_device_config_middle_emulation_set_enabled(libinput_device, LIBINPUT_CONFIG_MIDDLE_EMULATION_ENABLED);
+		} else {
+			libinput_device_config_middle_emulation_set_enabled(libinput_device, LIBINPUT_CONFIG_MIDDLE_EMULATION_DISABLED);
+		}
+	} else {
+		if (device->name) {
+			printf("Libinput pointer \"%s\": Middle button emulation not supported", device->name);
+		} else {
+			printf("Unnamed libinput pointer: Middle button emulation not supported");
+		}
+	}
+	if (libinput_device_config_left_handed_is_available(libinput_device)) {
+		libinput_device_config_left_handed_set(libinput_device, g_leftHanded);
+	} else {
+		if (device->name) {
+			printf("Libinput pointer \"%s\": Left handed mode not supported", device->name);
+		} else {
+			printf("Unnamed libinput pointer: Left handed mode not supported");
+		}
+	}
+	if (libinput_device_config_dwt_is_available(libinput_device)) {
+		if (g_dwt) {
+			libinput_device_config_dwt_set_enabled(libinput_device, LIBINPUT_CONFIG_DWT_ENABLED);
+		} else {
+			libinput_device_config_dwt_set_enabled(libinput_device, LIBINPUT_CONFIG_DWT_DISABLED);
+		}
+	} else {
+		if (device->name) {
+			printf("Libinput pointer \"%s\": Disable while typing not supported", device->name);
+		} else {
+			printf("Unnamed libinput pointer: Disable while typing not supported");
+		}
+	}
+	if (libinput_device_config_dwtp_is_available(libinput_device)) {
+		if (g_dwtp) {
+			libinput_device_config_dwtp_set_enabled(libinput_device, LIBINPUT_CONFIG_DWTP_ENABLED);
+		} else {
+			libinput_device_config_dwtp_set_enabled(libinput_device, LIBINPUT_CONFIG_DWTP_DISABLED);
+		}
+	} else {
+		if (device->name) {
+			printf("Libinput pointer \"%s\": Disable while track pointing not supported", device->name);
+		} else {
+			printf("Unnamed libinput pointer: Disable while track pointing not supported");
+		}
+	}
+	if (libinput_device_config_scroll_has_natural_scroll(libinput_device) != 0) {
+		switch (g_naturalScrolling)
+		{
+		case SelectedPointerType::TOUCHPAD:
+			if (libinput_device_config_tap_get_finger_count(libinput_device) != 0)
+				libinput_device_config_scroll_set_natural_scroll_enabled(libinput_device, true);
+			break;
+		case SelectedPointerType::MOUSE:
+			if (libinput_device_config_tap_get_finger_count(libinput_device) == 0)
+				libinput_device_config_scroll_set_natural_scroll_enabled(libinput_device, true);
+			break;
+		case SelectedPointerType::ALL:
+			libinput_device_config_scroll_set_natural_scroll_enabled(libinput_device, true);
+			break;
+		case SelectedPointerType::NONE:
+			break;
+		}
+	}
+	if (libinput_device_config_accel_is_available(libinput_device)) {
+		switch (g_accelProfile) {
+		case PointerAccelProfileType::FLAT:
+			libinput_device_config_accel_set_profile(libinput_device, LIBINPUT_CONFIG_ACCEL_PROFILE_FLAT);
+			break;
+		case PointerAccelProfileType::ADAPTIVE:
+		default:
+			libinput_device_config_accel_set_profile(libinput_device, LIBINPUT_CONFIG_ACCEL_PROFILE_ADAPTIVE);
+			break;
+		}
+		libinput_device_config_accel_set_speed(libinput_device, g_accelSpeed);
+	} else {
+		if (device->name) {
+			printf("Libinput pointer \"%s\": Accelation not supported", device->name);
+		} else {
+			printf("Unnamed libinput pointer: Accelation not supported");
+		}
+	}
+#endif
+}
+
 static void wlserver_new_input(struct wl_listener *listener, void *data)
 {
 	struct wlr_input_device *device = (struct wlr_input_device *) data;
@@ -476,6 +586,8 @@ static void wlserver_new_input(struct wl_listener *listener, void *data)
 			wl_signal_add( &pointer->wlr->events.axis, &pointer->axis);
 			pointer->frame.notify = wlserver_handle_pointer_frame;
 			wl_signal_add( &pointer->wlr->events.frame, &pointer->frame);
+
+			wlserver_set_libinput_pointer(device);
 		}
 		break;
 		case WLR_INPUT_DEVICE_TOUCH:

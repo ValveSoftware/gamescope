@@ -73,3 +73,29 @@ extern int g_nXWaylandCount;
 extern uint32_t g_preferVendorID;
 extern uint32_t g_preferDeviceID;
 
+enum class SelectedPointerType : uint32_t
+{
+    NONE,
+    TOUCHPAD,
+    MOUSE,
+    ALL,
+};
+
+enum class PointerAccelProfileType : uint32_t
+{
+    NONE,
+    FLAT,
+    ADAPTIVE,
+    CUSTOM,
+};
+
+extern bool g_tapToClick;
+extern bool g_tapAndDrag;
+extern bool g_dragLock;
+extern bool g_middleEmu;
+extern bool g_leftHanded;
+extern bool g_dwt;
+extern bool g_dwtp;
+extern SelectedPointerType g_naturalScrolling;
+extern PointerAccelProfileType g_accelProfile;
+extern double g_accelSpeed;
