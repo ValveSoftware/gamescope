@@ -31,6 +31,7 @@ struct mangoapp_msg_v1 {
     uint16_t displayRefresh;
     bool bAppWantsHDR : 1;
     bool bSteamFocused : 1;
+    char engineName[40];
     
     // WARNING: Always ADD fields, never remove or repurpose fields
 } __attribute__((packed)) mangoapp_msg_v1;
@@ -60,6 +61,11 @@ void mangoapp_update( uint64_t visible_frametime, uint64_t app_frametime_ns, uin
     mangoapp_msg_v1.displayRefresh = (uint16_t) gamescope::ConvertmHzToHz( g_nOutputRefresh );
     mangoapp_msg_v1.bAppWantsHDR = g_bAppWantsHDRCached;
     mangoapp_msg_v1.bSteamFocused = g_focusedBaseAppId == 769;
+    memset(mangoapp_msg_v1.engineName, 0, sizeof(mangoapp_msg_v1.engineName));
+    if (focusWindow_engine)
+        focusWindow_engine->copy(mangoapp_msg_v1.engineName, sizeof(mangoapp_msg_v1.engineName) / sizeof(char));
+    else
+        std::string("gamescope").copy(mangoapp_msg_v1.engineName, sizeof(mangoapp_msg_v1.engineName) / sizeof(char));
     msgsnd(msgid, &mangoapp_msg_v1, sizeof(mangoapp_msg_v1) - sizeof(mangoapp_msg_v1.hdr.msg_type), IPC_NOWAIT);
 }
 

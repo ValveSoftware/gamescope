@@ -89,6 +89,7 @@
       <arg name="vk_composite_alpha" type="uint" summary="VkCompositeAlphaFlagBitsKHR of swapchain"/>
       <arg name="vk_pre_transform" type="uint" summary="VkSurfaceTransformFlagBitsKHR of swapchain"/>
       <arg name="vk_clipped" type="uint" summary="clipped (VkBool32) of swapchain"/>
+      <arg name="vk_engine_name" type="string" summary="Engine name"/>
     </request>
 
     <request name="set_present_mode">

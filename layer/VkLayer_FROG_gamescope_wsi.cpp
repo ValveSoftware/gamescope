@@ -394,6 +394,7 @@ namespace GamescopeWSILayer {
   struct GamescopeInstanceData {
     wl_display* display;
     uint32_t appId = 0;
+    std::string engineName;
     GamescopeLayerClient::Flags flags = 0;
   };
   VKROOTS_DEFINE_SYNCHRONIZED_MAP_TYPE(GamescopeInstance, VkInstance);
@@ -616,9 +617,14 @@ namespace GamescopeWSILayer {
       {
         uint32_t appId = clientAppId();
 
+        std::string engineName;
+        if (pCreateInfo->pApplicationInfo && pCreateInfo->pApplicationInfo->pEngineName)
+          engineName = pCreateInfo->pApplicationInfo->pEngineName;
+
         auto state = GamescopeInstance::create(*pInstance, GamescopeInstanceData {
           .display = display,
           .appId   = appId,
+          .engineName = engineName,
           .flags   = defaultLayerClientFlags(pCreateInfo->pApplicationInfo, appId),
         });
 
@@ -1251,7 +1257,8 @@ namespace GamescopeWSILayer {
         uint32_t(pCreateInfo->imageColorSpace),
         uint32_t(pCreateInfo->compositeAlpha),
         uint32_t(pCreateInfo->preTransform),
-        uint32_t(pCreateInfo->clipped));
+        uint32_t(pCreateInfo->clipped),
+        gamescopeInstance->engineName.c_str());
 
       return VK_SUCCESS;
     }

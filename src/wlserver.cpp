@@ -840,7 +840,8 @@ static void gamescope_swapchain_swapchain_feedback( struct wl_client *client, st
 	uint32_t vk_colorspace,
 	uint32_t vk_composite_alpha,
 	uint32_t vk_pre_transform,
-	uint32_t vk_clipped)
+	uint32_t vk_clipped,
+	const char *vk_engine_name)
 {
 	wlserver_wl_surface_info *wl_info = (wlserver_wl_surface_info *)wl_resource_get_user_data( resource );
 	if ( wl_info )
@@ -852,6 +853,7 @@ static void gamescope_swapchain_swapchain_feedback( struct wl_client *client, st
 			.vk_composite_alpha = VkCompositeAlphaFlagBitsKHR(vk_composite_alpha),
 			.vk_pre_transform = VkSurfaceTransformFlagBitsKHR(vk_pre_transform),
 			.vk_clipped = VkBool32(vk_clipped),
+			.vk_engine_name = std::make_shared<std::string>(vk_engine_name),
 			.hdr_metadata_blob = nullptr,
 		});
 	}
