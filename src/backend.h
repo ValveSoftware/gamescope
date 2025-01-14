@@ -352,6 +352,8 @@ namespace gamescope
 
         virtual void NotifyPhysicalInput( InputType eInputType ) = 0;
 
+        virtual void ToggleFullscreen() = 0;
+
         static IBackend *Get();
         template <typename T>
         static bool Set();
@@ -381,6 +383,8 @@ namespace gamescope
         virtual std::shared_ptr<IBackendConnector> CreateVirtualConnector( uint64_t ulVirtualConnectorKey ) override;
 
         virtual void NotifyPhysicalInput( InputType eInputType ) override {}
+
+        virtual void ToggleFullscreen() override {};
     };
 
     // This is a blob of data that may be associated with
