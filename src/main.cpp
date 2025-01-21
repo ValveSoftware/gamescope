@@ -432,6 +432,34 @@ static enum gamescope::GamescopeBackend parse_backend_name(const char *str)
 	}
 }
 
+static int parse_integer(const char *str, const char *optionName)
+{
+	auto result = gamescope::Parse<int>(str);
+	if ( result.has_value() )
+	{
+		return result.value();
+	}
+	else
+	{
+		fprintf( stderr, "gamescope: invalid value for --%s, \"%s\" is either not an integer or is far too large\n", optionName, str );
+		exit(1);
+	}
+}
+
+static float parse_float(const char *str, const char *optionName)
+{
+	auto result = gamescope::Parse<float>(str);
+	if ( result.has_value() )
+	{
+		return result.value();
+	}
+	else
+	{
+		fprintf( stderr, "gamescope: invalid value for --%s, \"%s\" could not be interpreted as a real number\n", optionName, str );
+		exit(1);
+	}
+}
+
 struct sigaction handle_signal_action = {};
 
 void ShutdownGamescope()
@@ -684,25 +712,25 @@ int main(int argc, char **argv)
 		const char *opt_name;
 		switch (o) {
 			case 'w':
-				g_nNestedWidth = atoi( optarg );
+				g_nNestedWidth = parse_integer( optarg, "nested-width" );
 				break;
 			case 'h':
-				g_nNestedHeight = atoi( optarg );
+				g_nNestedHeight = parse_integer( optarg, "nested-height" );
 				break;
 			case 'r':
-				g_nNestedRefresh = gamescope::ConvertHztomHz( atoi( optarg ) );
+				g_nNestedRefresh = gamescope::ConvertHztomHz( parse_integer( optarg, "nested-refresh" ) );
 				break;
 			case 'W':
-				g_nPreferredOutputWidth = atoi( optarg );
+				g_nPreferredOutputWidth = parse_integer( optarg, "output-width" );
 				break;
 			case 'H':
-				g_nPreferredOutputHeight = atoi( optarg );
+				g_nPreferredOutputHeight = parse_integer( optarg, "output-height" );
 				break;
 			case 'o':
-				g_nNestedUnfocusedRefresh = gamescope::ConvertHztomHz( atoi( optarg ) );
+				g_nNestedUnfocusedRefresh = gamescope::ConvertHztomHz( parse_integer( optarg, "nested-unfocused-refresh" ) );
 				break;
 			case 'm':
-				g_flMaxWindowScale = atof( optarg );
+				g_flMaxWindowScale = parse_float( optarg, "max-scale" );
 				break;
 			case 'S':
 				g_wantedUpscaleScaler = parse_upscaler_scaler(optarg);
@@ -723,7 +751,7 @@ int main(int argc, char **argv)
 				g_bGrabbed = true;
 				break;
 			case 's':
-				g_mouseSensitivity = atof( optarg );
+				g_mouseSensitivity = parse_float( optarg, "mouse-sensitivity" );
 				break;
 			case 'e':
 				steamMode = true;
@@ -743,21 +771,21 @@ int main(int argc, char **argv)
 				} else if (strcmp(opt_name, "disable-color-management") == 0) {
 					g_bForceDisableColorMgmt = true;
 				} else if (strcmp(opt_name, "xwayland-count") == 0) {
-					g_nXWaylandCount = atoi( optarg );
+					g_nXWaylandCount = parse_integer( optarg, opt_name );
 				} else if (strcmp(opt_name, "composite-debug") == 0) {
 					cv_composite_debug |= CompositeDebugFlag::Markers;
 					cv_composite_debug |= CompositeDebugFlag::PlaneBorders;
 				} else if (strcmp(opt_name, "hdr-debug-heatmap") == 0) {
 					cv_composite_debug |= CompositeDebugFlag::Heatmap;
 				} else if (strcmp(opt_name, "default-touch-mode") == 0) {
-					gamescope::cv_touch_click_mode = (gamescope::TouchClickMode) atoi( optarg );
+					gamescope::cv_touch_click_mode = (gamescope::TouchClickMode) parse_integer( optarg, opt_name );
 				} else if (strcmp(opt_name, "generate-drm-mode") == 0) {
 					g_eGamescopeModeGeneration = parse_gamescope_mode_generation( optarg );
 				} else if (strcmp(opt_name, "force-orientation") == 0) {
 					g_DesiredInternalOrientation = force_orientation( optarg );
 				} else if (strcmp(opt_name, "sharpness") == 0 ||
 						   strcmp(opt_name, "fsr-sharpness") == 0) {
-					g_upscaleFilterSharpness = atoi( optarg );
+					g_upscaleFilterSharpness = parse_integer( optarg, opt_name );
 				} else if (strcmp(opt_name, "rt") == 0) {
 					g_bRt = true;
 				} else if (strcmp(opt_name, "prefer-vk-device") == 0) {
@@ -771,7 +799,7 @@ int main(int argc, char **argv)
 				} else if (strcmp(opt_name, "force-grab-cursor") == 0) {
 					g_bForceRelativeMouse = true;
 				} else if (strcmp(opt_name, "display-index") == 0) {
-					g_nNestedDisplayIndex = atoi( optarg );	
+					g_nNestedDisplayIndex = parse_integer( optarg, opt_name );
 				} else if (strcmp(opt_name, "adaptive-sync") == 0) {
 					cv_adaptive_sync = true;
 				} else if (strcmp(opt_name, "expose-wayland") == 0) {
@@ -779,7 +807,7 @@ int main(int argc, char **argv)
 				} else if (strcmp(opt_name, "backend") == 0) {
 					eCurrentBackend = parse_backend_name( optarg );
 				} else if (strcmp(opt_name, "cursor-scale-height") == 0) {
-					g_nCursorScaleHeight = atoi(optarg);
+					g_nCursorScaleHeight = parse_integer(optarg, opt_name);
 				} else if (strcmp(opt_name, "mangoapp") == 0) {
 					g_bLaunchMangoapp = true;
 				} else if (strcmp(opt_name, "virtual-connector-strategy") == 0) {
