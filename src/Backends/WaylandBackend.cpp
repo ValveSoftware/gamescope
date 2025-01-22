@@ -32,6 +32,7 @@
 #include <xx-color-management-v3-client-protocol.h>
 #include <pointer-constraints-unstable-v1-client-protocol.h>
 #include <relative-pointer-unstable-v1-client-protocol.h>
+#include <primary-selection-unstable-v1-client-protocol.h>
 #include <fractional-scale-v1-client-protocol.h>
 #include <xdg-toplevel-icon-v1-client-protocol.h>
 #include "wlr_end.hpp"
@@ -692,6 +693,10 @@ namespace gamescope
         void Wayland_DataSource_Cancelled( struct wl_data_source *pSource );
         static const wl_data_source_listener s_DataSourceListener;
 
+        void Wayland_PrimarySelectionSource_Send( struct zwp_primary_selection_source_v1 *pSource, const char *pMime, int nFd );
+        void Wayland_PrimarySelectionSource_Cancelled( struct zwp_primary_selection_source_v1 *pSource );
+        static const zwp_primary_selection_source_v1_listener s_PrimarySelectionSourceListener;
+
         CWaylandInputThread m_InputThread;
 
         wl_display *m_pDisplay = nullptr;
@@ -720,6 +725,10 @@ namespace gamescope
         wl_data_device_manager *m_pDataDeviceManager = nullptr;
         wl_data_device *m_pDataDevice = nullptr;
         std::shared_ptr<std::string> m_pClipboard = nullptr;
+
+        zwp_primary_selection_device_manager_v1 *m_pPrimarySelectionDeviceManager = nullptr;
+        zwp_primary_selection_device_v1 *m_pPrimarySelectionDevice = nullptr;
+        std::shared_ptr<std::string> m_pPrimarySelection = nullptr;
 
         struct 
         {
@@ -808,6 +817,11 @@ namespace gamescope
     {
         .send      = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_DataSource_Send ),
         .cancelled = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_DataSource_Cancelled ),
+    };
+    const zwp_primary_selection_source_v1_listener CWaylandBackend::s_PrimarySelectionSourceListener =
+    {
+        .send      = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_PrimarySelectionSource_Send ),
+        .cancelled = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_PrimarySelectionSource_Cancelled ),
     };
 
     //////////////////
@@ -1189,6 +1203,9 @@ namespace gamescope
         if ( m_pBackend->m_pDataDeviceManager && !m_pBackend->m_pDataDevice )
             m_pBackend->m_pDataDevice = wl_data_device_manager_get_data_device( m_pBackend->m_pDataDeviceManager, m_pBackend->m_pSeat );
 
+        if ( m_pBackend->m_pPrimarySelectionDeviceManager && !m_pBackend->m_pPrimarySelectionDevice )
+            m_pBackend->m_pPrimarySelectionDevice = zwp_primary_selection_device_manager_v1_get_device( m_pBackend->m_pPrimarySelectionDeviceManager, m_pBackend->m_pSeat );
+
         if ( eSelection == GAMESCOPE_SELECTION_CLIPBOARD && m_pBackend->m_pDataDevice )
         {
             m_pBackend->m_pClipboard = szContents;
@@ -1201,9 +1218,17 @@ namespace gamescope
             wl_data_source_offer( source, "UTF8_STRING" );
             wl_data_device_set_selection( m_pBackend->m_pDataDevice, source, m_pBackend->m_uKeyboardEnterSerial );
         }
-        else if ( eSelection == GAMESCOPE_SELECTION_PRIMARY )
+        else if ( eSelection == GAMESCOPE_SELECTION_PRIMARY && m_pBackend->m_pPrimarySelectionDevice )
         {
-            // Do nothing
+            m_pBackend->m_pPrimarySelection = szContents;
+            zwp_primary_selection_source_v1 *source = zwp_primary_selection_device_manager_v1_create_source( m_pBackend->m_pPrimarySelectionDeviceManager );
+            zwp_primary_selection_source_v1_add_listener( source, &m_pBackend->s_PrimarySelectionSourceListener, m_pBackend );
+            zwp_primary_selection_source_v1_offer( source, "text/plain" );
+            zwp_primary_selection_source_v1_offer( source, "text/plain;charset=utf-8" );
+            zwp_primary_selection_source_v1_offer( source, "TEXT" );
+            zwp_primary_selection_source_v1_offer( source, "STRING" );
+            zwp_primary_selection_source_v1_offer( source, "UTF8_STRING" );
+            zwp_primary_selection_device_v1_set_selection( m_pBackend->m_pPrimarySelectionDevice, source, m_pBackend->m_uPointerEnterSerial );
         }
     }
 
@@ -2301,6 +2326,10 @@ namespace gamescope
         {
             m_pDataDeviceManager = (wl_data_device_manager *)wl_registry_bind( pRegistry, uName, &wl_data_device_manager_interface, 3u );
         }
+        else if ( !strcmp( pInterface, zwp_primary_selection_device_manager_v1_interface.name ) )
+        {
+            m_pPrimarySelectionDeviceManager = (zwp_primary_selection_device_manager_v1 *)wl_registry_bind( pRegistry, uName, &zwp_primary_selection_device_manager_v1_interface, 1u );
+        }
     }
 
     void CWaylandBackend::Wayland_Modifier( zwp_linux_dmabuf_v1 *pDmabuf, uint32_t uFormat, uint32_t uModifierHi, uint32_t uModifierLo )
@@ -2452,6 +2481,20 @@ namespace gamescope
     void CWaylandBackend::Wayland_DataSource_Cancelled( struct wl_data_source *pSource )
     {
         wl_data_source_destroy( pSource );
+    }
+
+    // Primary Selection Source
+
+    void CWaylandBackend::Wayland_PrimarySelectionSource_Send( struct zwp_primary_selection_source_v1 *pSource, const char *pMime, int nFd )
+    {
+	ssize_t len = m_pPrimarySelection->length();
+        if ( write( nFd, m_pPrimarySelection->c_str(), len ) != len )
+	    xdg_log.infof( "Failed to write all %zd bytes to clipboard", len );
+        close( nFd );
+    }
+    void CWaylandBackend::Wayland_PrimarySelectionSource_Cancelled( struct zwp_primary_selection_source_v1 *pSource)
+    {
+        zwp_primary_selection_source_v1_destroy( pSource );
     }
 
     ///////////////////////
