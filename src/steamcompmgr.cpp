@@ -5087,24 +5087,28 @@ handle_selection_notify(xwayland_ctx_t *ctx, XSelectionEvent *ev)
 			auto szContents = std::make_shared<std::string>(contents);
 			defer( XFree( data ); );
 
+			gamescope::INestedHints *hints = nullptr;
+			if (auto connector = GetBackend()->GetCurrentConnector())
+				hints = connector->GetNestedHints();
+
 			if (ev->selection == ctx->atoms.clipboard)
 			{
-				// if ( GetBackend()->GetNestedHints() )
-				// {
-				// 	//GetBackend()->GetNestedHints()->SetSelection()
-				// }
-				// else
+				if ( hints )
+				{
+					hints->SetSelection( szContents, GAMESCOPE_SELECTION_CLIPBOARD );
+				}
+				else
 				{
 					gamescope_set_selection( contents, GAMESCOPE_SELECTION_CLIPBOARD );
 				}
 			}
 			else if (ev->selection == ctx->atoms.primarySelection)
 			{
-				// if ( GetBackend()->GetNestedHints() )
-				// {
-				// 	//GetBackend()->GetNestedHints()->SetSelection()
-				// }
-				// else
+				if ( hints )
+				{
+					hints->SetSelection( szContents, GAMESCOPE_SELECTION_PRIMARY );
+				}
+				else
 				{
 					gamescope_set_selection( contents, GAMESCOPE_SELECTION_PRIMARY );
 				}
