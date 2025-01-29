@@ -4923,11 +4923,8 @@ handle_wm_change_state(xwayland_ctx_t *ctx, steamcompmgr_win_t *w, XClientMessag
 	long state = ev->data.l[0];
 
 	if (state == ICCCM_ICONIC_STATE) {
-		/* Wine will request iconic state and cannot ensure that the WM has
-		 * agreed on it; immediately revert to normal state to avoid being
-		 * stuck in a paused state. */
-		xwm_log.debugf("Rejecting WM_CHANGE_STATE to ICONIC for window 0x%lx", w->xwayland().id);
-		set_wm_state( ctx, w->xwayland().id, ICCCM_NORMAL_STATE );
+		xwm_log.debugf("Faking WM_CHANGE_STATE to ICONIC for window 0x%lx", w->xwayland().id);
+		set_wm_state( ctx, w->xwayland().id, ICCCM_ICONIC_STATE );
 	} else {
 		xwm_log.debugf("Unhandled WM_CHANGE_STATE to %ld for window 0x%lx", state, w->xwayland().id);
 	}
