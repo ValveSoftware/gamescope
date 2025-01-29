@@ -3440,6 +3440,14 @@ found:;
 	return vecPossibleFocusWindows;
  }
 
+static void set_wm_state( xwayland_ctx_t *ctx, Window win, uint32_t state )
+{
+	uint32_t wmState[] = { state, None };
+	XChangeProperty(ctx->dpy, win, ctx->atoms.WMStateAtom, ctx->atoms.WMStateAtom, 32,
+				PropModeReplace, (unsigned char *)wmState,
+				sizeof(wmState) / sizeof(wmState[0]));
+}
+
 void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win_t* > &vecPossibleFocusWindows )
 {
 	xwayland_ctx_t *ctx = this;
@@ -3503,10 +3511,7 @@ void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win
 	{
 		/* Some games (e.g. DOOM Eternal) don't react well to being put back as
 		* iconic, so never do that. Only take them out of iconic. */
-		uint32_t wmState[] = { ICCCM_NORMAL_STATE, None };
-		XChangeProperty(ctx->dpy, ctx->focus.focusWindow->xwayland().id, ctx->atoms.WMStateAtom, ctx->atoms.WMStateAtom, 32,
-					PropModeReplace, (unsigned char *)wmState,
-					sizeof(wmState) / sizeof(wmState[0]));
+		set_wm_state( ctx, ctx->focus.focusWindow->xwayland().id, ICCCM_NORMAL_STATE );
 
 		gpuvis_trace_printf( "determine_and_apply_focus focus %lu", ctx->focus.focusWindow->xwayland().id );
 
@@ -4320,6 +4325,8 @@ map_win(xwayland_ctx_t* ctx, Window id, unsigned long sequence)
 	}
 
 	MakeFocusDirty();
+
+	set_wm_state( ctx, w->xwayland().id, ICCCM_NORMAL_STATE );
 }
 
 static void
@@ -4344,6 +4351,7 @@ unmap_win(xwayland_ctx_t *ctx, Window id, bool fade)
 	MakeFocusDirty();
 
 	finish_unmap_win(ctx, w);
+	set_wm_state( ctx, w->xwayland().id, ICCCM_WITHDRAWN_STATE );
 }
 
 uint32_t
@@ -4919,10 +4927,7 @@ handle_wm_change_state(xwayland_ctx_t *ctx, steamcompmgr_win_t *w, XClientMessag
 		 * agreed on it; immediately revert to normal state to avoid being
 		 * stuck in a paused state. */
 		xwm_log.debugf("Rejecting WM_CHANGE_STATE to ICONIC for window 0x%lx", w->xwayland().id);
-		uint32_t wmState[] = { ICCCM_NORMAL_STATE, None };
-		XChangeProperty(ctx->dpy, w->xwayland().id, ctx->atoms.WMStateAtom, ctx->atoms.WMStateAtom, 32,
-			PropModeReplace, (unsigned char *)wmState,
-			sizeof(wmState) / sizeof(wmState[0]));
+		set_wm_state( ctx, w->xwayland().id, ICCCM_NORMAL_STATE );
 	} else {
 		xwm_log.debugf("Unhandled WM_CHANGE_STATE to %ld for window 0x%lx", state, w->xwayland().id);
 	}
