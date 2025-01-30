@@ -722,7 +722,7 @@ namespace gamescope
         xdg_toplevel_icon_manager_v1 *m_pToplevelIconManager = nullptr;
 
         // TODO: Restructure and remove the need for this.
-        std::shared_ptr<CWaylandConnector> m_pFocusConnector;
+        std::weak_ptr<CWaylandConnector> m_pFocusConnector;
 
         wl_data_device_manager *m_pDataDeviceManager = nullptr;
         wl_data_device *m_pDataDevice = nullptr;
@@ -2043,7 +2043,7 @@ namespace gamescope
 
     IBackendConnector *CWaylandBackend::GetCurrentConnector()
     {
-        return m_pFocusConnector.get();
+        return m_pFocusConnector.lock().get();
     }
     IBackendConnector *CWaylandBackend::GetConnector( GamescopeScreenType eScreenType )
     {
@@ -2115,7 +2115,7 @@ namespace gamescope
     std::shared_ptr<IBackendConnector> CWaylandBackend::CreateVirtualConnector( uint64_t ulVirtualConnectorKey )
     {
         std::shared_ptr<CWaylandConnector> pConnector = std::make_shared<CWaylandConnector>( this, ulVirtualConnectorKey );
-        if ( !m_pFocusConnector )
+        if ( m_pFocusConnector.expired() )
             m_pFocusConnector = pConnector;
 
         if ( !pConnector->Init() )
