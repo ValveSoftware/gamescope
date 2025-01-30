@@ -76,7 +76,9 @@ static inline uint32_t WaylandScaleToLogical( uint32_t pValue, uint32_t pFactor 
 }
 
 static bool IsSurfacePlane( wl_surface *pSurface ) {
-    return wl_proxy_get_tag( (wl_proxy *)pSurface ) == &GAMESCOPE_plane_tag;
+    // HACK: this probably should never be called with a null pointer, but it
+    // was happening after a window was closed.
+    return pSurface && (wl_proxy_get_tag( (wl_proxy *)pSurface ) == &GAMESCOPE_plane_tag);
 }
 
 #define WAYLAND_NULL() []<typename... Args> ( void *pData, Args... args ) { }
