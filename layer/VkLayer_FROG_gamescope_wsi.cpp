@@ -1076,9 +1076,9 @@ namespace GamescopeWSILayer {
         gamescope_swapchain_destroy(state->object);
       }
       GamescopeSwapchain::remove(swapchain);
-      fprintf(stderr, "[Gamescope WSI] Destroying swapchain: %p\n", swapchain);
+      fprintf(stderr, "[Gamescope WSI] Destroying swapchain: %p\n", reinterpret_cast<void*>(swapchain));
       pDispatch->DestroySwapchainKHR(device, swapchain, pAllocator);
-      fprintf(stderr, "[Gamescope WSI] Destroyed swapchain: %p\n", swapchain);
+      fprintf(stderr, "[Gamescope WSI] Destroyed swapchain: %p\n", reinterpret_cast<void*>(swapchain));
     }
 
     static VkResult CreateSwapchainKHR(
@@ -1160,7 +1160,7 @@ namespace GamescopeWSILayer {
 
       fprintf(stderr, "[Gamescope WSI] Creating swapchain for xid: 0x%0x - oldSwapchain: %p - provided minImageCount: %u - minImageCount: %u - format: %s - colorspace: %s - flip: %s\n",
         gamescopeSurface->window,
-        pCreateInfo->oldSwapchain,
+        reinterpret_cast<void*>(pCreateInfo->oldSwapchain),
         pCreateInfo->minImageCount,
         minImageCount,
         vkroots::helpers::enumString(pCreateInfo->imageFormat),
@@ -1241,7 +1241,7 @@ namespace GamescopeWSILayer {
 
       fprintf(stderr, "[Gamescope WSI] Created swapchain for xid: 0x%0x swapchain: %p - imageCount: %u\n",
         gamescopeSurface->window,
-        *pSwapchain,
+        reinterpret_cast<void*>(*pSwapchain),
         imageCount);
 
       gamescope_swapchain_swapchain_feedback(
