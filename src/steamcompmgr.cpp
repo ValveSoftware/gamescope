@@ -803,7 +803,7 @@ float			focusedWindowScaleY = 1.0f;
 float			focusedWindowOffsetX = 0.0f;
 float			focusedWindowOffsetY = 0.0f;
 
-uint32_t		inputCounter;
+std::atomic<uint32_t>		inputCounter;
 uint32_t		lastPublishedInputCounter;
 
 std::atomic<bool> hasRepaint = false;
@@ -1482,9 +1482,8 @@ void MouseCursor::checkSuspension()
 	if ( ShouldDrawCursor() )
 	{
 		const bool suspended = int64_t( get_time_in_nanos() ) - int64_t( wlserver.ulLastMovedCursorTime ) > int64_t( cursorHideTime );
-		if (!wlserver.bCursorHidden && suspended) {
-			wlserver.bCursorHidden = true;
-
+		const bool bCursorWasHidden = suspended ? wlserver.bCursorHidden.exchange(true) : wlserver.bCursorHidden.load();
+		if (!bCursorWasHidden && suspended) {
 			steamcompmgr_win_t *window = m_ctx->focus.inputFocusWindow;
 			// Rearm warp count
 			if (window)
@@ -7750,12 +7749,12 @@ steamcompmgr_main(int argc, char **argv)
 
 		bool flush_root = false;
 
-		if ( inputCounter != lastPublishedInputCounter )
+		if ( auto currentInputCount = inputCounter.load(); currentInputCount != lastPublishedInputCounter )
 		{
 			XChangeProperty( root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeInputCounterAtom, XA_CARDINAL, 32, PropModeReplace,
-							 (unsigned char *)&inputCounter, 1 );
+							 (unsigned char *)&currentInputCount, 1 );
 
-			lastPublishedInputCounter = inputCounter;
+			lastPublishedInputCounter = currentInputCount;
 			flush_root = true;
 		}
 
