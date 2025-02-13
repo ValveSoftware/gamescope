@@ -32,6 +32,7 @@
 #include <wlr/render/wlr_renderer.h>
 #include <wlr/types/wlr_compositor.h>
 #include <wlr/types/wlr_keyboard.h>
+#include <wlr/types/wlr_keyboard_group.h>
 #include <wlr/types/wlr_pointer.h>
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_touch.h>
@@ -282,21 +283,21 @@ static void bump_input_counter()
 
 static void wlserver_handle_modifiers(struct wl_listener *listener, void *data)
 {
-	struct wlserver_keyboard *keyboard = wl_container_of( listener, keyboard, modifiers );
+	struct wlr_keyboard *keyboard = &wlserver.keyboard_group->keyboard;
 
-	wlr_seat_set_keyboard( wlserver.wlr.seat, keyboard->wlr );
-	wlr_seat_keyboard_notify_modifiers( wlserver.wlr.seat, &keyboard->wlr->modifiers );
+	wlr_seat_set_keyboard( wlserver.wlr.seat, keyboard );
+	wlr_seat_keyboard_notify_modifiers( wlserver.wlr.seat, &keyboard->modifiers );
 
 	bump_input_counter();
 }
 
 static void wlserver_handle_key(struct wl_listener *listener, void *data)
 {
-	struct wlserver_keyboard *keyboard = wl_container_of( listener, keyboard, key );
+	struct wlr_keyboard *keyboard = &wlserver.keyboard_group->keyboard;
 	struct wlr_keyboard_key_event *event = (struct wlr_keyboard_key_event *) data;
 
 	xkb_keycode_t keycode = event->keycode + 8;
-	xkb_keysym_t keysym = xkb_state_key_get_one_sym(keyboard->wlr->xkb_state, keycode);
+	xkb_keysym_t keysym = xkb_state_key_get_one_sym(keyboard->xkb_state, keycode);
 
 #if HAVE_SESSION
 	if (wlserver.wlr.session && event->state == WL_KEYBOARD_KEY_STATE_PRESSED && keysym >= XKB_KEY_XF86Switch_VT_1 && keysym <= XKB_KEY_XF86Switch_VT_12) {
@@ -318,14 +319,14 @@ static void wlserver_handle_key(struct wl_listener *listener, void *data)
 		if ( new_kb_surf )
 		{
 			wlserver_keyboardfocus( new_kb_surf, false );
-			wlr_seat_set_keyboard( wlserver.wlr.seat, keyboard->wlr );
+			wlr_seat_set_keyboard( wlserver.wlr.seat, keyboard );
 			wlr_seat_keyboard_notify_key( wlserver.wlr.seat, event->time_msec, event->keycode, event->state );
 			wlserver_keyboardfocus( old_kb_surf, false );
 			return;
 		}
 	}
 
-	wlr_seat_set_keyboard( wlserver.wlr.seat, keyboard->wlr );
+	wlr_seat_set_keyboard( wlserver.wlr.seat, keyboard );
 	wlr_seat_keyboard_notify_key( wlserver.wlr.seat, event->time_msec, event->keycode, event->state );
 
 	bump_input_counter();
@@ -434,32 +435,21 @@ static void wlserver_new_input(struct wl_listener *listener, void *data)
 	{
 		case WLR_INPUT_DEVICE_KEYBOARD:
 		{
-			struct wlserver_keyboard *keyboard = (struct wlserver_keyboard *) calloc( 1, sizeof( struct wlserver_keyboard ) );
-
-			keyboard->wlr = (struct wlr_keyboard *)device;
-
-			struct xkb_rule_names rules = { 0 };
-			struct xkb_context *context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
-			rules.rules = getenv("XKB_DEFAULT_RULES");
-			rules.model = getenv("XKB_DEFAULT_MODEL");
-			rules.layout = getenv("XKB_DEFAULT_LAYOUT");
-			rules.variant = getenv("XKB_DEFAULT_VARIANT");
-			rules.options = getenv("XKB_DEFAULT_OPTIONS");
-			struct xkb_keymap *keymap = xkb_keymap_new_from_names(context, &rules,
-															   XKB_KEYMAP_COMPILE_NO_FLAGS);
-
-			wlr_keyboard_set_keymap(keyboard->wlr, keymap);
-			xkb_keymap_unref(keymap);
-			xkb_context_unref(context);
-			wlr_keyboard_set_repeat_info(keyboard->wlr, 25, 600);
-
-			keyboard->wlr->data = keyboard;
-
-			keyboard->modifiers.notify = wlserver_handle_modifiers;
-			wl_signal_add( &keyboard->wlr->events.modifiers, &keyboard->modifiers );
-
-			keyboard->key.notify = wlserver_handle_key;
-			wl_signal_add( &keyboard->wlr->events.key, &keyboard->key );
+			struct wlr_keyboard *keyboard = wlr_keyboard_from_input_device(device);
+			wlr_keyboard_set_keymap(keyboard, wlserver.keyboard_group->keyboard.keymap);
+			if (!wlr_keyboard_group_add_keyboard(wlserver.keyboard_group, keyboard)) {
+				wl_log.errorf("failed to add physical keyboard %s", device->name);
+				break;
+			}
+			// Sync the state of the modifiers and the state of the LEDs
+			struct wlr_keyboard_modifiers mods = wlserver.keyboard_group->keyboard.modifiers;
+			if (mods.depressed != keyboard->modifiers.depressed ||
+				mods.latched != keyboard->modifiers.latched ||
+				mods.locked != keyboard->modifiers.locked ||
+				mods.group != keyboard->modifiers.group) {
+				wlr_keyboard_notify_modifiers(keyboard,
+					mods.depressed, mods.latched, mods.locked, mods.group);
+			}
 		}
 		break;
 		case WLR_INPUT_DEVICE_POINTER:
@@ -1735,8 +1725,26 @@ bool wlserver_init( void ) {
 	// We need to wait for the backend to be started before adding the device
 	struct wlr_keyboard *kbd = (struct wlr_keyboard *) calloc(1, sizeof(*kbd));
 	wlr_keyboard_init(kbd, nullptr, "virtual");
-
 	wlserver.wlr.virtual_keyboard_device = kbd;
+
+	// Create a keyboard group to keep all externally connected keyboards
+	// in sync (one single layout and a shared state)
+	struct xkb_context *context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+	struct xkb_rule_names rules = { 0 };
+	rules.rules = getenv("XKB_DEFAULT_RULES");
+	rules.model = getenv("XKB_DEFAULT_MODEL");
+	rules.layout = getenv("XKB_DEFAULT_LAYOUT");
+	rules.variant = getenv("XKB_DEFAULT_VARIANT");
+	rules.options = getenv("XKB_DEFAULT_OPTIONS");
+	struct xkb_keymap *keymap = xkb_keymap_new_from_names(context, &rules, XKB_KEYMAP_COMPILE_NO_FLAGS);
+	wlserver.keyboard_group = wlr_keyboard_group_create();
+	struct wlr_keyboard *keyboard = &wlserver.keyboard_group->keyboard;
+	wlr_keyboard_set_repeat_info(keyboard, 25, 600);
+	wlr_keyboard_set_keymap(keyboard, keymap);
+	wlserver.keyboard_group_modifiers.notify = wlserver_handle_modifiers;
+	wl_signal_add(&keyboard->events.modifiers, &wlserver.keyboard_group_modifiers);
+	wlserver.keyboard_group_key.notify = wlserver_handle_key;
+	wl_signal_add(&keyboard->events.key, &wlserver.keyboard_group_key);
 
 	wlserver.wlr.renderer = vulkan_renderer_create();
 
