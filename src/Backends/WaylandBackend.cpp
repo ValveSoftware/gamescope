@@ -2642,81 +2642,16 @@ namespace gamescope
 
     void CWaylandInputThread::HandleKey( uint32_t uKey, bool bPressed )
     {
-        if ( m_uKeyModifiers & m_uModMask[ GAMESCOPE_WAYLAND_MOD_META ] )
+        if ( !bPressed && m_uKeyModifiers & m_uModMask[ GAMESCOPE_WAYLAND_MOD_META ] )
         {
-            switch ( uKey )
+            auto shortcut = g_shortcutHandler.GetShortcut( uKey );
+            g_shortcutHandler.HandleShortcut( shortcut );
+
+            switch ( shortcut )
             {
-                case KEY_F:
+                case GAMESCOPE_SHORTCUT_FULLSCREEN:
                 {
-                    if ( !bPressed )
-                    {
-                        static_cast< CWaylandConnector * >( m_pBackend->GetCurrentConnector() )->SetFullscreen( !g_bFullscreen );
-                    }
-                    return;
-                }
-
-                case KEY_N:
-                {
-                    if ( !bPressed )
-                    {
-                        g_wantedUpscaleFilter = GamescopeUpscaleFilter::PIXEL;
-                    }
-                    return;
-                }
-
-                case KEY_B:
-                {
-                    if ( !bPressed )
-                    {
-                        g_wantedUpscaleFilter = GamescopeUpscaleFilter::LINEAR;
-                    }
-                    return;
-                }
-
-                case KEY_U:
-                {
-                    if ( !bPressed )
-                    {
-                        g_wantedUpscaleFilter = ( g_wantedUpscaleFilter == GamescopeUpscaleFilter::FSR ) ?
-                            GamescopeUpscaleFilter::LINEAR : GamescopeUpscaleFilter::FSR;
-                    }
-                    return;
-                }
-
-                case KEY_Y:
-                {
-                    if ( !bPressed )
-                    {
-                        g_wantedUpscaleFilter = ( g_wantedUpscaleFilter == GamescopeUpscaleFilter::NIS ) ?
-                            GamescopeUpscaleFilter::LINEAR : GamescopeUpscaleFilter::NIS;
-                    }
-                    return;
-                }
-
-                case KEY_I:
-                {
-                    if ( !bPressed )
-                    {
-                        g_upscaleFilterSharpness = std::min( 20, g_upscaleFilterSharpness + 1 );
-                    }
-                    return;
-                }
-
-                case KEY_O:
-                {
-                    if ( !bPressed )
-                    {
-                        g_upscaleFilterSharpness = std::max( 0, g_upscaleFilterSharpness - 1 );
-                    }
-                    return;
-                }
-
-                case KEY_S:
-                {
-                    if ( !bPressed )
-                    {
-                        gamescope::CScreenshotManager::Get().TakeScreenshot( true );
-                    }
+                    static_cast< CWaylandConnector * >( m_pBackend->GetCurrentConnector() )->SetFullscreen( !g_bFullscreen );
                     return;
                 }
 
