@@ -29,8 +29,7 @@ namespace gamescope
     {
         if ( s_pBackend )
         {
-            delete s_pBackend;
-            s_pBackend = nullptr;
+            std::destroy_at(s_pBackend);
         }
 
         if ( pBackend )
