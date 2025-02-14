@@ -1960,6 +1960,7 @@ void wlserver_run(void)
 			wl_display_flush_clients(wlserver.display);
 			int ret = wl_event_loop_dispatch(wlserver.event_loop, 0);
 			if (ret < 0) {
+				wlserver_unlock();
 				break;
 			}
 
