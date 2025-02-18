@@ -19,10 +19,13 @@ xkbcommon = dependency('xkbcommon')
 thread_dep = dependency('threads')
 cap_dep = dependency('libcap', required: get_option('rt_cap'))
 epoll_dep = dependency('epoll-shim', required: false)
-glm_dep = dependency('glm')
 sdl2_dep = dependency('SDL2', required: get_option('sdl2_backend'))
-stb_dep = dependency('stb')
 avif_dep = dependency('libavif', version: '>=1.0.0', required: get_option('avif_screenshots'))
+
+glm_proj = subproject('glm')
+glm_dep = glm_proj.get_variable('glm_dep')
+stb_proj = subproject('stb')
+stb_dep = stb_proj.get_variable('stb_dep')
 
 wlroots_dep = dependency(
   'wlroots',
