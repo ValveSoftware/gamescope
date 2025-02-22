@@ -408,6 +408,7 @@ namespace gamescope
         CWaylandPlane m_Planes[8];
         bool m_bVisible = true;
         std::atomic<bool> m_bDesiredFullscreenState = { false };
+        std::weak_ptr<std::vector<uint32_t>> m_uLastIcon;
 
         bool m_bHostCompositorIsCurrentlyVRR = false;
     };
@@ -1159,6 +1160,10 @@ namespace gamescope
         if ( !m_pBackend->GetToplevelIconManager() )
             return;
 
+        // There is no need to update the icon when it's the same as before.
+        if ( m_uLastIcon.lock() == uIconPixels )
+            return;
+
         if ( uIconPixels && uIconPixels->size() >= 3 )
         {
             xdg_toplevel_icon_v1 *pIcon = xdg_toplevel_icon_manager_v1_create_icon( m_pBackend->GetToplevelIconManager() );
@@ -1191,10 +1196,12 @@ namespace gamescope
             xdg_toplevel_icon_v1_add_buffer( pIcon, pBuffer, 1 );
 
             xdg_toplevel_icon_manager_v1_set_icon( m_pBackend->GetToplevelIconManager(), m_Planes[0].GetXdgToplevel(), pIcon );
+            m_uLastIcon = uIconPixels;
         }
         else
         {
             xdg_toplevel_icon_manager_v1_set_icon( m_pBackend->GetToplevelIconManager(), m_Planes[0].GetXdgToplevel(), nullptr );
+            m_uLastIcon.reset();
         }
     }
 
