@@ -1194,8 +1194,13 @@ int32_t CVulkanDevice::findMemoryType( VkMemoryPropertyFlags properties, uint32_
 }
 
 std::unique_ptr<CVulkanCmdBuffer> CVulkanDevice::commandBuffer()
-{
-	std::unique_ptr<CVulkanCmdBuffer> cmdBuffer;
+{	
+	auto finalizeCmdBuffer = [this](std::unique_ptr<CVulkanCmdBuffer> cmdBuffer, void (*preInitHook)(CVulkanDevice*) = [](CVulkanDevice*) { return; } ) {
+		preInitHook(this);
+		cmdBuffer->begin();
+		return cmdBuffer;
+	};
+
 	if (m_unusedCmdBufs.empty())
 	{
 		VkCommandBuffer rawCmdBuffer;
@@ -1213,16 +1218,14 @@ std::unique_ptr<CVulkanCmdBuffer> CVulkanDevice::commandBuffer()
 			return nullptr;
 		}
 
-		cmdBuffer = std::make_unique<CVulkanCmdBuffer>(this, rawCmdBuffer, queue(), queueFamily());
+		return finalizeCmdBuffer(std::make_unique<CVulkanCmdBuffer>(this, rawCmdBuffer, queue(), queueFamily()));
 	}
 	else
 	{
-		cmdBuffer = std::move(m_unusedCmdBufs.back());
-		m_unusedCmdBufs.pop_back();
+		return finalizeCmdBuffer(std::move(m_unusedCmdBufs.back()), [](CVulkanDevice* obj) {
+			obj->m_unusedCmdBufs.pop_back();
+		});
 	}
-
-	cmdBuffer->begin();
-	return cmdBuffer;
 }
 
 uint64_t CVulkanDevice::submitInternal( CVulkanCmdBuffer* cmdBuffer )
@@ -1332,7 +1335,7 @@ int VulkanTimelineSemaphore_t::GetFd() const
 
 std::shared_ptr<VulkanTimelineSemaphore_t> CVulkanDevice::CreateTimelineSemaphore( uint64_t ulStartPoint, bool bShared )
 {
-	std::shared_ptr<VulkanTimelineSemaphore_t> pSemaphore = std::make_unique<VulkanTimelineSemaphore_t>();
+	auto pSemaphore = std::make_unique<VulkanTimelineSemaphore_t>();
 	pSemaphore->pDevice = this;
 
 	VkSemaphoreCreateInfo createInfo =
@@ -1363,13 +1366,14 @@ std::shared_ptr<VulkanTimelineSemaphore_t> CVulkanDevice::CreateTimelineSemaphor
 		return nullptr;
 	}
 
-	return pSemaphore;
+	return std::shared_ptr<VulkanTimelineSemaphore_t>( std::move(pSemaphore) );
 }
 
 std::shared_ptr<VulkanTimelineSemaphore_t> CVulkanDevice::ImportTimelineSemaphore( gamescope::CTimeline *pTimeline )
 {
-	std::shared_ptr<VulkanTimelineSemaphore_t> pSemaphore = std::make_unique<VulkanTimelineSemaphore_t>();
+	auto pSemaphore = std::make_unique<VulkanTimelineSemaphore_t>();
 	pSemaphore->pDevice = this;
+	
 
 	const VkSemaphoreTypeCreateInfo typeInfo =
 	{
@@ -1412,7 +1416,7 @@ std::shared_ptr<VulkanTimelineSemaphore_t> CVulkanDevice::ImportTimelineSemaphor
 		return nullptr;
 	}
 
-	return pSemaphore;
+	return std::shared_ptr<VulkanTimelineSemaphore_t>( std::move(pSemaphore) );
 }
 
 void CVulkanCmdBuffer::AddDependency( std::shared_ptr<VulkanTimelineSemaphore_t> pTimelineSemaphore, uint64_t ulPoint )
