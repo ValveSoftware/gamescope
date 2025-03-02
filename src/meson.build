@@ -116,6 +116,7 @@ src = [
   'mangoapp.cpp',
   'Timeline.cpp',
   'reshade_effect_manager.cpp',
+  'shortcut.cpp',
   'backend.cpp',
   'x11cursor.cpp',
   'InputEmulation.cpp',

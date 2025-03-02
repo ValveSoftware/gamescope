@@ -314,6 +314,8 @@ float g_flMaxWindowScale = FLT_MAX;
 uint32_t g_preferVendorID = 0;
 uint32_t g_preferDeviceID = 0;
 
+gamescope::ShortcutHandler g_shortcutHandler = {};
+
 pthread_t g_mainThread;
 
 static void steamCompMgrThreadRun(int argc, char **argv);
