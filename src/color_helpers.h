@@ -7,10 +7,15 @@
 #include <cmath>
 #include <vector>
 
+#include "Utils/Directives.h"
+
 #include <glm/vec2.hpp> // glm::vec2
 #include <glm/vec3.hpp> // glm::vec3
+FAST_MATH_ON
 #include <glm/mat3x3.hpp> // glm::mat3
+FAST_MATH_OFF
 #include <glm/gtx/component_wise.hpp>
+FAST_MATH_ON
 
 // Color utils
 inline int quantize( float fVal, float fMaxVal )
@@ -493,3 +498,4 @@ extern const glm::mat3 k_xyz_from_2020;
 extern const glm::mat3 k_2020_from_xyz;
 
 extern const glm::mat3 k_2020_from_709;
+FAST_MATH_OFF
