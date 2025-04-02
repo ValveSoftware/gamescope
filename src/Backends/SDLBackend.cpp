@@ -13,6 +13,7 @@
 #include "SDL_events.h"
 #include "gamescope_shared.h"
 #include "main.hpp"
+#include "shortcut.h"
 #include "wlserver.hpp"
 #include <SDL.h>
 #include <SDL_vulkan.h>
@@ -730,9 +731,7 @@ namespace gamescope
 					if ( event.key.keysym.mod & KMOD_LGUI )
 					{
 						uint32_t key = SDLScancodeToLinuxKey( event.key.keysym.scancode );
-						const uint32_t shortcutKeys[] = {KEY_F, KEY_N, KEY_B, KEY_U, KEY_Y, KEY_I, KEY_O, KEY_S, KEY_G};
-						const bool isShortcutKey = std::find(std::begin(shortcutKeys), std::end(shortcutKeys), key) != std::end(shortcutKeys);
-						if ( isShortcutKey )
+						if ( g_shortcutHandler.GetShortcut( key ) != GAMESCOPE_SHORTCUT_NONE )
 						{
 							break;
 						}
@@ -745,38 +744,16 @@ namespace gamescope
 
 					if ( event.type == SDL_KEYUP && ( event.key.keysym.mod & KMOD_LGUI ) )
 					{
-						bool handled = true;
-						switch ( key )
+						auto shortcut = g_shortcutHandler.GetShortcut( key );
+						g_shortcutHandler.HandleShortcut( shortcut );
+
+						switch ( shortcut )
 						{
-							case KEY_F:
+							case GAMESCOPE_SHORTCUT_FULLSCREEN:
 								g_bFullscreen = !g_bFullscreen;
 								SDL_SetWindowFullscreen( m_Connector.GetSDLWindow(), g_bFullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0 );
 								break;
-							case KEY_N:
-								g_wantedUpscaleFilter = GamescopeUpscaleFilter::PIXEL;
-								break;
-							case KEY_B:
-								g_wantedUpscaleFilter = GamescopeUpscaleFilter::LINEAR;
-								break;
-							case KEY_U:
-								g_wantedUpscaleFilter = (g_wantedUpscaleFilter == GamescopeUpscaleFilter::FSR) ?
-									GamescopeUpscaleFilter::LINEAR : GamescopeUpscaleFilter::FSR;
-								break;
-							case KEY_Y:
-								g_wantedUpscaleFilter = (g_wantedUpscaleFilter == GamescopeUpscaleFilter::NIS) ? 
-									GamescopeUpscaleFilter::LINEAR : GamescopeUpscaleFilter::NIS;
-								break;
-							case KEY_I:
-								g_upscaleFilterSharpness = std::min(20, g_upscaleFilterSharpness + 1);
-								break;
-							case KEY_O:
-								g_upscaleFilterSharpness = std::max(0, g_upscaleFilterSharpness - 1);
-								break;
-							case KEY_S:
-								gamescope::CScreenshotManager::Get().TakeScreenshot( true );
-								break;
-							case KEY_G:
-								g_bGrabbed = !g_bGrabbed;
+							case GAMESCOPE_SHORTCUT_KEYBOARD_GRAB:
 								SDL_SetWindowKeyboardGrab( m_Connector.GetSDLWindow(), g_bGrabbed ? SDL_TRUE : SDL_FALSE );
 
 								SDL_Event event;
@@ -784,9 +761,9 @@ namespace gamescope
 								SDL_PushEvent( &event );
 								break;
 							default:
-								handled = false;
+								break;
 						}
-						if ( handled )
+						if ( shortcut != GAMESCOPE_SHORTCUT_NONE )
 						{
 							break;
 						}

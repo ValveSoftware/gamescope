@@ -4,6 +4,8 @@
 
 #include <atomic>
 
+#include "shortcut.h"
+
 extern const char *gamescope_optstring;
 extern const struct option *gamescope_options;
 
@@ -73,3 +75,4 @@ extern int g_nXWaylandCount;
 extern uint32_t g_preferVendorID;
 extern uint32_t g_preferDeviceID;
 
+extern gamescope::ShortcutHandler g_shortcutHandler;
