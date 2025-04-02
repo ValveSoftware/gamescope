@@ -124,6 +124,16 @@ namespace gamescope
 
     void CScriptManager::RunDefaultScripts()
     {
+        const char *sScriptPathEnv = getenv("GAMESCOPE_SCRIPT_PATH");
+        if ( sScriptPathEnv )
+        {
+            std::vector<std::string_view> sScriptPaths = gamescope::Split( sScriptPathEnv, ":" );
+            for ( const auto &sScriptPath : sScriptPaths )
+            {
+                RunFolder( sScriptPath, true );
+            }
+        }
+
         if ( cv_script_use_local_scripts )
         {
             RunFolder( "../scripts", true );
