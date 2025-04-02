@@ -317,10 +317,10 @@ static void wlserver_handle_key(struct wl_listener *listener, void *data)
 		struct wlr_surface *new_kb_surf = steamcompmgr_get_server_input_surface( 0 );
 		if ( new_kb_surf )
 		{
-			wlserver_keyboardfocus( new_kb_surf, false );
+			wlserver_keyboardfocus( new_kb_surf, false, true );
 			wlr_seat_set_keyboard( wlserver.wlr.seat, keyboard->wlr );
 			wlr_seat_keyboard_notify_key( wlserver.wlr.seat, event->time_msec, event->keycode, event->state );
-			wlserver_keyboardfocus( old_kb_surf, false );
+			wlserver_keyboardfocus( old_kb_surf, false, false );
 			return;
 		}
 	}
@@ -2010,7 +2010,7 @@ void wlserver_shutdown()
     }
 }
 
-void wlserver_keyboardfocus( struct wlr_surface *surface, bool bConstrain )
+void wlserver_keyboardfocus( struct wlr_surface *surface, bool bConstrain, bool shouldNotifyKeyboardEnter )
 {
 	assert( wlserver_is_lock_held() );
 
@@ -2027,11 +2027,13 @@ void wlserver_keyboardfocus( struct wlr_surface *surface, bool bConstrain )
 	assert( wlserver.wlr.virtual_keyboard_device != nullptr );
 	wlr_seat_set_keyboard( wlserver.wlr.seat, wlserver.wlr.virtual_keyboard_device );
 
-	struct wlr_keyboard *keyboard = wlr_seat_get_keyboard( wlserver.wlr.seat );
-	if ( keyboard == nullptr )
-		wlr_seat_keyboard_notify_enter( wlserver.wlr.seat, surface, nullptr, 0, nullptr);
-	else
-		wlr_seat_keyboard_notify_enter( wlserver.wlr.seat, surface, keyboard->keycodes, keyboard->num_keycodes, &keyboard->modifiers);
+	if (shouldNotifyKeyboardEnter) {
+		struct wlr_keyboard *keyboard = wlr_seat_get_keyboard( wlserver.wlr.seat );
+		if ( keyboard == nullptr )
+			wlr_seat_keyboard_notify_enter( wlserver.wlr.seat, surface, nullptr, 0, nullptr);
+		else
+			wlr_seat_keyboard_notify_enter( wlserver.wlr.seat, surface, keyboard->keycodes, keyboard->num_keycodes, &keyboard->modifiers);
+	}
 
 	wlserver.kb_focus_surface = surface;
 
