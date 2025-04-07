@@ -3311,7 +3311,7 @@ static bool vulkan_make_output_images( VulkanOutput_t *pOutput )
 	uint32_t l_nOutputWidth = g_nOutputWidth;
 	uint32_t l_nOutputHeight = g_nOutputHeight;
 
-	if (g_bUseRotationShader) {
+	if (g_bEnableDRMRotationShader) {
 		l_nOutputWidth = g_nOutputHeight;
 		l_nOutputHeight = g_nOutputWidth;
 	}

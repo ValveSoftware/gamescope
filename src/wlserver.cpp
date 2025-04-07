@@ -3060,7 +3060,7 @@ static void apply_touchscreen_orientation(GamescopePanelOrientation orientation,
         }
     }
 
-	if (g_bUseRotationShader) {
+	if (g_bEnableDRMRotationShader) {
 		tx = 1.0 - *y;
 		ty = *x;
 	}

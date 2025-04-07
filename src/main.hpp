@@ -23,6 +23,7 @@ extern int g_nOutputRefresh; // mHz
 extern bool g_bOutputHDREnabled;
 extern bool g_bForceInternal;
 extern bool g_bUseRotationShader;
+extern bool g_bEnableDRMRotationShader;
 
 extern bool g_bFullscreen;
 
