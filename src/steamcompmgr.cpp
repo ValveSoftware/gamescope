@@ -6629,8 +6629,7 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 		wlserver_lock();
 		wlr_buffer_unlock( buf );
 		wlserver_unlock();
-
-		// Don't mark as recieve done commit, it was for the wrong surface.
+		w->receivedDoneCommit = true;
 		return;
 	}
 
