@@ -99,3 +99,7 @@ endif
 
 # Handle default script/config stuff
 meson.add_install_script('default_scripts_install.sh')
+
+devenv = environment()
+devenv.set('GAMESCOPE_SCRIPT_PATH', join_paths(meson.current_source_dir(), 'scripts'))
+meson.add_devenv(devenv)
