@@ -43,6 +43,7 @@ gamescope.config.known_displays.legiongos_lcd = {
         local lcd_types = {
             { vendor = "CSW", model = "PN8007QB1-1", product = 0x0800 },
             { vendor = "BOE", model = "NS080WUM-LX1", product = 0x0C00 },
+            { vendor = "BOE", model = "NS080WUM-LX1", product = 0x0CFF },
         }
 
         for index,value in ipairs(lcd_types) do
