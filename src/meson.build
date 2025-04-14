@@ -124,6 +124,7 @@ src = [
 
 luajit_dep = dependency( 'luajit' )
 libinput_dep = dependency('libinput', required: true)
+libudev_dep = dependency('libudev', required: true)
 
 gamescope_cpp_args = []
 if drm_dep.found()
@@ -196,7 +197,7 @@ gamescope_version = configure_file(
       xkbcommon, thread_dep, sdl2_dep, wlroots_dep,
       vulkan_dep, liftoff_dep, dep_xtst, dep_xmu, cap_dep, epoll_dep, pipewire_dep, librt_dep,
       stb_dep, displayinfo_dep, openvr_dep, dep_xcursor, avif_dep, dep_xi,
-      libdecor_dep, eis_dep, luajit_dep, libinput_dep,
+      libdecor_dep, eis_dep, luajit_dep, libinput_dep, libudev_dep
     ],
     install: true,
     cpp_args: gamescope_cpp_args,
