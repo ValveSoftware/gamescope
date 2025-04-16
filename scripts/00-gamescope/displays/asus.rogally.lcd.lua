@@ -10,7 +10,7 @@ local rogally_lcd_refresh_rates = {
 }
 
 gamescope.config.known_displays.rogally_lcd = {
-    pretty_name = "ASUS ROG Ally/Ally X LCD",
+    pretty_name = "ASUS ROG Ally / ROG Ally X LCD",
     hdr = {
         -- Setup some fallbacks for undocking with HDR, meant
         -- for the internal panel. It does not support HDR.
@@ -21,16 +21,14 @@ gamescope.config.known_displays.rogally_lcd = {
         max_frame_average_luminance = 500,
         min_content_light_level = 0.5
     },
-    -- Use the EDID colorimetry for now, but someone should check
-    -- if the EDID colorimetry truly matches what the display is capable of.
     dynamic_refresh_rates = rogally_lcd_refresh_rates,
-    -- Follow the Steam Deck OLED style for modegen by variang the VFP (Vertical Front Porch)
+    -- Follow the Steam Deck OLED style for modegen by varying the VFP (Vertical Front Porch)
     --
     -- Given that this display is VRR and likely has an FB/Partial FB in the DDIC:
     -- it should be able to handle this method, and it is more optimal for latency
     -- than elongating the clock.
     dynamic_modegen = function(base_mode, refresh)
-        debug("Generating mode "..refresh.."Hz for ROG Ally with fixed pixel clock")
+        debug("Generating mode "..refresh.."Hz for ASUS ROG Ally / ROG Ally X LCD with fixed pixel clock")
         local vfps = {
             1771, 1720, 1655, 1600, 1549,
             1499, 1455, 1405, 1361, 1320,
@@ -50,7 +48,7 @@ gamescope.config.known_displays.rogally_lcd = {
         }
         local vfp = vfps[zero_index(refresh - 48)]
         if vfp == nil then
-            warn("Couldn't do refresh "..refresh.." on ROG Ally")
+            warn("Couldn't do refresh "..refresh.." on ASUS ROG Ally / ROG Ally X LCD")
             return base_mode
         end
 
@@ -62,15 +60,28 @@ gamescope.config.known_displays.rogally_lcd = {
         --debug(inspect(mode))
         return mode
     end,
-    -- There is only a single panel model in use across both
-    -- ROG Ally + ROG Ally X.
     matches = function(display)
-        if display.vendor == "TMX" and display.model == "TL070FVXS01-0" and display.product == 0x0002 then
-            debug("[rogally_lcd] Matched vendor: "..display.vendor.." model: "..display.model.." product:"..display.product)
-            return 5000
+        -- There are two panels used across the ROG Ally and ROG Ally X
+        -- with the same timings, but the model names are in different
+        -- parts of the EDID.
+        local lcd_types = {
+            { vendor = "TMX", model = "TL070FVXS01-0", product = 0x0002 },
+            { vendor = "BOE", data_string = "TS070FHM-LU0", product = 0x0C33 },
+        }
+
+        for index, value in ipairs(lcd_types) do
+            -- We only match if the vendor and product match exactly, plus either model or data_string
+            if value.vendor == display.vendor and value.product == display.product then
+                if (value.model and value.model == display.model)
+                   or (value.data_string and value.data_string == display.data_string) then
+                    debug("[rogally_lcd] Matched vendor: "..value.vendor.." model: "..(value.model or value.data_string).." product: "..value.product)
+                    return 5000
+                end
+            end
         end
+
         return -1
     end
 }
-debug("Registered ASUS ROG Ally/Ally X LCD as a known display")
+debug("Registered ASUS ROG Ally / ROG Ally X LCD as a known display")
 --debug(inspect(gamescope.config.known_displays.rogally_lcd))
