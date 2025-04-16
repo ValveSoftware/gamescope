@@ -55,7 +55,10 @@ if get_option('enable_openvr_support')
   if not openvr_dep.found()
     cmake = import('cmake')
     openvr_var = cmake.subproject_options()
-    openvr_var.add_cmake_defines({'USE_LIBCXX': false})
+    openvr_var.add_cmake_defines({'USE_LIBCXX': false,
+    #HACK: remove me when openvr supports CMake 4.0
+    'CMAKE_POLICY_VERSION_MINIMUM': '3.5'})
+    #ENDHACK
     openvr_var.set_override_option('warning_level', '0')
     openvr_proj = cmake.subproject('openvr', options : openvr_var)
     openvr_dep = openvr_proj.dependency('openvr_api')
