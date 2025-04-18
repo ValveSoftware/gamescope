@@ -815,8 +815,12 @@ namespace gamescope
     };
     const wl_data_source_listener CWaylandBackend::s_DataSourceListener =
     {
-        .send      = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_DataSource_Send ),
-        .cancelled = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_DataSource_Cancelled ),
+        .target             = WAYLAND_NULL(),
+        .send               = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_DataSource_Send ),
+        .cancelled          = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_DataSource_Cancelled ),
+        .dnd_drop_performed = WAYLAND_NULL(),
+        .dnd_finished       = WAYLAND_NULL(),
+        .action             = WAYLAND_NULL(),
     };
     const zwp_primary_selection_source_v1_listener CWaylandBackend::s_PrimarySelectionSourceListener =
     {
