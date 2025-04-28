@@ -1855,10 +1855,10 @@ namespace gamescope
     void CWaylandPlane::Wayland_WPImageDescriptionInfo_TargetPrimaries( wp_image_description_info_v1 *pImageDescInfo, int32_t nRedX, int32_t nRedY, int32_t nGreenX, int32_t nGreenY, int32_t nBlueX, int32_t nBlueY, int32_t nWhiteX, int32_t nWhiteY )
     {
         auto *pDisplayColorimetry = &m_pConnector->m_DisplayColorimetry;
-        pDisplayColorimetry->primaries.r = glm::vec2{ nRedX / 10000.0f, nRedY / 10000.0f };
-        pDisplayColorimetry->primaries.g = glm::vec2{ nGreenX / 10000.0f, nGreenY / 10000.0f };
-        pDisplayColorimetry->primaries.b = glm::vec2{ nBlueX / 10000.0f, nBlueY / 10000.0f };
-        pDisplayColorimetry->white = glm::vec2{ nWhiteX / 10000.0f, nWhiteY / 10000.0f };
+        pDisplayColorimetry->primaries.r = glm::vec2{ nRedX / 1000000.0f, nRedY / 1000000.0f };
+        pDisplayColorimetry->primaries.g = glm::vec2{ nGreenX / 1000000.0f, nGreenY / 1000000.0f };
+        pDisplayColorimetry->primaries.b = glm::vec2{ nBlueX / 1000000.0f, nBlueY / 1000000.0f };
+        pDisplayColorimetry->white = glm::vec2{ nWhiteX / 1000000.0f, nWhiteY / 1000000.0f };
     }
     void CWaylandPlane::Wayland_WPImageDescriptionInfo_TargetLuminance( wp_image_description_info_v1 *pImageDescInfo, uint32_t uMinLum, uint32_t uMaxLum )
     {
