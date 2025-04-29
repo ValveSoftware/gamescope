@@ -187,18 +187,16 @@ struct wlserver_t {
 	std::vector<wl_resource*> gamescope_controls;
 
 	std::atomic<bool> bWaylandServerRunning = { false };
+
+    // Share one single keymap and state between all connected physical keyboards
+    struct wlr_keyboard_group *keyboard_group;
+    struct wl_listener keyboard_group_modifiers;
+    struct wl_listener keyboard_group_key;
 };
 
 extern struct wlserver_t wlserver;
 
 std::vector<ResListEntry_t> wlserver_xdg_commit_queue();
-
-struct wlserver_keyboard {
-	struct wlr_keyboard *wlr;
-	
-	struct wl_listener modifiers;
-	struct wl_listener key;
-};
 
 struct wlserver_pointer {
 	struct wlr_pointer *wlr;
