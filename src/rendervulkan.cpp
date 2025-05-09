@@ -1246,29 +1246,51 @@ uint64_t CVulkanDevice::submitInternal( CVulkanCmdBuffer* cmdBuffer )
 
 	std::vector<VkPipelineStageFlags> uWaitStageFlags;
 	std::vector<VkSemaphore> pWaitSemaphores;
-	std::vector<uint64_t> ulWaitPoints;
+
+	for ( auto &dep : cmdBuffer->GetExternalSignalTimelinePoints() )
+	{
+		static_cast<void>(dep);
+		std::shared_ptr<VulkanSemaphore_t> pSemaphore = std::make_unique<VulkanSemaphore_t>();
+		pSemaphore->pDevice = this;
+
+		VkExportSemaphoreCreateInfo exportInfo =
+		{
+		    .sType = VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO,
+		    .pNext = nullptr,
+		    .handleTypes = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT,
+		};
+
+		VkSemaphoreCreateInfo createInfo =
+		{
+			.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+		    .pNext = &exportInfo,
+		};
+
+		VkResult res;
+		if ( ( res = vk.CreateSemaphore( m_device, &createInfo, nullptr, &pSemaphore->pVkSemaphore ) ) != VK_SUCCESS )
+		{
+			vk_errorf( res, "vkCreateSemaphore failed" );
+		}
+
+		pSignalSemaphores.push_back( pSemaphore->pVkSemaphore );
+		cmdBuffer->AddSignal( pSemaphore );
+		ulSignalPoints.push_back( 0 );
+	}
 
 	pSignalSemaphores.push_back( m_scratchTimelineSemaphore );
 	ulSignalPoints.push_back( nextSeqNo );
 
-	for ( auto &dep : cmdBuffer->GetExternalSignals() )
-	{
-		pSignalSemaphores.push_back( dep.pTimelineSemaphore->pVkSemaphore );
-		ulSignalPoints.push_back( dep.ulPoint );
-	}
-
 	for ( auto &dep : cmdBuffer->GetExternalDependencies() )
 	{
-		pWaitSemaphores.push_back( dep.pTimelineSemaphore->pVkSemaphore );
-		ulWaitPoints.push_back( dep.ulPoint );
+		pWaitSemaphores.push_back( dep->pVkSemaphore );
 		uWaitStageFlags.push_back( VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT );
 	}
 
 	VkTimelineSemaphoreSubmitInfo timelineInfo = {
 		.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
 		// no need to ensure order of cmd buffer submission, we only have one queue
-		.waitSemaphoreValueCount = static_cast<uint32_t>( ulWaitPoints.size() ),
-		.pWaitSemaphoreValues = ulWaitPoints.data(),
+		.waitSemaphoreValueCount = 0,
+		.pWaitSemaphoreValues = nullptr,
 		.signalSemaphoreValueCount = static_cast<uint32_t>( ulSignalPoints.size() ),
 		.pSignalSemaphoreValues = ulSignalPoints.data(),
 	};
@@ -1289,6 +1311,42 @@ uint64_t CVulkanDevice::submitInternal( CVulkanCmdBuffer* cmdBuffer )
 
 	vk_check( vk.QueueSubmit( cmdBuffer->queue(), 1, &submitInfo, VK_NULL_HANDLE ) );
 
+	for (int i = 0; auto &dep : cmdBuffer->GetExternalSignalTimelinePoints() )
+	{
+		int nSyncFd = -1;
+
+		VkSemaphoreGetFdInfoKHR getFdInfo =
+		{
+			.sType = VK_STRUCTURE_TYPE_SEMAPHORE_GET_FD_INFO_KHR,
+			.pNext = nullptr,
+			.semaphore = pSignalSemaphores[i],
+			.handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT,
+		};
+
+		VkResult res;
+		bool importRes = true;
+		if ( ( res = vk.GetSemaphoreFdKHR( m_device, &getFdInfo, &nSyncFd ) ) != VK_SUCCESS )
+		{
+			vk_errorf( res, "vkGetSemaphoreFdKHR failed" );
+			importRes = false;
+		}
+		else
+		{
+			if ( !dep->GetTimeline()->ImportSyncFd( nSyncFd, dep->GetPoint() ) )
+			{
+				importRes = false;
+			}
+			close( nSyncFd );
+		}
+
+		if ( !importRes )
+		{
+			gamescope::CReleaseTimelinePoint releasePoint( dep->GetTimeline(), dep->GetPoint() );
+		}
+
+		++i;
+	}
+
 	return nextSeqNo;
 }
 
@@ -1307,38 +1365,15 @@ void CVulkanDevice::garbageCollect( void )
 	resetCmdBuffers(currentSeqNo);
 }
 
-VulkanTimelineSemaphore_t::~VulkanTimelineSemaphore_t()
+VulkanSemaphore_t::~VulkanSemaphore_t()
 {
-	if ( pVkSemaphore != VK_NULL_HANDLE )
-	{
-		pDevice->vk.DestroySemaphore( pDevice->device(), pVkSemaphore, nullptr );
-		pVkSemaphore = VK_NULL_HANDLE;
-	}
+	pDevice->vk.DestroySemaphore( pDevice->device(), pVkSemaphore, nullptr );
+	pVkSemaphore = VK_NULL_HANDLE;
 }
 
-int VulkanTimelineSemaphore_t::GetFd() const
+std::shared_ptr<VulkanSemaphore_t> CVulkanDevice::ImportSyncFd( int syncFd )
 {
-	const VkSemaphoreGetFdInfoKHR semaphoreGetInfo =
-	{
-		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_GET_FD_INFO_KHR,
-		.semaphore = pVkSemaphore,
-		.handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT,
-	};
-
-	int32_t nFd = -1;
-	VkResult res = VK_SUCCESS;
-	if ( ( res = pDevice->vk.GetSemaphoreFdKHR( pDevice->device(), &semaphoreGetInfo, &nFd ) ) != VK_SUCCESS )
-	{
-		vk_errorf( res, "vkGetSemaphoreFdKHR failed" );
-		return -1;
-	}
-
-	return nFd;
-}
-
-std::shared_ptr<VulkanTimelineSemaphore_t> CVulkanDevice::CreateTimelineSemaphore( uint64_t ulStartPoint, bool bShared )
-{
-	std::shared_ptr<VulkanTimelineSemaphore_t> pSemaphore = std::make_unique<VulkanTimelineSemaphore_t>();
+	std::shared_ptr<VulkanSemaphore_t> pSemaphore = std::make_unique<VulkanSemaphore_t>();
 	pSemaphore->pDevice = this;
 
 	VkSemaphoreCreateInfo createInfo =
@@ -1346,71 +1381,21 @@ std::shared_ptr<VulkanTimelineSemaphore_t> CVulkanDevice::CreateTimelineSemaphor
 		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
 	};
 
-	VkSemaphoreTypeCreateInfo typeInfo =
-	{
-		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
-		.pNext = std::exchange( createInfo.pNext, &typeInfo ),
-		.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE,
-		.initialValue = ulStartPoint,
-	};
-
-	VkExportSemaphoreCreateInfo exportInfo =
-	{
-		.sType = VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO,
-		.pNext = bShared ? std::exchange( createInfo.pNext, &exportInfo ) : nullptr,
-		// This is a syncobj fd for any drivers using syncobj.
-		.handleTypes = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT,
-	};
-
 	VkResult res;
 	if ( ( res = vk.CreateSemaphore( m_device, &createInfo, nullptr, &pSemaphore->pVkSemaphore ) ) != VK_SUCCESS )
 	{
 		vk_errorf( res, "vkCreateSemaphore failed" );
 		return nullptr;
 	}
-
-	return pSemaphore;
-}
-
-std::shared_ptr<VulkanTimelineSemaphore_t> CVulkanDevice::ImportTimelineSemaphore( gamescope::CTimeline *pTimeline )
-{
-	std::shared_ptr<VulkanTimelineSemaphore_t> pSemaphore = std::make_unique<VulkanTimelineSemaphore_t>();
-	pSemaphore->pDevice = this;
-
-	const VkSemaphoreTypeCreateInfo typeInfo =
-	{
-		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
-		.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE,
-	};
-
-	const VkSemaphoreCreateInfo createInfo =
-	{
-		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
-		.pNext = &typeInfo,
-	};
-
-	VkResult res;
-	if ( ( res = vk.CreateSemaphore( m_device, &createInfo, nullptr, &pSemaphore->pVkSemaphore ) ) != VK_SUCCESS )
-	{
-		vk_errorf( res, "vkCreateSemaphore failed" );
-		return nullptr;
-	}
-
-    // "Importing a semaphore payload from a file descriptor transfers
-    // ownership of the file descriptor from the application to the Vulkan
-    // implementation. The application must not perform any operations on
-    // the file descriptor after a successful import."
-	//
-	// Thus, we must dup.
 
 	VkImportSemaphoreFdInfoKHR importFdInfo =
 	{
 		.sType = VK_STRUCTURE_TYPE_IMPORT_SEMAPHORE_FD_INFO_KHR,
 		.pNext = nullptr,
 		.semaphore = pSemaphore->pVkSemaphore,
-		.flags = 0, // not temporary
-		.handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT,
-		.fd = dup( pTimeline->GetSyncobjFd() ),
+		.flags = VK_SEMAPHORE_IMPORT_TEMPORARY_BIT,
+		.handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT,
+		.fd = syncFd,
 	};
 	if ( ( res = vk.ImportSemaphoreFdKHR( m_device, &importFdInfo ) ) != VK_SUCCESS )
 	{
@@ -1421,14 +1406,24 @@ std::shared_ptr<VulkanTimelineSemaphore_t> CVulkanDevice::ImportTimelineSemaphor
 	return pSemaphore;
 }
 
-void CVulkanCmdBuffer::AddDependency( std::shared_ptr<VulkanTimelineSemaphore_t> pTimelineSemaphore, uint64_t ulPoint )
+void CVulkanCmdBuffer::AddDependency( std::shared_ptr<gamescope::CAcquireTimelinePoint> pAcquirePoint )
 {
-	m_ExternalDependencies.emplace_back( std::move( pTimelineSemaphore ), ulPoint );
+	std::shared_ptr<VulkanSemaphore_t> acquireSemaphore = pAcquirePoint->ToVkSemaphore();
+
+	if ( acquireSemaphore )
+	{
+		m_ExternalDependencies.emplace_back( std::move( acquireSemaphore ) );
+	}
 }
 
-void CVulkanCmdBuffer::AddSignal( std::shared_ptr<VulkanTimelineSemaphore_t> pTimelineSemaphore, uint64_t ulPoint )
+void CVulkanCmdBuffer::AddSignal( std::shared_ptr<VulkanSemaphore_t> pSemaphore )
 {
-	m_ExternalSignals.emplace_back( std::move( pTimelineSemaphore ), ulPoint );
+	m_ExternalSignals.emplace_back( std::move( pSemaphore ) );
+}
+
+void CVulkanCmdBuffer::AddSignalTimeline( std::shared_ptr<gamescope::CTimeline> pTimeline, uint64_t ulPoint )
+{
+	m_ExternalSignalTimelinePoints.push_back(std::make_shared<gamescope::CAcquireTimelinePoint>(pTimeline, ulPoint));
 }
 
 void CVulkanDevice::wait(uint64_t sequence, bool reset)
@@ -1489,6 +1484,7 @@ void CVulkanCmdBuffer::reset()
 
 	m_ExternalDependencies.clear();
 	m_ExternalSignals.clear();
+	m_ExternalSignalTimelinePoints.clear();
 }
 
 void CVulkanCmdBuffer::begin()
