@@ -6717,9 +6717,9 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 				const uint64_t ulNextReleasePoint = ++pTempImage->ulLastPoint;
 
 				std::unique_ptr<CVulkanCmdBuffer> pCommandBuffer = g_device.commandBuffer();
-				
-				pCommandBuffer->AddDependency( reslistentry.pAcquirePoint->GetTimeline()->ToVkSemaphore(), reslistentry.pAcquirePoint->GetPoint() );
-				pCommandBuffer->AddSignal( pTempImage->pReleaseTimeline->ToVkSemaphore(), ulNextReleasePoint );
+
+				pCommandBuffer->AddSignalTimeline( pTempImage->pReleaseTimeline, ulNextReleasePoint );
+				pCommandBuffer->AddDependency( reslistentry.pAcquirePoint );
 
 				static std::optional<uint64_t> s_ulLastPreemptiveUpscaleSeqNo;
 
