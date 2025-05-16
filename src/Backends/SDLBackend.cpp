@@ -34,6 +34,7 @@ extern bool steamMode;
 extern bool g_bFirstFrame;
 extern int g_nPreferredOutputWidth;
 extern int g_nPreferredOutputHeight;
+extern const char *g_nClassName;
 
 namespace gamescope
 {
@@ -562,6 +563,10 @@ namespace gamescope
 
 		SDL_SetHint( SDL_HINT_APP_NAME, "Gamescope" );
 		SDL_SetHint( SDL_HINT_VIDEO_ALLOW_SCREENSAVER, "1" );
+		if ( g_nClassName != nullptr ) {
+			setenv("SDL_VIDEO_WAYLAND_WMCLASS", g_nClassName, 1);
+			setenv("SDL_VIDEO_X11_WMCLASS", g_nClassName, 1);
+		}
 
 		if ( SDL_Init( SDL_INIT_VIDEO | SDL_INIT_EVENTS ) != 0 )
 		{
