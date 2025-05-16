@@ -6267,10 +6267,16 @@ bool handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint64_t co
 					hasRepaintNonBasePlane = true;
 				}
 
-				// If this is an external overlay, repaint
+				// matt: the performance overlay in Steam will interfere with VRR if we let this repaint.
+				// This has been broken since the logic for external overlay repaints was moved out of
+				// outdatedInteractiveFocus. It can cause displays to jump between the focused app's
+				// refresh rate and the maximum panel refresh rate when presenting any type of overlay,
+				// creating noticeable VRR flicker in the process.
+				// TODO: fix this properly for all overlays
+				// HACK: If this is an external overlay, DO NOT repaint
 				if ( w == pFocus->externalOverlayWindow && w->opacity != TRANSLUCENT )
 				{
-					hasRepaintNonBasePlane = true;
+					hasRepaintNonBasePlane = false;
 				}
 
 				// If this is the main plane, repaint
