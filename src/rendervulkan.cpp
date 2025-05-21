@@ -2814,7 +2814,7 @@ bool vulkan_init_format(VkFormat format, uint32_t drmFormat)
 	}
 	else
 	{
-		if ( GetBackend()->UsesModifiers() && !GetBackend()->SupportsFormat( drmFormat ) )
+		if ( GetBackend()->UsesModifiers() && !GetBackend()->SupportsFormat( drmFormat, true ) )
 			return false;
 
 		wlr_drm_format_set_add( &sampledDRMFormats, drmFormat, DRM_FORMAT_MOD_INVALID );
