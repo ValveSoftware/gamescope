@@ -254,7 +254,10 @@ static void copy_buffer(struct pipewire_state *state, struct pipewire_buffer *bu
 		assert(dmabuf.n_planes == 1);
 		chunk->offset = dmabuf.offset[0];
 		chunk->stride = dmabuf.stride[0];
-		chunk->size = 0; // TODO
+		chunk->size = dmabuf.height * chunk->stride;
+		if (state->video_info.format == SPA_VIDEO_FORMAT_NV12) {
+			chunk->size += ((dmabuf.height + 1)/2 * chunk->stride);
+		}
 		break;
 	default:
 		assert(false); // unreachable
