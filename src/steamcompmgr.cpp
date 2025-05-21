@@ -6362,8 +6362,15 @@ bool handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint64_t co
 					hasRepaintNonBasePlane = true;
 				}
 
-				// If this is an external overlay, repaint
-				if ( w == pFocus->externalOverlayWindow && w->opacity != TRANSLUCENT )
+				// matt: the performance overlay in Steam will interfere with VRR if we let this repaint.
+				// This has been broken since the logic for external overlay repaints was moved out of
+				// outdatedInteractiveFocus. It can cause displays to jump between the focused app's
+				// refresh rate and the maximum panel refresh rate when presenting any type of overlay,
+				// creating noticeable VRR flicker in the process.
+				// TODO: fix this properly for all overlays, including Steam notifications and QAM
+				// HACK: If VRR is active, prevent external overlays, i.e. mangoapp, from repainting the base plane
+				if ( ( w == pFocus->externalOverlayWindow && w->opacity != TRANSLUCENT ) &&
+				     ( GetBackend()->GetCurrentConnector() && !GetBackend()->GetCurrentConnector()->IsVRRActive() ) )
 				{
 					hasRepaintNonBasePlane = true;
 				}
