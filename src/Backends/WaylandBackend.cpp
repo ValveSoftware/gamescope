@@ -2251,7 +2251,7 @@ namespace gamescope
 
     bool CWaylandBackend::IsPaused() const
     {
-        return true;
+        return false;
     }
 
     bool CWaylandBackend::IsVisible() const
