@@ -1428,10 +1428,21 @@ namespace gamescope
 
                     if ( oState->eColorspace == GAMESCOPE_APP_TEXTURE_COLORSPACE_SCRGB )
                     {
+                        if ( !Algorithm::Contains( m_pBackend->m_WPColorManagerFeatures.eFeatures, WP_COLOR_MANAGER_V1_FEATURE_WINDOWS_SCRGB ))
+                        {
+                            xdg_log.errorf( "Attempting to transition to Windows scRGB, but it is not supported by the compositor." );
+                        }
+
                         m_pCurrentImageDescription = wp_color_manager_v1_create_windows_scrgb( m_pBackend->GetWPColorManager() );
                     }
                     else if ( oState->eColorspace == GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ )
                     {
+                        if ( !( Algorithm::Contains( m_pBackend->m_WPColorManagerFeatures.ePrimaries, WP_COLOR_MANAGER_V1_PRIMARIES_BT2020 ) &&
+                                Algorithm::Contains( m_pBackend->m_WPColorManagerFeatures.eTransferFunctions, WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_ST2084_PQ ) ) )
+                        {
+                            xdg_log.errorf( "Attempting to transition to HDR10 PQ, but it is not supported by the compositor." );
+                        }
+
                         wp_image_description_creator_params_v1 *pParams = wp_color_manager_v1_create_parametric_creator( m_pBackend->GetWPColorManager() );
 
                         double flScale = cv_wayland_hdr10_saturation_scale;
@@ -2478,16 +2489,23 @@ namespace gamescope
             wp_color_manager_v1_add_listener( m_pWPColorManager, &s_WPColorManagerListener, this );
 
             // HDR10.
+            if ( Algorithm::Contains( m_WPColorManagerFeatures.ePrimaries, WP_COLOR_MANAGER_V1_PRIMARIES_BT2020 ) &&
+                    Algorithm::Contains( m_WPColorManagerFeatures.eTransferFunctions, WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_ST2084_PQ ) )
             {
                 wp_image_description_creator_params_v1 *pParams = wp_color_manager_v1_create_parametric_creator( m_pWPColorManager );
                 wp_image_description_creator_params_v1_set_primaries_named( pParams, WP_COLOR_MANAGER_V1_PRIMARIES_BT2020 );
                 wp_image_description_creator_params_v1_set_tf_named( pParams, WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_ST2084_PQ );
                 m_pWPImageDescriptions[ GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ ] = wp_image_description_creator_params_v1_create( pParams );
+            } else {
+                xdg_log.warnf( "Compositor does not support HDR10 PQ." );
             }
 
             // scRGB
+            if ( Algorithm::Contains( m_WPColorManagerFeatures.eFeatures, WP_COLOR_MANAGER_V1_FEATURE_WINDOWS_SCRGB ) )
             {
                 m_pWPImageDescriptions[ GAMESCOPE_APP_TEXTURE_COLORSPACE_SCRGB ] = wp_color_manager_v1_create_windows_scrgb( m_pWPColorManager );
+            } else {
+                xdg_log.warnf( "Compositor does not support Windows scRGB." );
             }
         }
         else if ( !strcmp( pInterface, zwp_pointer_constraints_v1_interface.name ) )
