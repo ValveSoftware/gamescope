@@ -1,9 +1,10 @@
+#if HAVE_SCRIPTING
+
 #include <linux/input-event-codes.h>
 
 #include <span>
 
 #include "hotkey.h"
-#include "convar.h"
 
 // TODO: Consolidate
 #define WAYLAND_NULL() []<typename... Args> ( void *pData, Args... args ) { }
@@ -16,7 +17,7 @@ namespace gamescope
 	class CHotkeyBinding
     {
     public:
-        bool Init( gamescope_action_binding_manager *pManager, std::span<uint32_t> pKeySyms, std::vector<std::string> args )
+        bool Init( gamescope_action_binding_manager *pManager, std::span<uint32_t> pKeySyms, sol::function func )
         {
             Shutdown();
 
@@ -24,12 +25,7 @@ namespace gamescope
             if ( !m_pBinding )
                 return false;
 
-            m_args = args;
-            for ( std::string_view sv : args )
-            {
-                m_sDescription += sv;
-                m_sDescription += " ";
-            }
+            m_func = func;
 
             wl_array array;
             wl_array_init(&array);
@@ -41,7 +37,7 @@ namespace gamescope
 
             gamescope_action_binding_add_listener( m_pBinding, &s_BindingListener, (void *)this );
             gamescope_action_binding_add_keyboard_trigger( m_pBinding, &array );
-            gamescope_action_binding_set_description( m_pBinding, m_sDescription.c_str() );
+            gamescope_action_binding_set_description( m_pBinding, "TODO: for debugging" );
             gamescope_action_binding_arm( m_pBinding, 0 );
 
             return true;
@@ -58,23 +54,12 @@ namespace gamescope
 
         void Wayland_Triggered( gamescope_action_binding *pBinding, uint32_t uSequence, uint32_t uTriggerFlags, uint32_t uTimeLo, uint32_t uTimeHi )
         {
-            // eugh
-            std::vector<std::string_view> vec;
-            for ( std::string_view sv : m_args )
-            {
-                vec.push_back( sv );
-            }
-
-            if ( !gamescope::ConCommand::Exec( std::span<std::string_view>{ vec } ) )
-            {
-                fprintf( stderr, "Failed to exec: %s\n", m_sDescription.c_str() );
-            }
+            m_func();
         }
 
     private:
         gamescope_action_binding *m_pBinding = nullptr;
-		std::vector<std::string> m_args;
-        std::string m_sDescription;
+		sol::function m_func;
 
         static const gamescope_action_binding_listener s_BindingListener;
     };
@@ -119,10 +104,10 @@ namespace gamescope
 		return true;
 	}
 
-	bool HotkeyHandler::Bind( std::vector<uint32_t> pKeySyms, std::vector<std::string> args )
+	bool HotkeyHandler::Bind( std::vector<uint32_t> pKeySyms, sol::function func )
 	{
 		std::shared_ptr<CHotkeyBinding> binding = std::make_shared<CHotkeyBinding>();
-        auto success = binding->Init( m_pActionBindingManager, pKeySyms, args );
+        auto success = binding->Init( m_pActionBindingManager, pKeySyms, func );
         if ( success )
         {
             m_bindings.push_back(binding);
@@ -145,3 +130,5 @@ namespace gamescope
         .global_remove = WAYLAND_NULL(),
     };
 }
+
+#endif // HAVE_SCRIPTING
