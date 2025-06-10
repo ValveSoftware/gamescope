@@ -1426,6 +1426,7 @@ namespace GamescopeWSILayer {
             continue;
           }
 
+          auto prefetcher = xcb::Prefetcher::GetPrefetcherIf(!gamescopeSurface->isWayland(), gamescopeSurface->connection, gamescopeSurface->window);
           const bool canBypass = gamescopeSurface->canBypassXWayland();
           if (canBypass != gamescopeSwapchain->isBypassingXWayland) {
             if (canBypass) {
