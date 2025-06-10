@@ -27,6 +27,7 @@ extern bool g_bFullscreen;
 extern bool g_bGrabbed;
 
 extern float g_mouseSensitivity;
+extern float g_cursorSensitivity;
 extern const char *g_sOutputName;
 
 enum class GamescopeUpscaleFilter : uint32_t

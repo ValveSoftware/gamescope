@@ -2472,8 +2472,8 @@ void wlserver_mousemotion( double dx, double dy, uint32_t time )
 	wlserver.ulLastMovedCursorTime = get_time_in_nanos();
 	wlserver.bCursorHidden = !wlserver.bCursorHasImage;
 
-	wlserver.mouse_surface_cursorx += dx;
-	wlserver.mouse_surface_cursory += dy;
+	wlserver.mouse_surface_cursorx += dx * g_cursorSensitivity;
+	wlserver.mouse_surface_cursory += dy * g_cursorSensitivity;
 
 	wlserver_clampcursor();
 

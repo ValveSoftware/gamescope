@@ -118,6 +118,7 @@ const struct option *gamescope_options = (struct option[]){
 	{ "cursor", required_argument, nullptr, 0 },
 	{ "cursor-hotspot", required_argument, nullptr, 0 },
 	{ "cursor-scale-height", required_argument, nullptr, 0 },
+	{ "cursor-sensitivity", required_argument, nullptr, 0 },
 	{ "virtual-connector-strategy", required_argument, nullptr, 0 },
 	{ "ready-fd", required_argument, nullptr, 'R' },
 	{ "stats-path", required_argument, nullptr, 'T' },
@@ -186,6 +187,7 @@ const char usage[] =
 	"                                     headless => use headless backend (no window, no DRM output)\n"
 	"                                     wayland => use Wayland backend\n"
 	"  --cursor                       path to default cursor image\n"
+	"  --cursor-sensitivity           multiply mouse cursor movement by given decimal number\n"
 	"  -R, --ready-fd                 notify FD when ready\n"
 	"  --rt                           Use realtime scheduling\n"
 	"  -T, --stats-path               write statistics to path\n"
@@ -295,6 +297,7 @@ bool g_bForceRelativeMouse = false;
 bool g_bGrabbed = false;
 
 float g_mouseSensitivity = 1.0;
+float g_cursorSensitivity = 1.0;
 
 GamescopeUpscaleFilter g_upscaleFilter = GamescopeUpscaleFilter::LINEAR;
 GamescopeUpscaleScaler g_upscaleScaler = GamescopeUpscaleScaler::AUTO;
@@ -808,6 +811,8 @@ int main(int argc, char **argv)
 					eCurrentBackend = parse_backend_name( optarg );
 				} else if (strcmp(opt_name, "cursor-scale-height") == 0) {
 					g_nCursorScaleHeight = parse_integer(optarg, opt_name);
+				} else if (strcmp(opt_name, "cursor-sensitivity") == 0) {
+					g_cursorSensitivity = parse_float(optarg, opt_name);
 				} else if (strcmp(opt_name, "mangoapp") == 0) {
 					g_bLaunchMangoapp = true;
 				} else if (strcmp(opt_name, "virtual-connector-strategy") == 0) {
