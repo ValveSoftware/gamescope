@@ -296,8 +296,8 @@ bool g_bForceRelativeMouse = false;
 
 bool g_bGrabbed = false;
 
-float g_mouseSensitivity = 1.0;
-float g_cursorSensitivity = 1.0;
+gamescope::ConVar<float> cv_mouse_sensitivity("mouse_sensitivity", 1.0f, "Mouse movement multiplier");
+gamescope::ConVar<float> cv_cursor_sensitivity("cursor_sensitivity", 1.0f, "Cursor movement multiplier");
 
 GamescopeUpscaleFilter g_upscaleFilter = GamescopeUpscaleFilter::LINEAR;
 GamescopeUpscaleScaler g_upscaleScaler = GamescopeUpscaleScaler::AUTO;
@@ -754,7 +754,7 @@ int main(int argc, char **argv)
 				g_bGrabbed = true;
 				break;
 			case 's':
-				g_mouseSensitivity = parse_float( optarg, "mouse-sensitivity" );
+				cv_mouse_sensitivity = parse_float( optarg, "mouse-sensitivity" );
 				break;
 			case 'e':
 				steamMode = true;
@@ -812,7 +812,7 @@ int main(int argc, char **argv)
 				} else if (strcmp(opt_name, "cursor-scale-height") == 0) {
 					g_nCursorScaleHeight = parse_integer(optarg, opt_name);
 				} else if (strcmp(opt_name, "cursor-sensitivity") == 0) {
-					g_cursorSensitivity = parse_float(optarg, opt_name);
+					cv_cursor_sensitivity = parse_float(optarg, opt_name);
 				} else if (strcmp(opt_name, "mangoapp") == 0) {
 					g_bLaunchMangoapp = true;
 				} else if (strcmp(opt_name, "virtual-connector-strategy") == 0) {

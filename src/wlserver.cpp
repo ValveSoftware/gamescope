@@ -2458,8 +2458,8 @@ void wlserver_mousemotion( double dx, double dy, uint32_t time )
 {
 	assert( wlserver_is_lock_held() );
 
-	dx *= g_mouseSensitivity;
-	dy *= g_mouseSensitivity;
+	dx *= float(cv_mouse_sensitivity);
+	dy *= float(cv_mouse_sensitivity);
 
 	wlserver_perform_rel_pointer_motion( dx, dy );
 
@@ -2472,8 +2472,8 @@ void wlserver_mousemotion( double dx, double dy, uint32_t time )
 	wlserver.ulLastMovedCursorTime = get_time_in_nanos();
 	wlserver.bCursorHidden = !wlserver.bCursorHasImage;
 
-	wlserver.mouse_surface_cursorx += dx * g_cursorSensitivity;
-	wlserver.mouse_surface_cursory += dy * g_cursorSensitivity;
+	wlserver.mouse_surface_cursorx += dx * float(cv_cursor_sensitivity);
+	wlserver.mouse_surface_cursory += dy * float(cv_cursor_sensitivity);
 
 	wlserver_clampcursor();
 
