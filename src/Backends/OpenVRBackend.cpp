@@ -69,8 +69,8 @@ gamescope::ConVar<float> cv_vr_trackpad_click_max_delta( "vr_trackpad_click_max_
 gamescope::ConVar<bool> cv_vr_debug_force_opaque( "vr_debug_force_opaque", false, "Force textures to be treated as opaque." );
 gamescope::ConVar<bool> cv_vr_nudge_to_visible_per_connector( "vr_nudge_to_visible_per_connector", false, "" );
 
-// Just below half of 120Hz, so we always at least poll input once per frame, regardless of cadence/cycles.
-gamescope::ConVar<uint64_t> cv_vr_poll_rate( "vr_poll_rate", 4'000'000ul, "Time between input polls. In nanoseconds." );
+// Maximum interval between polling for VR events (normally paced by frame sync)
+gamescope::ConVar<uint32_t> cv_vr_poll_rate( "vr_poll_rate", 50ul, "Max time between input polls. In milliseconds." );
 
 // Not in public headers yet.
 namespace vr
@@ -228,8 +228,14 @@ namespace gamescope
         bool IsSubview() const { return m_bIsSubview; }
 
         COpenVRBackend *GetBackend() const { return m_pBackend; }
+        COpenVRConnector *GetConnector() const { return m_pConnector; }
 
         void OnPageFlip();
+
+        bool operator==( const vr::VROverlayHandle_t& hOverlay ) const
+        {
+            return this->m_hOverlay == hOverlay;
+        }
 
     private:
         COpenVRConnector *m_pConnector = nullptr;
@@ -310,6 +316,15 @@ namespace gamescope
         }
 
         std::span<COpenVRPlane> GetPlanes() { return std::span<COpenVRPlane>( &m_Planes[0], std::size( m_Planes ) ); }
+
+        COpenVRPlane *GetPlaneByOverlayHandle( vr::VROverlayHandle_t hOverlay )
+        {
+            auto iter = std::find( std::begin( m_Planes ), std::end( m_Planes ), hOverlay );
+            if ( iter == std::end( m_Planes ) )
+                return nullptr;
+            else
+                return &(*iter);
+        }
 
         bool ConsumeNudgeToVisible() { return std::exchange( m_bNudgeToVisible, false ); }
         bool IsRelativeMouse() const { return m_bRelativeMouse; }
@@ -931,311 +946,332 @@ namespace gamescope
             }
         }
 
+        COpenVRPlane *GetPlaneByOverlayHandle( vr::VROverlayHandle_t hOverlay )
+        {
+            COpenVRPlane *pPlane = nullptr;
+            for ( COpenVRConnector *pConnector : m_pActiveConnectors )
+            {
+                pPlane = pConnector->GetPlaneByOverlayHandle( hOverlay );
+                if ( pPlane )
+                    break;
+            }
+            return pPlane;
+        }
+
         void VRInputThread()
         {
             pthread_setname_np( pthread_self(), "gamescope-vrinp" );
 
             m_bInitted.wait( false );
 
-            // Josh: PollNextOverlayEvent sucks.
-            // I want WaitNextOverlayEvent (like SDL_WaitEvent) so this doesn't have to spin and sleep.
             while ( m_bRunning )
             {
                 {
-                    std::scoped_lock lock{ m_mutActiveConnectors };
+                    std::scoped_lock lock{m_mutActiveConnectors};
 
-                    for ( COpenVRConnector *pConnector : m_pActiveConnectors )
+                    vr::VREvent_t vrEvent;
+                    bool bDidScrollThisFrame = false;
+                    bool bPendingTouchMove = false;
+                    float flTouchMoveX, flTouchMoveY;
+                    vr::VROverlayHandle_t hOverlay;
+                    while (vr::VRSystem()->PollNextEventWithPoseAndOverlays(vr::TrackingUniverseSeated, &vrEvent, sizeof(vrEvent), nullptr, &hOverlay))
                     {
-                        bool bIsSteam = VirtualConnectorKeyIsSteam( pConnector->GetVirtualConnectorKey() );
-
-                        for ( COpenVRPlane &plane : pConnector->GetPlanes() )
+                        COpenVRPlane *pPlane = nullptr;
+                        COpenVRConnector *pConnector = nullptr;
+                        bool bIsSteam = false;
+                        if (hOverlay != vr::k_ulOverlayHandleInvalid)
                         {
-                            vr::VREvent_t vrEvent;
-                            bool bDidScrollThisFrame = false;
-                            bool bPendingTouchMove = false;
-                            float flTouchMoveX, flTouchMoveY;
-                            while( vr::VROverlay()->PollNextOverlayEvent( plane.GetOverlay(), &vrEvent, sizeof( vrEvent ) ) )
+                            pPlane = GetPlaneByOverlayHandle(hOverlay);
+                            if (pPlane)
                             {
-                                switch( vrEvent.eventType )
+                                pConnector = pPlane->GetConnector();
+                                bIsSteam = VirtualConnectorKeyIsSteam(pConnector->GetVirtualConnectorKey());
+                            }
+                        }
+
+                        switch (vrEvent.eventType)
+                        {
+                        case vr::VREvent_Quit:
+                        {
+                            raise(SIGTERM);
+                        }
+                        break;
+
+                        case vr::VREvent_OverlayClosed:
+                        {
+                            if (!steamMode || bIsSteam)
+                            {
+                                if (!pPlane || !pPlane->IsSubview())
                                 {
-                                    case vr::VREvent_Quit:
-                                    {
-                                        raise( SIGTERM );
-                                    }
-                                    break;
-
-                                    case vr::VREvent_OverlayClosed:
-                                    {
-                                        if ( !steamMode || bIsSteam )
-                                        {
-                                            if ( !plane.IsSubview() )
-                                            {
-                                                raise( SIGTERM );
-                                            }
-                                        }
-                                        else
-                                        {
-                                            // How do we quit a game?
-                                            // Do we?
-                                        }
-                                        break;
-                                    }
-
-                                    case vr::VREvent_SceneApplicationChanged:
-                                    {
-                                        if ( m_uCurrentScenePid != vrEvent.data.process.pid )
-                                        {
-                                            m_uCurrentScenePid = vrEvent.data.process.pid;
-                                            m_uCurrentSceneAppId = get_appid_from_pid( m_uCurrentScenePid );
-
-                                            openvr_log.debugf( "SceneApplicationChanged -> pid: %u appid: %u", m_uCurrentScenePid, m_uCurrentSceneAppId );
-
-                                            std::optional<VirtualConnectorKey_t> oulNewSceneAppVirtualConnectorKey;
-                                            if ( cv_backend_virtual_connector_strategy == VirtualConnectorStrategies::PerAppId )
-                                            {
-                                                oulNewSceneAppVirtualConnectorKey = m_uCurrentSceneAppId;
-                                            }
-
-                                            if ( ( oulNewSceneAppVirtualConnectorKey || m_oulCurrentSceneVirtualConnectorKey ) &&
-                                                ( oulNewSceneAppVirtualConnectorKey != m_oulCurrentSceneVirtualConnectorKey ) )
-                                            {
-                                                for ( COpenVRConnector *pOtherConnector : m_pActiveConnectors )
-                                                {
-                                                    if ( oulNewSceneAppVirtualConnectorKey )
-                                                    {
-                                                        if ( pOtherConnector->GetVirtualConnectorKey() == *oulNewSceneAppVirtualConnectorKey )
-                                                            pOtherConnector->MarkSceneAppShown( true );
-                                                    }
-
-                                                    if ( m_oulCurrentSceneVirtualConnectorKey )
-                                                    {
-                                                        if ( pOtherConnector->GetVirtualConnectorKey() == *m_oulCurrentSceneVirtualConnectorKey )
-                                                            pOtherConnector->MarkSceneAppShown( false );
-                                                    }
-                                                }
-                                            }
-
-                                            m_oulCurrentSceneVirtualConnectorKey = oulNewSceneAppVirtualConnectorKey;
-                                        }
-
-                                        break;
-                                    }
-
-                                    case vr::VREvent_KeyboardCharInput:
-                                    {
-                                        if (m_pIME)
-                                        {
-                                            type_text(m_pIME, vrEvent.data.keyboard.cNewInput);
-                                        }
-                                        break;
-                                    }
-
-                                    case vr::VREvent_MouseMove:
-                                    {
-                                        if ( pConnector->m_bUsingVRMouse )
-                                        {
-                                            SetFocus( pConnector );
-                                            float flX = vrEvent.data.mouse.x / float( g_nOutputWidth );
-                                            float flY = ( g_nOutputHeight - vrEvent.data.mouse.y ) / float( g_nOutputHeight );
-
-                                            TouchClickMode eMode = GetTouchClickMode();
-
-                                            if ( eMode == TouchClickModes::Trackpad )
-                                            {
-                                                glm::vec2 vOldTrackpadPos = m_vScreenTrackpadPos;
-                                                m_vScreenTrackpadPos = glm::vec2{ flX, flY };
-
-                                                if ( m_bMouseDown )
-                                                {
-                                                    glm::vec2 vDelta = ( m_vScreenTrackpadPos - vOldTrackpadPos );
-                                                    // We are based off normalized coords, so we need to fix the aspect ratio
-                                                    // or we get different sensitivities on X and Y.
-                                                    vDelta.y *= ( (float)g_nOutputHeight / (float)g_nOutputWidth );
-
-                                                    vDelta *= float( cv_vr_trackpad_sensitivity );
-
-                                                    wlserver_lock();
-                                                    wlserver_mousemotion( vDelta.x, vDelta.y, ++m_uFakeTimestamp );
-                                                    wlserver_unlock();
-                                                }
-                                            }
-                                            else
-                                            {
-                                                // Hold the call to wlserver_touchmotion until we're sure there are no VREvent_ScrollSmooth events this frame
-                                                bPendingTouchMove = true;
-                                                flTouchMoveX = flX;
-                                                flTouchMoveY = flY;
-                                            }
-                                        }
-                                        break;
-                                    }
-                                    case vr::VREvent_FocusEnter:
-                                    {
-                                        pConnector->m_bUsingVRMouse = true;
-                                        SetFocus( pConnector );
-                                        break;
-                                    }
-                                    case vr::VREvent_MouseButtonUp:
-                                    case vr::VREvent_MouseButtonDown:
-                                    {
-                                        SetFocus( pConnector );
-
-                                        if ( !pConnector->m_bUsingVRMouse )
-                                        {
-                                            pConnector->m_bUsingVRMouse = true;
-                                        }
-                                        else
-                                        {
-
-                                            float flX = vrEvent.data.mouse.x / float( g_nOutputWidth );
-                                            float flY = ( g_nOutputHeight - vrEvent.data.mouse.y ) / float( g_nOutputHeight );
-
-                                            uint64_t ulNow = get_time_in_nanos();
-
-                                            if ( vrEvent.eventType == vr::VREvent_MouseButtonDown )
-                                            {
-                                                m_ulMouseDownTime = ulNow;
-                                                m_bMouseDown = true;
-                                            }
-                                            else
-                                            {
-                                                m_bMouseDown = false;
-                                            }
-
-                                            TouchClickMode eMode = GetTouchClickMode();
-                                            if ( eMode == TouchClickModes::Trackpad )
-                                            {
-                                                m_vScreenTrackpadPos = glm::vec2{ flX, flY };
-
-                                                if ( vrEvent.eventType == vr::VREvent_MouseButtonUp )
-                                                {
-                                                    glm::vec2 vTotalDelta = ( m_vScreenTrackpadPos - m_vScreenStartTrackpadPos );
-                                                    vTotalDelta.y *= ( (float)g_nOutputHeight / (float)g_nOutputWidth );
-                                                    float flMaxAbsTotalDelta = std::max<float>( std::abs( vTotalDelta.x ), std::abs( vTotalDelta.y ) );
-
-                                                    uint64_t ulClickTime = ulNow - m_ulMouseDownTime;
-                                                    if ( ulClickTime <= cv_vr_trackpad_click_time && flMaxAbsTotalDelta <= cv_vr_trackpad_click_max_delta )
-                                                    {
-                                                        wlserver_lock();
-                                                        wlserver_mousebutton( BTN_LEFT, true, ++m_uFakeTimestamp );
-                                                        wlserver_unlock();
-
-                                                        sleep_for_nanos( g_SteamCompMgrLimitedAppRefreshCycle + 1'000'000 );
-
-                                                        wlserver_lock();
-                                                        wlserver_mousebutton( BTN_LEFT, false, ++m_uFakeTimestamp );
-                                                        wlserver_unlock();
-                                                    }
-                                                    else
-                                                    {
-                                                        m_vScreenStartTrackpadPos = m_vScreenTrackpadPos;
-                                                    }
-                                                }
-                                            }
-                                            else
-                                            {
-                                                wlserver_lock();
-                                                if ( vrEvent.eventType == vr::VREvent_MouseButtonDown )
-                                                    wlserver_touchdown( flX, flY, 0, ++m_uFakeTimestamp );
-                                                else
-                                                    wlserver_touchup( 0, ++m_uFakeTimestamp );
-                                                wlserver_unlock();
-                                            }
-                                        }
-                                        break;
-                                    }
-
-                                    case vr::VREvent_ScrollSmooth:
-                                    {
-                                        SetFocus( pConnector );
-                                        float flX = -vrEvent.data.scroll.xdelta * m_flScrollSpeed;
-                                        float flY = -vrEvent.data.scroll.ydelta * m_flScrollSpeed;
-                                        wlserver_lock();
-                                        wlserver_mousewheel( flX, flY, ++m_uFakeTimestamp );
-                                        wlserver_unlock();
-                                        bDidScrollThisFrame = true;
-                                        break;
-                                    }
-
-                                    case vr::VREvent_ButtonPress:
-                                    {
-                                        SetFocus( pConnector );
-                                        vr::EVRButtonId button = (vr::EVRButtonId)vrEvent.data.controller.button;
-
-                                        if (button != vr::k_EButton_Steam && button != vr::k_EButton_QAM)
-                                            break;
-
-                                        if (button == vr::k_EButton_Steam)
-                                            openvr_log.infof("STEAM button pressed.");
-                                        else
-                                            openvr_log.infof("QAM button pressed.");
-
-                                        wlserver_open_steam_menu( button == vr::k_EButton_QAM );
-                                        break;
-                                    }
-
-                                    case vr::VREvent_OverlayShown:
-                                    case vr::VREvent_OverlayHidden:
-                                    {
-                                        // Only handle this for the base plane.
-                                        // Subviews can be hidden if we hide them ourselves,
-                                        // or for other reasons.
-                                        if ( !plane.IsSubview() )
-                                        {
-                                            pConnector->MarkOverlayShown( vrEvent.eventType == vr::VREvent_OverlayShown );
-                                        }
-                                        break;
-                                    }
-
-                                    default:
-                                        break;
+                                    raise(SIGTERM);
                                 }
                             }
-
-                            if ( bPendingTouchMove )
+                            else
                             {
-                                // Always warp a cursor, even if it's invisible, so we get hover events.
-                                // Unless a scroll happened this frame. Then, skip the cursor move because it causes the scroll to be dropped.
-                                bool bAlwaysMoveCursor = !bDidScrollThisFrame && ( GetTouchClickMode() == TouchClickModes::Passthrough ) && cv_vr_always_warp_cursor;
-
-                                wlserver_lock();
-                                wlserver_touchmotion( flTouchMoveX, flTouchMoveY , 0, ++m_uFakeTimestamp, bAlwaysMoveCursor );
-                                wlserver_unlock();
+                                // How do we quit a game?
+                                // Do we?
                             }
+                            break;
+                        }
+
+                        case vr::VREvent_SceneApplicationChanged:
+                        {
+                            if (m_uCurrentScenePid != vrEvent.data.process.pid)
+                            {
+                                m_uCurrentScenePid = vrEvent.data.process.pid;
+                                m_uCurrentSceneAppId = get_appid_from_pid(m_uCurrentScenePid);
+
+                                openvr_log.debugf("SceneApplicationChanged -> pid: %u appid: %u", m_uCurrentScenePid, m_uCurrentSceneAppId);
+
+                                std::optional<VirtualConnectorKey_t> oulNewSceneAppVirtualConnectorKey;
+                                if (cv_backend_virtual_connector_strategy == VirtualConnectorStrategies::PerAppId)
+                                {
+                                    oulNewSceneAppVirtualConnectorKey = m_uCurrentSceneAppId;
+                                }
+
+                                if ((oulNewSceneAppVirtualConnectorKey || m_oulCurrentSceneVirtualConnectorKey) &&
+                                    (oulNewSceneAppVirtualConnectorKey != m_oulCurrentSceneVirtualConnectorKey))
+                                {
+                                    for (COpenVRConnector *pOtherConnector : m_pActiveConnectors)
+                                    {
+                                        if (oulNewSceneAppVirtualConnectorKey)
+                                        {
+                                            if (pOtherConnector->GetVirtualConnectorKey() == *oulNewSceneAppVirtualConnectorKey)
+                                                pOtherConnector->MarkSceneAppShown(true);
+                                        }
+
+                                        if (m_oulCurrentSceneVirtualConnectorKey)
+                                        {
+                                            if (pOtherConnector->GetVirtualConnectorKey() == *m_oulCurrentSceneVirtualConnectorKey)
+                                                pOtherConnector->MarkSceneAppShown(false);
+                                        }
+                                    }
+                                }
+
+                                m_oulCurrentSceneVirtualConnectorKey = oulNewSceneAppVirtualConnectorKey;
+                            }
+
+                            break;
+                        }
+
+                        case vr::VREvent_KeyboardCharInput:
+                        {
+                            if (m_pIME)
+                            {
+                                type_text(m_pIME, vrEvent.data.keyboard.cNewInput);
+                            }
+                            break;
+                        }
+
+                        case vr::VREvent_MouseMove:
+                        {
+                            if (pConnector && pConnector->m_bUsingVRMouse)
+                            {
+                                SetFocus(pConnector);
+                                float flX = vrEvent.data.mouse.x / float(g_nOutputWidth);
+                                float flY = (g_nOutputHeight - vrEvent.data.mouse.y) / float(g_nOutputHeight);
+
+                                TouchClickMode eMode = GetTouchClickMode();
+
+                                if (eMode == TouchClickModes::Trackpad)
+                                {
+                                    glm::vec2 vOldTrackpadPos = m_vScreenTrackpadPos;
+                                    m_vScreenTrackpadPos = glm::vec2{flX, flY};
+
+                                    if (m_bMouseDown)
+                                    {
+                                        glm::vec2 vDelta = (m_vScreenTrackpadPos - vOldTrackpadPos);
+                                        // We are based off normalized coords, so we need to fix the aspect ratio
+                                        // or we get different sensitivities on X and Y.
+                                        vDelta.y *= ((float)g_nOutputHeight / (float)g_nOutputWidth);
+
+                                        vDelta *= float(cv_vr_trackpad_sensitivity);
+
+                                        wlserver_lock();
+                                        wlserver_mousemotion(vDelta.x, vDelta.y, ++m_uFakeTimestamp);
+                                        wlserver_unlock();
+                                    }
+                                }
+                                else
+                                {
+                                    // Hold the call to wlserver_touchmotion until we're sure there are no VREvent_ScrollSmooth events this frame
+                                    bPendingTouchMove = true;
+                                    flTouchMoveX = flX;
+                                    flTouchMoveY = flY;
+                                }
+                            }
+                            break;
+                        }
+                        case vr::VREvent_FocusEnter:
+                            if (pConnector)
+                            {
+                                pConnector->m_bUsingVRMouse = true;
+                                SetFocus(pConnector);
+                            }
+                            break;
+                        case vr::VREvent_MouseButtonUp:
+                        case vr::VREvent_MouseButtonDown:
+                            if (pConnector)
+                            {
+                                SetFocus(pConnector);
+
+                                if (!pConnector->m_bUsingVRMouse)
+                                {
+                                    pConnector->m_bUsingVRMouse = true;
+                                }
+                                else
+                                {
+
+                                    float flX = vrEvent.data.mouse.x / float(g_nOutputWidth);
+                                    float flY = (g_nOutputHeight - vrEvent.data.mouse.y) / float(g_nOutputHeight);
+
+                                    uint64_t ulNow = get_time_in_nanos();
+
+                                    if (vrEvent.eventType == vr::VREvent_MouseButtonDown)
+                                    {
+                                        m_ulMouseDownTime = ulNow;
+                                        m_bMouseDown = true;
+                                    }
+                                    else
+                                    {
+                                        m_bMouseDown = false;
+                                    }
+
+                                    TouchClickMode eMode = GetTouchClickMode();
+                                    if (eMode == TouchClickModes::Trackpad)
+                                    {
+                                        m_vScreenTrackpadPos = glm::vec2{flX, flY};
+
+                                        if (vrEvent.eventType == vr::VREvent_MouseButtonUp)
+                                        {
+                                            glm::vec2 vTotalDelta = (m_vScreenTrackpadPos - m_vScreenStartTrackpadPos);
+                                            vTotalDelta.y *= ((float)g_nOutputHeight / (float)g_nOutputWidth);
+                                            float flMaxAbsTotalDelta = std::max<float>(std::abs(vTotalDelta.x), std::abs(vTotalDelta.y));
+
+                                            uint64_t ulClickTime = ulNow - m_ulMouseDownTime;
+                                            if (ulClickTime <= cv_vr_trackpad_click_time && flMaxAbsTotalDelta <= cv_vr_trackpad_click_max_delta)
+                                            {
+                                                wlserver_lock();
+                                                wlserver_mousebutton(BTN_LEFT, true, ++m_uFakeTimestamp);
+                                                wlserver_unlock();
+
+                                                sleep_for_nanos(g_SteamCompMgrLimitedAppRefreshCycle + 1'000'000);
+
+                                                wlserver_lock();
+                                                wlserver_mousebutton(BTN_LEFT, false, ++m_uFakeTimestamp);
+                                                wlserver_unlock();
+                                            }
+                                            else
+                                            {
+                                                m_vScreenStartTrackpadPos = m_vScreenTrackpadPos;
+                                            }
+                                        }
+                                    }
+                                    else
+                                    {
+                                        wlserver_lock();
+                                        if (vrEvent.eventType == vr::VREvent_MouseButtonDown)
+                                            wlserver_touchdown(flX, flY, 0, ++m_uFakeTimestamp);
+                                        else
+                                            wlserver_touchup(0, ++m_uFakeTimestamp);
+                                        wlserver_unlock();
+                                    }
+                                }
+                            }
+                            break;
+
+                        case vr::VREvent_ScrollSmooth:
+                            if (pConnector)
+                            {
+                                SetFocus(pConnector);
+                                float flX = -vrEvent.data.scroll.xdelta * m_flScrollSpeed;
+                                float flY = -vrEvent.data.scroll.ydelta * m_flScrollSpeed;
+                                wlserver_lock();
+                                wlserver_mousewheel(flX, flY, ++m_uFakeTimestamp);
+                                wlserver_unlock();
+                                bDidScrollThisFrame = true;
+                            }
+                            break;
+
+                        case vr::VREvent_ButtonPress:
+                            if (pConnector)
+                            {
+                                SetFocus(pConnector);
+                                vr::EVRButtonId button = (vr::EVRButtonId)vrEvent.data.controller.button;
+
+                                if (button != vr::k_EButton_Steam && button != vr::k_EButton_QAM)
+                                    break;
+
+                                if (button == vr::k_EButton_Steam)
+                                    openvr_log.infof("STEAM button pressed.");
+                                else
+                                    openvr_log.infof("QAM button pressed.");
+
+                                wlserver_open_steam_menu(button == vr::k_EButton_QAM);
+                            }
+                            break;
+
+                        case vr::VREvent_OverlayShown:
+                        case vr::VREvent_OverlayHidden:
+                            if (pConnector)
+                            {
+                                // Only handle this for the base plane.
+                                // Subviews can be hidden if we hide them ourselves,
+                                // or for other reasons.
+                                if (!pPlane->IsSubview())
+                                {
+                                    pConnector->MarkOverlayShown(vrEvent.eventType == vr::VREvent_OverlayShown);
+                                }
+                            }
+                            break;
+
+                        default:
+                            break;
                         }
                     }
 
+                    if (bPendingTouchMove)
+                    {
+                        // Always warp a cursor, even if it's invisible, so we get hover events.
+                        // Unless a scroll happened this frame. Then, skip the cursor move because it causes the scroll to be dropped.
+                        bool bAlwaysMoveCursor = !bDidScrollThisFrame && (GetTouchClickMode() == TouchClickModes::Passthrough) && cv_vr_always_warp_cursor;
+
+                        wlserver_lock();
+                        wlserver_touchmotion(flTouchMoveX, flTouchMoveY, 0, ++m_uFakeTimestamp, bAlwaysMoveCursor);
+                        wlserver_unlock();
+                    }
+
                     // Process mouse input state.
-                    for ( COpenVRConnector *pConnector : m_pActiveConnectors )
+                    for (COpenVRConnector *pConnector : m_pActiveConnectors)
                     {
                         bool bUsingPhysicalMouse = GetCurrentConnector() == pConnector && !pConnector->m_bUsingVRMouse;
 
                         bool bShowCursor = !pConnector->IsRelativeMouse();
 
-                        if ( bUsingPhysicalMouse && bShowCursor )
+                        if (bUsingPhysicalMouse && bShowCursor)
                         {
                             vr::HmdVector2_t vMousePos =
-                            {
-                                static_cast<float>( wlserver.mouse_surface_cursorx ),
-                                static_cast<float>( static_cast<double>( g_nOutputHeight )       - wlserver.mouse_surface_cursory ),
-                            };
+                                {
+                                    static_cast<float>(wlserver.mouse_surface_cursorx),
+                                    static_cast<float>(static_cast<double>(g_nOutputHeight) - wlserver.mouse_surface_cursory),
+                                };
 
-                            vr::VROverlay()->SetOverlayCursorPositionOverride( pConnector->GetPrimaryPlane()->GetOverlay(), &vMousePos );
+                            vr::VROverlay()->SetOverlayCursorPositionOverride(pConnector->GetPrimaryPlane()->GetOverlay(), &vMousePos);
                             pConnector->m_bCurrentlyOverridingPosition = true;
                         }
                         else
                         {
-                            if ( !pConnector->m_bCurrentlyOverridingPosition )
+                            if (!pConnector->m_bCurrentlyOverridingPosition)
                                 continue;
 
-                            vr::VROverlay()->ClearOverlayCursorPositionOverride( pConnector->GetPrimaryPlane()->GetOverlay() );
+                            vr::VROverlay()->ClearOverlayCursorPositionOverride(pConnector->GetPrimaryPlane()->GetOverlay());
 
                             pConnector->m_bCurrentlyOverridingPosition = false;
                         }
                     }
                 }
 
-                sleep_for_nanos( cv_vr_poll_rate );
+                vr::VROverlay()->WaitFrameSync(cv_vr_poll_rate);
             }
         }
 
