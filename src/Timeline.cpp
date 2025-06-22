@@ -26,29 +26,43 @@ namespace gamescope
 
     /*static*/ std::shared_ptr<CTimeline> CTimeline::Create( const TimelineCreateDesc_t &desc )
     {
-        std::shared_ptr<VulkanTimelineSemaphore_t> pSemaphore = g_device.CreateTimelineSemaphore( desc.ulStartingPoint, true );
-        if ( !pSemaphore )
-            return nullptr;
+        int nSyncobjFd = -1;
+        uint32_t uSyncobjHandle = 0;
+        uint64_t ulStartingPoint = desc.ulStartingPoint;
 
-        return std::make_shared<CTimeline>( pSemaphore->GetFd(), std::move( pSemaphore ) );
+        if ( drmSyncobjCreate( g_device.drmRenderFd(), 0, &uSyncobjHandle ) != 0 )
+        {
+            return nullptr;
+        }
+
+        if ( drmSyncobjTimelineSignal( g_device.drmRenderFd(), &uSyncobjHandle, &ulStartingPoint, 1 ) != 0 )
+        {
+            drmSyncobjDestroy( g_device.drmRenderFd(), uSyncobjHandle );
+            return nullptr;
+        }
+
+        if ( drmSyncobjHandleToFD( g_device.drmRenderFd(), uSyncobjHandle, &nSyncobjFd ) != 0 )
+        {
+            drmSyncobjDestroy( g_device.drmRenderFd(), uSyncobjHandle );
+            return nullptr;
+        }
+
+        return std::make_shared<CTimeline>( nSyncobjFd, uSyncobjHandle );
     }
 
-    CTimeline::CTimeline( int32_t nSyncobjFd, std::shared_ptr<VulkanTimelineSemaphore_t> pSemaphore )
-        : CTimeline( nSyncobjFd, SyncobjFdToHandle( nSyncobjFd ), std::move( pSemaphore ) )
+    CTimeline::CTimeline( int32_t nSyncobjFd )
+        : CTimeline( nSyncobjFd, SyncobjFdToHandle( nSyncobjFd ) )
     {
     }
 
-    CTimeline::CTimeline( int32_t nSyncobjFd, uint32_t uSyncobjHandle, std::shared_ptr<VulkanTimelineSemaphore_t> pSemaphore )
+    CTimeline::CTimeline( int32_t nSyncobjFd, uint32_t uSyncobjHandle )
         : m_nSyncobjFd{ nSyncobjFd }
         , m_uSyncobjHandle{ uSyncobjHandle }
-        , m_pVkSemaphore{ std::move( pSemaphore ) }
     {
     }
 
     CTimeline::~CTimeline()
     {
-        m_pVkSemaphore = nullptr;
-
         if ( m_uSyncobjHandle )
             drmSyncobjDestroy( GetDrmRenderFD(), m_uSyncobjHandle );
         if ( m_nSyncobjFd >= 0 )
@@ -60,14 +74,37 @@ namespace gamescope
         return g_device.drmRenderFd();
     }
 
-    std::shared_ptr<VulkanTimelineSemaphore_t> CTimeline::ToVkSemaphore()
+    bool CTimeline::ImportSyncFd( int nSyncFd, uint64_t ulPoint )
     {
-        if ( !m_pVkSemaphore )
-            m_pVkSemaphore = g_device.ImportTimelineSemaphore( this );
+        uint32_t uTempHandle = 0;
+        int nRet = 0;
 
-        return m_pVkSemaphore;
+        nRet = drmSyncobjCreate( g_device.drmRenderFd(), 0, &uTempHandle );
+        if ( nRet != 0 )
+        {
+            s_TimelineLog.errorf_errno( "drmSyncobjCreate failed (%d)", nRet );
+            goto done_ImportSyncFd;
+        }
+
+        nRet = drmSyncobjImportSyncFile( g_device.drmRenderFd(), uTempHandle, nSyncFd );
+        if ( nRet != 0 )
+        {
+            s_TimelineLog.errorf_errno( "drmSyncobjImportSyncFile failed (%d)", nRet );
+            goto done_ImportSyncFd;
+        }
+
+        nRet = drmSyncobjTransfer( g_device.drmRenderFd(), m_uSyncobjHandle, ulPoint, uTempHandle, 0, 0 );
+        if ( nRet != 0 )
+        {
+            s_TimelineLog.errorf_errno( "drmSyncobjTransfer failed (%d)", nRet );
+            goto done_ImportSyncFd;
+        }
+
+done_ImportSyncFd:
+        drmSyncobjDestroy( g_device.drmRenderFd(), uTempHandle );
+
+        return nRet == 0;
     }
-
     // CTimelinePoint
 
     template <TimelinePointType Type>
@@ -157,6 +194,56 @@ namespace gamescope
 
             return { nExplicitSyncEventFd, false };
         }
+
+    }
+
+    template <TimelinePointType Type>
+    std::shared_ptr<VulkanSemaphore_t> CTimelinePoint<Type>::ToVkSemaphore()
+    {
+        uint32_t uSyncobjHandle = m_pTimeline->GetSyncobjHandle();
+        uint32_t uTmpSyncobj = 0;
+        int nSyncFd = -1;
+        int nRet = 0;
+
+        nRet = drmSyncobjCreate( g_device.drmRenderFd(), 0, &uTmpSyncobj );
+        if ( nRet != 0 )
+        {
+            s_TimelineLog.errorf_errno( "drmSyncobjCreate failed (%d)", nRet );
+            goto done_ToVkSemaphore;
+        }
+
+        nRet = drmSyncobjTimelineWait(
+            m_pTimeline->GetDrmRenderFD(),
+            &uSyncobjHandle,
+            &m_ulPoint,
+            1,
+            std::numeric_limits<int64_t>::max(),
+            DRM_SYNCOBJ_WAIT_FLAGS_WAIT_AVAILABLE,
+            nullptr );
+        if ( nRet != 0 )
+        {
+            s_TimelineLog.errorf_errno( "drmSyncobjTimelineWait failed (%d)", nRet );
+            goto done_ToVkSemaphore;
+        }
+
+        nRet = drmSyncobjTransfer( g_device.drmRenderFd(), uTmpSyncobj, 0, uSyncobjHandle, m_ulPoint, 0 );
+        if ( nRet != 0)
+        {
+            s_TimelineLog.errorf_errno( "drmSyncobjTransfer failed (%d)", nRet );
+            goto done_ToVkSemaphore;
+        }
+
+        nRet = drmSyncobjExportSyncFile( g_device.drmRenderFd(), uTmpSyncobj, &nSyncFd );
+        if ( nRet != 0 )
+        {
+            s_TimelineLog.errorf_errno( "drmSyncobjExportSyncFile failed (%d)", nRet );
+            goto done_ToVkSemaphore;
+        }
+
+done_ToVkSemaphore:
+        drmSyncobjDestroy( g_device.drmRenderFd(), uTmpSyncobj );
+
+        return g_device.ImportSyncFd( nSyncFd );
     }
 
     template class CTimelinePoint<TimelinePointType::Acquire>;
