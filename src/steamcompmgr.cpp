@@ -2688,6 +2688,9 @@ paint_all( global_focus_t *pFocus, bool async )
 	}
 
 	g_bFSRActive = frameInfo.useFSRLayer0;
+	if ( const auto& heldCommit = g_HeldCommits[HELD_COMMIT_BASE]; heldCommit && heldCommit->upscaledTexture ) {
+		g_bFSRActive = ( heldCommit->upscaledTexture->eFilter == GamescopeUpscaleFilter::FSR );
+	}
 
 	g_bFirstFrame = false;
 
