@@ -2394,7 +2394,11 @@ static void paint_pipewire()
 gamescope::ConVar<int> cv_cursor_composite{ "cursor_composite", 1, "0 = Never composite a cursor. 1 = Composite cursor when not nested. 2 = Always composite a cursor manually" };
 bool ShouldDrawCursor()
 {
-	if ( cv_cursor_composite == 2 )
+	if (g_bLibinputSelectedDevices.size() > 0 && g_bMouseDisabled) {
+		return true;
+	}
+
+	if (cv_cursor_composite == 2 )
 		return true;
 
 	if ( cv_cursor_composite == 0 )

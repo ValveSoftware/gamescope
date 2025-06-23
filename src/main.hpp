@@ -3,6 +3,8 @@
 #include <getopt.h>
 
 #include <atomic>
+#include <vector>
+#include <string>
 
 extern const char *gamescope_optstring;
 extern const struct option *gamescope_options;
@@ -25,6 +27,12 @@ extern bool g_bForceInternal;
 extern bool g_bFullscreen;
 
 extern bool g_bGrabbed;
+
+
+extern bool g_bKeyboardDisabled;
+extern bool g_bMouseDisabled;
+
+extern std::vector<std::string> g_bLibinputSelectedDevices;
 
 extern float g_mouseSensitivity;
 extern const char *g_sOutputName;
