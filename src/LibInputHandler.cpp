@@ -43,7 +43,7 @@ namespace gamescope
 
                 if (ioctl(dev_fd, EVIOCGRAB, 1) == -1) {
                     // Do not close here, we can continue with it not exclusive.
-                    log_input_stealer.errorf( "Failed to grab exclusive lock on device: %s", pszPath);
+                    log_input_stealer.warnf( "Failed to grab exclusive lock on device: %s", pszPath);
                 } 
                 return dev_fd;
             }
@@ -55,7 +55,7 @@ namespace gamescope
         {
             if (g_bLibinputSelectedDevices.size() > 0) {
                 if (ioctl(nFd, EVIOCGRAB, (unsigned long)0) < 0) {
-                    perror("Failed to release exclusive grab");
+                    log_input_stealer.warnf("Failed to release exclusive grab");
                 }
             }
 

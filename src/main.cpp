@@ -156,9 +156,9 @@ const struct option *gamescope_options = (struct option[]){
 	{ "mura-map", required_argument, nullptr, 0 },
 
 
-	{ "libinput_hold_dev", required_argument, nullptr, 0 },
-	{ "backend_disable_keyboard", no_argument, nullptr, 0 },
-	{ "backend_disable_mouse", no_argument, nullptr, 0 },
+	{ "libinput-hold-dev", required_argument, nullptr, 0 },
+	{ "backend-disable-keyboard", no_argument, nullptr, 0 },
+	{ "backend-disable-mouse", no_argument, nullptr, 0 },
 
 	{} // keep last
 };
