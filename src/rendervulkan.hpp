@@ -537,7 +537,7 @@ struct VulkanOutput_t
 	uint32_t uOutputFormat = DRM_FORMAT_INVALID;
 	uint32_t uOutputFormatOverlay = DRM_FORMAT_INVALID;
 
-	std::array<gamescope::OwningRc<CVulkanTexture>, 2> pScreenshotImages;
+	std::array<gamescope::OwningRc<CVulkanTexture>, 6> pScreenshotImages;
 
 	// NIS and FSR
 	gamescope::OwningRc<CVulkanTexture> tmpOutput;
