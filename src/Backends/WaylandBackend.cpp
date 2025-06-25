@@ -1935,15 +1935,13 @@ namespace gamescope
 
     bool CWaylandBackend::Init()
     {
-
-		fprintf(stderr, "CWaylandBackend::Init Called");
         if (g_bLibinputSelectedDevices.size() > 0) { 
 			std::unique_ptr<CLibInputHandler> pLibInput = std::make_unique<CLibInputHandler>();
 			if ( pLibInput->Init() ) {
 				m_pLibInput = std::move( pLibInput );
 				m_LibInputWaiter.AddWaitable( m_pLibInput.get() );
 			} else {
-				fprintf(stderr, "CWaylandBackend::Init failed: Unable to register LIBINPUT devices");
+                xdg_log.errorf( "CWaylandBackend::Init failed: Unable to register LIBINPUT devices" );
 				return false;
 			}
 		}
