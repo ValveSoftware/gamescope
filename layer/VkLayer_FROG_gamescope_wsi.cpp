@@ -469,7 +469,7 @@ namespace GamescopeWSILayer {
       // it's top level window, then it cannot be flipped.
       //
       // Some games like Halo Infinite, make a child window that is 1280x802px
-      // I have no idea how thtat happens, or whether its an app or Wine bug or not.
+      // I have no idea how that happens, or whether its an app or Wine bug or not.
       if (*toplevelWindow != window) {
         if (iabs(rect->offset.x) > 1 ||
             iabs(rect->offset.y) > 1 ||
@@ -548,7 +548,7 @@ namespace GamescopeWSILayer {
         std::unique_lock lock(*swapchain->presentTimingMutex);
         swapchain->refreshCycle = (uint64_t(refresh_cycle_hi) << 32) | refresh_cycle_lo;
       }
-      fprintf(stderr, "[Gamescope WSI] Swapchain recieved new refresh cycle: %.2fms\n", swapchain->refreshCycle / 1'000'000.0);
+      fprintf(stderr, "[Gamescope WSI] Swapchain received new refresh cycle: %.2fms\n", swapchain->refreshCycle / 1'000'000.0);
     },
 
     .retired = [](
