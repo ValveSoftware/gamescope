@@ -81,6 +81,7 @@ const struct option *gamescope_options = (struct option[]){
 	{ "grab", no_argument, nullptr, 'g' },
 	{ "force-grab-cursor", no_argument, nullptr, 0 },
 	{ "display-index", required_argument, nullptr, 0 },
+	{ "class-name", required_argument, nullptr, 0 },
 
 	// embedded mode options
 	{ "disable-layers", no_argument, nullptr, 0 },
@@ -216,7 +217,8 @@ const char usage[] =
 	"  -f, --fullscreen               make the window fullscreen\n"
 	"  -g, --grab                     grab the keyboard\n"
 	"  --force-grab-cursor            always use relative mouse mode instead of flipping dependent on cursor visibility.\n"
-	"  --display-index                forces gamescope to use a specific display in nested mode."
+	"  --display-index                forces gamescope to use a specific display in nested mode.\n"
+	"  --class-name                   changes gamescope's app id/class name\n"
 	"\n"
 	"Embedded mode options:\n"
 	"  -O, --prefer-output            list of connectors in order of preference (ex: DP-1,DP-2,DP-3,HDMI-A-1)\n"
@@ -283,6 +285,7 @@ int g_nNestedHeight = 0;
 int g_nNestedRefresh = 0;
 int g_nNestedUnfocusedRefresh = 0;
 int g_nNestedDisplayIndex = 0;
+const char *g_nClassName = nullptr;
 
 uint32_t g_nOutputWidth = 0;
 uint32_t g_nOutputHeight = 0;
@@ -821,6 +824,8 @@ int main(int argc, char **argv)
 								
 						}
 					}
+				} else if (strcmp(opt_name, "class-name") == 0) {
+					g_nClassName = optarg;
 				}
 				break;
 			case '?':
