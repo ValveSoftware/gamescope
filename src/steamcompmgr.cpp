@@ -3354,7 +3354,8 @@ static bool is_good_override_candidate( steamcompmgr_win_t *override, steamcompm
 	if ( !focus )
 		return false;
 
-	return override != focus && override->GetGeometry().nX >= 0 && override->GetGeometry().nY >= 0;
+	auto rect = override->GetGeometry();
+	return override != focus && (rect.nX + rect.nWidth) > 0 && (rect.nY + rect.nHeight) > 0;
 } 
 
 static bool
