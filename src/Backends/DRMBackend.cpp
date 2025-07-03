@@ -918,7 +918,7 @@ static bool get_color_pipeline( struct drm_t *drm, uint32_t uHeadId )
 	uint32_t uColorOpId = uHeadId;
 	while ( uColorOpId != 0 )
 	{
-		auto pColorOp = std::make_unique<gamescope::CDRMColorOp>( uHeadId );
+		auto pColorOp = std::make_unique<gamescope::CDRMColorOp>( uColorOpId );
 		pColorOp->RefreshState();
 		uColorOpId = pColorOp->GetProperties().NEXT.value().GetInitialValue();
 		pipeline.emplace_back( std::move(pColorOp) );
@@ -2132,7 +2132,7 @@ namespace gamescope
 			m_Props.AMD_PLANE_LUT3D          = CDRMAtomicProperty::Instantiate( "AMD_PLANE_LUT3D",          this, *rawProperties );
 			m_Props.AMD_PLANE_BLEND_TF       = CDRMAtomicProperty::Instantiate( "AMD_PLANE_BLEND_TF",       this, *rawProperties );
 			m_Props.AMD_PLANE_BLEND_LUT      = CDRMAtomicProperty::Instantiate( "AMD_PLANE_BLEND_LUT",      this, *rawProperties );
-			m_Props.COLOR_PIPELINE           = CDRMAtomicProperty::Instantiate( "COLOR PIPELINE",           this, *rawProperties );
+			m_Props.COLOR_PIPELINE           = CDRMAtomicProperty::Instantiate( "COLOR_PIPELINE",           this, *rawProperties );
 		}
 	}
 
