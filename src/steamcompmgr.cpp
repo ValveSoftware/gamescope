@@ -7798,7 +7798,7 @@ void LaunchNestedChildren( char **ppPrimaryChildArgv )
 
 static gamescope::CTimerFunction g_FPSLimitVRRTimer{ []
 {
-	// do nothing.
+	g_FPSLimitVRRTimer.DisarmTimer();
 }};
 
 void
