@@ -309,9 +309,11 @@ namespace gamescope
 
         virtual bool UsesModifiers() const = 0;
         virtual std::span<const uint64_t> GetSupportedModifiers( uint32_t uDrmFormat ) const = 0;
-        inline bool SupportsFormat( uint32_t uDrmFormat ) const
+        inline bool SupportsFormat( uint32_t uDrmFormat, bool invalidOnly ) const
         {
-            return Algorithm::Contains( this->GetSupportedModifiers( uDrmFormat ), DRM_FORMAT_MOD_INVALID );
+            if ( invalidOnly )
+                return Algorithm::Contains( this->GetSupportedModifiers( uDrmFormat ), DRM_FORMAT_MOD_INVALID );
+            return !this->GetSupportedModifiers( uDrmFormat ).empty();
         }
 
         virtual IBackendConnector *GetCurrentConnector() = 0;

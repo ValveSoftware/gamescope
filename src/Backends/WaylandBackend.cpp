@@ -2089,24 +2089,32 @@ namespace gamescope
         // Prefer opaque for composition on the Wayland backend.
 
         uint32_t u8BitFormat = DRM_FORMAT_INVALID;
-        if ( SupportsFormat( DRM_FORMAT_XRGB8888 ) )
-            u8BitFormat = DRM_FORMAT_XRGB8888;
-        else if ( SupportsFormat( DRM_FORMAT_XBGR8888 ) )
-            u8BitFormat = DRM_FORMAT_XBGR8888;
-        else if ( SupportsFormat( DRM_FORMAT_ARGB8888 ) )
-            u8BitFormat = DRM_FORMAT_ARGB8888;
-        else if ( SupportsFormat( DRM_FORMAT_ABGR8888 ) )
-            u8BitFormat = DRM_FORMAT_ABGR8888;
+        for (int i = 0; i < 2 && u8BitFormat == DRM_FORMAT_INVALID; i++)
+        {
+            bool invalidOnly = i == 0;
+            if ( SupportsFormat( DRM_FORMAT_XRGB8888, invalidOnly ) )
+                u8BitFormat = DRM_FORMAT_XRGB8888;
+            else if ( SupportsFormat( DRM_FORMAT_XBGR8888, invalidOnly ) )
+                u8BitFormat = DRM_FORMAT_XBGR8888;
+            else if ( SupportsFormat( DRM_FORMAT_ARGB8888, invalidOnly ) )
+                u8BitFormat = DRM_FORMAT_ARGB8888;
+            else if ( SupportsFormat( DRM_FORMAT_ABGR8888, invalidOnly ) )
+                u8BitFormat = DRM_FORMAT_ABGR8888;
+        }
 
         uint32_t u10BitFormat = DRM_FORMAT_INVALID;
-        if ( SupportsFormat( DRM_FORMAT_XBGR2101010 ) )
-            u10BitFormat = DRM_FORMAT_XBGR2101010;
-        else if ( SupportsFormat( DRM_FORMAT_XRGB2101010 ) )
-            u10BitFormat = DRM_FORMAT_XRGB2101010;
-        else if ( SupportsFormat( DRM_FORMAT_ABGR2101010 ) )
-            u10BitFormat = DRM_FORMAT_ABGR2101010;
-        else if ( SupportsFormat( DRM_FORMAT_ARGB2101010 ) )
-            u10BitFormat = DRM_FORMAT_ARGB2101010;
+        for (int i = 0; i < 2 && u10BitFormat == DRM_FORMAT_INVALID; i++)
+        {
+            bool invalidOnly = i == 0;
+            if ( SupportsFormat( DRM_FORMAT_XBGR2101010, invalidOnly ) )
+                u10BitFormat = DRM_FORMAT_XBGR2101010;
+            else if ( SupportsFormat( DRM_FORMAT_XRGB2101010, invalidOnly ) )
+                u10BitFormat = DRM_FORMAT_XRGB2101010;
+            else if ( SupportsFormat( DRM_FORMAT_ABGR2101010, invalidOnly ) )
+                u10BitFormat = DRM_FORMAT_ABGR2101010;
+            else if ( SupportsFormat( DRM_FORMAT_ARGB2101010, invalidOnly ) )
+                u10BitFormat = DRM_FORMAT_ARGB2101010;
+        }
 
         assert( u8BitFormat != DRM_FORMAT_INVALID );
 
