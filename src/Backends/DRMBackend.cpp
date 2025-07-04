@@ -598,6 +598,7 @@ struct drm_color_ctm2 {
 
 bool g_bSupportsAsyncFlips = false;
 bool g_bSupportsSyncObjs = false;
+bool g_bSupportsColorPipeline = false;
 
 extern gamescope::GamescopeModeGeneration g_eGamescopeModeGeneration;
 extern GamescopePanelOrientation g_DesiredInternalOrientation;
@@ -984,10 +985,13 @@ static bool get_resources(struct drm_t *drm)
 		}
 	}
 
-	for ( std::unique_ptr< gamescope::CDRMPlane > &pPlane : drm->planes )
+	if ( g_bSupportsColorPipeline )
 	{
-		if ( !get_plane_color_pipelines( drm, pPlane ) )
-			return false;
+		for ( std::unique_ptr< gamescope::CDRMPlane > &pPlane : drm->planes )
+		{
+			if ( !get_plane_color_pipelines( drm, pPlane ) )
+				return false;
+		}
 	}
 
 	return refresh_state( drm );
@@ -1363,6 +1367,8 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 		g_bSupportsAsyncFlips = false;
 		drm_log.errorf("Immediate flips disabled from environment");
 	}
+
+	g_bSupportsColorPipeline = drmSetClientCap(drm->fd, DRM_CLIENT_CAP_PLANE_COLOR_PIPELINE, 1) == 0;
 
 	if (!get_resources(drm)) {
 		return false;
@@ -3464,10 +3470,27 @@ bool drm_supports_color_mgmt(struct drm_t *drm)
 	if ( g_bForceDisableColorMgmt )
 		return false;
 
+	if ( g_bSupportsColorPipeline )
+		return false;
+
 	if ( !drm->pPrimaryPlane )
 		return false;
 
 	return drm->pPrimaryPlane->GetProperties().AMD_PLANE_CTM.has_value() && drm->pPrimaryPlane->GetProperties().AMD_PLANE_BLEND_TF.has_value();
+}
+
+bool drm_supports_color_pipeline(struct drm_t *drm)
+{
+	if ( g_bForceDisableColorMgmt )
+		return false;
+
+	if ( !g_bSupportsColorPipeline )
+		return false;
+
+	if ( !drm->pPrimaryPlane )
+		return false;
+
+	return drm->pPrimaryPlane->GetProperties().COLOR_PIPELINE.has_value() ;
 }
 
 std::span<const uint32_t> drm_get_valid_refresh_rates( struct drm_t *drm )
