@@ -407,7 +407,7 @@ namespace gamescope
 
 	bool CSDLBackend::Init()
 	{
-		if (g_bLibinputSelectedDevices.size() > 0) { 
+		if (g_libinputSelectedDevices.size() > 0) { 
 			std::unique_ptr<CLibInputHandler> pLibInput = std::make_unique<CLibInputHandler>();
 			if ( pLibInput->Init() ) {
 				m_pLibInput = std::move( pLibInput );

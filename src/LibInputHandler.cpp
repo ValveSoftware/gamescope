@@ -33,7 +33,7 @@ namespace gamescope
     {
         .open_restricted = []( const char *pszPath, int nFlags, void *pUserData ) -> int
         {
-            if (g_bLibinputSelectedDevices.size() > 0) {
+            if (g_libinputSelectedDevices.size() > 0) {
                 int dev_fd = open( pszPath, nFlags );
                 
                 if (dev_fd == -1) {
@@ -53,7 +53,7 @@ namespace gamescope
 
         .close_restricted = []( int nFd, void *pUserData ) -> void
         {
-            if (g_bLibinputSelectedDevices.size() > 0) {
+            if (g_libinputSelectedDevices.size() > 0) {
                 if (ioctl(nFd, EVIOCGRAB, (unsigned long)0) < 0) {
                     log_input_stealer.warnf("Failed to release exclusive grab");
                 }
@@ -92,7 +92,7 @@ namespace gamescope
         }
 
 
-        if (g_bLibinputSelectedDevices.size() > 0) {
+        if (g_libinputSelectedDevices.size() > 0) {
             m_pLibInput = libinput_path_create_context(&s_LibInputInterface, nullptr);
 
             if ( !m_pLibInput )
@@ -102,7 +102,7 @@ namespace gamescope
             }
 
             
-            for (std::string dev_path: g_bLibinputSelectedDevices) {
+            for (std::string dev_path: g_libinputSelectedDevices) {
                 if (
                     libinput_path_add_device(m_pLibInput, dev_path.c_str()) == NULL
                 ) {

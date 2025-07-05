@@ -308,7 +308,7 @@ bool g_bGrabbed = false;
 
 bool g_bKeyboardDisabled = false;
 bool g_bMouseDisabled = false;
-std::vector<std::string> g_bLibinputSelectedDevices;
+std::vector<std::string> g_libinputSelectedDevices;
 
 float g_mouseSensitivity = 1.0;
 
@@ -841,7 +841,7 @@ int main(int argc, char **argv)
 					std::string item;
 					std::istringstream ss (optarg);
 					while (std::getline(ss, item, ',')) {
-						g_bLibinputSelectedDevices.push_back(item);
+						g_libinputSelectedDevices.push_back(item);
 					}
 				} else if (strcmp(opt_name, "backend-disable-keyboard") == 0) {
 					g_bKeyboardDisabled = true;
