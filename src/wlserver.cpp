@@ -2247,6 +2247,16 @@ bool wlserver_process_hotkeys( wlr_keyboard *keyboard, uint32_t key, bool press 
 
 void wlserver_key( uint32_t key, bool press, uint32_t time )
 {
+	if (g_keyboardFilterRange.size() != 0) {
+		bool should_continue = false;
+		for (auto filter: g_keyboardFilterRange) {
+			if (key >= filter.start && key <= filter.end) {
+				should_continue = true;
+			}
+		}
+		if (!should_continue) return;
+	}
+
 	assert( wlserver_is_lock_held() );
 
 	wlr_keyboard *keyboard = wlserver.wlr.virtual_keyboard_device;

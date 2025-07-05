@@ -2,7 +2,11 @@
 
 #include <X11/Xlib.h>
 
+#include <bits/getopt_core.h>
+#include <cstddef>
+#include <cstdint>
 #include <cstdio>
+#include <stdexcept>
 #include <thread>
 #include <mutex>
 #include <vector>
@@ -71,6 +75,7 @@ const struct option *gamescope_options = (struct option[]){
 	{ "mouse-sensitivity", required_argument, nullptr, 's' },
 	{ "mangoapp", no_argument, nullptr, 0 },
 	{ "adaptive-sync", no_argument, nullptr, 0 },
+	{ "keyboard-filter", required_argument, nullptr, 0 },
 
 	{ "backend", required_argument, nullptr, 0 },
 
@@ -209,6 +214,8 @@ const char usage[] =
 	"  --framerate-limit              Set a simple framerate limit. Used as a divisor of the refresh rate, rounds down eg 60 / 59 -> 60fps, 60 / 25 -> 30fps. Default: 0, disabled.\n"
 	"  --mangoapp                     Launch with the mangoapp (mangohud) performance overlay enabled. You should use this instead of using mangohud on the game or gamescope.\n"
 	"  --adaptive-sync                Enable adaptive sync if available (variable rate refresh)\n"
+	"  --keyboard-filter              Filter keyboard inputs to only process data included (xkb keycodes in int)\n"
+	"                                     Ex: 17,30-32,57 -- Pass w,a-s-d,space\n"
 	"\n"
 	"Nested mode options:\n"
 	"  -o, --nested-unfocused-refresh game refresh rate when unfocused\n"
@@ -277,6 +284,8 @@ const char usage[] =
 	"";
 
 std::atomic< bool > g_bRun{true};
+
+std::vector< filter_range > g_keyboardFilterRange;
 
 int g_nNestedWidth = 0;
 int g_nNestedHeight = 0;
@@ -442,6 +451,20 @@ static int parse_integer(const char *str, const char *optionName)
 	else
 	{
 		fprintf( stderr, "gamescope: invalid value for --%s, \"%s\" is either not an integer or is far too large\n", optionName, str );
+		exit(1);
+	}
+}
+
+static unsigned int parse_unsigned_integer(const char *str, const char *optionName)
+{
+	auto result = gamescope::Parse<unsigned int>(str);
+	if ( result.has_value() )
+	{
+		return result.value();
+	}
+	else
+	{
+		fprintf( stderr, "gamescope: invalid value for --%s, \"%s\" is either not an positive integer or is far too large\n", optionName, str );
 		exit(1);
 	}
 }
@@ -819,6 +842,25 @@ int main(int argc, char **argv)
 						{
 							gamescope::cv_backend_virtual_connector_strategy = eStrategy;
 								
+						}
+					}
+				} else if (strcmp(opt_name, "keyboard-filter") == 0) {
+					std::string item;
+					std::istringstream ss (optarg);
+					while (std::getline(ss, item, ',')) {
+						size_t dashOffset = item.find("-");
+						if (dashOffset == std::string::npos) {
+							g_keyboardFilterRange.push_back(filter_range {
+								.start = parse_unsigned_integer(item.c_str(),opt_name),
+								.end = parse_unsigned_integer(item.c_str(),opt_name)
+							});
+						} else {
+							uint32_t first_value = parse_unsigned_integer(item.substr(0,dashOffset).c_str(),opt_name);
+							uint32_t second_value = parse_unsigned_integer(item.substr(dashOffset+1).c_str(),opt_name);
+							g_keyboardFilterRange.push_back(filter_range {
+								.start = std::min(first_value,second_value),
+								.end = std::max(first_value,second_value)
+							});
 						}
 					}
 				}
