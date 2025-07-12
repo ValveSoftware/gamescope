@@ -691,7 +691,7 @@ namespace gamescope
 					if ( event.key.keysym.mod & KMOD_LGUI )
 					{
 						uint32_t key = SDLScancodeToLinuxKey( event.key.keysym.scancode );
-						const uint32_t shortcutKeys[] = {KEY_F, KEY_N, KEY_B, KEY_U, KEY_Y, KEY_I, KEY_O, KEY_S, KEY_G};
+						const uint32_t shortcutKeys[] = {KEY_F, KEY_N, KEY_B, KEY_K, KEY_U, KEY_Y, KEY_I, KEY_O, KEY_S, KEY_G};
 						const bool isShortcutKey = std::find(std::begin(shortcutKeys), std::end(shortcutKeys), key) != std::end(shortcutKeys);
 						if ( isShortcutKey )
 						{
