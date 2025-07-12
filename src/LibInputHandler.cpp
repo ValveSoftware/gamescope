@@ -20,7 +20,8 @@
 // eg. in VR where we want global access to the m + kb
 // without doing any seat dance.
 //
-// Used in SDL backend when 
+// Used in SDL & Wayland backend when using libinput held devices
+// to prevent handling by base system while still interacting with gamescope.
 //
 // That may change in the future...
 // but for now, this solves that problem.
