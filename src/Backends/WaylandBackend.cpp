@@ -2389,6 +2389,9 @@ namespace gamescope
     {
         bool bUseHostCursor = false;
 
+        if ( !m_pPointer )
+            return;
+
         if ( cv_wayland_mouse_warp_without_keyboard_focus )
             bUseHostCursor = m_pRelativePointer && !m_bKeyboardEntered && m_pDefaultCursorSurface;
         else
