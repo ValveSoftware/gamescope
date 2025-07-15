@@ -150,6 +150,10 @@ const struct option *gamescope_options = (struct option[]){
 
 	// Steam Deck options
 	{ "mura-map", required_argument, nullptr, 0 },
+	// PipeWire options
+	{ "pipewire-source", required_argument, nullptr, 0 },
+	{ "pipewire-width", required_argument, nullptr, 0 },
+	{ "pipewire-height", required_argument, nullptr, 0 },
 
 	{} // keep last
 };
@@ -209,6 +213,9 @@ const char usage[] =
 	"  --framerate-limit              Set a simple framerate limit. Used as a divisor of the refresh rate, rounds down eg 60 / 59 -> 60fps, 60 / 25 -> 30fps. Default: 0, disabled.\n"
 	"  --mangoapp                     Launch with the mangoapp (mangohud) performance overlay enabled. You should use this instead of using mangohud on the game or gamescope.\n"
 	"  --adaptive-sync                Enable adaptive sync if available (variable rate refresh)\n"
+	"  --pipewire-source              Select PipeWire source: 'output' (default) or 'source' (unscaled source texture).\n"
+	"  --pipewire-width               Fixed width for PipeWire capture (overrides output width).\n"
+	"  --pipewire-height              Fixed height for PipeWire capture (overrides output height).\n"
 	"\n"
 	"Nested mode options:\n"
 	"  -o, --nested-unfocused-refresh game refresh rate when unfocused\n"
@@ -680,6 +687,9 @@ static void UpdateCompatEnvVars()
 int g_nPreferredOutputWidth = 0;
 int g_nPreferredOutputHeight = 0;
 bool g_bExposeWayland = false;
+PipeWireSourceMode g_ePipewireSourceMode = PipeWireSourceMode::Output;
+int g_nPipewireWidth = 0;
+int g_nPipewireHeight = 0;
 const char *g_sOutputName = nullptr;
 bool g_bDebugLayers = false;
 bool g_bForceDisableColorMgmt = false;
@@ -821,6 +831,19 @@ int main(int argc, char **argv)
 								
 						}
 					}
+				} else if (strcmp(opt_name, "pipewire-source") == 0) {
+					if (strcmp(optarg, "source") == 0) {
+						g_ePipewireSourceMode = PipeWireSourceMode::Source;
+					} else if (strcmp(optarg, "output") == 0) {
+						g_ePipewireSourceMode = PipeWireSourceMode::Output;
+					} else {
+						fprintf( stderr, "gamescope: invalid pipewire source mode: %s\n", optarg );
+						return 1;
+					}
+				} else if (strcmp(opt_name, "pipewire-width") == 0) {
+					g_nPipewireWidth = atoi(optarg);
+				} else if (strcmp(opt_name, "pipewire-height") == 0) {
+					g_nPipewireHeight = atoi(optarg);
 				}
 				break;
 			case '?':

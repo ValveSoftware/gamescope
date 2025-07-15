@@ -2023,6 +2023,7 @@ namespace PaintWindowFlag
 	static const uint32_t NoScale = 1u << 4;
 	static const uint32_t NoFilter = 1u << 5;
 	static const uint32_t CoverageMode = 1u << 6;
+	static const uint32_t PipeWire = 1u << 7;
 }
 using PaintWindowFlags = uint32_t;
 
@@ -2073,12 +2074,22 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
 
 	layer->filter = ( flags & PaintWindowFlag::NoFilter ) ? GamescopeUpscaleFilter::LINEAR : g_upscaleFilter;
 
-	layer->tex = lastCommit->GetTexture( layer->filter, g_upscaleScaler, layer->colorspace );
+	// Use source texture for PipeWire when source mode is enabled
+	bool bUseSourceTexture = ( flags & PaintWindowFlag::PipeWire ) && ( g_ePipewireSourceMode == PipeWireSourceMode::Source );
+	layer->tex = bUseSourceTexture ? lastCommit->vulkanTex : lastCommit->GetTexture( layer->filter, g_upscaleScaler, layer->colorspace );
 
 	if ( flags & PaintWindowFlag::NoScale )
 	{
-		sourceWidth = currentOutputWidth;
-		sourceHeight = currentOutputHeight;
+		if ( flags & PaintWindowFlag::PipeWire && g_ePipewireSourceMode == PipeWireSourceMode::Source )
+		{
+			sourceWidth = layer->tex->width();
+			sourceHeight = layer->tex->height();
+		}
+		else
+		{
+			sourceWidth = currentOutputWidth;
+			sourceHeight = currentOutputHeight;
+		}
 	}
 	else
 	{
@@ -2108,22 +2119,27 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
 		if ( fit )
 		{
 			// If we have an override window, try to fit it in as long as it won't make our scale go below 1.0.
-			sourceWidth = std::max<uint32_t>( sourceWidth, clamp<int>( fit->GetGeometry().nX + fit->GetGeometry().nWidth, 0, currentOutputWidth ) );
-			sourceHeight = std::max<uint32_t>( sourceHeight, clamp<int>( fit->GetGeometry().nY + fit->GetGeometry().nHeight, 0, currentOutputHeight ) );
+			uint32_t outputWidth = (flags & PaintWindowFlag::PipeWire && g_nPipewireWidth > 0) ? g_nPipewireWidth : currentOutputWidth;
+			uint32_t outputHeight = (flags & PaintWindowFlag::PipeWire && g_nPipewireHeight > 0) ? g_nPipewireHeight : currentOutputHeight;
+			sourceWidth = std::max<uint32_t>( sourceWidth, clamp<int>( fit->GetGeometry().nX + fit->GetGeometry().nWidth, 0, outputWidth ) );
+			sourceHeight = std::max<uint32_t>( sourceHeight, clamp<int>( fit->GetGeometry().nY + fit->GetGeometry().nHeight, 0, outputHeight ) );
 
-			baseWidth = std::max<uint32_t>( baseWidth, clamp<int>( fit->GetGeometry().nX + fit->GetGeometry().nWidth, 0, currentOutputWidth ) );
-			baseHeight = std::max<uint32_t>( baseHeight, clamp<int>( fit->GetGeometry().nY + fit->GetGeometry().nHeight, 0, currentOutputHeight ) );
+			baseWidth = std::max<uint32_t>( baseWidth, clamp<int>( fit->GetGeometry().nX + fit->GetGeometry().nWidth, 0, outputWidth ) );
+			baseHeight = std::max<uint32_t>( baseHeight, clamp<int>( fit->GetGeometry().nY + fit->GetGeometry().nHeight, 0, outputHeight ) );
 		}
 	}
 
 	bool offset = ( ( w->GetGeometry().nX || w->GetGeometry().nY ) && w != scaleW );
 
-	if (sourceWidth != (int32_t)currentOutputWidth || sourceHeight != (int32_t)currentOutputHeight || offset || globalScaleRatio != 1.0f)
+	uint32_t targetOutputWidth = (flags & PaintWindowFlag::PipeWire && g_nPipewireWidth > 0) ? g_nPipewireWidth : currentOutputWidth;
+	uint32_t targetOutputHeight = (flags & PaintWindowFlag::PipeWire && g_nPipewireHeight > 0) ? g_nPipewireHeight : currentOutputHeight;
+
+	if (sourceWidth != (int32_t)targetOutputWidth || sourceHeight != (int32_t)targetOutputHeight || offset || globalScaleRatio != 1.0f)
 	{
 		calc_scale_factor(currentScaleRatio_x, currentScaleRatio_y, sourceWidth, sourceHeight);
 
-		drawXOffset = ((int)currentOutputWidth - (int)sourceWidth * currentScaleRatio_x) / 2.0f;
-		drawYOffset = ((int)currentOutputHeight - (int)sourceHeight * currentScaleRatio_y) / 2.0f;
+		drawXOffset = ((int)targetOutputWidth - (int)sourceWidth * currentScaleRatio_x) / 2.0f;
+		drawYOffset = ((int)targetOutputHeight - (int)sourceHeight * currentScaleRatio_y) / 2.0f;
 
 		if ( w != scaleW )
 		{
@@ -2360,10 +2376,10 @@ static void paint_pipewire()
 	currentOutputHeight = uHeight;
 
 	// Paint the windows we have onto the Pipewire stream.
-	paint_window( pFocus->focusWindow, pFocus->focusWindow, &frameInfo, nullptr, 0, 1.0f, pFocus->overrideWindow );
+	paint_window( pFocus->focusWindow, pFocus->focusWindow, &frameInfo, nullptr, PaintWindowFlag::PipeWire, 1.0f, pFocus->overrideWindow );
 
 	if ( pFocus->overrideWindow && !pFocus->focusWindow->isSteamStreamingClient )
-		paint_window( pFocus->overrideWindow, pFocus->focusWindow, &frameInfo, nullptr, PaintWindowFlag::NoFilter, 1.0f, pFocus->overrideWindow );
+		paint_window( pFocus->overrideWindow, pFocus->focusWindow, &frameInfo, nullptr, PaintWindowFlag::NoFilter | PaintWindowFlag::PipeWire, 1.0f, pFocus->overrideWindow );
 
 	gamescope::Rc<CVulkanTexture> pRGBTexture = s_pPipewireBuffer->texture->isYcbcr()
 		? vulkan_acquire_screenshot_texture( uWidth, uHeight, false, DRM_FORMAT_XRGB2101010 )
