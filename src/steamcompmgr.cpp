@@ -8462,7 +8462,9 @@ steamcompmgr_main(int argc, char **argv)
 
 			// If we are running behind, allow tearing.
 
-			const bool bForceRepaint = g_bForceRepaint.exchange(false);
+			// A false vblank value means bShouldPaint will resolve to false below, effectively ignoring this flag and losing any request
+			// to force a repaint. Don't clear g_bForceRepaint unless vblank is true.
+			const bool bForceRepaint = vblank && g_bForceRepaint.exchange(false);
 			const bool bForceSyncFlip = bForceRepaint || is_fading_out();
 
 			// If we are compositing, always force sync flips because we currently wait

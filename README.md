@@ -21,7 +21,7 @@ If running RadeonSI clients with older cards (GFX8 and below), currently have to
 git submodule update --init
 meson setup build/
 ninja -C build/
-build/gamescope -- <game>
+build/src/gamescope -- <game>
 ```
 
 Install with:
