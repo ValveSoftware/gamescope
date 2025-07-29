@@ -1178,6 +1178,33 @@ static void gamescope_control_handle_destroy( struct wl_client *client, struct w
 	wl_resource_destroy( resource );
 }
 
+static void gamescope_control_request_app_performance_stats( struct wl_client *client, struct wl_resource *resource, uint32_t app_id )
+{
+	assert( wlserver_is_lock_held() );
+	wlserver.app_perf_requests[ app_id ].push_back( resource );
+}
+
+void wlserver_app_presented( uint32_t app_id, uint64_t frametime_ns )
+{
+	assert( wlserver_is_lock_held() );
+
+	auto it = wlserver.app_perf_requests.find( app_id );
+	if ( it == wlserver.app_perf_requests.end() )
+		return;
+
+	// Fire the response to everyone that requested it
+	for ( wl_resource *resource : it->second )
+	{
+		uint32_t frametime_hi = frametime_ns >> 32;
+		uint32_t frametime_lo = frametime_ns & 0xffffffff;
+
+		gamescope_control_send_app_performance_stats( resource, app_id, frametime_lo, frametime_hi );
+	}
+
+	// Event fired, clear the request until we get the next one
+	wlserver.app_perf_requests.erase( it );
+}
+
 static const struct gamescope_control_interface gamescope_control_impl = {
 	.destroy = gamescope_control_handle_destroy,
 	.set_app_target_refresh_cycle = gamescope_control_set_app_target_refresh_cycle,
@@ -1185,6 +1212,7 @@ static const struct gamescope_control_interface gamescope_control_impl = {
 	.display_sleep = gamescope_control_display_sleep,
 	.set_look = gamescope_control_set_look,
 	.unset_look = gamescope_control_unset_look,
+	.request_app_performance_stats = gamescope_control_request_app_performance_stats,
 };
 
 static uint32_t get_conn_display_info_flags()
@@ -1241,6 +1269,10 @@ static void gamescope_control_bind( struct wl_client *client, void *data, uint32
 	[](struct wl_resource *resource)
 	{
 		std::erase_if(wlserver.gamescope_controls, [=](struct wl_resource *control) { return control == resource; });
+		for ( auto &[ app_id, resources] : wlserver.app_perf_requests )
+		{
+			std::erase_if( resources, [=]( struct wl_resource *control ) { return control == resource; } );
+		}
 	});
 
 	// Send feature support
@@ -1250,6 +1282,7 @@ static void gamescope_control_bind( struct wl_client *client, void *data, uint32
 	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_REFRESH_CYCLE_ONLY_CHANGE_REFRESH_RATE, 1, 0 );
 	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_MURA_CORRECTION, 1, 0 );
 	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_LOOK, 1, 0 );
+	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_PERF_QUERY, 1, 0 );
 	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_DONE, 0, 0 );
 
 	wlserver_send_gamescope_control( resource );
@@ -1259,7 +1292,7 @@ static void gamescope_control_bind( struct wl_client *client, void *data, uint32
 
 static void create_gamescope_control( void )
 {
-	uint32_t version = 5;
+	uint32_t version = 6;
 	wl_global_create( wlserver.display, &gamescope_control_interface, version, NULL, gamescope_control_bind );
 }
 

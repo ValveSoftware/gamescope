@@ -29,7 +29,7 @@
     it.
   </description>
 
-  <interface name="gamescope_control" version="5">
+  <interface name="gamescope_control" version="6">
     <request name="destroy" type="destructor"></request>
 
     <enum name="feature">
@@ -43,6 +43,7 @@
       <entry name="refresh_cycle_only_change_refresh_rate" value="4"/>
       <entry name="mura_correction" value="5"/>
       <entry name="look" value="6"/>
+      <entry name="perf_query" value="7"/>
     </enum>
 
     <event name="feature_support">
@@ -130,6 +131,17 @@
     <request name="unset_look" since="5">
       <description summary="Unsets the current look."></description>
     </request>
+
+    <request name="request_app_performance_stats" since="6">
+      <description summary="Asks the compositor to send the most recent performance stats"></description>
+      <arg name="app_id" type="uint" summary="Appid "></arg>
+    </request>
+
+    <event name="app_performance_stats" since="6">
+      <arg name="app_id" type="uint" summary="Appid for this request"></arg>
+      <arg name="frametime_ns_lo" type="uint" summary="Time delta between the two most recent frames"></arg>
+      <arg name="frametime_ns_hi" type="uint" summary="frametime_ns high bits"></arg>
+    </event>
 
   </interface>
 </protocol>

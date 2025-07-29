@@ -185,6 +185,7 @@ struct wlserver_t {
 	std::vector<ResListEntry_t> xdg_commit_queue;
 
 	std::vector<wl_resource*> gamescope_controls;
+	std::unordered_map< uint32_t, std::vector<wl_resource*> > app_perf_requests;
 
 	std::atomic<bool> bWaylandServerRunning = { false };
 
@@ -281,6 +282,8 @@ void wlserver_presentation_feedback_discard( struct wlr_surface *surface, std::v
 
 void wlserver_past_present_timing( struct wlr_surface *surface, uint32_t present_id, uint64_t desired_present_time, uint64_t actual_present_time, uint64_t earliest_present_time, uint64_t present_margin );
 void wlserver_refresh_cycle( struct wlr_surface *surface, uint64_t refresh_cycle );
+
+void wlserver_app_presented( uint32_t app_id, uint64_t frametime_ns );
 
 void wlserver_shutdown();
 

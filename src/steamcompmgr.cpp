@@ -6610,6 +6610,17 @@ void handle_presented_for_window( steamcompmgr_win_t* w )
 	commit_t *lastCommit = get_window_last_done_commit_peek(w);
 	if (lastCommit)
 	{
+		// We might present the same commit multiple times. In these cases
+		// there will be no frametime delta as the last frame was just re-used.
+		uint64_t frametime_ns = lastCommit->present_time - w->last_commit_present_time;
+		if ( frametime_ns > 0 )
+		{
+			if ( w->appID > 0 )
+				wlserver_app_presented( w->appID, frametime_ns );
+
+			w->last_commit_present_time = lastCommit->present_time;
+		}
+
 		if (!lastCommit->presentation_feedbacks.empty() || lastCommit->present_id)
 		{
 			if (!lastCommit->presentation_feedbacks.empty())
