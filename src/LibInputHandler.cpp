@@ -1,12 +1,16 @@
 #include "LibInputHandler.h"
 
+#include <cstddef>
 #include <libinput.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <poll.h>
+#include <linux/input.h>
+
 
 #include "log.hpp"
 #include "backend.h"
+#include "main.hpp"
 #include "wlserver.hpp"
 #include "Utils/Defer.h"
 
@@ -15,6 +19,9 @@
 //
 // eg. in VR where we want global access to the m + kb
 // without doing any seat dance.
+//
+// Used in SDL & Wayland backend when using libinput held devices
+// to prevent handling by base system while still interacting with gamescope.
 //
 // That may change in the future...
 // but for now, this solves that problem.
@@ -27,11 +34,32 @@ namespace gamescope
     {
         .open_restricted = []( const char *pszPath, int nFlags, void *pUserData ) -> int
         {
+            if (g_libinputSelectedDevices.size() > 0) {
+                int dev_fd = open( pszPath, nFlags );
+                
+                if (dev_fd == -1) {
+                    log_input_stealer.errorf( "Failed to open device: %s", pszPath);
+                    return -1;
+                } 
+
+                if (ioctl(dev_fd, EVIOCGRAB, 1) == -1) {
+                    // Do not close here, we can continue with it not exclusive.
+                    log_input_stealer.warnf( "Failed to grab exclusive lock on device: %s", pszPath);
+                } 
+                return dev_fd;
+            }
+
             return open( pszPath, nFlags );
         },
 
         .close_restricted = []( int nFd, void *pUserData ) -> void
         {
+            if (g_libinputSelectedDevices.size() > 0) {
+                if (ioctl(nFd, EVIOCGRAB, (unsigned long)0) < 0) {
+                    log_input_stealer.warnf("Failed to release exclusive grab");
+                }
+            }
+
             close( nFd );
         },
     };
@@ -64,18 +92,43 @@ namespace gamescope
             return false;
         }
 
-        m_pLibInput = libinput_udev_create_context( &s_LibInputInterface, nullptr, m_pUdev );
-        if ( !m_pLibInput )
-        {
-            log_input_stealer.errorf( "Failed to create libinput context" );
-            return false;
-        }
 
-        const char *pszSeatName = "seat0";
-        if ( libinput_udev_assign_seat( m_pLibInput, pszSeatName ) == -1 )
-        {
-            log_input_stealer.errorf( "Could not assign seat \"%s\"", pszSeatName );
-            return false;
+        if (g_libinputSelectedDevices.size() > 0) {
+            m_pLibInput = libinput_path_create_context(&s_LibInputInterface, nullptr);
+
+            if ( !m_pLibInput )
+            {
+                log_input_stealer.errorf( "Failed to create libinput context" );
+                return false;
+            }
+
+            
+            for (std::string dev_path: g_libinputSelectedDevices) {
+                if (
+                    libinput_path_add_device(m_pLibInput, dev_path.c_str()) == NULL
+                ) {
+                    log_input_stealer.errorf( "Failed to create libinput device: %s", dev_path.c_str());
+                    return false;
+                }
+            }
+            libinput_resume(m_pLibInput);
+
+        } else {
+
+
+            m_pLibInput = libinput_udev_create_context( &s_LibInputInterface, nullptr, m_pUdev );
+            if ( !m_pLibInput )
+            {
+                log_input_stealer.errorf( "Failed to create libinput context" );
+                return false;
+            }
+
+            const char *pszSeatName = "seat0";
+            if ( libinput_udev_assign_seat( m_pLibInput, pszSeatName ) == -1 )
+            {
+                log_input_stealer.errorf( "Could not assign seat \"%s\"", pszSeatName );
+                return false;
+            }
         }
 
         return true;
