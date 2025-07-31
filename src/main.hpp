@@ -3,11 +3,19 @@
 #include <getopt.h>
 
 #include <atomic>
+#include <vector>
 
 extern const char *gamescope_optstring;
 extern const struct option *gamescope_options;
 
 extern std::atomic< bool > g_bRun;
+
+typedef struct {
+    uint32_t start;
+    uint32_t end;
+} filter_range;
+
+extern std::vector< filter_range > g_keyboardFilterRange;
 
 extern int g_nNestedWidth;
 extern int g_nNestedHeight;
