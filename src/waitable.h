@@ -54,7 +54,7 @@ namespace gamescope
                 if ( read( nFD, buf, sizeof( buf ) ) < 0 )
                 {
                     if ( errno != EAGAIN )
-                        g_WaitableLog.errorf_errno( "Failed to drain CNudgeWaitable" );
+                        g_WaitableLog.errorf_errno( "Failed to drain IWaitable" );
                     break;
                 }
             }
@@ -155,6 +155,16 @@ namespace gamescope
             Shutdown();
         }
 
+        void Drain()
+        {
+            IWaitable::Drain( m_nFD );
+        }
+
+        void OnPollIn()
+        {
+            Drain();
+        }
+
         void Shutdown()
         {
             if ( m_nFD >= 0 )
@@ -200,6 +210,7 @@ namespace gamescope
 
         void OnPollIn() final
         {
+            ITimerWaitable::OnPollIn();
             m_fnPollFunc();
         }
     private:
