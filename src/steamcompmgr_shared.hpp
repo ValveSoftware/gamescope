@@ -237,6 +237,8 @@ struct steamcompmgr_win_t {
 	}
 };
 
+extern std::atomic<bool> hasRepaint;
+
 namespace gamescope
 {
 	struct GamescopeScreenshotInfo
@@ -255,6 +257,7 @@ namespace gamescope
 		{
 			std::unique_lock lock{ m_ScreenshotInfoMutex };
 			m_ScreenshotInfo = std::move( info );
+			hasRepaint = true;
 		}
 
 		void TakeScreenshot( bool bAVIF )
