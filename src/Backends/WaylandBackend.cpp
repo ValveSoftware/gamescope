@@ -1709,13 +1709,21 @@ namespace gamescope
         if ( uRefreshCycle )
         {
             int32_t nRefresh = RefreshCycleTomHz( uRefreshCycle );
-            if ( nRefresh && nRefresh != g_nOutputRefresh )
+            if ( nRefresh )
+            {
+                if ( abs(nRefresh - g_nOutputRefresh) > 0.01f )
             {
                 xdg_log.infof( "Changed refresh to: %.3fhz", ConvertmHzToHz( (float) nRefresh ) );
                 g_nOutputRefresh = nRefresh;
+                    m_pConnector->SetHostCompositorIsCurrentlyVRR( false );
             }
+                else
+                {
+                    m_pConnector->SetHostCompositorIsCurrentlyVRR( true );
 
-            m_pConnector->SetHostCompositorIsCurrentlyVRR( false );
+                    UpdateVRRRefreshRate();
+                }
+            }
         }
         else
         {
