@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <memory>
 #include <vector>
+#include <string>
 
 #include <gamescope-action-binding-client-protocol.h>
 
@@ -17,7 +18,7 @@ namespace gamescope
 		~HotkeyHandler() {}
 
 		bool Init();
-		bool Bind( std::vector<uint32_t> pKeySyms, const char* cmd, const char* value );
+		bool Bind( std::vector<uint32_t> pKeySyms, std::vector<std::string> args );
 		void Dispatch() { wl_display_dispatch(m_pDisplay); }
 
 	private:
