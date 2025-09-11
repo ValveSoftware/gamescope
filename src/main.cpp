@@ -1072,13 +1072,13 @@ static void hotkeyThreadRun()
 {
 	wlserver.bWaylandServerRunning.wait( false );
 
+#if HAVE_SCRIPTING
 	if ( !gamescope::g_hotkeyHandler.Init() )
 	{
 		fprintf( stderr, "Failed to initialize hotkeys\n" );
 		return;
 	}
 
-#if HAVE_SCRIPTING
 	{
 		gamescope::CScriptScopedLock script;
 		auto hotkeys = script.Manager().Gamescope().Config.GetHotkeys( script );
@@ -1087,12 +1087,12 @@ static void hotkeyThreadRun()
 			gamescope::g_hotkeyHandler.Bind( hot.first, hot.second );
 		}
 	}
-#endif
 
 	while ( wlserver.bWaylandServerRunning )
 	{
 		gamescope::g_hotkeyHandler.Dispatch();
 	}
+#endif
 }
 
 gamescope::ConCommand cc_upscale_filter( "upscale_filter", "Set upscale filter method. Values: nearest, linear, fsr, nis",

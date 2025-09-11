@@ -1,11 +1,14 @@
+#if HAVE_SCRIPTING
+
 #pragma once
 
 #include <cstdint>
 #include <memory>
 #include <vector>
-#include <string>
 
 #include <gamescope-action-binding-client-protocol.h>
+
+#include <sol/sol.hpp>
 
 namespace gamescope
 {
@@ -18,7 +21,7 @@ namespace gamescope
 		~HotkeyHandler() {}
 
 		bool Init();
-		bool Bind( std::vector<uint32_t> pKeySyms, std::vector<std::string> args );
+		bool Bind( std::vector<uint32_t> pKeySyms, sol::function func );
 		void Dispatch() { wl_display_dispatch(m_pDisplay); }
 
 	private:
@@ -32,3 +35,5 @@ namespace gamescope
 
 	extern HotkeyHandler g_hotkeyHandler;
 }
+
+#endif // HAVE_SCRIPTING

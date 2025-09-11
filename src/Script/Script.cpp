@@ -112,6 +112,20 @@ namespace gamescope
         );
         m_Gamescope.Base["log"] = []( LogPriority ePriority, std::string_view svText ) { s_ScriptLog.log( ePriority, svText ); };
 
+        m_Gamescope.Base["command"] = []( std::vector<std::string_view> svArgs )
+        {
+            if ( !gamescope::ConCommand::Exec( std::span<std::string_view>{ svArgs } ) )
+            {
+                std::string sDebug = "";
+                for ( std::string_view sv : svArgs )
+                {
+                    sDebug += sv;
+                    sDebug += " ";
+                }
+                s_ScriptMgrLog.warnf( "Failed to exec command: %s\n", sDebug.c_str() );
+            }
+        };
+
         m_Gamescope.Convars.Base = m_State.create_table();
         m_Gamescope.Base.set( "convars", m_Gamescope.Convars.Base );
 
@@ -299,9 +313,9 @@ namespace gamescope
         return oOutDisplay;
     }
 
-    std::vector<std::pair<std::vector<uint32_t>, std::vector<std::string>>> GamescopeScript_t::Config_t::GetHotkeys( CScriptScopedLock &script )
+    std::vector<std::pair<std::vector<uint32_t>, sol::function>> GamescopeScript_t::Config_t::GetHotkeys( CScriptScopedLock &script )
     {
-        std::vector<std::pair<std::vector<uint32_t>, std::vector<std::string>>> hotkeys;
+        std::vector<std::pair<std::vector<uint32_t>, sol::function>> hotkeys;
 
         sol::optional<std::vector<sol::optional<sol::table>>> ovotHotkeys = Input["hotkeys"];
         if ( !ovotHotkeys )
@@ -319,12 +333,12 @@ namespace gamescope
                 continue;
             std::vector<uint32_t> vKeys = *ovKeys;
 
-            sol::optional<std::vector<std::string>> osCommand = tHotkey["command"];
-            if ( !osCommand )
+            sol::optional<sol::function> oFunc = tHotkey["func"];
+            if ( !oFunc )
                 continue;
-            std::vector<std::string> sCommand = *osCommand;
+            sol::function func = *oFunc;
 
-            hotkeys.push_back( std::make_pair( vKeys, sCommand ) );
+            hotkeys.push_back( std::make_pair( vKeys, func ) );
         }
 
         return hotkeys;
