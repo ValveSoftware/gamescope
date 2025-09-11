@@ -1,6 +1,8 @@
 #include "Script/Script.h"
+#include "backend.h"
 
 #include <X11/Xlib.h>
+#include <xkbcommon/xkbcommon-keysyms.h>
 
 #include <cstdio>
 #include <thread>
@@ -25,6 +27,7 @@
 #include "steamcompmgr.hpp"
 #include "rendervulkan.hpp"
 #include "wlserver.hpp"
+#include "hotkey.h"
 #include "convar.h"
 #include "gpuvis_trace_utils.h"
 #include "Utils/TempFiles.h"
@@ -327,6 +330,7 @@ uint32_t g_preferDeviceID = 0;
 pthread_t g_mainThread;
 
 static void steamCompMgrThreadRun(int argc, char **argv);
+static void hotkeyThreadRun();
 
 static std::string build_optstring(const struct option *options)
 {
@@ -1037,6 +1041,7 @@ int main(int argc, char **argv)
 #endif
 
 	std::thread steamCompMgrThread( steamCompMgrThreadRun, argc, argv );
+	std::thread hotkeyThread( hotkeyThreadRun );
 
 	handle_signal_action.sa_handler = handle_signal;
 	sigaction(SIGHUP, &handle_signal_action, nullptr);
@@ -1049,6 +1054,7 @@ int main(int argc, char **argv)
 	wlserver_run();
 
 	steamCompMgrThread.join();
+	hotkeyThread.join();
 
 	gamescope::Process::KillAllChildren( getpid(), SIGTERM );
 	gamescope::Process::WaitForAllChildren();
@@ -1062,3 +1068,100 @@ static void steamCompMgrThreadRun(int argc, char **argv)
 
 	pthread_kill( g_mainThread, SIGINT );
 }
+
+static void hotkeyThreadRun()
+{
+	wlserver.bWaylandServerRunning.wait( false );
+
+	if ( !gamescope::g_hotkeyHandler.Init() )
+	{
+		fprintf( stderr, "Failed to initialize hotkeys\n" );
+		return;
+	}
+
+	// Default keys
+	gamescope::g_hotkeyHandler.Bind( {XKB_KEY_Super_L, XKB_KEY_f}, "fullscreen", "" );
+
+	gamescope::g_hotkeyHandler.Bind( {XKB_KEY_Super_L, XKB_KEY_n}, "upscale_filter", "nearest" );
+
+	gamescope::g_hotkeyHandler.Bind( {XKB_KEY_Super_L, XKB_KEY_b}, "upscale_filter", "linear" );
+
+	gamescope::g_hotkeyHandler.Bind( {XKB_KEY_Super_L, XKB_KEY_u}, "upscale_filter", "fsr" );
+
+	gamescope::g_hotkeyHandler.Bind( {XKB_KEY_Super_L, XKB_KEY_y}, "upscale_filter", "nis" );
+
+	gamescope::g_hotkeyHandler.Bind( {XKB_KEY_Super_L, XKB_KEY_i}, "upscale_filter_sharpness", "up" );
+
+	gamescope::g_hotkeyHandler.Bind( {XKB_KEY_Super_L, XKB_KEY_o}, "upscale_filter_sharpness", "down" );
+
+	gamescope::g_hotkeyHandler.Bind( {XKB_KEY_Super_L, XKB_KEY_s}, "screenshot", "" );
+
+	gamescope::g_hotkeyHandler.Bind( {XKB_KEY_Super_L, XKB_KEY_g}, "keyboard_grab", "" );
+
+	while ( wlserver.bWaylandServerRunning )
+	{
+		gamescope::g_hotkeyHandler.Dispatch();
+	}
+}
+
+gamescope::ConCommand cc_upscale_filter( "upscale_filter", "Set upscale filter method. Values: nearest, linear, fsr, nis",
+[]( std::span<std::string_view> svArgs ) -> void
+{
+	if ( svArgs.size() < 2 )
+	{
+		fprintf( stderr, "Missing filter argument\n" );
+		return;
+	}
+
+	if ( svArgs[1] == "nearest" )
+	{
+		g_wantedUpscaleFilter = GamescopeUpscaleFilter::PIXEL;
+	}
+	else if ( svArgs[1] == "linear" )
+	{
+		g_wantedUpscaleFilter = GamescopeUpscaleFilter::LINEAR;
+	}
+	else if ( svArgs[1] == "fsr" )
+	{
+		g_wantedUpscaleFilter = GamescopeUpscaleFilter::FSR;
+	}
+	else if ( svArgs[1] == "nis" )
+	{
+		g_wantedUpscaleFilter = GamescopeUpscaleFilter::NIS;
+	}
+	else
+	{
+		fprintf( stderr, "Invalid filter argument '%s'\n", svArgs[1].data() );
+	}
+});
+
+gamescope::ConCommand cc_upscale_filter_sharpness( "upscale_filter_sharpness", "Adjust upscale filter sharpness. Values: up, down",
+[]( std::span<std::string_view> svArgs ) -> void
+{
+	if ( svArgs.size() < 2 )
+	{
+		fprintf( stderr, "Missing direction argument\n" );
+		return;
+	}
+
+	if ( svArgs[1] == "up" )
+	{
+		g_upscaleFilterSharpness = std::min( 20, g_upscaleFilterSharpness + 1 );
+		fprintf( stdout, "Upscale filter sharpness: %d\n", g_upscaleFilterSharpness );
+	}
+	else if ( svArgs[1] == "down" )
+	{
+		g_upscaleFilterSharpness = std::max( 0, g_upscaleFilterSharpness - 1 );
+		fprintf( stdout, "Upscale filter sharpness: %d\n", g_upscaleFilterSharpness );
+	}
+	else
+	{
+		fprintf( stderr, "Invalid direction argument '%s'\n", svArgs[1].data() );
+	}
+});
+
+gamescope::ConCommand cc_keyboard_grab( "keyboard_grab", "Toggle keyboard grab",
+[]( std::span<std::string_view> svArgs ) -> void
+{
+	g_bGrabbed = !g_bGrabbed;
+});
