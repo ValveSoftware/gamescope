@@ -120,6 +120,9 @@ namespace gamescope
 
         m_Gamescope.Config.KnownDisplays = m_State.create_table();
         m_Gamescope.Config.Base.set( "known_displays", m_Gamescope.Config.KnownDisplays );
+
+        m_Gamescope.Config.Input = m_State.create_table();
+        m_Gamescope.Config.Base.set( "input", m_Gamescope.Config.Input );
     }
 
     void CScriptManager::RunDefaultScripts()
@@ -296,4 +299,34 @@ namespace gamescope
         return oOutDisplay;
     }
 
+    std::vector<std::pair<std::vector<uint32_t>, std::vector<std::string>>> GamescopeScript_t::Config_t::GetHotkeys( CScriptScopedLock &script )
+    {
+        std::vector<std::pair<std::vector<uint32_t>, std::vector<std::string>>> hotkeys;
+
+        sol::optional<std::vector<sol::optional<sol::table>>> ovotHotkeys = Input["hotkeys"];
+        if ( !ovotHotkeys )
+            return hotkeys;
+        std::vector<sol::optional<sol::table>> votHotkeys = *ovotHotkeys;
+
+        for ( auto iter : votHotkeys )
+        {
+            if ( !iter )
+                continue;
+            sol::table tHotkey = *iter;
+
+            sol::optional<std::vector<uint32_t>> ovKeys = tHotkey["keys"];
+            if ( !ovKeys )
+                continue;
+            std::vector<uint32_t> vKeys = *ovKeys;
+
+            sol::optional<std::vector<std::string>> osCommand = tHotkey["command"];
+            if ( !osCommand )
+                continue;
+            std::vector<std::string> sCommand = *osCommand;
+
+            hotkeys.push_back( std::make_pair( vKeys, sCommand ) );
+        }
+
+        return hotkeys;
+    }
 }

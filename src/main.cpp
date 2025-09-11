@@ -30,6 +30,7 @@
 #include "hotkey.h"
 #include "convar.h"
 #include "gpuvis_trace_utils.h"
+#include "Script/Script.h"
 #include "Utils/TempFiles.h"
 #include "Utils/Version.h"
 #include "Utils/Process.h"
@@ -1079,24 +1080,16 @@ static void hotkeyThreadRun()
 		return;
 	}
 
-	// Default keys
-	gamescope::g_hotkeyHandler.Bind( {XKB_KEY_Super_L, XKB_KEY_f}, "fullscreen", "" );
-
-	gamescope::g_hotkeyHandler.Bind( {XKB_KEY_Super_L, XKB_KEY_n}, "upscale_filter", "nearest" );
-
-	gamescope::g_hotkeyHandler.Bind( {XKB_KEY_Super_L, XKB_KEY_b}, "upscale_filter", "linear" );
-
-	gamescope::g_hotkeyHandler.Bind( {XKB_KEY_Super_L, XKB_KEY_u}, "upscale_filter", "fsr" );
-
-	gamescope::g_hotkeyHandler.Bind( {XKB_KEY_Super_L, XKB_KEY_y}, "upscale_filter", "nis" );
-
-	gamescope::g_hotkeyHandler.Bind( {XKB_KEY_Super_L, XKB_KEY_i}, "upscale_filter_sharpness", "up" );
-
-	gamescope::g_hotkeyHandler.Bind( {XKB_KEY_Super_L, XKB_KEY_o}, "upscale_filter_sharpness", "down" );
-
-	gamescope::g_hotkeyHandler.Bind( {XKB_KEY_Super_L, XKB_KEY_s}, "screenshot", "" );
-
-	gamescope::g_hotkeyHandler.Bind( {XKB_KEY_Super_L, XKB_KEY_g}, "keyboard_grab", "" );
+#if HAVE_SCRIPTING
+	{
+		gamescope::CScriptScopedLock script;
+		auto hotkeys = script.Manager().Gamescope().Config.GetHotkeys( script );
+		for ( auto hot : hotkeys )
+		{
+			gamescope::g_hotkeyHandler.Bind( hot.first, hot.second );
+		}
+	}
+#endif
 
 	while ( wlserver.bWaylandServerRunning )
 	{

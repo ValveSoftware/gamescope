@@ -1,6 +1,5 @@
 #include <linux/input-event-codes.h>
 
-#include <format>
 #include <span>
 
 #include "hotkey.h"
@@ -20,7 +19,7 @@ namespace gamescope
 	class CHotkeyBinding
     {
     public:
-        bool Init( gamescope_action_binding_manager *pManager, std::span<uint32_t> pKeySyms, const char* cmd, const char* value )
+        bool Init( gamescope_action_binding_manager *pManager, std::span<uint32_t> pKeySyms, std::vector<std::string> args )
         {
             Shutdown();
 
@@ -28,9 +27,12 @@ namespace gamescope
             if ( !m_pBinding )
                 return false;
 
-			m_sCommand = cmd;
-            m_sCommandValue = value;
-            std::string description = std::format("{} {}", cmd, value);
+            m_args = args;
+            for ( std::string_view sv : args )
+            {
+                m_sDescription += sv;
+                m_sDescription += " ";
+            }
 
             wl_array array;
             wl_array_init(&array);
@@ -42,7 +44,7 @@ namespace gamescope
 
             gamescope_action_binding_add_listener( m_pBinding, &s_BindingListener, (void *)this );
             gamescope_action_binding_add_keyboard_trigger( m_pBinding, &array );
-            gamescope_action_binding_set_description( m_pBinding, description.c_str() );
+            gamescope_action_binding_set_description( m_pBinding, m_sDescription.c_str() );
             gamescope_action_binding_arm( m_pBinding, 0 );
 
             return true;
@@ -59,19 +61,23 @@ namespace gamescope
 
         void Wayland_Triggered( gamescope_action_binding *pBinding, uint32_t uSequence, uint32_t uTriggerFlags, uint32_t uTimeLo, uint32_t uTimeHi )
         {
-            std::vector<std::string_view> args;
-            args.emplace_back( m_sCommand );
-            args.emplace_back( m_sCommandValue );
-            if ( !gamescope::ConCommand::Exec( std::span<std::string_view>{ args } ) )
+            // eugh
+            std::vector<std::string_view> vec;
+            for ( std::string_view sv : m_args )
             {
-                fprintf( stderr, "Failed to exec: %s %s\n", m_sCommand, m_sCommandValue );
+                vec.push_back( sv );
+            }
+
+            if ( !gamescope::ConCommand::Exec( std::span<std::string_view>{ vec } ) )
+            {
+                fprintf( stderr, "Failed to exec: %s\n", m_sDescription.c_str() );
             }
         }
 
     private:
         gamescope_action_binding *m_pBinding = nullptr;
-		const char* m_sCommand;
-		const char* m_sCommandValue;
+		std::vector<std::string> m_args;
+        std::string m_sDescription;
 
         static const gamescope_action_binding_listener s_BindingListener;
     };
@@ -116,10 +122,10 @@ namespace gamescope
 		return true;
 	}
 
-	bool HotkeyHandler::Bind( std::vector<uint32_t> pKeySyms, const char* cmd, const char* value )
+	bool HotkeyHandler::Bind( std::vector<uint32_t> pKeySyms, std::vector<std::string> args )
 	{
 		std::shared_ptr<CHotkeyBinding> binding = std::make_shared<CHotkeyBinding>();
-        auto success = binding->Init( m_pActionBindingManager, pKeySyms, cmd, value );
+        auto success = binding->Init( m_pActionBindingManager, pKeySyms, args );
         if ( success )
         {
             m_bindings.push_back(binding);
