@@ -1,5 +1,4 @@
 #include "Script/Script.h"
-#include "backend.h"
 
 #include <X11/Xlib.h>
 #include <xkbcommon/xkbcommon-keysyms.h>
@@ -30,7 +29,6 @@
 #include "hotkey.h"
 #include "convar.h"
 #include "gpuvis_trace_utils.h"
-#include "Script/Script.h"
 #include "Utils/TempFiles.h"
 #include "Utils/Version.h"
 #include "Utils/Process.h"

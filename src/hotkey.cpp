@@ -4,9 +4,6 @@
 
 #include "hotkey.h"
 #include "convar.h"
-#include "steamcompmgr_shared.hpp"
-#include "main.hpp"
-#include "wlserver.hpp"
 
 // TODO: Consolidate
 #define WAYLAND_NULL() []<typename... Args> ( void *pData, Args... args ) { }
