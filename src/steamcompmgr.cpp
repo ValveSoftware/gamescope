@@ -4286,7 +4286,7 @@ get_size_hints(xwayland_ctx_t *ctx, steamcompmgr_win_t *w)
 
 	const bool bHasPositionAndGravityHints = ( hintsSpecified & ( PPosition | PWinGravity ) ) == ( PPosition | PWinGravity );
 	if ( bHasPositionAndGravityHints &&
-		 hints.x && hints.y && hints.win_gravity == StaticGravity )
+		 hints.x >= 0 && hints.y >= 0 && hints.win_gravity == StaticGravity )
 	{
 		w->maybe_a_dropdown = true;
 	}
