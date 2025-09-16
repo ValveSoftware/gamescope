@@ -4523,6 +4523,7 @@ map_win(xwayland_ctx_t* ctx, Window id, unsigned long sequence)
 	
 	w->isOverlay = get_prop(ctx, w->xwayland().id, ctx->atoms.overlayAtom, 0);
 	w->isExternalOverlay = get_prop(ctx, w->xwayland().id, ctx->atoms.externalOverlayAtom, 0);
+	w->bIsViewport = get_prop(ctx, w->xwayland().id, ctx->atoms.steamGamescopeViewport, 0);
 
 	// misyl: Disable appID for overlay types, as parts of the code don't expect that focus-wise.
 	// Fixes mangoapp usage when nested, and not in SteamOS.
