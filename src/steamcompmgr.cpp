@@ -5604,7 +5604,7 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 
 			w->hViewportTarget = get_prop(ctx, w->xwayland().id, ctx->atoms.steamGamescopeViewportTarget, 0);
 
-			steamcompmgr_win_t *pViewportTarget = find_win(ctx, ev->window, false);
+			steamcompmgr_win_t *pViewportTarget = find_win(ctx, w->hViewportTarget, false);
 			if ( pViewportTarget )
 			{
 				pViewportTarget->pViewportLayers.push_back( w );
