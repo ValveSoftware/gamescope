@@ -2237,7 +2237,7 @@ paint_window(steamcompmgr_win_t *w, steamcompmgr_win_t *scaleW, struct FrameInfo
 		std::sort( w->pViewportLayers.begin(), w->pViewportLayers.end(),
 		[]( steamcompmgr_win_t *pA, steamcompmgr_win_t *pB )
 		{
-			return get_win_stacking_order( pA ) < get_win_stacking_order( pB );
+			return get_win_stacking_order( pA ) > get_win_stacking_order( pB );
 		} );
 
 		uint32_t unLayerIndex = 0;
