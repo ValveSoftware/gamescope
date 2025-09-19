@@ -2209,6 +2209,39 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
 	return layer;
 }
 
+bool win_is_viewport_target_of( steamcompmgr_win_t *pWindow, steamcompmgr_win_t *pViewport )
+{
+	if ( !pWindow || !pViewport )
+		return false;
+
+	if ( !pViewport->bIsViewport )
+		return false;
+
+	return gamescope::Algorithm::Contains( pViewport->pViewportLayers, pWindow );
+}
+
+bool win_is_equal_to_or_viewport_target_of( steamcompmgr_win_t *pWindow, steamcompmgr_win_t *pViewport )
+{
+	if ( !pWindow )
+		return false;
+
+	if ( pWindow == pViewport )
+		return true;
+
+	return win_is_viewport_target_of( pWindow, pViewport );
+}
+
+bool win_is_viewport_target_of( xwayland_ctx_t *ctx, Window hWindow, Window hViewport )
+{
+	steamcompmgr_win_t *pWindow = find_win( ctx, hWindow, false );
+	steamcompmgr_win_t *pViewport = find_win( ctx, hViewport, false );
+
+	if ( !pWindow || !pViewport )
+		return false;
+
+	return win_is_viewport_target_of( pWindow, pViewport );
+}
+
 int32_t get_win_stacking_order( steamcompmgr_win_t *pWindow )
 {
 	// XXX(misyl): TODO: Cache this!
@@ -2228,17 +2261,22 @@ int32_t get_win_stacking_order( steamcompmgr_win_t *pWindow )
 	return -1;
 }
 
+void update_viewport_stacking( steamcompmgr_win_t *w )
+{
+	std::sort( w->pViewportLayers.begin(), w->pViewportLayers.end(),
+	[]( steamcompmgr_win_t *pA, steamcompmgr_win_t *pB )
+	{
+		return get_win_stacking_order( pA ) > get_win_stacking_order( pB );
+	} );
+}
+
 static void
 paint_window(steamcompmgr_win_t *w, steamcompmgr_win_t *scaleW, struct FrameInfo_t *frameInfo,
 			  MouseCursor *cursor, PaintWindowFlags flags = 0, float flOpacityScale = 1.0f, steamcompmgr_win_t *fit = nullptr, uint32_t unZPosOffset = 0 )
 {
 	if ( w->bIsViewport )
 	{
-		std::sort( w->pViewportLayers.begin(), w->pViewportLayers.end(),
-		[]( steamcompmgr_win_t *pA, steamcompmgr_win_t *pB )
-		{
-			return get_win_stacking_order( pA ) > get_win_stacking_order( pB );
-		} );
+		update_viewport_stacking( w );
 
 		uint32_t unLayerIndex = 0;
 		for ( steamcompmgr_win_t *pLayer : w->pViewportLayers )
@@ -3767,9 +3805,9 @@ void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win
 	if ( keyboardFocusWindow && ctx->currentKeyboardFocusWindow && find_win( ctx, ctx->currentKeyboardFocusWindow ) == keyboardFocusWin )
 		keyboardFocusWindow = ctx->currentKeyboardFocusWindow;
 
-	if ( ctx->focus.inputFocusWindow != inputFocus ||
+	if ( ( ctx->focus.inputFocusWindow != inputFocus && !win_is_viewport_target_of( ctx->focus.inputFocusWindow, inputFocus ) ) ||
 		ctx->focus.inputFocusMode != inputFocus->inputFocusMode ||
-		ctx->currentKeyboardFocusWindow != keyboardFocusWindow )
+		( ctx->currentKeyboardFocusWindow != keyboardFocusWindow && !win_is_viewport_target_of( ctx, ctx->currentKeyboardFocusWindow, keyboardFocusWindow ) ) )
 	{
 		if ( debugFocus == true )
 		{
@@ -3808,14 +3846,16 @@ void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win
 
 	if ( inputFocus == ctx->focus.focusWindow && ctx->focus.overrideWindow )
 	{
-		if ( ctx->list[0].xwayland().id != ctx->focus.overrideWindow->xwayland().id )
+		if ( ctx->list[0].xwayland().id != ctx->focus.overrideWindow->xwayland().id &&
+			 !win_is_viewport_target_of( &ctx->list[0], ctx->focus.overrideWindow ) )
 		{
 			XRaiseWindow(ctx->dpy, ctx->focus.overrideWindow->xwayland().id);
 		}
 	}
 	else
 	{
-		if ( ctx->list[0].xwayland().id != inputFocus->xwayland().id )
+		if ( ctx->list[0].xwayland().id != inputFocus->xwayland().id &&
+			 !win_is_viewport_target_of( &ctx->list[0], inputFocus ) )
 		{
 			XRaiseWindow(ctx->dpy, inputFocus->xwayland().id);
 		}
@@ -4069,6 +4109,22 @@ determine_and_apply_focus( global_focus_t *pFocus )
 	{
 		pFocus->inputFocusWindow = pFocus->focusWindow;
 		pFocus->keyboardFocusWindow = pFocus->overrideWindow ? pFocus->overrideWindow : pFocus->focusWindow;
+	}
+
+	if ( pFocus->inputFocusWindow && pFocus->inputFocusWindow->bIsViewport )
+	{
+		update_viewport_stacking( pFocus->inputFocusWindow );
+
+		// Pick highest stacking viewport target...
+		if ( !pFocus->inputFocusWindow->pViewportLayers.empty() )
+			pFocus->inputFocusWindow = pFocus->inputFocusWindow->pViewportLayers[ pFocus->inputFocusWindow->pViewportLayers.size() - 1 ];
+	}
+
+	if ( pFocus->keyboardFocusWindow && pFocus->keyboardFocusWindow->bIsViewport )
+	{
+		steamcompmgr_win_t *pKeyboardFocusViewportTarget = find_win( pFocus->keyboardFocusWindow->xwayland().ctx, pFocus->keyboardFocusWindow->xwayland().ctx->currentKeyboardFocusWindow, false );
+		if ( pKeyboardFocusViewportTarget )
+			pFocus->keyboardFocusWindow = pKeyboardFocusViewportTarget;
 	}
 
 	// Pick cursor from our input focus window
@@ -5535,6 +5591,10 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 				{
 					hasRepaint = true;
 				}
+				if ( win_is_viewport_target_of( w, ctx->focus.focusWindow ) )
+				{
+					hasRepaint = true;
+				}
 			}
 
 			unsigned int maxOpacity = 0;
@@ -6548,6 +6608,11 @@ bool handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint64_t co
 					focusWindow_engine = w->engineName;
 				}
 
+				if ( ctx->focus.focusWindow && win_is_viewport_target_of( w, ctx->focus.focusWindow ) )
+				{
+					hasRepaint = true;
+				}
+
 				if ( w == pFocus->overrideWindow )
 				{
 					hasRepaintNonBasePlane = true;
@@ -7203,7 +7268,7 @@ void xwayland_ctx_t::Dispatch()
 
 					if ( kbw )
 					{
-						if ( kbw->xwayland().id == ctx->currentKeyboardFocusWindow )
+						if ( kbw->xwayland().id == ctx->currentKeyboardFocusWindow || win_is_viewport_target_of( kbw, w ) )
 						{
 							// focus went to a child, this is fine, make note of it in case we need to fix it
 							ctx->currentKeyboardFocusWindow = newKeyboardFocus;
