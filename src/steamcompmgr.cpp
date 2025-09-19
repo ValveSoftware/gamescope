@@ -3799,23 +3799,38 @@ void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win
 
 	Window keyboardFocusWindow = keyboardFocusWin ? keyboardFocusWin->xwayland().id : None;
 
+	steamcompmgr_win_t *pCurrentKeyboardFocusTopLevelWindow = find_win( ctx, ctx->currentKeyboardFocusWindow );
+
 	// If the top level parent of our current keyboard window is the same as our target (top level) input focus window
 	// then keep focus on that and don't yank it away to the top level input focus window.
 	// Fixes dropdowns in Steam CEF.
-	if ( keyboardFocusWindow && ctx->currentKeyboardFocusWindow && find_win( ctx, ctx->currentKeyboardFocusWindow ) == keyboardFocusWin )
+	if ( keyboardFocusWindow && ctx->currentKeyboardFocusWindow && ( pCurrentKeyboardFocusTopLevelWindow == keyboardFocusWin || win_is_viewport_target_of( pCurrentKeyboardFocusTopLevelWindow, keyboardFocusWin ) ) )
 		keyboardFocusWindow = ctx->currentKeyboardFocusWindow;
 
-	if ( ( ctx->focus.inputFocusWindow != inputFocus && !win_is_viewport_target_of( ctx->focus.inputFocusWindow, inputFocus ) ) ||
+	// Handle layering for viewports.
+	if ( inputFocus && inputFocus->bIsViewport )
+	{
+		update_viewport_stacking( inputFocus );
+
+		// Pick highest stacking viewport target...
+		if ( !inputFocus->pViewportLayers.empty() )
+			inputFocus = inputFocus->pViewportLayers[ inputFocus->pViewportLayers.size() - 1 ];
+	}
+
+	if ( ( ctx->focus.inputFocusWindow != inputFocus ) ||
 		ctx->focus.inputFocusMode != inputFocus->inputFocusMode ||
-		( ctx->currentKeyboardFocusWindow != keyboardFocusWindow && !win_is_viewport_target_of( ctx, ctx->currentKeyboardFocusWindow, keyboardFocusWindow ) ) )
+		( ctx->currentKeyboardFocusWindow != keyboardFocusWindow ) )
 	{
 		if ( debugFocus == true )
 		{
 			xwm_log.debugf( "determine_and_apply_focus inputFocus %lu", inputFocus->xwayland().id );
 		}
 
-		if ( !ctx->focus.overrideWindow || ctx->focus.overrideWindow != keyboardFocusWin )
-			XSetInputFocus(ctx->dpy, keyboardFocusWin->xwayland().id, RevertToNone, CurrentTime);
+		if ( ctx->currentKeyboardFocusWindow != keyboardFocusWindow )
+		{
+			if ( !ctx->focus.overrideWindow || ctx->focus.overrideWindow != keyboardFocusWin )
+				XSetInputFocus(ctx->dpy, keyboardFocusWin->xwayland().id, RevertToNone, CurrentTime);
+		}
 
 		if ( ctx->focus.inputFocusWindow != inputFocus ||
 			 ctx->focus.inputFocusMode != inputFocus->inputFocusMode )
@@ -4109,22 +4124,6 @@ determine_and_apply_focus( global_focus_t *pFocus )
 	{
 		pFocus->inputFocusWindow = pFocus->focusWindow;
 		pFocus->keyboardFocusWindow = pFocus->overrideWindow ? pFocus->overrideWindow : pFocus->focusWindow;
-	}
-
-	if ( pFocus->inputFocusWindow && pFocus->inputFocusWindow->bIsViewport )
-	{
-		update_viewport_stacking( pFocus->inputFocusWindow );
-
-		// Pick highest stacking viewport target...
-		if ( !pFocus->inputFocusWindow->pViewportLayers.empty() )
-			pFocus->inputFocusWindow = pFocus->inputFocusWindow->pViewportLayers[ pFocus->inputFocusWindow->pViewportLayers.size() - 1 ];
-	}
-
-	if ( pFocus->keyboardFocusWindow && pFocus->keyboardFocusWindow->bIsViewport )
-	{
-		steamcompmgr_win_t *pKeyboardFocusViewportTarget = find_win( pFocus->keyboardFocusWindow->xwayland().ctx, pFocus->keyboardFocusWindow->xwayland().ctx->currentKeyboardFocusWindow, false );
-		if ( pKeyboardFocusViewportTarget )
-			pFocus->keyboardFocusWindow = pKeyboardFocusViewportTarget;
 	}
 
 	// Pick cursor from our input focus window
