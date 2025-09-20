@@ -2278,15 +2278,16 @@ paint_window(steamcompmgr_win_t *w, steamcompmgr_win_t *scaleW, struct FrameInfo
 	{
 		update_viewport_stacking( w );
 
-		uint32_t unLayerIndex = 0;
+		uint32_t unViewportLayer = 0;
 		for ( steamcompmgr_win_t *pLayer : w->pViewportLayers )
 		{
-			unZPosOffset = unZPosOffset + unLayerIndex++;
+			xwm_log.debugf( "Viewport Layer %d (0x%lx) -> (%d, %d) [%d x %d]", unViewportLayer, (unsigned long)pLayer->xwayland().id, pLayer->xwayland().a.x, pLayer->xwayland().a.y, pLayer->xwayland().a.width, pLayer->xwayland().a.height );
 
-			paint_window( pLayer, scaleW, frameInfo, cursor, flags, flOpacityScale, fit, unZPosOffset );
+			paint_window( pLayer, scaleW, frameInfo, cursor, flags, flOpacityScale, fit, unZPosOffset++ );
 
 			// Remove base plane flag for any other layers
 			flags &= ~PaintWindowFlag::BasePlane;
+			unViewportLayer++;
 		}
 
 		return;
