@@ -1047,6 +1047,8 @@ bool steamcompmgr_window_should_limit_fps( steamcompmgr_win_t *w )
 	return w && !window_is_steam( w ) && !window_is_vr_scene_app( w ) && !w->isOverlay && !w->isExternalOverlay;
 }
 
+
+
 static bool
 steamcompmgr_user_has_any_game_open()
 {
@@ -1358,6 +1360,36 @@ static steamcompmgr_win_t * find_win( xwayland_ctx_t *ctx, struct wlr_surface *s
 	}
 
 	return nullptr;
+}
+
+void win_register_viewport_layer( steamcompmgr_win_t *pWindow, Window hTarget )
+{
+	if ( !pWindow )
+	{
+		xwm_log.errorf( "win_register_viewport_layer: called with invalid window" );
+		return;
+	}
+
+	xwayland_ctx_t *ctx = pWindow->xwayland().ctx;
+
+	if ( pWindow->hViewportTarget == hTarget )
+		return;
+
+	if (pWindow->hViewportTarget != None)
+	{
+		steamcompmgr_win_t *pOldViewportTarget = find_win(ctx, pWindow->hViewportTarget, false);
+		if (pOldViewportTarget)
+		{
+			std::erase(pOldViewportTarget->pViewportLayers, pWindow);
+		}
+	}
+
+	pWindow->hViewportTarget = hTarget;
+	steamcompmgr_win_t *pViewportTarget = find_win(ctx, hTarget, false);
+	if (pViewportTarget)
+	{
+		pViewportTarget->pViewportLayers.push_back(pWindow);
+	}
 }
 
 static gamescope::CBufferMemoizer s_BufferMemos;
@@ -2281,7 +2313,7 @@ paint_window(steamcompmgr_win_t *w, steamcompmgr_win_t *scaleW, struct FrameInfo
 		uint32_t unViewportLayer = 0;
 		for ( steamcompmgr_win_t *pLayer : w->pViewportLayers )
 		{
-			xwm_log.debugf( "Viewport Layer %d (0x%lx) -> (%d, %d) [%d x %d]", unViewportLayer, (unsigned long)pLayer->xwayland().id, pLayer->xwayland().a.x, pLayer->xwayland().a.y, pLayer->xwayland().a.width, pLayer->xwayland().a.height );
+			xwm_log.infof( "Viewport Layer %d (0x%lx) -> (%d, %d) [%d x %d]", unViewportLayer, (unsigned long)pLayer->xwayland().id, pLayer->xwayland().a.x, pLayer->xwayland().a.y, pLayer->xwayland().a.width, pLayer->xwayland().a.height );
 
 			paint_window( pLayer, scaleW, frameInfo, cursor, flags, flOpacityScale, fit, unZPosOffset++ );
 
@@ -4580,6 +4612,8 @@ map_win(xwayland_ctx_t* ctx, Window id, unsigned long sequence)
 	w->isOverlay = get_prop(ctx, w->xwayland().id, ctx->atoms.overlayAtom, 0);
 	w->isExternalOverlay = get_prop(ctx, w->xwayland().id, ctx->atoms.externalOverlayAtom, 0);
 	w->bIsViewport = get_prop(ctx, w->xwayland().id, ctx->atoms.steamGamescopeViewport, 0);
+	Window hTarget = get_prop(ctx, w->xwayland().id, ctx->atoms.steamGamescopeViewportTarget, 0);
+	win_register_viewport_layer(w, hTarget);
 
 	// misyl: Disable appID for overlay types, as parts of the code don't expect that focus-wise.
 	// Fixes mangoapp usage when nested, and not in SteamOS.
@@ -5654,23 +5688,8 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 		steamcompmgr_win_t * w = find_win(ctx, ev->window);
 		if (w)
 		{
-			if ( w->hViewportTarget != None )
-			{
-				steamcompmgr_win_t *pOldViewportTarget = find_win(ctx, ev->window, false);
-				if ( pOldViewportTarget )
-				{
-					std::erase( pOldViewportTarget->pViewportLayers, w );
-				}
-			}
-
-			w->hViewportTarget = get_prop(ctx, w->xwayland().id, ctx->atoms.steamGamescopeViewportTarget, 0);
-
-			steamcompmgr_win_t *pViewportTarget = find_win(ctx, w->hViewportTarget, false);
-			if ( pViewportTarget )
-			{
-				pViewportTarget->pViewportLayers.push_back( w );
-			}
-
+			Window hTarget = get_prop(ctx, w->xwayland().id, ctx->atoms.steamGamescopeViewportTarget, 0);
+			win_register_viewport_layer(w, hTarget);
 			MakeFocusDirty();
 			hasRepaint = true;
 		}
