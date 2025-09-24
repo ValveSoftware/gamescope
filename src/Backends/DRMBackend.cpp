@@ -713,6 +713,23 @@ static gamescope::CDRMPlane *find_primary_plane(struct drm_t *drm)
 	return nullptr;
 }
 
+static bool have_overlay_planes(struct drm_t *drm)
+{
+	if ( !drm->pCRTC )
+		return false;
+
+	for ( std::unique_ptr< gamescope::CDRMPlane > &pPlane : drm->planes )
+	{
+		if ( pPlane->GetModePlane()->possible_crtcs & drm->pCRTC->GetCRTCMask() )
+		{
+			if ( pPlane->GetProperties().type->GetCurrentValue() == DRM_PLANE_TYPE_OVERLAY )
+				return true;
+		}
+	}
+
+	return false;
+}
+
 extern void mangoapp_output_update( uint64_t vblanktime );
 static void page_flip_handler(int fd, unsigned int frame, unsigned int sec, unsigned int usec, unsigned int crtc_id, void *data)
 {
@@ -1333,16 +1350,32 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 		}
 	}
 
-	// ARGB8888 is the Xformat and AFormat here in this function as we want transparent overlay
-	g_nDRMFormatOverlay = pick_plane_format(&drm->primary_formats, DRM_FORMAT_ARGB2101010, DRM_FORMAT_ARGB2101010);
-	if ( g_nDRMFormatOverlay == DRM_FORMAT_INVALID ) {
-		g_nDRMFormatOverlay = pick_plane_format(&drm->primary_formats, DRM_FORMAT_ABGR2101010, DRM_FORMAT_ABGR2101010);
+	if (have_overlay_planes(drm)) {
+		// ARGB8888 is the Xformat and AFormat here in this function as we want transparent overlay
+		g_nDRMFormatOverlay = pick_plane_format(&drm->formats, DRM_FORMAT_ARGB2101010, DRM_FORMAT_ARGB2101010);
 		if ( g_nDRMFormatOverlay == DRM_FORMAT_INVALID ) {
-			g_nDRMFormatOverlay = pick_plane_format(&drm->primary_formats, DRM_FORMAT_ARGB8888, DRM_FORMAT_ARGB8888);
+			g_nDRMFormatOverlay = pick_plane_format(&drm->formats, DRM_FORMAT_ABGR2101010, DRM_FORMAT_ABGR2101010);
 			if ( g_nDRMFormatOverlay == DRM_FORMAT_INVALID ) {
-				drm_log.errorf("Overlay plane doesn't support any formats >= 8888");
-				return false;
+				g_nDRMFormatOverlay = pick_plane_format(&drm->formats, DRM_FORMAT_ARGB8888, DRM_FORMAT_ARGB8888);
+				if ( g_nDRMFormatOverlay == DRM_FORMAT_INVALID ) {
+					drm_log.errorf("Overlay plane doesn't support any formats >= 8888");
+					return false;
+				}
 			}
+		}
+	} else {
+		switch (g_nDRMFormat) {
+		case DRM_FORMAT_XRGB2101010:
+			g_nDRMFormatOverlay = DRM_FORMAT_ARGB2101010;
+			break;
+		case DRM_FORMAT_ABGR2101010:
+			g_nDRMFormatOverlay = DRM_FORMAT_ABGR2101010;
+			break;
+		case DRM_FORMAT_XRGB8888:
+			g_nDRMFormatOverlay = DRM_FORMAT_ARGB8888;
+			break;
+		default:
+			return false;
 		}
 	}
 
