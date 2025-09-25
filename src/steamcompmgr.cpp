@@ -7513,6 +7513,7 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 	/* get atoms */
 	ctx->atoms.steamAtom = XInternAtom(ctx->dpy, STEAM_PROP, false);
 	ctx->atoms.steamInputFocusAtom = XInternAtom(ctx->dpy, "STEAM_INPUT_FOCUS", false);
+	ctx->atoms.gamescopeViewportSupported = XInternAtom(ctx->dpy, "GAMESCOPE_VIEWPORT_SUPPORTED", false);
 	ctx->atoms.steamGamescopeViewport = XInternAtom(ctx->dpy, "STEAM_GAMESCOPE_VIEWPORT", false);
 	ctx->atoms.steamGamescopeViewportTarget = XInternAtom(ctx->dpy, "STEAM_GAMESCOPE_VIEWPORT_TARGET", false);
 	ctx->atoms.steamTouchClickModeAtom = XInternAtom(ctx->dpy, "STEAM_TOUCH_CLICK_MODE", false);
@@ -7671,6 +7672,10 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 
 	XChangeProperty(ctx->dpy, ctx->root, ctx->atoms.gamescopeXwaylandServerId, XA_CARDINAL, 32, PropModeReplace,
 		(unsigned char *)&serverId, 1 );
+
+	unsigned long nViewportSupported = 1;
+	XChangeProperty(ctx->dpy, ctx->root, ctx->atoms.gamescopeViewportSupported, XA_CARDINAL, 32, PropModeReplace,
+		(unsigned char *)&nViewportSupported, 1 );
 
 	XGrabServer(ctx->dpy);
 
