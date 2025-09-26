@@ -2313,7 +2313,13 @@ paint_window(steamcompmgr_win_t *w, steamcompmgr_win_t *scaleW, struct FrameInfo
 		uint32_t unViewportLayer = 0;
 		for ( steamcompmgr_win_t *pLayer : w->pViewportLayers )
 		{
-			xwm_log.infof( "Viewport Layer %d (0x%lx) -> (%d, %d) [%d x %d]", unViewportLayer, (unsigned long)pLayer->xwayland().id, pLayer->xwayland().a.x, pLayer->xwayland().a.y, pLayer->xwayland().a.width, pLayer->xwayland().a.height );
+			if (pLayer->xwayland().a.map_state != IsViewable)
+				continue;
+
+			if (pLayer->xwayland().a.width == 1 && pLayer->xwayland().a.height == 1)
+				continue;
+
+			xwm_log.infof( "Viewport Layer %d (0x%lx) -> (%d, %d) [%d x %d ] Map: %d", unViewportLayer, (unsigned long)pLayer->xwayland().id, pLayer->xwayland().a.x, pLayer->xwayland().a.y, pLayer->xwayland().a.width, pLayer->xwayland().a.height, pLayer->xwayland().a.map_state );
 
 			paint_window( pLayer, scaleW, frameInfo, cursor, flags, flOpacityScale, fit, unZPosOffset++ );
 
