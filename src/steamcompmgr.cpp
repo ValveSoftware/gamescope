@@ -2422,6 +2422,31 @@ bool ShouldDrawCursor()
 	return !pFocus->GetNestedHints();
 }
 
+static void ForwardVROverlayTargets()
+{
+	gamescope_xwayland_server_t *server = NULL;
+	for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
+	{
+		for ( steamcompmgr_win_t *w = server->ctx->list; w; w = w->xwayland().next )
+		{
+			if ( w->oulTargetVROverlay )
+			{
+				gamescope::Rc<commit_t> lastCommit;
+				get_window_last_done_commit( w, lastCommit );
+				if ( !lastCommit )
+					continue;
+
+                gamescope::IBackendFb* pFb = lastCommit->vulkanTex->GetBackendFb();
+				if ( !pFb )
+					continue;
+
+				const uint64_t ulOverlayHandle = *w->oulTargetVROverlay;
+				GetBackend()->ForwardFramebuffer( pFb, &ulOverlayHandle );
+			}
+		}
+	}
+}
+
 gamescope::ConVar<bool> cv_paint_primary_plane{ "paint_primary_plane", true };
 gamescope::ConVar<bool> cv_paint_override_redirect_plane{ "paint_override_redirect_plane", true };
 gamescope::ConVar<bool> cv_paint_steam_overlay_plane{ "paint_steam_overlay_plane", true };
@@ -2770,6 +2795,8 @@ paint_all( global_focus_t *pFocus, bool async )
 			frameInfo.lut3D[i] = g_ColorMgmtLuts[i].vk_lut3d;
 		}
 	}
+
+	ForwardVROverlayTargets();
 
 	if ( pConnector && pConnector->Present( &frameInfo, async ) != 0 )
 	{
@@ -3155,6 +3182,17 @@ bool get_prop( xwayland_ctx_t *ctx, Window win, Atom prop, std::vector< uint32_t
 		return true;
 	}
 	return false;
+}
+
+std::optional<uint64_t> get_u64_prop( xwayland_ctx_t *ctx, Window win, Atom prop )
+{
+	std::vector< uint32_t > values;
+	get_prop( ctx, win, prop, values );
+
+	if ( values.size() != 2 )
+		return std::nullopt;
+
+	return ((uint64_t)(values[0])) | (((uint64_t)values[1]) << 32ul );
 }
 
 std::string get_string_prop( xwayland_ctx_t *ctx, Window win, Atom prop )
@@ -3594,6 +3632,12 @@ found:;
 	{
 		// Always skip system tray icons and overlays
 		if ( w->isSysTrayIcon || w->isOverlay || w->isExternalOverlay )
+		{
+			continue;
+		}
+
+		// Skip overlay targets
+		if ( w->oulTargetVROverlay )
 		{
 			continue;
 		}
@@ -4476,6 +4520,8 @@ map_win(xwayland_ctx_t* ctx, Window id, unsigned long sequence)
 	// Fixes mangoapp usage when nested, and not in SteamOS.
 	if ( w->isExternalOverlay )
 		w->appID = 0;
+
+	w->oulTargetVROverlay = get_u64_prop(ctx, w->xwayland().id, ctx->atoms.steamGamescopeVROverlayTarget);
 
 	get_size_hints(ctx, w);
 
@@ -5534,6 +5580,16 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 			MakeFocusDirty();
 		}
 	}
+	if (ev->atom == ctx->atoms.steamGamescopeVROverlayTarget)
+	{
+		steamcompmgr_win_t * w = find_win(ctx, ev->window);
+		if (w)
+		{
+			w->oulTargetVROverlay = get_u64_prop(ctx, w->xwayland().id, ctx->atoms.steamGamescopeVROverlayTarget);
+			MakeFocusDirty();
+			hasRepaint = true;
+		}
+	}
 	if (ev->atom == ctx->atoms.gamescopeCtrlAppIDAtom )
 	{
 		get_prop( ctx, ctx->root, ctx->atoms.gamescopeCtrlAppIDAtom, vecFocuscontrolAppIDs );
@@ -6406,6 +6462,12 @@ bool handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint64_t co
 			bFoundWindow = true;
 
 			// Window just got a new available commit, determine if that's worth a repaint
+
+			// If this is a forwarded vr plane, repaint
+			if ( w->oulTargetVROverlay )
+			{
+				hasRepaint = true;
+			}
 
 			for ( auto &iter : g_VirtualConnectorFocuses )
 			{
@@ -7360,6 +7422,9 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 	ctx->atoms.netSystemTrayOpcodeAtom = XInternAtom(ctx->dpy, "_NET_SYSTEM_TRAY_OPCODE", false);
 	ctx->atoms.steamStreamingClientAtom = XInternAtom(ctx->dpy, "STEAM_STREAMING_CLIENT", false);
 	ctx->atoms.steamStreamingClientVideoAtom = XInternAtom(ctx->dpy, "STEAM_STREAMING_CLIENT_VIDEO", false);
+	ctx->atoms.steamGamescopeVROverlayTarget = XInternAtom(ctx->dpy, "STEAM_GAMESCOPE_VROVERLAY_TARGET", false);
+	ctx->atoms.gamescopePid = XInternAtom(ctx->dpy, "GAMESCOPE_PID", false);
+	ctx->atoms.gamescopeVROverlayForwarding = XInternAtom(ctx->dpy, "GAMESCOPE_VROVERLAY_FORWARDING", false);
 	ctx->atoms.gamescopeFocusableAppsAtom = XInternAtom(ctx->dpy, "GAMESCOPE_FOCUSABLE_APPS", false);
 	ctx->atoms.gamescopeFocusableWindowsAtom = XInternAtom(ctx->dpy, "GAMESCOPE_FOCUSABLE_WINDOWS", false);
 	ctx->atoms.gamescopeFocusedAppAtom = XInternAtom( ctx->dpy, "GAMESCOPE_FOCUSED_APP", false );
@@ -7482,6 +7547,12 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 
 	XChangeProperty(ctx->dpy, ctx->root, ctx->atoms.gamescopeXwaylandServerId, XA_CARDINAL, 32, PropModeReplace,
 		(unsigned char *)&serverId, 1 );
+
+	uint32_t unPid = getpid();
+	XChangeProperty(ctx->dpy, ctx->root, ctx->atoms.gamescopePid, XA_CARDINAL, 32, PropModeReplace, (unsigned char *)&unPid, 1 );
+
+	uint32_t unVROverlayForwardingSupported = GetBackend()->SupportsVROverlayForwarding() ? 1 : 0;
+	XChangeProperty(ctx->dpy, ctx->root, ctx->atoms.gamescopeVROverlayForwarding, XA_CARDINAL, 32, PropModeReplace, (unsigned char *)&unVROverlayForwardingSupported, 1 );
 
 	XGrabServer(ctx->dpy);
 

@@ -892,6 +892,23 @@ namespace gamescope
                 }
             }
         }
+        
+        bool SupportsVROverlayForwarding() override
+        {
+            return true;
+        }
+        
+        void ForwardFramebuffer( IBackendFb *pFramebuffer, const void *pData ) override
+        {
+            COpenVRFb *pVRFB = static_cast<COpenVRFb *>( pFramebuffer );
+
+            vr::VROverlayHandle_t hOverlay = static_cast<vr::VROverlayHandle_t>( *reinterpret_cast<const uint64_t*>( pData ) );
+            vr::SharedTextureHandle_t ulHandle = pVRFB->GetSharedTextureHandle();
+
+            openvr_log.debugf( "Forwarding for overlay: %lx", (unsigned long)hOverlay );
+            vr::Texture_t texture = { (void *)&ulHandle, vr::TextureType_SharedTextureHandle, vr::ColorSpace_Gamma };
+            vr::VROverlay()->SetOverlayTexture( hOverlay, &texture );
+        }
 
         vr::IVRIPCResourceManagerClient *GetIPCResourceManager()
         {

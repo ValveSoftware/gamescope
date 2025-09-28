@@ -135,6 +135,9 @@ struct xwayland_ctx_t final : public gamescope::IWaitable
 		Atom netSystemTrayOpcodeAtom;
 		Atom steamStreamingClientAtom;
 		Atom steamStreamingClientVideoAtom;
+		Atom steamGamescopeVROverlayTarget;
+		Atom gamescopePid;
+		Atom gamescopeVROverlayForwarding;
 		Atom gamescopeFocusableAppsAtom;
 		Atom gamescopeFocusableWindowsAtom;
 		Atom gamescopeFocusedWindowAtom;
