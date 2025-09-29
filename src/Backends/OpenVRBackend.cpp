@@ -1895,8 +1895,11 @@ namespace gamescope
 
             // XXX: We have no guarantee for WHAT the sequence is here. This could be total crap.
             // but this is probably good enough for now?
-            m_pVisibleFbId = std::move( m_pQueuedFbId );
-            m_pQueuedFbId = nullptr;
+            if ( m_pQueuedFbId )
+            {
+                m_pVisibleFbId = std::move( m_pQueuedFbId );
+                m_pQueuedFbId = nullptr;
+            }
         }
     }
 
