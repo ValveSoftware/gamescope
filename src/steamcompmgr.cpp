@@ -2441,7 +2441,7 @@ static void ForwardVROverlayTargets()
 					continue;
 
 				const uint64_t ulOverlayHandle = *w->oulTargetVROverlay;
-				GetBackend()->ForwardFramebuffer( pFb, &ulOverlayHandle );
+				GetBackend()->ForwardFramebuffer( w->pForwarderPlane, pFb, &ulOverlayHandle );
 			}
 		}
 	}
@@ -4522,6 +4522,7 @@ map_win(xwayland_ctx_t* ctx, Window id, unsigned long sequence)
 		w->appID = 0;
 
 	w->oulTargetVROverlay = get_u64_prop(ctx, w->xwayland().id, ctx->atoms.steamGamescopeVROverlayTarget);
+	w->pForwarderPlane = nullptr;
 
 	get_size_hints(ctx, w);
 
@@ -5586,6 +5587,7 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 		if (w)
 		{
 			w->oulTargetVROverlay = get_u64_prop(ctx, w->xwayland().id, ctx->atoms.steamGamescopeVROverlayTarget);
+			w->pForwarderPlane = nullptr;
 			MakeFocusDirty();
 			hasRepaint = true;
 		}

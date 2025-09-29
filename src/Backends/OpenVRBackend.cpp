@@ -212,16 +212,19 @@ namespace gamescope
         float flAlpha = 1.0f;
     };
 
-    class COpenVRPlane
+    class COpenVRPlane final : public IBackendPlane
     {
     public:
         COpenVRPlane( COpenVRConnector *pConnector );
         ~COpenVRPlane();
 
         bool Init( COpenVRPlane *pParent, COpenVRPlane *pSiblingBelow );
+        void InitAsForwarder( vr::VROverlayHandle_t hOverlay ) { m_hOverlay = hOverlay; }
 
         void Present( std::optional<OpenVRPlaneState> oState );
         void Present( const FrameInfo_t::Layer_t *pLayer );
+
+        void ForwardFramebuffer( COpenVRFb *pFb );
 
         vr::VROverlayHandle_t GetOverlay() const { return m_hOverlay; }
         vr::VROverlayHandle_t GetOverlayThumbnail() const { return m_hOverlayThumbnail; }
@@ -422,6 +425,17 @@ namespace gamescope
                             plane.OnPageFlip();
                         }
                     }
+                }
+
+                {
+                    std::scoped_lock lock{ m_mutForwarderPlanes };
+
+                    for ( std::shared_ptr<COpenVRPlane> &pPlane : m_pForwarderPlanesInFlight )
+                    {
+                        pPlane->OnPageFlip();
+                    }
+
+                    m_pForwarderPlanesInFlight.clear();
                 }
 
                 ProcessVRInput();
@@ -898,16 +912,31 @@ namespace gamescope
             return true;
         }
         
-        void ForwardFramebuffer( IBackendFb *pFramebuffer, const void *pData ) override
+        void ForwardFramebuffer( std::shared_ptr<IBackendPlane> &pPlane, IBackendFb *pFramebuffer, const void *pData ) override
         {
             COpenVRFb *pVRFB = static_cast<COpenVRFb *>( pFramebuffer );
 
             vr::VROverlayHandle_t hOverlay = static_cast<vr::VROverlayHandle_t>( *reinterpret_cast<const uint64_t*>( pData ) );
-            vr::SharedTextureHandle_t ulHandle = pVRFB->GetSharedTextureHandle();
-
             openvr_log.debugf( "Forwarding for overlay: %lx", (unsigned long)hOverlay );
-            vr::Texture_t texture = { (void *)&ulHandle, vr::TextureType_SharedTextureHandle, vr::ColorSpace_Gamma };
-            vr::VROverlay()->SetOverlayTexture( hOverlay, &texture );
+
+            if ( !pPlane )
+            {
+                std::shared_ptr<COpenVRPlane> pOpenVRPlane = std::make_shared<COpenVRPlane>( nullptr );
+                pOpenVRPlane->InitAsForwarder( hOverlay );
+                pPlane = pOpenVRPlane;
+            }
+
+            std::shared_ptr<COpenVRPlane> pOpenVRPlane = std::static_pointer_cast<COpenVRPlane>( pPlane );
+            assert( pOpenVRPlane->GetOverlay() == hOverlay );
+
+            pOpenVRPlane->ForwardFramebuffer( pVRFB );
+            {
+                std::scoped_lock lock{ m_mutForwarderPlanes };
+                if ( !Algorithm::Contains( m_pForwarderPlanesInFlight, pOpenVRPlane ) )
+                {
+                    m_pForwarderPlanesInFlight.emplace_back( std::move( pOpenVRPlane ) );
+                }
+            }
         }
 
         vr::IVRIPCResourceManagerClient *GetIPCResourceManager()
@@ -1334,6 +1363,9 @@ namespace gamescope
         std::shared_ptr<CLibInputHandler> m_pLibInput;
         CAsyncWaiter<CRawPointer<IWaitable>, 16> m_LibInputWaiter;
 
+        std::mutex m_mutForwarderPlanes;
+        std::vector<std::shared_ptr<COpenVRPlane>> m_pForwarderPlanesInFlight;
+
         // Threads need to go last, as they rely on the other things in the class being constructed before their code is run.
         std::thread m_FlipHandlerThread;
 	};
@@ -1681,7 +1713,7 @@ namespace gamescope
 
     COpenVRPlane::COpenVRPlane( COpenVRConnector *pConnector )
         : m_pConnector{ pConnector }
-        , m_pBackend{ pConnector->GetBackend() }
+        , m_pBackend{ pConnector ? pConnector->GetBackend() : nullptr }
     {
     }
     COpenVRPlane::~COpenVRPlane()
@@ -1885,6 +1917,19 @@ namespace gamescope
         else
         {
             Present( std::nullopt );
+        }
+    }
+
+    void COpenVRPlane::ForwardFramebuffer( COpenVRFb *pFb )
+    {
+        vr::SharedTextureHandle_t ulHandle = pFb->GetSharedTextureHandle();
+
+        vr::Texture_t texture = { (void *)&ulHandle, vr::TextureType_SharedTextureHandle, vr::ColorSpace_Gamma };
+        vr::VROverlay()->SetOverlayTexture( m_hOverlay, &texture );
+
+        {
+            std::scoped_lock lock{ m_mutFbIds };
+            m_pQueuedFbId = pFb;
         }
     }
 

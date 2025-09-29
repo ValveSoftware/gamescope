@@ -258,6 +258,12 @@ namespace gamescope
         virtual void SetReleasePoint( std::shared_ptr<CReleaseTimelinePoint> pReleasePoint ) = 0;
     };
 
+    class IBackendPlane
+    {
+    public:
+        virtual ~IBackendPlane() = default;
+    };
+
     class CBaseBackendFb : public IBackendFb
     {
     public:
@@ -354,7 +360,7 @@ namespace gamescope
         virtual void NotifyPhysicalInput( InputType eInputType ) = 0;
 
         virtual bool SupportsVROverlayForwarding() = 0;
-        virtual void ForwardFramebuffer( IBackendFb *pFramebuffer, const void *pData ) = 0;
+        virtual void ForwardFramebuffer( std::shared_ptr<IBackendPlane> &pPlane, IBackendFb *pFramebuffer, const void *pData ) = 0;
 
         static IBackend *Get();
         template <typename T>
@@ -387,7 +393,7 @@ namespace gamescope
         virtual void NotifyPhysicalInput( InputType eInputType ) override {}
 
         virtual bool SupportsVROverlayForwarding() override { return false; }
-        virtual void ForwardFramebuffer( IBackendFb *pFramebuffer, const void *pData ) override {}
+        virtual void ForwardFramebuffer( std::shared_ptr<IBackendPlane> &pPlane, IBackendFb *pFramebuffer, const void *pData ) override {}
     };
 
     // This is a blob of data that may be associated with
