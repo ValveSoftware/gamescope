@@ -233,7 +233,14 @@ struct steamcompmgr_win_t {
 		case gamescope::VirtualConnectorStrategies::SteamControlled:
 			return 0;
 		case gamescope::VirtualConnectorStrategies::PerAppId:
-			return static_cast<gamescope::VirtualConnectorKey_t>( this->appID );
+			if ( this->appID )
+			{
+				return static_cast<gamescope::VirtualConnectorKey_t>( this->appID );
+			}
+			else
+			{
+				return static_cast<gamescope::VirtualConnectorKey_t>( ( uint64_t( 1 ) << 63u ) | this->seq );	
+			}
 		case gamescope::VirtualConnectorStrategies::PerWindow:
 			return static_cast<gamescope::VirtualConnectorKey_t>( this->seq );
 		}

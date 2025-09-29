@@ -3642,8 +3642,13 @@ found:;
 			continue;
 		}
 
+		if ( gamescope::cv_backend_virtual_connector_strategy == gamescope::VirtualConnectorStrategies::SteamControlled )
+		{
+			if ( !( win_has_game_id( w ) || window_is_steam( w ) || w->isSteamStreamingClient ) )	
+				continue;
+		}
+
 		if ( w->xwayland().a.map_state == IsViewable && w->xwayland().a.c_class == InputOutput &&
-			( win_has_game_id( w ) || window_is_steam( w ) || w->isSteamStreamingClient ) &&
 			 (w->opacity > TRANSLUCENT || w->isSteamStreamingClient ) )
 		{
 			vecPossibleFocusWindows.push_back( w );
@@ -5026,6 +5031,7 @@ damage_win(xwayland_ctx_t *ctx, XDamageNotifyEvent *de)
 
 	// First damage event we get, compute focus; we only want to focus damaged
 	// windows to have meaningful frames.
+	/// FIXME APPID FOCUS STRATERGY FOR 
 	if (w->appID && w->xwayland().damage_sequence == 0)
 		MakeFocusDirty();
 
