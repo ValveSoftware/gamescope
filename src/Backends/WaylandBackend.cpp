@@ -60,6 +60,14 @@ static const char *GAMESCOPE_proxy_tag = "gamescope-proxy";
 static const char *GAMESCOPE_plane_tag = "gamescope-plane";
 static const char *GAMESCOPE_toplevel_tag = "gamescope-toplevel";
 
+const std::vector<const char*> supportedMimeTypes = {
+    "text/plain;charset=utf-8",
+    "UTF8_STRING",
+    "text/plain",
+    "STRING",
+    "TEXT",
+};
+
 template <typename Func, typename... Args>
 auto CallWithAllButLast(Func pFunc, Args&&... args)
 {
@@ -810,6 +818,7 @@ namespace gamescope
         wl_data_device *m_pDataDevice = nullptr;
         std::shared_ptr<std::string> m_pClipboard = nullptr;
 
+        std::vector<std::string> m_CurrentOfferMimeTypes;
         zwp_primary_selection_device_manager_v1 *m_pPrimarySelectionDeviceManager = nullptr;
         zwp_primary_selection_device_v1 *m_pPrimarySelectionDevice = nullptr;
         std::shared_ptr<std::string> m_pPrimarySelection = nullptr;
@@ -1316,11 +1325,9 @@ namespace gamescope
             m_pBackend->m_pClipboard = szContents;
             wl_data_source *source = wl_data_device_manager_create_data_source( m_pBackend->m_pDataDeviceManager );
             wl_data_source_add_listener( source, &m_pBackend->s_DataSourceListener, m_pBackend );
-            wl_data_source_offer( source, "text/plain" );
-            wl_data_source_offer( source, "text/plain;charset=utf-8" );
-            wl_data_source_offer( source, "TEXT" );
-            wl_data_source_offer( source, "STRING" );
-            wl_data_source_offer( source, "UTF8_STRING" );
+            for (const char *mime_type : supportedMimeTypes) {
+                wl_data_source_offer(source, mime_type);
+            }
             wl_data_device_set_selection( m_pBackend->m_pDataDevice, source, m_pBackend->m_uKeyboardEnterSerial );
         }
         else if ( eSelection == GAMESCOPE_SELECTION_PRIMARY && m_pBackend->m_pPrimarySelectionDevice )
@@ -1328,11 +1335,9 @@ namespace gamescope
             m_pBackend->m_pPrimarySelection = szContents;
             zwp_primary_selection_source_v1 *source = zwp_primary_selection_device_manager_v1_create_source( m_pBackend->m_pPrimarySelectionDeviceManager );
             zwp_primary_selection_source_v1_add_listener( source, &m_pBackend->s_PrimarySelectionSourceListener, m_pBackend );
-            zwp_primary_selection_source_v1_offer( source, "text/plain" );
-            zwp_primary_selection_source_v1_offer( source, "text/plain;charset=utf-8" );
-            zwp_primary_selection_source_v1_offer( source, "TEXT" );
-            zwp_primary_selection_source_v1_offer( source, "STRING" );
-            zwp_primary_selection_source_v1_offer( source, "UTF8_STRING" );
+            for (const char *mime_type : supportedMimeTypes) {
+                zwp_primary_selection_source_v1_offer( source, mime_type );
+            }
             zwp_primary_selection_device_v1_set_selection( m_pBackend->m_pPrimarySelectionDevice, source, m_pBackend->m_uPointerEnterSerial );
         }
     }
@@ -2773,14 +2778,40 @@ namespace gamescope
         // An application has set the clipboard contents
         if (pOffer == nullptr) {
             // Clipboard is empty
+            m_CurrentOfferMimeTypes.clear();
             m_pClipboard = nullptr;
             gamescope_set_selection(std::string{}, GAMESCOPE_SELECTION_CLIPBOARD);
             return;
         }
-        
+
+        wl_display_roundtrip(m_pDisplay);
+
+        const std::vector<const char *> &mimeTypes = m_CurrentOfferMimeTypes;
+        const char *selectedMimeType = nullptr;
+
+        for (const char *supportedType : supportedMimeTypes) {
+            for (const auto &offeredType : mimeTypes) {
+                if (strcmp(offeredType == supportedType) == 0) {
+                    selectedMimeType == supportedType;
+                    return;
+                }
+            }
+        }
+
+        if (!selectedMimeType) {
+            xdg_log.debugf("No supported clipboard MIME type found. Destroying data offer.");
+            wl_data_offer_destroy(pOffer);
+            m_CurrentOfferMimeTypes.clear();
+            return;
+        }
+
+        xdg_log.debugf("Accepting clipboard MIME type: %s", selectedMimeType);
+
         int fds[2];
         if (pipe(fds) < 0) {
             xdg_log.errorf("Failed to create pipe for clipboard data");
+            wl_data_offer_destroy(pOffer);
+            m_CurrentOfferMimeTypes.clear();
             return;
         }
         
@@ -2806,12 +2837,14 @@ namespace gamescope
         wl_data_offer_destroy(pOffer);
     }
     void CWaylandBackend::Wayland_DataDevice_DataOffer(struct wl_data_device *pDevice, struct wl_data_offer *pOffer) {
+        m_CurrentOfferMimeTypes.clear();
         wl_data_offer_add_listener(pOffer, &s_DataOfferListener, nullptr);
     }
 
     // Data Offer
     void CWaylandBackend::Wayland_DataOffer_Offer(struct wl_data_offer* pOffer, const char* pMime)
     {
+        m_CurrentOfferMimeTypes.emplace_back(pMime);
         xdg_log.debugf("Clipboard supports MIME type: %s", pMime);
     }
 
