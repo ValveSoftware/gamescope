@@ -100,18 +100,21 @@ namespace gamescope::Process
 
     void KillProcessTree( std::vector<pid_t> nPids, int nSignal )
     {
-        for ( pid_t nPid : nPids )
+        pid_t nPid = 0;
+        int sz = nPids.size() - 1;
+        while (sz >= 0)
         {
-            auto nChildPids = GetChildPids( nPid );
+            nPid = nPids[sz--];
             KillProcess( nPid, nSignal );
-            KillProcessTree( nChildPids, nSignal );
+            WaitForChild( nPid );
         }
     }
+
 
     void KillAllChildren( pid_t nParentPid, int nSignal )
     {
         std::vector<pid_t> nChildPids = GetChildPids( nParentPid );
-        return KillProcessTree( nChildPids, nSignal );
+        KillProcessTree( nChildPids, nSignal );
     }
 
     void KillProcess( pid_t nPid, int nSignal )
