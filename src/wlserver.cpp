@@ -414,12 +414,48 @@ static inline uint32_t TouchClickModeToLinuxButton( gamescope::TouchClickMode eT
 
 std::atomic<bool> g_bPendingTouchMovement = { false };
 
+static void wlserver_touch_associate_connector(struct wlserver_touch *touch)
+{
+	if (touch->connector != nullptr) return;
+
+	// Heuristic to associate a monitor to a touch input device:
+	//  - if a touchscreen's bus is I²C, it can very likely be associated to an internal monitor.
+	//  - if its bus is USB, it can be associated to an external monitor.
+	// This isn't perfect, but we can't rely on the physical sizes reported by both devices,
+	// because it's not uncommon for touchscreens to report wildly incorrect sizes.
+	gamescope::IBackendConnector* connector = nullptr;
+	struct libinput_device *lidev = wlr_libinput_get_device_handle(&touch->wlr->base);
+	struct udev_device *dev = libinput_device_get_udev_device(lidev);
+	auto *parent = dev;
+	while (parent) {
+		const char *subsystem = udev_device_get_subsystem(parent);
+		if (subsystem) {
+			if (strcmp( subsystem, "i2c" ) == 0) {
+				connector = GetBackend()->GetConnector(gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL);
+				break;
+			} else if (strcmp( subsystem, "usb" ) == 0) {
+				connector = GetBackend()->GetConnector(gamescope::GAMESCOPE_SCREEN_TYPE_EXTERNAL);
+				break;
+			}
+		}
+		parent = udev_device_get_parent(parent);
+	}
+	udev_device_unref(dev);
+	if (connector != nullptr) {
+		touch->connector = connector;
+		wl_log.infof("associating connector %s (%s %s) with touch input device %s",
+			connector->GetName(), connector->GetMake(), connector->GetModel(),
+			libinput_device_get_name(lidev));
+	}
+}
+
 static void wlserver_handle_touch_down(struct wl_listener *listener, void *data)
 {
 	struct wlserver_touch *touch = wl_container_of( listener, touch, down );
 	struct wlr_touch_down_event *event = (struct wlr_touch_down_event *) data;
 
-	wlserver_touchdown( event->x, event->y, event->touch_id, event->time_msec );
+	wlserver_touch_associate_connector( touch );
+	wlserver_touchdown( event->x, event->y, event->touch_id, event->time_msec, touch->connector );
 }
 
 static void wlserver_handle_touch_up(struct wl_listener *listener, void *data)
@@ -435,7 +471,8 @@ static void wlserver_handle_touch_motion(struct wl_listener *listener, void *dat
 	struct wlserver_touch *touch = wl_container_of( listener, touch, motion );
 	struct wlr_touch_motion_event *event = (struct wlr_touch_motion_event *) data;
 
-	wlserver_touchmotion( event->x, event->y, event->touch_id, event->time_msec );
+	wlserver_touch_associate_connector( touch );
+	wlserver_touchmotion( event->x, event->y, event->touch_id, event->time_msec, false, touch->connector );
 }
 
 static void wlserver_new_input(struct wl_listener *listener, void *data)
@@ -491,6 +528,8 @@ static void wlserver_new_input(struct wl_listener *listener, void *data)
 			wl_signal_add( &touch->wlr->events.up, &touch->up );
 			touch->motion.notify = wlserver_handle_touch_motion;
 			wl_signal_add( &touch->wlr->events.motion, &touch->motion );
+
+			wlserver_touch_associate_connector( touch );
 		}
 		break;
 		default:
@@ -2740,13 +2779,12 @@ const std::shared_ptr<wlserver_vk_swapchain_feedback>& wlserver_surface_swapchai
 }
 
 /* Handle the orientation of the touch inputs */
-static void apply_touchscreen_orientation(double *x, double *y )
+static void apply_touchscreen_orientation(GamescopePanelOrientation orientation, double *x, double *y )
 {
 	double tx = 0;
 	double ty = 0;
 
-	// Use internal screen always for orientation purposes.
-	switch ( GetBackend()->GetConnector( gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL )->GetCurrentOrientation() )
+	switch ( orientation )
 	{
 		default:
 		case GAMESCOPE_PANEL_ORIENTATION_AUTO:
@@ -2772,7 +2810,7 @@ static void apply_touchscreen_orientation(double *x, double *y )
 	*y = ty;
 }
 
-void wlserver_touchmotion( double x, double y, int touch_id, uint32_t time, bool bAlwaysWarpCursor )
+void wlserver_touchmotion( double x, double y, int touch_id, uint32_t time, bool bAlwaysWarpCursor, gamescope::IBackendConnector* connector )
 {
 	assert( wlserver_is_lock_held() );
 
@@ -2781,7 +2819,7 @@ void wlserver_touchmotion( double x, double y, int touch_id, uint32_t time, bool
 		double tx = x;
 		double ty = y;
 
-		apply_touchscreen_orientation(&tx, &ty);
+		apply_touchscreen_orientation((connector ? connector : GetBackend()->GetCurrentConnector())->GetCurrentOrientation(), &tx, &ty);
 
 		tx *= g_nOutputWidth;
 		ty *= g_nOutputHeight;
@@ -2827,7 +2865,7 @@ void wlserver_touchmotion( double x, double y, int touch_id, uint32_t time, bool
 	bump_input_counter();
 }
 
-void wlserver_touchdown( double x, double y, int touch_id, uint32_t time )
+void wlserver_touchdown( double x, double y, int touch_id, uint32_t time, gamescope::IBackendConnector* connector )
 {
 	assert( wlserver_is_lock_held() );
 
@@ -2836,7 +2874,7 @@ void wlserver_touchdown( double x, double y, int touch_id, uint32_t time )
 		double tx = x;
 		double ty = y;
 
-		apply_touchscreen_orientation(&tx, &ty);
+		apply_touchscreen_orientation((connector ? connector : GetBackend()->GetCurrentConnector())->GetCurrentOrientation(), &tx, &ty);
 
 		tx *= g_nOutputWidth;
 		ty *= g_nOutputHeight;
