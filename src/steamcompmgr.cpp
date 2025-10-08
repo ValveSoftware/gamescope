@@ -4328,7 +4328,7 @@ get_size_hints(xwayland_ctx_t *ctx, steamcompmgr_win_t *w)
 
 	XGetWMNormalHints(ctx->dpy, w->xwayland().id, &hints, &hintsSpecified);
 
-	const bool bHasPositionAndGravityHints = ( hintsSpecified & ( PPosition | PWinGravity ) ) == ( PPosition | PWinGravity );
+	const bool bHasPositionAndGravityHints = hintsSpecified & ( PPosition | PWinGravity );
 	if ( bHasPositionAndGravityHints &&
 		 hints.x >= 0 && hints.y >= 0 && hints.win_gravity == StaticGravity )
 	{
