@@ -3306,6 +3306,12 @@ win_maybe_a_dropdown( steamcompmgr_win_t *w )
 		( ( w->hwndStyleEx & invalidLayered ) == 0 ) )
 		return true;
 
+	// Forza Horizon 4 & 5 create a black background window that might incorrectly
+	// be considered a valid dropdown and steal focus.
+	if ( ( w->appID == 1293830 || w->appID == 1551360 ) &&
+		w->maybe_a_dropdown && w->requestedWidth == 0 && w->requestedHeight == 0 )
+		return false;
+
 	// Josh:
 	// The logic here is as follows. The window will be treated as a dropdown if:
 	// 
