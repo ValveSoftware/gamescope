@@ -724,6 +724,10 @@ namespace gamescope
         void Wayland_Keyboard_Leave( wl_keyboard *pKeyboard, uint32_t uSerial, wl_surface *pSurface );
         static const wl_keyboard_listener s_KeyboardListener;
 
+		void Wayland_LockedPointer_Locked( zwp_locked_pointer_v1 *pLockedPointer );
+		void Wayland_LockedPointer_Unlocked( zwp_locked_pointer_v1 *pLockedPointer );
+		static const zwp_locked_pointer_v1_listener s_LockedPointerListener;
+
         void Wayland_WPColorManager_SupportedIntent( wp_color_manager_v1 *pWPColorManager, uint32_t uRenderIntent );
         void Wayland_WPColorManager_SupportedFeature( wp_color_manager_v1 *pWPColorManager, uint32_t uFeature );
         void Wayland_WPColorManager_SupportedTFNamed( wp_color_manager_v1 *pWPColorManager, uint32_t uTF );
@@ -792,6 +796,7 @@ namespace gamescope
         wl_pointer *m_pPointer = nullptr;
         wl_touch *m_pTouch = nullptr;
         zwp_locked_pointer_v1 *m_pLockedPointer = nullptr;
+		bool m_bPointerLocked = false;
         wl_surface *m_pLockedSurface = nullptr;
         zwp_relative_pointer_v1 *m_pRelativePointer = nullptr;
 
@@ -850,6 +855,11 @@ namespace gamescope
         .modifiers     = WAYLAND_NULL(),
         .repeat_info   = WAYLAND_NULL(),
     };
+	const zwp_locked_pointer_v1_listener CWaylandBackend::s_LockedPointerListener =
+	{
+		.locked        = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_LockedPointer_Locked ),
+		.unlocked      = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_LockedPointer_Unlocked ),
+	};
 
     const wp_color_manager_v1_listener CWaylandBackend::s_WPColorManagerListener
     {
@@ -2390,11 +2400,13 @@ namespace gamescope
                 m_pRelativePointer = nullptr;
             }
 
-            if ( bRelative )
-            {
-                m_pLockedPointer = zwp_pointer_constraints_v1_lock_pointer( m_pPointerConstraints, pSurface, m_pPointer, nullptr, ZWP_POINTER_CONSTRAINTS_V1_LIFETIME_PERSISTENT );
-                m_pRelativePointer = zwp_relative_pointer_manager_v1_get_relative_pointer( m_pRelativePointerManager, m_pPointer );
-            }
+			if ( bRelative )
+			{
+				m_pLockedPointer = zwp_pointer_constraints_v1_lock_pointer( m_pPointerConstraints, pSurface, m_pPointer, nullptr, ZWP_POINTER_CONSTRAINTS_V1_LIFETIME_PERSISTENT );
+				zwp_locked_pointer_v1_add_listener( m_pLockedPointer, &s_LockedPointerListener, this );
+
+				m_pRelativePointer = zwp_relative_pointer_manager_v1_get_relative_pointer( m_pRelativePointerManager, m_pPointer );
+			}
 
             m_InputThread.SetRelativePointer( bRelative );
 
@@ -2409,10 +2421,10 @@ namespace gamescope
         if ( !m_pPointer )
             return;
 
-        if ( cv_wayland_mouse_warp_without_keyboard_focus )
-            bUseHostCursor = m_pRelativePointer && !m_bKeyboardEntered && m_pDefaultCursorSurface;
-        else
-            bUseHostCursor = !m_bKeyboardEntered && m_pDefaultCursorSurface;
+		if ( cv_wayland_mouse_warp_without_keyboard_focus )
+			bUseHostCursor = m_bPointerLocked && !m_bKeyboardEntered && m_pDefaultCursorSurface;
+		else
+			bUseHostCursor = !m_bKeyboardEntered && m_pDefaultCursorSurface;
 
         if ( bUseHostCursor )
         {
@@ -2420,7 +2432,7 @@ namespace gamescope
         }
         else
         {
-            bool bHideCursor = m_pLockedPointer || !m_pCursorSurface;
+			bool bHideCursor = m_bPointerLocked || !m_pCursorSurface;
 
             if ( bHideCursor )
                 wl_pointer_set_cursor( m_pPointer, m_uPointerEnterSerial, nullptr, 0, 0 );
@@ -2644,6 +2656,17 @@ namespace gamescope
 
         UpdateCursor();
     }
+
+	void CWaylandBackend::Wayland_LockedPointer_Locked( zwp_locked_pointer_v1 *pLockedPointer )
+	{
+		m_bPointerLocked = true;
+		UpdateCursor();
+	}
+	void CWaylandBackend::Wayland_LockedPointer_Unlocked( zwp_locked_pointer_v1 *pLockedPointer )
+	{
+		m_bPointerLocked = false;
+		UpdateCursor();
+	}
 
     // WP Color Manager
 
@@ -3191,9 +3214,9 @@ namespace gamescope
 
     void CWaylandInputThread::Wayland_RelativePointer_RelativeMotion( zwp_relative_pointer_v1 *pRelativePointer, uint32_t uTimeHi, uint32_t uTimeLo, wl_fixed_t fDx, wl_fixed_t fDy, wl_fixed_t fDxUnaccel, wl_fixed_t fDyUnaccel )
     {
-        // Don't do any motion/movement stuff if we don't have kb focus
-        if ( !cv_wayland_mouse_relmotion_without_keyboard_focus && !m_bKeyboardEntered )
-            return;
+		// Don't do any motion/movement stuff if we don't have kb focus
+		if ( !m_pBackend->m_bPointerLocked || ( !cv_wayland_mouse_relmotion_without_keyboard_focus && !m_bKeyboardEntered ) )
+			return;
 
         wlserver_lock();
         wlserver_mousemotion( wl_fixed_to_double( fDxUnaccel ), wl_fixed_to_double( fDyUnaccel ), ++m_uFakeTimestamp );
