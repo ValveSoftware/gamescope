@@ -6,12 +6,12 @@ project(
   default_options: [
     'cpp_std=c++20',
     'warning_level=2',
-    'force_fallback_for=wlroots,libliftoff,vkroots',
+    'force_fallback_for=libliftoff,vkroots',
   ],
 )
 
 fallbacks = get_option('force_fallback_for')
-if not (fallbacks.contains('wlroots') and fallbacks.contains('libliftoff') and fallbacks.contains('vkroots'))
+if not (fallbacks.contains('libliftoff') and fallbacks.contains('vkroots'))
   error('!!!"force_fallback_for" is missing entries!!!\n\tPlease do not remove entries from force_fallback_for if you are packaging the project.\n\tWe pull in these projects at specific commits/forks/builds for a reason.\n\tIf you are not packaging, remove this line to continue.')
 endif
 

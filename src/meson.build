@@ -27,8 +27,8 @@ pixman_dep = dependency('pixman-1')
 udev_dep = dependency('libudev')
 
 wlroots_dep = dependency(
-  'wlroots-0.18',
-  version: ['>= 0.18.0', '< 0.19.0'],
+  'wlroots-0.19',
+  version: ['>= 0.19.0', '< 0.20.0'],
   fallback: 'wlroots',
   default_options: ['default_library=static', 'examples=false', 'xwayland=enabled', 'backends=libinput', 'renderers=[]', 'allocators=[]', 'session=enabled'],
 )
