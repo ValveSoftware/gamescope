@@ -4,6 +4,8 @@
 
 #include <atomic>
 
+#include <convar.h>
+
 extern const char *gamescope_optstring;
 extern const struct option *gamescope_options;
 
@@ -26,7 +28,8 @@ extern bool g_bFullscreen;
 
 extern bool g_bGrabbed;
 
-extern float g_mouseSensitivity;
+extern gamescope::ConVar<float> cv_mouse_sensitivity;
+extern gamescope::ConVar<float> cv_cursor_sensitivity;
 extern const char *g_sOutputName;
 
 enum class GamescopeUpscaleFilter : uint32_t
