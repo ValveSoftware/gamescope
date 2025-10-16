@@ -56,7 +56,9 @@ using namespace std::literals;
 
 static LogScope xdg_log( "xdg_backend" );
 
+static const char *GAMESCOPE_proxy_tag = "gamescope-proxy";
 static const char *GAMESCOPE_plane_tag = "gamescope-plane";
+static const char *GAMESCOPE_toplevel_tag = "gamescope-toplevel";
 
 template <typename Func, typename... Args>
 auto CallWithAllButLast(Func pFunc, Args&&... args)
@@ -75,10 +77,34 @@ static inline uint32_t WaylandScaleToLogical( uint32_t pValue, uint32_t pFactor 
     return div_roundup( pValue * WL_FRACTIONAL_SCALE_DENOMINATOR, pFactor );
 }
 
-static bool IsSurfacePlane( wl_surface *pSurface ) {
-    // HACK: this probably should never be called with a null pointer, but it
-    // was happening after a window was closed.
-    return pSurface && (wl_proxy_get_tag( (wl_proxy *)pSurface ) == &GAMESCOPE_plane_tag);
+[[maybe_unused]] static bool IsGamescopeProxy( void *pProxy ) {
+	// HACK: this probably should never be called with a null pointer, but it
+	// was happening after a window was closed.
+	if ( pProxy )
+		return false;
+
+	const char* const* pTag = wl_proxy_get_tag( (wl_proxy *)pProxy );
+
+	return pTag == &GAMESCOPE_proxy_tag ||
+		pTag == &GAMESCOPE_plane_tag ||
+		pTag == &GAMESCOPE_toplevel_tag;
+}
+
+[[maybe_unused]] static bool IsGamescopePlane( wl_surface *pSurface ) {
+	// HACK: this probably should never be called with a null pointer, but it
+	// was happening after a window was closed.
+	if ( pSurface )
+		return false;
+	const char* const* pTag = wl_proxy_get_tag( (wl_proxy *)pSurface );
+
+	return pTag == &GAMESCOPE_plane_tag ||
+		pTag == &GAMESCOPE_toplevel_tag;
+}
+
+static bool IsGamescopeToplevel( wl_surface *pSurface ) {
+	// HACK: this probably should never be called with a null pointer, but it
+	// was happening after a window was closed.
+	return pSurface && (wl_proxy_get_tag( (wl_proxy *)pSurface ) == &GAMESCOPE_toplevel_tag);
 }
 
 #define WAYLAND_NULL() []<typename... Args> ( void *pData, Args... args ) { }
@@ -527,7 +553,7 @@ namespace gamescope
         double m_flScrollAccum[2] = { 0.0, 0.0 };
         uint32_t m_uAxisSource = WL_POINTER_AXIS_SOURCE_WHEEL;
 
-        CWaylandPlane *m_pCurrentCursorPlane = nullptr;
+		wl_surface *m_pCurrentCursorSurface = nullptr;
 
         std::optional<wl_fixed_t> m_ofPendingCursorX;
         std::optional<wl_fixed_t> m_ofPendingCursorY;
@@ -690,6 +716,7 @@ namespace gamescope
             return &iter->second;
         }
 
+		wl_region *GetEmptyRegion() const { return m_pEmptyRegion; }
         wl_region *GetFullRegion() const { return m_pFullRegion; }
         CWaylandFb *GetBlackFb() const { return m_BlackFb.get(); }
 
@@ -749,6 +776,7 @@ namespace gamescope
         zwp_linux_dmabuf_v1 *m_pLinuxDmabuf = nullptr;
         xdg_wm_base *m_pXdgWmBase = nullptr;
         wp_viewporter *m_pViewporter = nullptr;
+		wl_region *m_pEmptyRegion = nullptr;
         wl_region *m_pFullRegion = nullptr;
         Rc<CWaylandFb> m_BlackFb;
         OwningRc<CWaylandFb> m_pOwnedBlackFb;
@@ -1326,7 +1354,6 @@ namespace gamescope
     {
         m_pParent = pParent;
         m_pSurface = wl_compositor_create_surface( m_pBackend->GetCompositor() );
-        wl_proxy_set_tag( (wl_proxy *)m_pSurface, &GAMESCOPE_plane_tag );
         wl_surface_set_user_data( m_pSurface, this );
         wl_surface_add_listener( m_pSurface, &s_SurfaceListener, this );
 
@@ -1362,6 +1389,7 @@ namespace gamescope
 
         if ( !pParent )
         {
+			wl_proxy_set_tag( (wl_proxy *)m_pSurface, &GAMESCOPE_toplevel_tag );
             m_pFrame = libdecor_decorate( m_pBackend->GetLibDecor(), m_pSurface, &s_LibDecorFrameInterface, this );
             libdecor_frame_set_title( m_pFrame, "Gamescope" );
             libdecor_frame_set_app_id( m_pFrame, "gamescope" );
@@ -1369,9 +1397,12 @@ namespace gamescope
         }
         else
         {
+			wl_proxy_set_tag( (wl_proxy *)m_pSurface, &GAMESCOPE_plane_tag );
             m_pSubsurface = wl_subcompositor_get_subsurface( m_pBackend->GetSubcompositor(), m_pSurface, pParent->GetSurface() );
             wl_subsurface_place_above( m_pSubsurface, pSiblingBelow->GetSurface() );
             wl_subsurface_set_sync( m_pSubsurface );
+			// Allow pParent to receive input while covered by subsurface planes
+			wl_surface_set_input_region( m_pSurface, m_pBackend->GetEmptyRegion() );
         }
 
         wl_surface_commit( m_pSurface );
@@ -1644,8 +1675,8 @@ namespace gamescope
 
     void CWaylandPlane::Wayland_Surface_Enter( wl_surface *pSurface, wl_output *pOutput )
     {
-        if ( !IsSurfacePlane( pSurface ) )
-            return;
+		if ( !IsGamescopeToplevel( pSurface ) )
+			return;
 
         m_pOutputs.emplace_back( pOutput );
 
@@ -1653,8 +1684,8 @@ namespace gamescope
     }
     void CWaylandPlane::Wayland_Surface_Leave( wl_surface *pSurface, wl_output *pOutput )
     {
-        if ( !IsSurfacePlane( pSurface ) )
-            return;
+		if ( !IsGamescopeToplevel( pSurface ) )
+			return;
 
         std::erase( m_pOutputs, pOutput );
 
@@ -1969,6 +2000,10 @@ namespace gamescope
             return false;
         }
 
+		m_pEmptyRegion = wl_compositor_create_region( m_pCompositor );
+		m_pFullRegion = wl_compositor_create_region( m_pCompositor );
+		wl_region_add( m_pFullRegion, 0, 0, INT32_MAX, INT32_MAX );
+
         // Grab stuff from any extra bindings/listeners we set up, eg. format/modifiers.
         wl_display_roundtrip( m_pDisplay );
 
@@ -2054,9 +2089,6 @@ namespace gamescope
 
     bool CWaylandBackend::PostInit()
     {
-        m_pFullRegion = wl_compositor_create_region( m_pCompositor );
-        wl_region_add( m_pFullRegion, 0, 0, INT32_MAX, INT32_MAX );
-
         if ( m_pSinglePixelBufferManager )
         {
             wl_buffer *pBlackBuffer = wp_single_pixel_buffer_manager_v1_create_u32_rgba_buffer( m_pSinglePixelBufferManager, 0, 0, 0, ~0u );
@@ -2607,8 +2639,8 @@ namespace gamescope
 
     void CWaylandBackend::Wayland_Pointer_Enter( wl_pointer *pPointer, uint32_t uSerial, wl_surface *pSurface, wl_fixed_t fSurfaceX, wl_fixed_t fSurfaceY )
     {
-        if ( !IsSurfacePlane( pSurface ) )
-            return;
+		if ( !IsGamescopeToplevel( pSurface ) )
+			return;
 
         m_uPointerEnterSerial = uSerial;
         m_bMouseEntered = true;
@@ -2617,8 +2649,8 @@ namespace gamescope
     }
     void CWaylandBackend::Wayland_Pointer_Leave( wl_pointer *pPointer, uint32_t uSerial, wl_surface *pSurface )
     {
-        if ( !IsSurfacePlane( pSurface ) )
-            return;
+		if ( !IsGamescopeToplevel( pSurface ) )
+			return;
 
         m_bMouseEntered = false;
     }
@@ -2627,8 +2659,8 @@ namespace gamescope
 
     void CWaylandBackend::Wayland_Keyboard_Enter( wl_keyboard *pKeyboard, uint32_t uSerial, wl_surface *pSurface, wl_array *pKeys )
     {
-        if ( !IsSurfacePlane( pSurface ) )
-            return;
+		if ( !IsGamescopeToplevel( pSurface ) )
+			return;
 
         m_uKeyboardEnterSerial = uSerial;
         m_bKeyboardEntered = true;
@@ -2637,8 +2669,8 @@ namespace gamescope
     }
     void CWaylandBackend::Wayland_Keyboard_Leave( wl_keyboard *pKeyboard, uint32_t uSerial, wl_surface *pSurface )
     {
-        if ( !IsSurfacePlane( pSurface ) )
-            return;
+		if ( !IsGamescopeToplevel( pSurface ) )
+			return;
 
         m_bKeyboardEntered = false;
 
@@ -2986,35 +3018,35 @@ namespace gamescope
 
     // Pointer
 
-    void CWaylandInputThread::Wayland_Pointer_Enter( wl_pointer *pPointer, uint32_t uSerial, wl_surface *pSurface, wl_fixed_t fSurfaceX, wl_fixed_t fSurfaceY )
-    {
-        if ( !IsSurfacePlane( pSurface ) )
-            return;
+	void CWaylandInputThread::Wayland_Pointer_Enter( wl_pointer *pPointer, uint32_t uSerial, wl_surface *pSurface, wl_fixed_t fSurfaceX, wl_fixed_t fSurfaceY )
+	{
+		if ( !IsGamescopeToplevel( pSurface ) )
+			return;
 
-        CWaylandPlane *pPlane = (CWaylandPlane *)wl_surface_get_user_data( pSurface );
-        if ( !pPlane )
-            return;
-        m_pCurrentCursorPlane = pPlane;
-        m_bMouseEntered = true;
-        m_uPointerEnterSerial = uSerial;
+		m_pCurrentCursorSurface = pSurface;
+		m_bMouseEntered = true;
+		m_uPointerEnterSerial = uSerial;
 
-        Wayland_Pointer_Motion( pPointer, 0, fSurfaceX, fSurfaceY );
-    }
-    void CWaylandInputThread::Wayland_Pointer_Leave( wl_pointer *pPointer, uint32_t uSerial, wl_surface *pSurface )
-    {
-        if ( !IsSurfacePlane( pSurface ) )
-            return;
+		Wayland_Pointer_Motion( pPointer, 0, fSurfaceX, fSurfaceY );
+	}
+	void CWaylandInputThread::Wayland_Pointer_Leave( wl_pointer *pPointer, uint32_t uSerial, wl_surface *pSurface )
+	{
+		if ( !IsGamescopeToplevel( pSurface ) )
+			return;
 
-        CWaylandPlane *pPlane = (CWaylandPlane *)wl_surface_get_user_data( pSurface );
-        if ( !pPlane )
-            return;
-        if ( pPlane != m_pCurrentCursorPlane )
-            return;
-        m_pCurrentCursorPlane = nullptr;
-        m_bMouseEntered = false;
-    }
-    void CWaylandInputThread::Wayland_Pointer_Motion( wl_pointer *pPointer, uint32_t uTime, wl_fixed_t fSurfaceX, wl_fixed_t fSurfaceY )
-    {
+		m_pCurrentCursorSurface = nullptr;
+		m_bMouseEntered = false;
+	}
+	void CWaylandInputThread::Wayland_Pointer_Motion( wl_pointer *pPointer, uint32_t uTime, wl_fixed_t fSurfaceX, wl_fixed_t fSurfaceY )
+	{
+		if ( !m_bMouseEntered )
+			return;
+
+		CWaylandPlane *pPlane = (CWaylandPlane *)wl_surface_get_user_data( m_pCurrentCursorSurface );
+
+		if ( !pPlane )
+			return;
+
         if ( m_pRelativePointer.load() != nullptr )
             return;
 
@@ -3026,10 +3058,7 @@ namespace gamescope
             return;
         }
 
-        if ( !m_pCurrentCursorPlane )
-            return;
-
-        auto oState = m_pCurrentCursorPlane->GetCurrentState();
+		auto oState = pPlane->GetCurrentState();
         if ( !oState )
             return;
 
@@ -3131,6 +3160,9 @@ namespace gamescope
     }
     void CWaylandInputThread::Wayland_Keyboard_Enter( wl_keyboard *pKeyboard, uint32_t uSerial, wl_surface *pSurface, wl_array *pKeys )
     {
+		if ( !IsGamescopeToplevel( pSurface ) )
+			return;
+
         m_bKeyboardEntered = true;
         m_uScancodesHeld.clear();
 
@@ -3154,6 +3186,9 @@ namespace gamescope
     }
     void CWaylandInputThread::Wayland_Keyboard_Leave( wl_keyboard *pKeyboard, uint32_t uSerial, wl_surface *pSurface )
     {
+		if ( !IsGamescopeToplevel( pSurface ) )
+			return;
+
         m_bKeyboardEntered = false;
         m_uKeyModifiers = 0;
 
