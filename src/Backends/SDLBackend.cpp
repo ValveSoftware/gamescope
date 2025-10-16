@@ -21,6 +21,8 @@
 #include "Utils/Defer.h"
 #include "refresh_rate.h"
 
+#include "LibInputHandler.h"
+
 #include "sdlscancodetable.hpp"
 
 static int g_nOldNestedRefresh = 0;
@@ -190,6 +192,10 @@ namespace gamescope
 		CSDLConnector m_Connector; // Window.
 		uint32_t m_uUserEventIdBase = 0u;
 		std::vector<const char *> m_pszInstanceExtensions;
+
+
+        std::shared_ptr<CLibInputHandler> m_pLibInput;
+        CAsyncWaiter<CRawPointer<IWaitable>, 16> m_LibInputWaiter;
 
 		std::thread m_SDLThread;
 		std::atomic<SDLInitState> m_eSDLInit = { SDLInitState::SDLInit_Waiting };
@@ -394,12 +400,24 @@ namespace gamescope
 	////////////////
 
 	CSDLBackend::CSDLBackend()
-		: m_SDLThread{ [this](){ this->SDLThreadFunc(); } }
+		: m_LibInputWaiter{ "gamescope-libinput" }
+		, m_SDLThread{ [this](){ this->SDLThreadFunc(); } }
 	{
 	}
 
 	bool CSDLBackend::Init()
 	{
+		if (g_libinputSelectedDevices.size() > 0) { 
+			std::unique_ptr<CLibInputHandler> pLibInput = std::make_unique<CLibInputHandler>();
+			if ( pLibInput->Init() ) {
+				m_pLibInput = std::move( pLibInput );
+				m_LibInputWaiter.AddWaitable( m_pLibInput.get() );
+			} else {
+				fprintf(stderr, "CSDLBackend::Init failed: Unable to register LIBINPUT devices");
+				return false;
+			}
+		}
+
 		m_eSDLInit.wait( SDLInitState::SDLInit_Waiting );
 
 		return m_eSDLInit == SDLInitState::SDLInit_Success;
@@ -664,6 +682,7 @@ namespace gamescope
 
 				case SDL_MOUSEMOTION:
 				{
+					if (g_bMouseDisabled) break;
 					if ( m_bApplicationGrabbed )
 					{
 						if ( g_bWindowFocused )
@@ -689,6 +708,7 @@ namespace gamescope
 				case SDL_MOUSEBUTTONDOWN:
 				case SDL_MOUSEBUTTONUP:
 				{
+					if (g_bMouseDisabled) break;
 					wlserver_lock();
 					wlserver_mousebutton( SDLButtonToLinuxButton( event.button.button ),
 										event.button.state == SDL_PRESSED,
@@ -699,6 +719,7 @@ namespace gamescope
 
 				case SDL_MOUSEWHEEL:
 				{
+					if (g_bMouseDisabled) break;
 					wlserver_lock();
 					wlserver_mousewheel( -event.wheel.x, -event.wheel.y, fake_timestamp );
 					wlserver_unlock();
@@ -731,6 +752,7 @@ namespace gamescope
 
 				case SDL_KEYDOWN:
 				{
+					if (g_bKeyboardDisabled) break;
 					// If this keydown event is super + one of the shortcut keys, consume the keydown event, since the corresponding keyup
 					// event will be consumed by the next case statement when the user releases the key
 					if ( event.key.keysym.mod & KMOD_LGUI )
@@ -747,6 +769,7 @@ namespace gamescope
 				[[fallthrough]];
 				case SDL_KEYUP:
 				{
+					if (g_bKeyboardDisabled) break;
 					uint32_t key = SDLScancodeToLinuxKey( event.key.keysym.scancode );
 
 					if ( event.type == SDL_KEYUP && ( event.key.keysym.mod & KMOD_LGUI ) )

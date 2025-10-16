@@ -2,6 +2,8 @@
 
 #include <X11/Xlib.h>
 
+#include <bits/getopt_core.h>
+#include <cstddef>
 #include <cstdio>
 #include <thread>
 #include <mutex>
@@ -20,6 +22,8 @@
 #include <unistd.h>
 #include <float.h>
 #include <climits>
+
+#include <iostream>
 
 #include "main.hpp"
 #include "steamcompmgr.hpp"
@@ -151,6 +155,11 @@ const struct option *gamescope_options = (struct option[]){
 	// Steam Deck options
 	{ "mura-map", required_argument, nullptr, 0 },
 
+
+	{ "libinput-hold-dev", required_argument, nullptr, 0 },
+	{ "backend-disable-keyboard", no_argument, nullptr, 0 },
+	{ "backend-disable-mouse", no_argument, nullptr, 0 },
+
 	{} // keep last
 };
 
@@ -216,7 +225,10 @@ const char usage[] =
 	"  -f, --fullscreen               make the window fullscreen\n"
 	"  -g, --grab                     grab the keyboard\n"
 	"  --force-grab-cursor            always use relative mouse mode instead of flipping dependent on cursor visibility.\n"
-	"  --display-index                forces gamescope to use a specific display in nested mode."
+	"  --display-index                forces gamescope to use a specific display in nested mode.\n"
+	"  --libinput-hold-dev            Comma seporated list of evdev path devices that will become the handlers on the nested window (WAYLAND & SDL & VR ONLY)\n"
+	"  --backend-disable-keyboard     Disables the normal backend keyboard support (window will not handle keyboard) (WAYLAND & SDL ONLY)\n"
+	"  --backend-disable-mouse        Disables the normal backend mouse support (window will not handle mouse) (WAYLAND & SDL ONLY)\n"
 	"\n"
 	"Embedded mode options:\n"
 	"  -O, --prefer-output            list of connectors in order of preference (ex: DP-1,DP-2,DP-3,HDMI-A-1)\n"
@@ -293,6 +305,10 @@ bool g_bFullscreen = false;
 bool g_bForceRelativeMouse = false;
 
 bool g_bGrabbed = false;
+
+bool g_bKeyboardDisabled = false;
+bool g_bMouseDisabled = false;
+std::vector<std::string> g_libinputSelectedDevices;
 
 float g_mouseSensitivity = 1.0;
 
@@ -821,6 +837,16 @@ int main(int argc, char **argv)
 								
 						}
 					}
+				} else if (strcmp(opt_name, "libinput-hold-dev") == 0) {
+					std::string item;
+					std::istringstream ss (optarg);
+					while (std::getline(ss, item, ',')) {
+						g_libinputSelectedDevices.push_back(item);
+					}
+				} else if (strcmp(opt_name, "backend-disable-keyboard") == 0) {
+					g_bKeyboardDisabled = true;
+				} else if (strcmp(opt_name, "backend-disable-mouse") == 0) {
+					g_bMouseDisabled = true;
 				}
 				break;
 			case '?':
