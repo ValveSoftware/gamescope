@@ -379,7 +379,8 @@ bool CVulkanDevice::selectPhysDev(VkSurfaceKHR surface)
 				m_generalQueueFamily = generalIndex;
 				m_physDev = cphysDev;
 
-				if ( env_to_bool( getenv( "GAMESCOPE_FORCE_GENERAL_QUEUE" ) ) )
+				if ( env_to_bool( getenv( "GAMESCOPE_FORCE_GENERAL_QUEUE" ) ) ||
+				     deviceProperties.vendorID == 0x8086) /* Intel */
 					m_queueFamily = generalIndex;
 			}
 		}
