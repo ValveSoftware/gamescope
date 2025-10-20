@@ -9,7 +9,7 @@ local zotac_amoled_colorimetry = {
 gamescope.config.known_displays.zotac_amoled = {
     pretty_name = "DXQ7D0023 AMOLED",
     dynamic_refresh_rates = {
-        60, 72, 90, 120, 144
+        60, 72, 90, 120
     },
     hdr = {
         supported = true,
