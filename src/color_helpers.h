@@ -327,7 +327,7 @@ struct lut1d_t
 	int startIndexG = -1;
 	int startIndexB = -1;
 
-	void finalize(); // calculates start indicies
+	void finalize(); // calculates start indices
 
 	void resize( int lutSize_ )
 	{

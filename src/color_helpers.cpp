@@ -745,7 +745,7 @@ void calcColorTransform( lut1d_t * pShaper, int nLutSize1d,
             whitePointDestAdaptation = dest_from_xyz * virtualWhiteXYZFromPhysicalWhiteXYZ * xyz_from_dest;
 
             // Consider lerp-ing the gain limiting between 0-1? That would allow partial clipping
-            // so that contrast ratios wouldnt be sacrified too bad with alternate white points
+            // so that contrast ratios wouldn't be sacrified too bad with alternate white points
             static const bool k_bLimitGain = true;
             if ( k_bLimitGain )
             {
@@ -830,7 +830,7 @@ void calcColorTransform( lut1d_t * pShaper, int nLutSize1d,
 
 bool BIsWideGamut( const displaycolorimetry_t & nativeDisplayOutput )
 {
-    // Use red as a sentinal for a wide-gamut display
+    // Use red as a sentinel for a wide-gamut display
     return ( nativeDisplayOutput.primaries.r.x > 0.650f && nativeDisplayOutput.primaries.r.y < 0.320f );
 }
 

@@ -233,13 +233,13 @@ namespace GamescopeWSILayer {
     {
       const char *mesaExecutableEnv = getenv("MESA_DRICONF_EXECUTABLE_OVERRIDE");
       if (mesaExecutableEnv && *mesaExecutableEnv) {
-        fprintf(stderr, "[Gamescope WSI] Executable name overriden by MESA_DRICONF_EXECUTABLE_OVERRIDE: %s\n", mesaExecutableEnv);
+        fprintf(stderr, "[Gamescope WSI] Executable name overridden by MESA_DRICONF_EXECUTABLE_OVERRIDE: %s\n", mesaExecutableEnv);
         return mesaExecutableEnv;
       }
 
       const char *mesaProcessName = getenv("MESA_PROCESS_NAME");
       if (mesaProcessName && *mesaProcessName) {
-        fprintf(stderr, "[Gamescope WSI] Executable name overriden by MESA_PROCESS_NAME: %s\n", mesaExecutableEnv);
+        fprintf(stderr, "[Gamescope WSI] Executable name overridden by MESA_PROCESS_NAME: %s\n", mesaExecutableEnv);
         return mesaProcessName;
       }
 
