@@ -373,7 +373,7 @@ create_color_mgmt_luts(const gamescope_color_mgmt_t& newColorMgmt, gamescope_col
 				}
 
 				// The final display colorimetry is used to build the output mapping, as we want a gamut-aware handling
-				// for sdrGamutWideness indepdendent of the output encoding (for SDR data), and when mapping SDR -> PQ output
+				// for sdrGamutWideness independent of the output encoding (for SDR data), and when mapping SDR -> PQ output
 				// we only want to utilize a portion of the gamut the actual display can reproduce
 				buildSDRColorimetry( &inputColorimetry, &colorMapping, newColorMgmt.sdrGamutWideness, displayColorimetry );
 			}
@@ -8488,7 +8488,7 @@ steamcompmgr_main(int argc, char **argv)
 
 		// Handles if we got a commit for the window we want to focus
 		// to switch to it for painting (outdatedInteractiveFocus)
-		// Doesn't realllly matter but avoids an extra frame of being on the wrong window.
+		// Doesn't really matter but avoids an extra frame of being on the wrong window.
 		for ( auto &iter : g_VirtualConnectorFocuses )
 		{
 			global_focus_t *pFocus = &iter.second;
@@ -8499,7 +8499,7 @@ steamcompmgr_main(int argc, char **argv)
 			}
 		}
 
-		// XXX(misyl): This is bad! We shouldnt change the upscaler like this at all!!!
+		// XXX(misyl): This is bad! We shouldn't change the upscaler like this at all!!!
 		// We should move this to business logic in paint_window or something!
 		if ( GetCurrentFocus() && window_is_steam( GetCurrentFocus()->focusWindow ) )
 		{
