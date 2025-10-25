@@ -460,6 +460,8 @@ namespace gamescope
         friend CWaylandPlane;
 
         BackendConnectorHDRInfo m_HDRInfo{};
+        uint32_t m_uReferenceLuminance = 203;
+        uint32_t m_uMaxTargetLuminance = 203;
         displaycolorimetry_t m_DisplayColorimetry = displaycolorimetry_709;
         std::vector<uint8_t> m_FakeEdid;
 
@@ -1840,7 +1842,16 @@ namespace gamescope
 
     void CWaylandPlane::Wayland_WPImageDescriptionInfo_Done( wp_image_description_info_v1 *pImageDescInfo )
     {
+        auto *pHDRInfo = &m_pConnector->m_HDRInfo;
+        if (m_pBackend->SupportsColorManagement()) {
+            pHDRInfo->bExposeHDRSupport   = ( cv_hdr_enabled && m_pConnector->m_uMaxTargetLuminance > m_pConnector->m_uReferenceLuminance );
+            pHDRInfo->eOutputEncodingEOTF = pHDRInfo->bExposeHDRSupport ? EOTF_PQ : EOTF_Gamma22;
+        }
 
+        xdg_log.infof( "HDR INFO" );
+        xdg_log.infof( "  cv_hdr_enabled: %s", cv_hdr_enabled ? "true" : "false" );
+        xdg_log.infof( "  uMaxLum: %u, uRefLum: %u", m_pConnector->m_uMaxTargetLuminance, m_pConnector->m_uReferenceLuminance);
+        xdg_log.infof( "  bExposeHDRSupport: %s", pHDRInfo->bExposeHDRSupport ? "true" : "false" );
     }
     void CWaylandPlane::Wayland_WPImageDescriptionInfo_ICCFile( wp_image_description_info_v1 *pImageDescInfo, int32_t nICCFd, uint32_t uICCSize )
     {
@@ -1859,40 +1870,12 @@ namespace gamescope
     {
 
     }
-    static const char *TFToString( uint32_t uTF )
-    {
-        switch ( (wp_color_manager_v1_transfer_function) uTF )
-        {
-            case WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_BT1886: return "BT1886";
-            case WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_GAMMA22: return "GAMMA22";
-            case WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_GAMMA28: return "GAMMA28";
-            case WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_ST240: return "ST240";
-            case WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_EXT_LINEAR: return "EXT_LINEAR";
-            case WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_LOG_100: return "LOG_100";
-            case WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_LOG_316: return "LOG_316";
-            case WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_XVYCC: return "XVYCC";
-            case WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_SRGB: return "SRGB";
-            case WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_EXT_SRGB: return "EXT_SRGB";
-            case WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_ST2084_PQ: return "ST2084_PQ";
-            case WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_ST428: return "ST428";
-            case WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_HLG: return "HLG";
-            default: return "Unknown";
-        }
-    }
     void CWaylandPlane::Wayland_WPImageDescriptionInfo_TFNamed( wp_image_description_info_v1 *pImageDescInfo, uint32_t uTF)
     {
-        auto *pHDRInfo = &m_pConnector->m_HDRInfo;
-        pHDRInfo->bExposeHDRSupport   = ( cv_hdr_enabled && uTF == WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_ST2084_PQ );
-        pHDRInfo->eOutputEncodingEOTF = ( cv_hdr_enabled && uTF == WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_ST2084_PQ ) ? EOTF_PQ : EOTF_Gamma22;
-
-        xdg_log.infof( "HDR INFO" );
-        xdg_log.infof( "  cv_hdr_enabled: %s", cv_hdr_enabled ? "true" : "false" );
-        xdg_log.infof( "  uTF: %s", TFToString( uTF ) );
-        xdg_log.infof( "  bExposeHDRSupport: %s", pHDRInfo->bExposeHDRSupport ? "true" : "false" );
     }
     void CWaylandPlane::Wayland_WPImageDescriptionInfo_Luminances( wp_image_description_info_v1 *pImageDescInfo, uint32_t uMinLum, uint32_t uMaxLum, uint32_t uRefLum )
     {
-
+        m_pConnector->m_uReferenceLuminance = uRefLum;
     }
     void CWaylandPlane::Wayland_WPImageDescriptionInfo_TargetPrimaries( wp_image_description_info_v1 *pImageDescInfo, int32_t nRedX, int32_t nRedY, int32_t nGreenX, int32_t nGreenY, int32_t nBlueX, int32_t nBlueY, int32_t nWhiteX, int32_t nWhiteY )
     {
@@ -1904,7 +1887,7 @@ namespace gamescope
     }
     void CWaylandPlane::Wayland_WPImageDescriptionInfo_TargetLuminance( wp_image_description_info_v1 *pImageDescInfo, uint32_t uMinLum, uint32_t uMaxLum )
     {
-
+        m_pConnector->m_uMaxTargetLuminance = uMaxLum;
     }
     void CWaylandPlane::Wayland_WPImageDescriptionInfo_Target_MaxCLL( wp_image_description_info_v1 *pImageDescInfo, uint32_t uMaxCLL )
     {
