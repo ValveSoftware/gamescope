@@ -775,7 +775,7 @@ namespace gamescope
         void Wayland_DataSource_Send( struct wl_data_source *pSource, const char *pMime, int nFd );
         void Wayland_DataSource_Cancelled( struct wl_data_source *pSource );
         static const wl_data_source_listener s_DataSourceListener;
-        
+
         void Wayland_DataDevice_DataOffer( struct wl_data_device *pDevice, struct wl_data_offer *pOffer );
         void Wayland_DataDevice_Selection( wl_data_device *pDataDevice, wl_data_offer *pOffer );
         static const wl_data_device_listener s_DataDeviceListener;
@@ -2095,7 +2095,7 @@ namespace gamescope
             xdg_log.errorf( "Failed to initialize input thread" );
             return false;
         }
-        
+
         // Set up the data device listener
         if (m_pDataDeviceManager && !m_pDataDevice) {
             m_pDataDevice = wl_data_device_manager_get_data_device(m_pDataDeviceManager, m_pSeat);
@@ -2791,7 +2791,7 @@ namespace gamescope
 
         for (const char *supportedType : supportedMimeTypes) {
             for (const auto &offeredType : mimeTypes) {
-                if (strcmp(offeredType == supportedType) == 0) {
+                if (strcmp(offeredType, supportedType) == 0) {
                     selectedMimeType == supportedType;
                     return;
                 }
@@ -2814,7 +2814,7 @@ namespace gamescope
             m_CurrentOfferMimeTypes.clear();
             return;
         }
-        
+
         wl_data_offer_receive(pOffer, "text/plain", fds[1]);
         close(fds[1]);
 
