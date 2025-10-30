@@ -1022,7 +1022,7 @@ unsigned int g_BlurFadeDuration = 0;
 int g_BlurRadius = 5;
 unsigned int g_BlurFadeStartTime = 0;
 
-pid_t focusWindow_pid;
+pid_t focusWindow_pid, sdFocusWindow_pid;
 std::shared_ptr<std::string> focusWindow_engine = nullptr;
 
 focus_t g_steamcompmgr_xdg_focus;
@@ -4161,8 +4161,8 @@ determine_and_apply_focus( global_focus_t *pFocus )
 
 #if HAVE_LIBSYSTEMD
 	pid_t newFocusedWindowPID = pFocus->focusWindow ? pFocus->focusWindow->pid : 0;
-	if (g_dbus && focusWindow_pid != newFocusedWindowPID) {
-		const char *unfocusedWindowUnit = unit_from_pid(focusWindow_pid);
+	if (g_dbus && sdFocusWindow_pid != newFocusedWindowPID) {
+		const char *unfocusedWindowUnit = unit_from_pid(sdFocusWindow_pid);
 		const char *focusedWindowUnit = unit_from_pid(newFocusedWindowPID);
 		bool sameUnit = unfocusedWindowUnit && focusedWindowUnit && !strcmp(unfocusedWindowUnit, focusedWindowUnit);
 
@@ -4187,7 +4187,7 @@ determine_and_apply_focus( global_focus_t *pFocus )
 		focusedBaseAppId = pFocus->focusWindow->appID;
 		focusedAppId = pFocus->inputFocusWindow->appID;
 		focused_display = get_win_display_name(pFocus->focusWindow);
-		focusWindow_pid = pFocus->focusWindow->pid;
+		sdFocusWindow_pid = pFocus->focusWindow->pid;
 	}
 
 	g_focusedBaseAppId = (uint32_t)focusedAppId;
@@ -6507,6 +6507,7 @@ bool handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint64_t co
 					hasRepaint = true;
 
 					focusWindow_engine = w->engineName;
+					focusWindow_pid = w->pid;
 				}
 
 				if ( w == pFocus->overrideWindow )
