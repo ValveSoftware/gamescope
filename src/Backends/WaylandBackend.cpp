@@ -80,7 +80,7 @@ static inline uint32_t WaylandScaleToLogical( uint32_t pValue, uint32_t pFactor 
 [[maybe_unused]] static bool IsGamescopeProxy( void *pProxy ) {
 	// HACK: this probably should never be called with a null pointer, but it
 	// was happening after a window was closed.
-	if ( pProxy )
+	if ( !pProxy )
 		return false;
 
 	const char* const* pTag = wl_proxy_get_tag( (wl_proxy *)pProxy );
@@ -93,7 +93,7 @@ static inline uint32_t WaylandScaleToLogical( uint32_t pValue, uint32_t pFactor 
 [[maybe_unused]] static bool IsGamescopePlane( wl_surface *pSurface ) {
 	// HACK: this probably should never be called with a null pointer, but it
 	// was happening after a window was closed.
-	if ( pSurface )
+	if ( !pSurface )
 		return false;
 	const char* const* pTag = wl_proxy_get_tag( (wl_proxy *)pSurface );
 
