@@ -45,10 +45,13 @@ using namespace std::literals;
 
 EStreamColorspace g_ForcedNV12ColorSpace = k_EStreamColorspace_Unknown;
 extern gamescope::ConVar<bool> cv_adaptive_sync;
+extern gamescope::ConVar<bool> cv_shutdown_on_primary_child_death;
 
 const char *gamescope_optstring = nullptr;
 const char *g_pOriginalDisplay = nullptr;
 const char *g_pOriginalWaylandDisplay = nullptr;
+
+bool g_bAllowDeferredBackend = false;
 
 int g_nCursorScaleHeight = -1;
 
@@ -150,6 +153,9 @@ const struct option *gamescope_options = (struct option[]){
 
 	// Steam Deck options
 	{ "mura-map", required_argument, nullptr, 0 },
+
+	{ "allow-deferred-backend", no_argument, nullptr, 0 },
+	{ "keep-alive", no_argument, nullptr, 0 },
 
 	{} // keep last
 };
@@ -264,6 +270,10 @@ const char usage[] =
 	"\n"
 	"Steam Deck options:\n"
 	"  --mura-map                     Set the mura compensation map to use for the display. Takes in a path to the mura map.\n"
+	"\n"
+	"Platform options:\n"
+	"  --allow-deferred-backend       Allows initting the backend in a deferred way, if it doesn't work immediately. (Note: This has some very minor correctness compromises that you should consider wrt. your platform with modifiers, etc).\n"
+	"  --keep-alive                   Keep Gamescope alive even when the primary process has died.\n"
 	"\n"
 	"Keyboard shortcuts:\n"
 	"  Super + F                      toggle fullscreen\n"
@@ -810,6 +820,10 @@ int main(int argc, char **argv)
 					g_nCursorScaleHeight = parse_integer(optarg, opt_name);
 				} else if (strcmp(opt_name, "mangoapp") == 0) {
 					g_bLaunchMangoapp = true;
+				} else if (strcmp(opt_name, "allow-deferred-backend") == 0) {
+					g_bAllowDeferredBackend = true;
+				} else if (strcmp(opt_name, "keep-alive") == 0) {
+					cv_shutdown_on_primary_child_death = false;
 				} else if (strcmp(opt_name, "virtual-connector-strategy") == 0) {
 					for ( uint32_t i = 0; i < gamescope::VirtualConnectorStrategies::Count; i++ )
 					{

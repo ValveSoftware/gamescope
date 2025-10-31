@@ -652,7 +652,7 @@ namespace gamescope
 
         virtual std::shared_ptr<BackendBlob> CreateBackendBlob( const std::type_info &type, std::span<const uint8_t> data ) override;
 
-        virtual OwningRc<IBackendFb> ImportDmabufToBackend( wlr_buffer *pBuffer, wlr_dmabuf_attributes *pDmaBuf ) override;
+        virtual OwningRc<IBackendFb> ImportDmabufToBackend( wlr_dmabuf_attributes *pDmaBuf ) override;
         virtual bool UsesModifiers() const override;
         virtual std::span<const uint64_t> GetSupportedModifiers( uint32_t uDrmFormat ) const override;
 
@@ -1625,7 +1625,7 @@ namespace gamescope
 
     void CWaylandPlane::Present( const FrameInfo_t::Layer_t *pLayer )
     {
-        CWaylandFb *pWaylandFb = pLayer && pLayer->tex != nullptr ? static_cast<CWaylandFb*>( pLayer->tex->GetBackendFb() ) : nullptr;
+        CWaylandFb *pWaylandFb = pLayer && pLayer->tex != nullptr ? static_cast<CWaylandFb*>( pLayer->tex->GetBackendFb()->Unwrap() ) : nullptr;
         wl_buffer *pBuffer = pWaylandFb ? pWaylandFb->GetHostBuffer() : nullptr;
 
         if ( pBuffer )
@@ -2064,7 +2064,7 @@ namespace gamescope
         {
             return false;
         }
-
+        
         if ( !wlsession_init() )
         {
             xdg_log.errorf( "Failed to initialize Wayland session" );
@@ -2076,6 +2076,8 @@ namespace gamescope
             xdg_log.errorf( "Failed to initialize input thread" );
             return false;
         }
+
+        xdg_log.infof( "Initted Wayland backend" );
 
         return true;
     }
@@ -2107,6 +2109,8 @@ namespace gamescope
 
         m_pDefaultCursorInfo = GetX11HostCursor();
         m_pDefaultCursorSurface = CursorInfoToSurface( m_pDefaultCursorInfo );
+
+        xdg_log.infof( "Post-Initted Wayland backend" );
 
         return true;
     }
@@ -2198,7 +2202,7 @@ namespace gamescope
         return std::make_shared<BackendBlob>( data );
     }
 
-    OwningRc<IBackendFb> CWaylandBackend::ImportDmabufToBackend( wlr_buffer *pClientBuffer, wlr_dmabuf_attributes *pDmaBuf )
+    OwningRc<IBackendFb> CWaylandBackend::ImportDmabufToBackend( wlr_dmabuf_attributes *pDmaBuf )
     {
         zwp_linux_buffer_params_v1 *pBufferParams = zwp_linux_dmabuf_v1_create_params( m_pLinuxDmabuf );
         if ( !pBufferParams )

@@ -56,6 +56,7 @@
 #include "reshade_effect_manager.hpp"
 
 extern bool g_bWasPartialComposite;
+extern bool g_bAllowDeferredBackend;
 
 static constexpr mat3x4 g_rgb2yuv_srgb_to_bt601_limited = {{
   { 0.257f, 0.504f, 0.098f, 0.0625f },
@@ -124,8 +125,18 @@ uint32_t g_uCompositeDebug = 0u;
 gamescope::ConVar<uint32_t> cv_composite_debug{ "composite_debug", 0, "Debug composition flags" };
 
 static std::map< VkFormat, std::map< uint64_t, VkDrmFormatModifierPropertiesEXT > > DRMModifierProps = {};
+static std::unordered_map<uint32_t, std::vector<uint64_t>> s_SampledModifierFormats = {};
 static struct wlr_drm_format_set sampledShmFormats = {};
 static struct wlr_drm_format_set sampledDRMFormats = {};
+
+std::span<const uint64_t> GetSupportedSampleModifiers( uint32_t uDrmFormat )
+{
+	auto iter = s_SampledModifierFormats.find( uDrmFormat );
+	if ( iter == s_SampledModifierFormats.end() )
+		return std::span<const uint64_t>{};
+
+	return std::span<const uint64_t>{ iter->second.begin(), iter->second.end() };
+}
 
 static LogScope vk_log("vulkan");
 
@@ -2444,7 +2455,7 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 
 	if ( flags.bFlippable == true )
 	{
-		m_pBackendFb = GetBackend()->ImportDmabufToBackend( nullptr, &m_dmabuf );
+		m_pBackendFb = GetBackend()->ImportDmabufToBackend( &m_dmabuf );
 	}
 
 	bool bHasAlpha = pDMA ? DRMFormatHasAlpha( pDMA->format ) : true;
@@ -2822,10 +2833,15 @@ bool vulkan_init_format(VkFormat format, uint32_t drmFormat)
 				continue;
 			}
 
-			if ( GetBackend()->UsesModifiers() && !gamescope::Algorithm::Contains( GetBackend()->GetSupportedModifiers( drmFormat ), modifier ) )
-				continue;
+			// The deferred backend exposes all sample-able formats as supported modifiers.
+			if ( !g_bAllowDeferredBackend )
+			{
+				if ( GetBackend()->UsesModifiers() && !gamescope::Algorithm::Contains( GetBackend()->GetSupportedModifiers( drmFormat ), modifier ) )
+					continue;
+			}
 
 			wlr_drm_format_set_add( &sampledDRMFormats, drmFormat, modifier );
+			s_SampledModifierFormats[ drmFormat ].emplace_back( modifier );
 		}
 
 		DRMModifierProps[ format ] = map;
@@ -3493,6 +3509,13 @@ VkInstance vulkan_get_instance( void )
 
 bool vulkan_init( VkInstance instance, VkSurfaceKHR surface )
 {
+	static bool s_bInitted = false;
+	if ( s_bInitted )
+	{
+		g_output.surface = surface;
+		return true;
+	}
+
 	if (!g_device.BInit(instance, surface))
 		return false;
 
@@ -3504,6 +3527,8 @@ bool vulkan_init( VkInstance instance, VkSurfaceKHR surface )
 		std::thread present_wait_thread( present_wait_thread_func );
 		present_wait_thread.detach();
 	}
+
+	s_bInitted = true;
 
 	return true;
 }

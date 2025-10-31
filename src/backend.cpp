@@ -1,4 +1,5 @@
 #include "backend.h"
+#include "Backends/DeferredBackend.h"
 #include "vblankmanager.hpp"
 #include "convar.h"
 #include "wlserver.hpp"
@@ -9,6 +10,8 @@
 
 extern void sleep_until_nanos(uint64_t nanos);
 extern bool env_to_bool(const char *env);
+
+extern bool g_bAllowDeferredBackend;
 
 namespace gamescope
 {
@@ -38,9 +41,22 @@ namespace gamescope
             s_pBackend = pBackend;
             if ( !s_pBackend->Init() )
             {
-                delete s_pBackend;
-                s_pBackend = nullptr;
-                return false;
+                if ( g_bAllowDeferredBackend )
+                {
+                    s_pBackend = new CDeferredBackend( pBackend );
+                    if ( !s_pBackend->Init() )
+                    {
+                        delete s_pBackend;
+                        s_pBackend = nullptr;
+                        return false;
+                    }
+                }
+                else
+                {
+                    delete s_pBackend;
+                    s_pBackend = nullptr;
+                    return false;
+                }
             }
         }
 

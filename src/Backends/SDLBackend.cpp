@@ -55,10 +55,12 @@ namespace gamescope
 		GAMESCOPE_SDL_EVENT_COUNT,
 	};
 
+	class CSDLBackend;
+
 	class CSDLConnector final : public CBaseBackendConnector, public INestedHints
 	{
 	public:
-		CSDLConnector();
+		CSDLConnector( CSDLBackend *pBackend );
 		virtual bool Init();
 
 		virtual ~CSDLConnector();
@@ -121,6 +123,7 @@ namespace gamescope
 		SDL_Window *GetSDLWindow() const { return m_pWindow; }
 		VkSurfaceKHR GetVulkanSurface() const { return m_pVkSurface; }
 	private:
+		CSDLBackend *m_pBackend = nullptr;
 		SDL_Window *m_pWindow = nullptr;
 		VkSurfaceKHR m_pVkSurface = VK_NULL_HANDLE;
 		BackendConnectorHDRInfo m_HDRInfo{};
@@ -148,7 +151,7 @@ namespace gamescope
 
 		virtual std::shared_ptr<BackendBlob> CreateBackendBlob( const std::type_info &type, std::span<const uint8_t> data ) override;
 
-        virtual OwningRc<IBackendFb> ImportDmabufToBackend( wlr_buffer *pBuffer, wlr_dmabuf_attributes *pDmaBuf ) override;
+        virtual OwningRc<IBackendFb> ImportDmabufToBackend( wlr_dmabuf_attributes *pDmaBuf ) override;
 		virtual bool UsesModifiers() const override;
 		virtual std::span<const uint64_t> GetSupportedModifiers( uint32_t uDrmFormat ) const override;
 
@@ -208,7 +211,8 @@ namespace gamescope
 	// CSDLConnector
 	//////////////////
 
-	CSDLConnector::CSDLConnector()
+	CSDLConnector::CSDLConnector( CSDLBackend *pBackend )
+		: m_pBackend{ pBackend }
 	{
 	}
 
@@ -357,28 +361,23 @@ namespace gamescope
 
 	void CSDLConnector::SetCursorImage( std::shared_ptr<INestedHints::CursorInfo> info )
 	{
-		CSDLBackend *pBackend = static_cast<CSDLBackend *>( GetBackend() );
-		pBackend->SetCursorImage( std::move( info ) );
+		m_pBackend->SetCursorImage( std::move( info ) );
 	}
 	void CSDLConnector::SetRelativeMouseMode( bool bRelative )
 	{
-		CSDLBackend *pBackend = static_cast<CSDLBackend *>( GetBackend() );
-		pBackend->SetRelativeMouseMode( bRelative );
+		m_pBackend->SetRelativeMouseMode( bRelative );
 	}
 	void CSDLConnector::SetVisible( bool bVisible )
 	{
-		CSDLBackend *pBackend = static_cast<CSDLBackend *>( GetBackend() );
-		pBackend->SetVisible( bVisible );
+		m_pBackend->SetVisible( bVisible );
 	}
 	void CSDLConnector::SetTitle( std::shared_ptr<std::string> szTitle )
 	{
-		CSDLBackend *pBackend = static_cast<CSDLBackend *>( GetBackend() );
-		pBackend->SetTitle( std::move( szTitle ) );
+		m_pBackend->SetTitle( std::move( szTitle ) );
 	}
 	void CSDLConnector::SetIcon( std::shared_ptr<std::vector<uint32_t>> uIconPixels )
 	{
-		CSDLBackend *pBackend = static_cast<CSDLBackend *>( GetBackend() );
-		pBackend->SetIcon( std::move( uIconPixels ) );
+		m_pBackend->SetIcon( std::move( uIconPixels ) );
 	}
 
     void CSDLConnector::SetSelection( std::shared_ptr<std::string> szContents, GamescopeSelection eSelection )
@@ -394,7 +393,8 @@ namespace gamescope
 	////////////////
 
 	CSDLBackend::CSDLBackend()
-		: m_SDLThread{ [this](){ this->SDLThreadFunc(); } }
+		: m_Connector{ this }
+		, m_SDLThread{ [this](){ this->SDLThreadFunc(); } }
 	{
 	}
 
@@ -449,7 +449,7 @@ namespace gamescope
 		return std::make_shared<BackendBlob>( data );
 	}
 
-	OwningRc<IBackendFb> CSDLBackend::ImportDmabufToBackend( wlr_buffer *pBuffer, wlr_dmabuf_attributes *pDmaBuf )
+	OwningRc<IBackendFb> CSDLBackend::ImportDmabufToBackend( wlr_dmabuf_attributes *pDmaBuf )
 	{
 		return new CBaseBackendFb();
 	}

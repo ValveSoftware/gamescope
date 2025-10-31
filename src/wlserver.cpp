@@ -1624,6 +1624,10 @@ static bool filter_global(const struct wl_client *client, const struct wl_global
 }
 
 bool wlsession_init( void ) {
+	static bool s_bInitted = false;
+	if ( s_bInitted )
+		return true;
+
 	wlr_log_init(WLR_DEBUG, handle_wlr_log);
 
 	wlserver.display = wl_display_create();
@@ -1639,7 +1643,10 @@ bool wlsession_init( void ) {
 
 #if HAVE_SESSION
 	if ( !GetBackend()->IsSessionBased() )
+	{
+		s_bInitted = true;
 		return true;
+	}
 
 	wlserver.wlr.session = wlr_session_create( wlserver.event_loop );
 	if ( wlserver.wlr.session == nullptr )
@@ -1651,6 +1658,8 @@ bool wlsession_init( void ) {
 	wlserver.session_active.notify = handle_session_active;
 	wl_signal_add( &wlserver.wlr.session->events.active, &wlserver.session_active );
 #endif
+
+	s_bInitted = true;
 
 	return true;
 }

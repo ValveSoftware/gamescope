@@ -1404,7 +1404,7 @@ import_commit (
 	gamescope::OwningRc<gamescope::IBackendFb> pBackendFb;
 	if ( wlr_buffer_get_dmabuf( buf, &dmabuf ) )
 	{
-		pBackendFb = GetBackend()->ImportDmabufToBackend( buf, &dmabuf );
+		pBackendFb = GetBackend()->ImportDmabufToBackend( &dmabuf );
 	}
 
 	gamescope::OwningRc<CVulkanTexture> pOwnedTexture = vulkan_create_texture_from_wlr_buffer( buf, std::move( pBackendFb ) );
@@ -8165,15 +8165,34 @@ steamcompmgr_main(int argc, char **argv)
 			flush_root = true;
 		}
 
+		bool bBackendJustInitted = GetBackend()->NewlyInitted();
+
 		static gamescope::VirtualConnectorStrategy s_eLastVirtualConnectorStrategy = gamescope::cv_backend_virtual_connector_strategy;
 		gamescope::VirtualConnectorStrategy eVirtualConnectorStrategy = gamescope::cv_backend_virtual_connector_strategy;
 
-		if ( eVirtualConnectorStrategy != s_eLastVirtualConnectorStrategy )
+		if ( eVirtualConnectorStrategy != s_eLastVirtualConnectorStrategy || bBackendJustInitted )
 		{
 			// If our virtual connector strategy changes, clear out our virtual connector
 			// global focuses.
 			g_VirtualConnectorFocuses.clear();
 			s_eLastVirtualConnectorStrategy = eVirtualConnectorStrategy;
+
+			xwm_log.infof( "Late init of virtual connector stuff." );
+
+			if ( gamescope::VirtualConnectorIsSingleOutput() )
+			{
+				// misyl: Make the virtual connector up-front if we are in a single-output mode.
+				// So we don't delay in getting display/output info to the game
+				static constexpr uint64_t k_unSingleOutputVirtualConnectorKey = 0;
+
+				g_VirtualConnectorFocuses[ k_unSingleOutputVirtualConnectorKey ] = global_focus_t
+				{
+					.ulVirtualFocusKey = k_unSingleOutputVirtualConnectorKey,
+					.pVirtualConnector = GetBackend()->UsesVirtualConnectors() ? GetBackend()->CreateVirtualConnector( k_unSingleOutputVirtualConnectorKey ) : nullptr,
+				};
+			}
+
+			hasRepaint = true;
 		}
 
 #if 0

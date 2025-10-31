@@ -180,7 +180,7 @@ namespace gamescope
 			return std::make_shared<BackendBlob>( data );
 		}
 
-		virtual OwningRc<IBackendFb> ImportDmabufToBackend( wlr_buffer *pBuffer, wlr_dmabuf_attributes *pDmaBuf ) override
+		virtual OwningRc<IBackendFb> ImportDmabufToBackend( wlr_dmabuf_attributes *pDmaBuf ) override
 		{
 			return new CBaseBackendFb();
 		}

@@ -256,6 +256,8 @@ namespace gamescope
     public:
         virtual void SetBuffer( wlr_buffer *pClientBuffer ) = 0;
         virtual void SetReleasePoint( std::shared_ptr<CReleaseTimelinePoint> pReleasePoint ) = 0;
+
+        virtual IBackendFb *Unwrap() = 0;
     };
 
     class IBackendPlane
@@ -275,6 +277,8 @@ namespace gamescope
 
         void SetBuffer( wlr_buffer *pClientBuffer ) override;
         void SetReleasePoint( std::shared_ptr<CReleaseTimelinePoint> pReleasePoint ) override;
+
+        virtual IBackendFb *Unwrap() override { return this; };
 
     private:
         wlr_buffer *m_pClientBuffer = nullptr;
@@ -311,7 +315,7 @@ namespace gamescope
         //
         // shared_ptr owns the structure.
         // Rc manages acquire/release of buffer to/from client while imported.
-        virtual OwningRc<IBackendFb> ImportDmabufToBackend( wlr_buffer *pBuffer, wlr_dmabuf_attributes *pDmaBuf ) = 0;
+        virtual OwningRc<IBackendFb> ImportDmabufToBackend( wlr_dmabuf_attributes *pDmaBuf ) = 0;
 
         virtual bool UsesModifiers() const = 0;
         virtual std::span<const uint64_t> GetSupportedModifiers( uint32_t uDrmFormat ) const = 0;
@@ -366,6 +370,8 @@ namespace gamescope
         virtual bool SupportsVROverlayForwarding() = 0;
         virtual void ForwardFramebuffer( std::shared_ptr<IBackendPlane> &pPlane, IBackendFb *pFramebuffer, const void *pData ) = 0;
 
+        virtual bool NewlyInitted() = 0;
+
         static IBackend *Get();
         template <typename T>
         static bool Set();
@@ -398,6 +404,8 @@ namespace gamescope
 
         virtual bool SupportsVROverlayForwarding() override { return false; }
         virtual void ForwardFramebuffer( std::shared_ptr<IBackendPlane> &pPlane, IBackendFb *pFramebuffer, const void *pData ) override {}
+
+        virtual bool NewlyInitted() override { return false; }
     };
 
     // This is a blob of data that may be associated with

@@ -48,6 +48,7 @@ extern std::string g_reshade_effect;
 extern gamescope::ConVar<bool> cv_hdr_enabled;
 
 extern uint64_t g_SteamCompMgrLimitedAppRefreshCycle;
+extern bool g_bAllowDeferredBackend;
 
 void MakeFocusDirty();
 void update_connector_display_info_wl(struct drm_t *drm);
@@ -553,33 +554,37 @@ namespace gamescope
                 m_pchOverlayName = "Gamescope";
 
             m_pIPCResourceManager = vr::VRIPCResourceManager();
-            if ( m_pIPCResourceManager )
+
+            if ( !g_bAllowDeferredBackend )
             {
-                uint32_t uFormatCount = 0;
-                m_pIPCResourceManager->GetDmabufFormats( &uFormatCount, nullptr );
-
-                if ( uFormatCount )
+                if ( m_pIPCResourceManager )
                 {
-                    std::vector<uint32_t> uFormats;
-                    uFormats.resize( uFormatCount );
-                    m_pIPCResourceManager->GetDmabufFormats( &uFormatCount, uFormats.data() );
+                    uint32_t uFormatCount = 0;
+                    m_pIPCResourceManager->GetDmabufFormats( &uFormatCount, nullptr );
 
-                    for ( uint32_t i = 0; i < uFormatCount; i++ )
+                    if ( uFormatCount )
                     {
-                        uint32_t uFormat = uFormats[i];
-                        uint32_t uModifierCount = 0;
-                        m_pIPCResourceManager->GetDmabufModifiers( vr::VRApplication_Overlay, uFormat, &uModifierCount, nullptr );
+                        std::vector<uint32_t> uFormats;
+                        uFormats.resize( uFormatCount );
+                        m_pIPCResourceManager->GetDmabufFormats( &uFormatCount, uFormats.data() );
 
-                        if ( uModifierCount )
+                        for ( uint32_t i = 0; i < uFormatCount; i++ )
                         {
-                            std::vector<uint64_t> ulModifiers;
-                            ulModifiers.resize( uModifierCount );
-                            m_pIPCResourceManager->GetDmabufModifiers( vr::VRApplication_Overlay, uFormat, &uModifierCount, ulModifiers.data() );
+                            uint32_t uFormat = uFormats[i];
+                            uint32_t uModifierCount = 0;
+                            m_pIPCResourceManager->GetDmabufModifiers( vr::VRApplication_Overlay, uFormat, &uModifierCount, nullptr );
 
-                            for ( uint64_t ulModifier : ulModifiers )
+                            if ( uModifierCount )
                             {
-                                if ( ulModifier != DRM_FORMAT_MOD_INVALID )
-                                    m_FormatModifiers[uFormat].emplace_back( ulModifier );
+                                std::vector<uint64_t> ulModifiers;
+                                ulModifiers.resize( uModifierCount );
+                                m_pIPCResourceManager->GetDmabufModifiers( vr::VRApplication_Overlay, uFormat, &uModifierCount, ulModifiers.data() );
+
+                                for ( uint64_t ulModifier : ulModifiers )
+                                {
+                                    if ( ulModifier != DRM_FORMAT_MOD_INVALID )
+                                        m_FormatModifiers[uFormat].emplace_back( ulModifier );
+                                }
                             }
                         }
                     }
@@ -677,7 +682,7 @@ namespace gamescope
 			return std::make_shared<BackendBlob>( data );
 		}
 
-		virtual OwningRc<IBackendFb> ImportDmabufToBackend( wlr_buffer *pBuffer, wlr_dmabuf_attributes *pDmaBuf ) override
+		virtual OwningRc<IBackendFb> ImportDmabufToBackend( wlr_dmabuf_attributes *pDmaBuf ) override
 		{
             if ( UsesModifiers() )
             {
@@ -738,6 +743,9 @@ namespace gamescope
 		{
             if ( !cv_vr_use_modifiers )
                 return false;
+
+            if ( g_bAllowDeferredBackend )
+                return true;
 
             if ( !m_pIPCResourceManager )
                 return false;
@@ -1834,7 +1842,7 @@ namespace gamescope
                     vr::VROverlay()->ShowOverlay( m_hOverlay );
                 }
 
-                pFb = static_cast<COpenVRFb *>( oState->pTexture->GetBackendFb() );
+                pFb = static_cast<COpenVRFb *>( oState->pTexture->GetBackendFb()->Unwrap() );
                 vr::SharedTextureHandle_t ulHandle = pFb->GetSharedTextureHandle();
 
                 vr::Texture_t texture = { (void *)&ulHandle, vr::TextureType_SharedTextureHandle, vr::ColorSpace_Gamma };

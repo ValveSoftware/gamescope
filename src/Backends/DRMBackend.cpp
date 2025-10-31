@@ -1523,7 +1523,7 @@ void finish_drm(struct drm_t *drm)
 	// page-flip handler thread.
 }
 
-gamescope::OwningRc<gamescope::IBackendFb> drm_fbid_from_dmabuf( struct drm_t *drm, struct wlr_buffer *buf, struct wlr_dmabuf_attributes *dma_buf )
+gamescope::OwningRc<gamescope::IBackendFb> drm_fbid_from_dmabuf( struct drm_t *drm, struct wlr_dmabuf_attributes *dma_buf )
 {
 	gamescope::OwningRc<gamescope::IBackendFb> pBackendFb;
 	uint32_t fb_id = 0;
@@ -2525,7 +2525,7 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 		if ( i < frameInfo->layerCount )
 		{
 			const FrameInfo_t::Layer_t *pLayer = &frameInfo->layers[ i ];
-			gamescope::CDRMFb *pDrmFb = static_cast<gamescope::CDRMFb *>( pLayer->tex ? pLayer->tex->GetBackendFb() : nullptr );
+			gamescope::CDRMFb *pDrmFb = static_cast<gamescope::CDRMFb *>( pLayer->tex ? pLayer->tex->GetBackendFb()->Unwrap() : nullptr );
 
 			if ( pDrmFb == nullptr )
 			{
@@ -3710,9 +3710,9 @@ namespace gamescope
 			return std::make_shared<BackendBlob>( data, uBlob, true );
 		}
 
-		virtual OwningRc<IBackendFb> ImportDmabufToBackend( wlr_buffer *pBuffer, wlr_dmabuf_attributes *pDmaBuf ) override
+		virtual OwningRc<IBackendFb> ImportDmabufToBackend( wlr_dmabuf_attributes *pDmaBuf ) override
 		{
-			return drm_fbid_from_dmabuf( &g_DRM, pBuffer, pDmaBuf );
+			return drm_fbid_from_dmabuf( &g_DRM, pDmaBuf );
 		}
 
 		virtual bool UsesModifiers() const override
