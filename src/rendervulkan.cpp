@@ -390,7 +390,19 @@ bool CVulkanDevice::selectPhysDev(VkSurfaceKHR surface)
 				m_generalQueueFamily = generalIndex;
 				m_physDev = cphysDev;
 
-				if ( env_to_bool( getenv( "GAMESCOPE_FORCE_GENERAL_QUEUE" ) ) )
+				/* When Intel uses compute-only queue for Gamescope composition, some games
+				 * experience performance loss. Using the general queue alleviates the issue
+				 * for now.
+				 * See: https://gitlab.freedesktop.org/drm/xe/kernel/-/issues/4452
+				 *
+				 * TODO: Remove vendorID check for Intel once issue is resolved.
+				 */
+				if (deviceProperties.vendorID == 0x8086) /* Intel */
+				{
+					vk_log.infof("Intel device detected, forcing general queue family instead of compute-only queue");
+					m_queueFamily = generalIndex;
+				}
+				else if ( env_to_bool( getenv( "GAMESCOPE_FORCE_GENERAL_QUEUE" ) ) )
 					m_queueFamily = generalIndex;
 			}
 		}
