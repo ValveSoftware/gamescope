@@ -553,6 +553,7 @@ extern std::string g_reshade_effect;
 #endif
 
 bool drm_update_color_mgmt(struct drm_t *drm);
+bool drm_supports_blend_tf(struct drm_t *drm);
 bool drm_supports_color_mgmt(struct drm_t *drm);
 bool drm_set_connector( struct drm_t *drm, gamescope::CDRMConnector *conn );
 
@@ -2659,10 +2660,13 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 
 			if ( drm_supports_color_mgmt( drm ) )
 			{
-				if (!cv_drm_debug_disable_blend_tf && !bSinglePlane)
-					liftoff_layer_set_property( drm->lo_layers[ i ], "AMD_PLANE_BLEND_TF", drm->pending.output_tf );
-				else
-					liftoff_layer_set_property( drm->lo_layers[ i ], "AMD_PLANE_BLEND_TF", AMDGPU_TRANSFER_FUNCTION_DEFAULT );
+				if ( drm_supports_blend_tf( drm ) )
+				{
+					if (!cv_drm_debug_disable_blend_tf && !bSinglePlane)
+						liftoff_layer_set_property( drm->lo_layers[ i ], "AMD_PLANE_BLEND_TF", drm->pending.output_tf );
+					else
+						liftoff_layer_set_property( drm->lo_layers[ i ], "AMD_PLANE_BLEND_TF", AMDGPU_TRANSFER_FUNCTION_DEFAULT );
+				}
 
 				if (!cv_drm_debug_disable_ctm && frameInfo->layers[i].ctm != nullptr)
 					liftoff_layer_set_property( drm->lo_layers[ i ], "AMD_PLANE_CTM", frameInfo->layers[i].ctm->GetBlobValue() );
@@ -2684,7 +2688,8 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 				liftoff_layer_set_property( drm->lo_layers[ i ], "AMD_PLANE_SHAPER_LUT", 0 );
 				liftoff_layer_set_property( drm->lo_layers[ i ], "AMD_PLANE_SHAPER_TF", 0 );
 				liftoff_layer_set_property( drm->lo_layers[ i ], "AMD_PLANE_LUT3D", 0 );
-				liftoff_layer_set_property( drm->lo_layers[ i ], "AMD_PLANE_BLEND_TF", AMDGPU_TRANSFER_FUNCTION_DEFAULT );
+				if ( drm_supports_blend_tf( drm ) )
+					liftoff_layer_set_property( drm->lo_layers[ i ], "AMD_PLANE_BLEND_TF", AMDGPU_TRANSFER_FUNCTION_DEFAULT );
 				liftoff_layer_set_property( drm->lo_layers[ i ], "AMD_PLANE_CTM", 0 );
 			}
 		}
@@ -2833,7 +2838,7 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 
 	bool bSinglePlane = frameInfo->layerCount < 2 && cv_drm_single_plane_optimizations;
 
-	if ( drm_supports_color_mgmt( &g_DRM ) && frameInfo->applyOutputColorMgmt )
+	if ( drm_supports_blend_tf( &g_DRM ) && frameInfo->applyOutputColorMgmt )
 	{
 		if ( !cv_drm_debug_disable_output_tf && !bSinglePlane )
 		{
@@ -3307,6 +3312,17 @@ std::pair<uint32_t, uint32_t> drm_get_connector_identifier(struct drm_t *drm)
 	return std::make_pair(drm->pConnector->GetModeConnector()->connector_type, drm->pConnector->GetModeConnector()->connector_type_id);
 }
 
+bool drm_supports_blend_tf(struct drm_t *drm)
+{
+	if ( g_bForceDisableColorMgmt )
+		return false;
+
+	if ( !drm->pPrimaryPlane )
+		return false;
+
+	return drm->pPrimaryPlane->GetProperties().AMD_PLANE_BLEND_TF.has_value();
+}
+
 bool drm_supports_color_mgmt(struct drm_t *drm)
 {
 	if ( g_bForceDisableColorMgmt )
@@ -3315,7 +3331,9 @@ bool drm_supports_color_mgmt(struct drm_t *drm)
 	if ( !drm->pPrimaryPlane )
 		return false;
 
-	return drm->pPrimaryPlane->GetProperties().AMD_PLANE_CTM.has_value() && drm->pPrimaryPlane->GetProperties().AMD_PLANE_BLEND_TF.has_value();
+	return drm->pPrimaryPlane->GetProperties().AMD_PLANE_DEGAMMA_TF.has_value() &&
+			drm->pPrimaryPlane->GetProperties().AMD_PLANE_CTM.has_value() &&
+			drm->pPrimaryPlane->GetProperties().AMD_PLANE_SHAPER_LUT.has_value();
 }
 
 std::span<const uint32_t> drm_get_valid_refresh_rates( struct drm_t *drm )
@@ -3434,12 +3452,12 @@ namespace gamescope
 			if ( g_bOutputHDREnabled )
 			{
 				bNeedsFullComposite |= g_bHDRItmEnable;
-				if ( !SupportsColorManagement() )
+				if ( !SupportsBlendTF() )
 					bNeedsFullComposite |= ( pFrameInfo->layerCount > 1 || pFrameInfo->layers[0].colorspace != GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ );
 			}
 			else
 			{
-				if ( !SupportsColorManagement() )
+				if ( !SupportsBlendTF() )
 					bNeedsFullComposite |= ColorspaceIsHDR( pFrameInfo->layers[0].colorspace );
 			}
 
@@ -3836,6 +3854,11 @@ namespace gamescope
 
 		uint32_t m_uNextPresentCtx = 0;
 		DRMPresentCtx m_PresentCtxs[3];
+
+		bool SupportsBlendTF() const
+		{
+			return drm_supports_blend_tf( &g_DRM );
+		}
 
 		bool SupportsColorManagement() const
 		{
