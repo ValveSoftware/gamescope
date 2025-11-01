@@ -47,7 +47,7 @@ gamescope.config.known_displays.steamdeck_oled_sdc = {
     matches = function(display)
         if display.vendor == "VLV" and display.product == 0x3003 then
             debug("[steamdeck_oled_sdc] Matched VLV and product 0x3003")
-            -- Higher priorty than LCD.
+            -- Higher priority than LCD.
             return 5100
         end
 
@@ -89,7 +89,7 @@ gamescope.config.known_displays.steamdeck_oled_boe = {
     matches = function(display)
         if display.vendor == "VLV" and display.product == 0x3004 then
             debug("[steamdeck_oled_boe] Matched VLV and product 0x3004")
-            -- Higher priorty than LCD.
+            -- Higher priority than LCD.
             return 5100
         end
 
