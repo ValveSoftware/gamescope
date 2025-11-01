@@ -1749,7 +1749,9 @@ namespace gamescope
         uint64_t ulTime = ( ( ( uint64_t( uTVSecHi ) << 32ul ) | uTVSecLo ) * 1'000'000'000lu ) +
                           ( uint64_t( uTVNSec ) );
 
-        if ( uRefreshCycle )
+        if ( ! (m_eWindowState & LIBDECOR_WINDOW_STATE_ACTIVE) && g_nNestedUnfocusedRefresh > 0)
+            g_nOutputRefresh = g_nNestedUnfocusedRefresh;
+        else if ( uRefreshCycle )
         {
             int32_t nRefresh = RefreshCycleTomHz( uRefreshCycle );
             if ( nRefresh && nRefresh != g_nOutputRefresh )
