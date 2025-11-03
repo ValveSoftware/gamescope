@@ -3028,6 +3028,10 @@ paint_all( global_focus_t *pFocus, bool async )
 						fwrite(mappedData, 1, pScreenshotTexture->totalSize(), file );
 						fclose(file);
 
+						bScreenshotSuccess = true;
+						xwm_log.infof("Screenshot saved to %s", oScreenshotInfo->szScreenshotPath.c_str());
+
+#if 0
 						char cmd[4096];
 						sprintf(cmd, "ffmpeg -f rawvideo -pixel_format nv12 -video_size %dx%d -i %s %s_encoded.png", pScreenshotTexture->width(), pScreenshotTexture->height(), oScreenshotInfo->szScreenshotPath.c_str(), oScreenshotInfo->szScreenshotPath.c_str() );
 
@@ -3039,8 +3043,8 @@ paint_all( global_focus_t *pFocus, bool async )
 							xwm_log.errorf( "Failed to save screenshot to %s", oScreenshotInfo->szScreenshotPath.c_str() );
 						} else {
 							xwm_log.infof("Screenshot saved to %s", oScreenshotInfo->szScreenshotPath.c_str());
-							bScreenshotSuccess = true;
 						}
+#endif
 					}
 					else
 					{
