@@ -3646,6 +3646,12 @@ found:;
 			continue;
 		}
 
+		// Skip streaming client video window
+		if ( w->isSteamStreamingClientVideo )
+		{
+			continue;
+		}
+
 		if ( w->xwayland().a.map_state == IsViewable && w->xwayland().a.c_class == InputOutput &&
 			( win_has_game_id( w ) || window_is_steam( w ) || w->isSteamStreamingClient ) &&
 			 (w->opacity > TRANSLUCENT || w->isSteamStreamingClient ) )
