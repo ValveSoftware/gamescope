@@ -33,6 +33,7 @@ extern bool g_bKeyboardDisabled;
 extern bool g_bMouseDisabled;
 
 extern std::vector<std::string> g_libinputSelectedDevices;
+extern std::vector<int> g_libinputSelectedDevices_grabbed_fds;
 
 extern float g_mouseSensitivity;
 extern const char *g_sOutputName;

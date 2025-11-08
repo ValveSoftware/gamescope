@@ -309,6 +309,7 @@ bool g_bGrabbed = false;
 bool g_bKeyboardDisabled = false;
 bool g_bMouseDisabled = false;
 std::vector<std::string> g_libinputSelectedDevices;
+std::vector<int> g_libinputSelectedDevices_grabbed_fds;
 
 float g_mouseSensitivity = 1.0;
 
