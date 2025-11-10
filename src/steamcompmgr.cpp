@@ -2623,7 +2623,7 @@ paint_all( global_focus_t *pFocus, bool async )
 				layer->opacity = 1.0f; // BLAH
 				layer->zpos = g_zposOverlay;
 				layer->applyColorMgmt = g_ColorMgmt.pending.enabled;
-				layer->eAlphaBlendingMode = ALPHA_BLENDING_MODE_COVERAGE; // misyl: Always coverage and not premult in case of a Look applied.
+				layer->eAlphaBlendingMode = cv_overlay_unmultiplied_alpha ? ALPHA_BLENDING_MODE_COVERAGE : ALPHA_BLENDING_MODE_PREMULTIPLIED;
 
 				layer->colorspace = GAMESCOPE_APP_TEXTURE_COLORSPACE_LINEAR;
 				layer->hdr_metadata_blob = nullptr;
