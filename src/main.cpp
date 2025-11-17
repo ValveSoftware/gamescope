@@ -8,7 +8,7 @@
 #include <vector>
 #include <cstring>
 #include <string>
-#if defined(__linux__)
+#if HAVE_LIBCAP
 #include <sys/capability.h>
 #endif
 #include <sys/stat.h>
