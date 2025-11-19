@@ -13,7 +13,9 @@
 #include <sys/resource.h>
 #include <sys/wait.h>
 #if defined(__linux__)
+#if HAVE_LIBCAP
 #include <sys/capability.h>
+#endif
 #include <sys/prctl.h>
 #elif defined(__DragonFly__) || defined(__FreeBSD__)
 #include <sys/procctl.h>
