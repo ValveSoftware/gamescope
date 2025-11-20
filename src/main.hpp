@@ -29,15 +29,16 @@ extern bool g_bGrabbed;
 extern float g_mouseSensitivity;
 extern const char *g_sOutputName;
 
-enum class GamescopeUpscaleFilter : uint32_t
+	enum class GamescopeUpscaleFilter : uint32_t
 {
-    LINEAR = 0,
-    NEAREST,
-    FSR,
-    NIS,
-    PIXEL,
+		LINEAR = 0,
+		NEAREST,
+		FSR,
+		NIS,
+		PIXEL,
+		SUBPIXEL_RGB,
 
-    FROM_VIEW = 0xF, // internal
+		FROM_VIEW = 0xF, // internal
 };
 
 static constexpr bool DoesHardwareSupportUpscaleFilter( GamescopeUpscaleFilter eFilter )
@@ -72,4 +73,3 @@ extern int g_nXWaylandCount;
 
 extern uint32_t g_preferVendorID;
 extern uint32_t g_preferDeviceID;
-
