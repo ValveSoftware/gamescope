@@ -45,6 +45,7 @@ enum class GamescopeUpscaleFilter : uint32_t
     NIS,
     PIXEL,
     SGSR,
+    SUBPIXEL_RGB,
 
     FROM_VIEW = 0xF, // internal
 };
@@ -118,6 +119,7 @@ inline std::optional<GamescopeUpscaleFilter> ParseUpscaleFilter( std::string_vie
         { "nis",     GamescopeUpscaleFilter::NIS },
         { "pixel",   GamescopeUpscaleFilter::PIXEL },
         { "sgsr",    GamescopeUpscaleFilter::SGSR },
+        { "subpixel_rgb", GamescopeUpscaleFilter::SUBPIXEL_RGB },
     };
     for ( const auto &[svFilterName, eFilter] : k_Filters )
     {
@@ -142,4 +144,3 @@ extern bool g_bNoTouchPointerEmulation;
 
 extern uint32_t g_preferVendorID;
 extern uint32_t g_preferDeviceID;
-
