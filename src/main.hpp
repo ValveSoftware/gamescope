@@ -32,13 +32,14 @@ extern const char *g_sOutputName;
 	enum class GamescopeUpscaleFilter : uint32_t
 {
 		LINEAR = 0,
-		NEAREST,
-		FSR,
-		NIS,
-		PIXEL,
-		SUBPIXEL_RGB,
+	NEAREST,
+	FSR,
+	NIS,
+	PIXEL,
+	SUBPIXEL_RGB,
+	SUBPIXEL_OLED,
 
-		FROM_VIEW = 0xF, // internal
+	FROM_VIEW = 0xF, // internal
 };
 
 static constexpr bool DoesHardwareSupportUpscaleFilter( GamescopeUpscaleFilter eFilter )

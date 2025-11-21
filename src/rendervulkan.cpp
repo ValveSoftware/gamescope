@@ -3639,10 +3639,12 @@ struct SubpixelFilterDefinition
 {
 	GamescopeUpscaleFilter eFilter;
 	vec2_t downscaleRatio;
+	const char *pName;
 };
 
-static constexpr std::array<SubpixelFilterDefinition, 1> g_SubpixelFilterDefinitions = {{
-	{ GamescopeUpscaleFilter::SUBPIXEL_RGB, { 3.0f, 3.0f } },
+static constexpr std::array<SubpixelFilterDefinition, 2> g_SubpixelFilterDefinitions = {{
+	{ GamescopeUpscaleFilter::SUBPIXEL_RGB,   { 3.0f, 3.0f },   "horizontal RGB" },
+	{ GamescopeUpscaleFilter::SUBPIXEL_OLED,  { 2.0f, 2.0f },   "RG/B OLED" },
 }};
 
 static const SubpixelFilterDefinition *FindSubpixelFilterDefinition( GamescopeUpscaleFilter eFilter )
@@ -3661,12 +3663,10 @@ static GamescopeUpscaleFilter GetLayerShaderFilter( const FrameInfo_t::Layer_t &
 	if ( layer.isScreenSize() || ( layer.filter == GamescopeUpscaleFilter::LINEAR && layer.viewConvertsToLinearAutomatically() ) )
 		return GamescopeUpscaleFilter::FROM_VIEW;
 
-	if ( layer.filter == GamescopeUpscaleFilter::SUBPIXEL_RGB )
+	if ( const auto *definition = FindSubpixelFilterDefinition( layer.filter ) )
 	{
-		static int s_lastState = -1; // -1 unknown, 0 inactive, 1 active
-
-		const auto *definition = FindSubpixelFilterDefinition( layer.filter );
-		bool haveDefinition = definition != nullptr;
+		static int s_lastState[ g_SubpixelFilterDefinitions.size() ] = { -1, -1 };
+		size_t idx = definition - g_SubpixelFilterDefinitions.data();
 
 		float dimRatioX = 0.0f;
 		float dimRatioY = 0.0f;
@@ -3685,38 +3685,37 @@ static GamescopeUpscaleFilter GetLayerShaderFilter( const FrameInfo_t::Layer_t &
 		float scaleRatioX = scaleToRatio( layer.scale.x );
 		float scaleRatioY = scaleToRatio( layer.scale.y );
 
-		// Prefer dimensional ratio; fall back to scale-derived ratio.
 		float observedX = dimRatioX > 0.0f ? dimRatioX : scaleRatioX;
 		float observedY = dimRatioY > 0.0f ? dimRatioY : scaleRatioY;
 
 		const float tolerance = 0.05f;
-		bool ratioOk = haveDefinition
-			&& close_enough( observedX, definition->downscaleRatio.x, tolerance )
-			&& close_enough( observedY, definition->downscaleRatio.y, tolerance );
+		bool ratioOk =
+			close_enough( observedX, definition->downscaleRatio.x, tolerance ) &&
+			close_enough( observedY, definition->downscaleRatio.y, tolerance );
 
 		int state = ratioOk ? 1 : 0;
-		if ( state != s_lastState )
+		if ( state != s_lastState[idx] )
 		{
 			if ( ratioOk )
 			{
-				vk_log.infof( "Subpixel RGB filter active: scale=(%.3f, %.3f) ratio=(%.3f, %.3f) tex=%ux%u out=%ux%u target=(%.1f, %.1f)",
+				vk_log.infof( "Subpixel %s filter active: scale=(%.3f, %.3f) ratio=(%.3f, %.3f) tex=%ux%u out=%ux%u target=(%.1f, %.1f)",
+					definition->pName,
 					layer.scale.x, layer.scale.y, observedX, observedY,
 					layer.tex ? layer.tex->width() : 0, layer.tex ? layer.tex->height() : 0,
 					currentOutputWidth, currentOutputHeight,
-					definition ? definition->downscaleRatio.x : 0.0f, definition ? definition->downscaleRatio.y : 0.0f );
+					definition->downscaleRatio.x, definition->downscaleRatio.y );
 			}
 			else
 			{
-				vk_log.warnf( "Subpixel RGB filter disabled (ratio mismatch): scale=(%.3f, %.3f) ratio=(%.3f, %.3f) tex=%ux%u out=%ux%u target=(3.0, 3.0)",
+				vk_log.warnf( "Subpixel %s filter disabled (ratio mismatch): scale=(%.3f, %.3f) ratio=(%.3f, %.3f) tex=%ux%u out=%ux%u target=(%.1f, %.1f)",
+					definition->pName,
 					layer.scale.x, layer.scale.y, observedX, observedY,
 					layer.tex ? layer.tex->width() : 0, layer.tex ? layer.tex->height() : 0,
-					currentOutputWidth, currentOutputHeight );
+					currentOutputWidth, currentOutputHeight,
+					definition->downscaleRatio.x, definition->downscaleRatio.y );
 			}
-			s_lastState = state;
+			s_lastState[idx] = state;
 		}
-
-		if ( !haveDefinition )
-			return GamescopeUpscaleFilter::LINEAR;
 	}
 
 	return layer.filter;

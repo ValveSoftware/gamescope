@@ -1057,7 +1057,7 @@ namespace gamescope
             // TODO: Dedupe some of this composite check code between us and drm.cpp
             bool bLayer0ScreenSize = close_enough(pFrameInfo->layers[0].scale.x, 1.0f) && close_enough(pFrameInfo->layers[0].scale.y, 1.0f);
 
-            bool bNeedsCompositeFromFilter = (g_upscaleFilter == GamescopeUpscaleFilter::NEAREST || g_upscaleFilter == GamescopeUpscaleFilter::PIXEL || g_upscaleFilter == GamescopeUpscaleFilter::SUBPIXEL_RGB) && !bLayer0ScreenSize;
+            bool bNeedsCompositeFromFilter = (g_upscaleFilter == GamescopeUpscaleFilter::NEAREST || g_upscaleFilter == GamescopeUpscaleFilter::PIXEL || g_upscaleFilter == GamescopeUpscaleFilter::SUBPIXEL_RGB || g_upscaleFilter == GamescopeUpscaleFilter::SUBPIXEL_OLED) && !bLayer0ScreenSize;
 
             bNeedsFullComposite |= cv_composite_force;
             bNeedsFullComposite |= pFrameInfo->useFSRLayer0;
