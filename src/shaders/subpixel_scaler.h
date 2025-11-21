@@ -2,76 +2,76 @@
 #define SUBPIXEL_SCALER_H
 
 // Generic subpixel-aware downscale helpers.
-// Current implementation targets RGB vertical stripe layouts with a fixed 3:1 ratio.
+// Current implementation targets a horizontal RGB subpixel-aware downscale filter with a fixed 3:1 ratio.
 
 const float kSubpixelRatioTolerance = 0.05f;
 const vec2 kSubpixelRGBDownscale = vec2(3.0f, 3.0f);
 const ivec2 kSubpixelRGBDownscaleInt = ivec2(3);
 const float kSubpixelAlphaWeight = 1.0f / 49.0f;
 
-const vec3 kSubpixelRGBVerticalKernel[7][7] = vec3[7][7](
+const vec3 kSubpixelHorizontalRGBKernel[7][7] = vec3[7][7](
     vec3[7](
-        vec3(-1.0526e-02f,  3.8514e-03f,  1.1707e-02f),
-        vec3(-5.1071e-02f, -5.4484e-03f, -1.5588e-02f),
-        vec3(-8.5119e-02f, -5.0128e-02f, -2.6335e-02f),
-        vec3(-6.1192e-02f, -8.9105e-02f, -5.8017e-02f),
-        vec3(-9.1344e-03f, -5.3422e-02f, -5.6514e-02f),
-        vec3( 3.5897e-03f, -6.5463e-03f, -3.8170e-02f),
-        vec3( 5.5279e-03f,  4.3577e-03f, -2.2234e-02f)
+        vec3( 7.1068e-03f, -5.4910e-03f, -1.7302e-03f),
+        vec3(-4.9596e-02f,  1.4541e-03f, -8.1770e-03f),
+        vec3(-1.1168e-01f, -3.9356e-02f,  1.0656e-02f),
+        vec3(-3.7548e-02f, -8.4949e-02f, -6.5272e-02f),
+        vec3( 1.8490e-02f, -4.7630e-02f, -5.5001e-02f),
+        vec3(-2.2353e-03f,  2.1439e-03f, -4.2040e-02f),
+        vec3(-9.0465e-04f, -3.0190e-03f, -8.3075e-03f)
     ),
     vec3[7](
-        vec3(-2.4249e-03f, -4.5839e-03f, -2.0525e-02f),
-        vec3( 2.6682e-02f,  1.0168e-02f,  2.2323e-02f),
-        vec3( 2.3826e-02f,  2.2712e-02f, -5.5703e-03f),
-        vec3( 2.4192e-02f,  2.5182e-02f,  4.2159e-02f),
-        vec3( 1.0538e-02f,  2.1549e-02f,  1.9901e-03f),
-        vec3( 1.9939e-03f,  1.0217e-02f,  3.5535e-02f),
-        vec3(-1.1452e-03f, -3.9492e-03f, -1.5025e-02f)
+        vec3(-6.2506e-03f, -3.5835e-03f, -8.5086e-03f),
+        vec3( 3.9232e-02f,  8.1267e-03f,  1.0763e-02f),
+        vec3( 1.3306e-02f,  2.3506e-02f,  3.9553e-03f),
+        vec3( 2.7662e-02f,  1.9066e-02f,  2.0329e-02f),
+        vec3(-5.6325e-03f,  2.6609e-02f,  2.3552e-02f),
+        vec3( 7.6947e-03f,  5.1926e-03f,  2.7644e-02f),
+        vec3(-1.1685e-02f, -3.7455e-03f,  2.3616e-03f)
     ),
     vec3[7](
-        vec3(-1.9276e-03f, -3.3225e-02f, -1.5280e-02f),
-        vec3( 1.1129e-01f,  1.9505e-02f, -4.1840e-02f),
-        vec3( 1.5322e-01f,  1.0794e-01f,  2.8163e-02f),
-        vec3( 1.1598e-01f,  1.6799e-01f,  1.2661e-01f),
-        vec3( 2.3158e-02f,  1.0714e-01f,  1.7142e-01f),
-        vec3(-2.1166e-02f,  1.9900e-02f,  1.0636e-01f),
-        vec3(-1.9158e-02f, -3.2187e-02f, -3.2487e-03f)
+        vec3(-5.0055e-03f, -1.6617e-02f, -1.8024e-02f),
+        vec3( 8.8724e-02f,  2.8274e-02f,  2.3960e-04f),
+        vec3( 1.6728e-01f,  8.3065e-02f,  3.8955e-02f),
+        vec3( 8.9757e-02f,  1.4706e-01f,  1.0101e-01f),
+        vec3( 1.7448e-02f,  8.5608e-02f,  1.0663e-01f),
+        vec3(-1.6968e-02f,  2.8939e-02f,  6.7206e-02f),
+        vec3(-5.2292e-03f, -1.8133e-02f,  2.9039e-02f)
     ),
     vec3[7](
-        vec3(-9.8290e-03f, -5.6365e-02f, -4.0351e-02f),
-        vec3( 1.7032e-01f,  2.1324e-02f,  5.7782e-03f),
-        vec3( 2.3965e-01f,  1.6300e-01f,  5.7683e-02f),
-        vec3( 1.8491e-01f,  2.5932e-01f,  1.6544e-01f),
-        vec3( 2.8468e-02f,  1.6246e-01f,  1.8679e-01f),
-        vec3(-4.0587e-02f,  2.2935e-02f,  1.5421e-01f),
-        vec3(-4.3002e-02f, -5.5869e-02f,  1.2911e-02f)
+        vec3(-6.1220e-02f, -4.9825e-02f, -5.5558e-02f),
+        vec3( 1.8421e-01f,  1.9944e-02f, -1.7329e-02f),
+        vec3( 2.6878e-01f,  1.4827e-01f,  3.4439e-02f),
+        vec3( 1.8127e-01f,  2.5076e-01f,  2.2284e-01f),
+        vec3(-6.3037e-03f,  1.6033e-01f,  1.7886e-01f),
+        vec3(-4.9562e-02f,  2.8671e-02f,  1.3686e-01f),
+        vec3(-1.5705e-02f, -5.4865e-02f,  5.6473e-03f)
     ),
     vec3[7](
-        vec3(-2.0463e-03f, -3.3211e-02f, -4.0655e-03f),
-        vec3( 1.1078e-01f,  1.9467e-02f, -3.8520e-02f),
-        vec3( 1.5392e-01f,  1.0804e-01f,  4.1863e-02f),
-        vec3( 1.1533e-01f,  1.6802e-01f,  9.2533e-02f),
-        vec3( 2.3271e-02f,  1.0719e-01f,  1.6531e-01f),
-        vec3(-2.1582e-02f,  1.9986e-02f,  1.0219e-01f),
-        vec3(-1.7926e-02f, -3.2075e-02f,  1.5415e-02f)
+        vec3(-5.4844e-03f, -1.6043e-02f, -1.6392e-02f),
+        vec3( 8.8965e-02f,  2.8861e-02f,  2.0795e-03f),
+        vec3( 1.6636e-01f,  8.2952e-02f,  3.8352e-02f),
+        vec3( 8.7956e-02f,  1.4735e-01f,  1.0193e-01f),
+        vec3( 1.8432e-02f,  8.5476e-02f,  1.0605e-01f),
+        vec3(-1.5480e-02f,  2.9659e-02f,  6.8861e-02f),
+        vec3(-5.6236e-03f, -1.8234e-02f,  2.9642e-02f)
     ),
     vec3[7](
-        vec3(-2.5467e-03f, -4.5877e-03f, -1.0176e-02f),
-        vec3( 2.6298e-02f,  1.0157e-02f,  2.1141e-02f),
-        vec3( 2.4420e-02f,  2.2687e-02f,  9.2225e-03f),
-        vec3( 2.3553e-02f,  2.5167e-02f,  1.2310e-02f),
-        vec3( 1.0961e-02f,  2.1636e-02f,  1.4885e-03f),
-        vec3( 1.5187e-03f,  1.0232e-02f,  3.3014e-02f),
-        vec3(-1.6591e-04f, -3.8778e-03f, -4.7787e-04f)
+        vec3(-6.7048e-03f, -3.8673e-03f, -1.0044e-02f),
+        vec3( 3.9388e-02f,  6.9483e-03f,  1.0357e-02f),
+        vec3( 1.3296e-02f,  2.3415e-02f,  4.4685e-03f),
+        vec3( 2.9055e-02f,  1.8918e-02f,  2.0069e-02f),
+        vec3(-6.1559e-03f,  2.5721e-02f,  2.3438e-02f),
+        vec3( 7.0322e-03f,  5.6895e-03f,  2.6485e-02f),
+        vec3(-1.2151e-02f, -4.4146e-03f,  1.3875e-03f)
     ),
     vec3[7](
-        vec3(-1.0415e-02f,  3.8308e-03f,  9.5637e-03f),
-        vec3(-5.1437e-02f, -5.4800e-03f, -2.3571e-02f),
-        vec3(-8.4871e-02f, -5.0085e-02f, -2.7867e-02f),
-        vec3(-6.2043e-02f, -8.9107e-02f, -4.9899e-02f),
-        vec3(-8.7220e-03f, -5.3422e-02f, -4.5404e-02f),
-        vec3( 3.4067e-03f, -6.5015e-03f, -3.7778e-02f),
-        vec3( 6.0927e-03f,  4.4328e-03f, -3.0901e-02f)
+        vec3( 7.2912e-03f, -5.3521e-03f, -1.2737e-03f),
+        vec3(-4.9607e-02f,  1.6422e-03f, -7.8235e-03f),
+        vec3(-1.1154e-01f, -3.9406e-02f,  1.0291e-02f),
+        vec3(-3.7869e-02f, -8.5334e-02f, -6.5227e-02f),
+        vec3( 1.8729e-02f, -4.6851e-02f, -5.4638e-02f),
+        vec3(-1.2923e-03f,  1.7708e-03f, -4.1082e-02f),
+        vec3(-2.4411e-04f, -2.8019e-03f, -8.5312e-03f)
     )
 );
 
@@ -97,7 +97,7 @@ bool try_sample_subpixel_filter(uint shaderFilter, sampler2D layerSampler, vec2 
 			vec4 texel = texelFetch(layerSampler, ivec2(sx, sy), 0);
 			vec3 linearSample = colorspace_plane_degamma_tf(texel.rgb, colorspace);
 
-			vec3 kernel = kSubpixelRGBVerticalKernel[ky][kx];
+			vec3 kernel = kSubpixelHorizontalRGBKernel[ky][kx];
 			accum += linearSample * kernel;
 			alpha += texel.a * kSubpixelAlphaWeight;
 		}
