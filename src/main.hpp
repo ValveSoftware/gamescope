@@ -46,6 +46,7 @@ enum class GamescopeUpscaleFilter : uint32_t
     PIXEL,
     SGSR,
     SUBPIXEL_RGB,
+    SUBPIXEL_OLED,
 
     FROM_VIEW = 0xF, // internal
 };
@@ -120,6 +121,7 @@ inline std::optional<GamescopeUpscaleFilter> ParseUpscaleFilter( std::string_vie
         { "pixel",   GamescopeUpscaleFilter::PIXEL },
         { "sgsr",    GamescopeUpscaleFilter::SGSR },
         { "subpixel_rgb", GamescopeUpscaleFilter::SUBPIXEL_RGB },
+        { "subpixel_oled", GamescopeUpscaleFilter::SUBPIXEL_OLED },
     };
     for ( const auto &[svFilterName, eFilter] : k_Filters )
     {
