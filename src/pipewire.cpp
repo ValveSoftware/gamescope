@@ -37,15 +37,9 @@ static void destroy_buffer(struct pipewire_buffer *buffer) {
 
 	switch (buffer->type) {
 	case SPA_DATA_MemFd:
-	{
-		off_t size = buffer->shm.stride * buffer->video_info.size.height;
-		if (buffer->video_info.format == SPA_VIDEO_FORMAT_NV12) {
-			size += buffer->shm.stride * ((buffer->video_info.size.height + 1) / 2);
-		}
-		munmap(buffer->shm.data, size);
+		munmap(buffer->shm.data, buffer->shm.size);
 		close(buffer->shm.fd);
 		break;
-	}
 	case SPA_DATA_DmaBuf:
 		break; // nothing to do
 	default:
@@ -225,10 +219,7 @@ static void stream_handle_process(void *data)
 	switch (buffer->type) {
 	case SPA_DATA_MemFd:
 		chunk->offset = 0;
-		chunk->size = state->video_info.size.height * buffer->shm.stride;
-		if (state->video_info.format == SPA_VIDEO_FORMAT_NV12) {
-			chunk->size += ((state->video_info.size.height + 1)/2 * buffer->shm.stride);
-		}
+		chunk->size = buffer->shm.size;
 		chunk->stride = buffer->shm.stride;
 
 		if (!needs_reneg) {
@@ -545,7 +536,7 @@ static void stream_handle_add_buffer(void *user_data, struct pw_buffer *pw_buffe
 			goto error;
 		}
 
-		off_t size = state->shm_stride * state->video_info.size.height;
+		size_t size = state->shm_stride * state->video_info.size.height;
 		if (state->video_info.format == SPA_VIDEO_FORMAT_NV12) {
 			size += state->shm_stride * ((state->video_info.size.height + 1) / 2);
 		}
@@ -563,6 +554,7 @@ static void stream_handle_add_buffer(void *user_data, struct pw_buffer *pw_buffe
 		}
 
 		buffer->type = SPA_DATA_MemFd;
+		buffer->shm.size = size;
 		buffer->shm.stride = state->shm_stride;
 		buffer->shm.data = (uint8_t *) data;
 		buffer->shm.fd = fd;

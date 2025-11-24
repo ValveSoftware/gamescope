@@ -36,6 +36,7 @@ struct pipewire_buffer {
 
 	// Only used for SPA_DATA_MemFd
 	struct {
+		size_t size;
 		int stride;
 		uint8_t *data;
 		int fd;
