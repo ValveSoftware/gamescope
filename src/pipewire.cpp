@@ -657,8 +657,6 @@ static void run_pipewire(struct pipewire_state *state)
 
 	pwr_log.infof("exiting");
 	pw_stream_destroy(state->stream);
-	pw_core_disconnect(state->core);
-	pw_context_destroy(state->context);
 	pw_loop_destroy(state->loop);
 	pw_deinit();
 }
@@ -680,29 +678,18 @@ bool pipewire_init()
 		return false;
 	}
 
-	state->context = pw_context_new(state->loop, nullptr, 0);
-	if (!state->context) {
-		pwr_log.errorf("pw_context_new failed");
-		return false;
-	}
-
-	state->core = pw_context_connect(state->context, nullptr, 0);
-	if (!state->core) {
-		pwr_log.errorf("pw_context_connect failed");
-		return false;
-	}
-
-	state->stream = pw_stream_new(state->core, "gamescope",
+	state->stream = pw_stream_new_simple(
+		state->loop,
+		"gamescope",
 		pw_properties_new(
 			PW_KEY_MEDIA_CLASS, "Video/Source",
-			nullptr));
+			nullptr),
+		&stream_events,
+		state);
 	if (!state->stream) {
-		pwr_log.errorf("pw_stream_new failed");
+		pwr_log.errorf("pw_stream_new_simple failed");
 		return false;
 	}
-
-	static struct spa_hook stream_hook;
-	pw_stream_add_listener(state->stream, &stream_hook, &stream_events, state);
 
 	s_nRequestedWidth = 0;
 	s_nRequestedHeight = 0;
