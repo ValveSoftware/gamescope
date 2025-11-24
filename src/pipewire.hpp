@@ -9,8 +9,6 @@
 
 struct pipewire_state {
 	struct pw_loop *loop;
-	struct pw_context *context;
-	struct pw_core *core;
 	bool running;
 
 	struct pw_stream *stream;
