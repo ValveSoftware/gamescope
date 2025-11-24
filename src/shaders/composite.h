@@ -170,7 +170,7 @@ vec4 sampleLayerEx(sampler2D layerSampler, uint offsetLayerIdx, uint colorspaceL
     vec4 color;
     bool sampled = false;
     uint shaderFilter = get_layer_shaderfilter(offsetLayerIdx);
-    if (shaderFilter == filter_subpixel_rgb && unnormalized) {
+    if ((shaderFilter == filter_subpixel_rgb || shaderFilter == filter_subpixel_oled) && unnormalized) {
         sampled = try_sample_subpixel_filter(shaderFilter, layerSampler, unnormalizedCoord, texSizeInt, u_scale[offsetLayerIdx], colorspace, color);
     }
 
