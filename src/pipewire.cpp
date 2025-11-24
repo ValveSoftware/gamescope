@@ -323,9 +323,8 @@ static void stream_handle_state_changed(void *data, enum pw_stream_state old_str
 
 	switch (stream_state) {
 	case PW_STREAM_STATE_PAUSED:
-		if (state->stream_node_id == SPA_ID_INVALID) {
-			state->stream_node_id = pw_stream_get_node_id(state->stream);
-		}
+		state->stream_node_id = pw_stream_get_node_id(state->stream);
+		pwr_log.infof("stream available on node ID: %u", state->stream_node_id);
 		state->streaming = false;
 		state->seq = 0;
 		break;
@@ -722,15 +721,6 @@ bool pipewire_init()
 	}
 
 	state->running = true;
-	while (state->stream_node_id == SPA_ID_INVALID) {
-		int ret = pw_loop_iterate(state->loop, -1);
-		if (ret < 0) {
-			pwr_log.errorf("pw_loop_iterate failed");
-			return false;
-		}
-	}
-
-	pwr_log.infof("stream available on node ID: %u", state->stream_node_id);
 
 	std::thread thread(run_pipewire, state);
 	thread.detach();
