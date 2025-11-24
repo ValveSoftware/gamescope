@@ -1076,7 +1076,9 @@ namespace gamescope
             bool bNeedsCompositeFromFilter = ( eLayer0Filter == GamescopeUpscaleFilter::NEAREST ||
                                                eLayer0Filter == GamescopeUpscaleFilter::PIXEL ||
                                                eLayer0Filter == GamescopeUpscaleFilter::SUBPIXEL_RGB ||
-                                               eLayer0Filter == GamescopeUpscaleFilter::SUBPIXEL_OLED ) && !bLayer0ScreenSize;
+                                               eLayer0Filter == GamescopeUpscaleFilter::SUBPIXEL_OLED ||
+                                               eLayer0Filter == GamescopeUpscaleFilter::SUBPIXEL_VBGR ||
+                                               eLayer0Filter == GamescopeUpscaleFilter::SUBPIXEL_QDOLED ) && !bLayer0ScreenSize;
 
             bNeedsFullComposite |= cv_composite_force;
             bNeedsFullComposite |= pFrameInfo->useFSRLayer0;
