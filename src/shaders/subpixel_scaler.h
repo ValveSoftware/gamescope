@@ -119,6 +119,14 @@ const vec3 kSubpixelOLEDKernel[5][5] = vec3[5][5](
     )
 );
 
+// Explicit sRGB decode for subpixel sampling when source is sRGB/linear.
+// Avoids depending on colorspace state for OLED path.
+vec3 SubpixelSRGBToLinear(vec3 c)
+{
+    // If the source is already linear, skip decode.
+    return c;
+}
+
 bool try_sample_subpixel_filter(uint shaderFilter, sampler2D layerSampler, vec2 coord, ivec2 texSize, vec2 scale, uint colorspace, out vec4 outColor)
 {
 	if (shaderFilter != filter_subpixel_rgb && shaderFilter != filter_subpixel_oled)
@@ -144,7 +152,7 @@ bool try_sample_subpixel_filter(uint shaderFilter, sampler2D layerSampler, vec2 
 			for (int kx = 0; kx < 5; kx++) {
 				int sx = clamp(start.x + kx, 0, maxCoord.x);
 				vec4 texel = texelFetch(layerSampler, ivec2(sx, sy), 0);
-				vec3 linearSample = colorspace_plane_degamma_tf(texel.rgb, colorspace);
+				vec3 linearSample = SubpixelSRGBToLinear(texel.rgb);
 
 				vec3 kernel = kSubpixelOLEDKernel[ky][kx];
 				accum += linearSample * kernel;
@@ -156,10 +164,17 @@ bool try_sample_subpixel_filter(uint shaderFilter, sampler2D layerSampler, vec2 
 			int sy = clamp(start.y + ky, 0, maxCoord.y);
 			for (int kx = 0; kx < 7; kx++) {
 				int sx = clamp(start.x + kx, 0, maxCoord.x);
-				vec4 texel = texelFetch(layerSampler, ivec2(sx, sy), 0);
-				vec3 linearSample = colorspace_plane_degamma_tf(texel.rgb, colorspace);
+				// Shift green footprint by +2 taps horizontally (tuned for RGB path).
+				int sxG = clamp(start.x + 2 + kx, 0, maxCoord.x);
 
-				vec3 kernel = kSubpixelHorizontalRGBKernel[ky][kx];
+				vec4 texel = texelFetch(layerSampler, ivec2(sx, sy), 0);
+				vec4 texelG = texelFetch(layerSampler, ivec2(sxG, sy), 0);
+
+				vec3 linearSample = colorspace_plane_degamma_tf(texel.rgb, colorspace);
+				linearSample.g = colorspace_plane_degamma_tf(texelG.rgb, colorspace).g;
+
+				// Apply kernel with channel permutation r->r, g->b, b->g.
+				vec3 kernel = kSubpixelHorizontalRGBKernel[ky][kx].rbg;
 				accum += linearSample * kernel;
 				alpha += texel.a * alphaWeight;
 			}
