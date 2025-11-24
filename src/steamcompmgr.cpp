@@ -2318,7 +2318,7 @@ static void paint_pipewire()
 			std::vector<steamcompmgr_win_t *> vecPossibleFocusWindows = GetGlobalPossibleFocusWindows();
 
 			std::vector<uint32_t> vecAppIds{ uint32_t( ulFocusAppId ) };
-			pick_primary_focus_and_override( &s_PipewireFocus, None, vecPossibleFocusWindows, false, vecAppIds );
+			pick_primary_focus_and_override( &s_PipewireFocus, None, vecPossibleFocusWindows, false, vecAppIds, 0, gamescope::VirtualConnectorStrategies::SteamControlled );
 		}
 		pFocus = &s_PipewireFocus;
 	}
