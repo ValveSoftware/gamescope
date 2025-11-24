@@ -29,17 +29,19 @@ extern bool g_bGrabbed;
 extern float g_mouseSensitivity;
 extern const char *g_sOutputName;
 
-	enum class GamescopeUpscaleFilter : uint32_t
+enum class GamescopeUpscaleFilter : uint32_t
 {
-		LINEAR = 0,
-	NEAREST,
-	FSR,
-	NIS,
-	PIXEL,
-	SUBPIXEL_RGB,
-	SUBPIXEL_OLED,
+    LINEAR = 0,
+    NEAREST,
+    FSR,
+    NIS,
+    PIXEL,
+    SUBPIXEL_RGB,
+    SUBPIXEL_OLED,
+    SUBPIXEL_VBGR,
+    SUBPIXEL_QDOLED,
 
-	FROM_VIEW = 0xF, // internal
+    FROM_VIEW = 0xF, // internal
 };
 
 static constexpr bool DoesHardwareSupportUpscaleFilter( GamescopeUpscaleFilter eFilter )

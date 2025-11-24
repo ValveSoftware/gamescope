@@ -172,9 +172,13 @@ const char usage[] =
 	"  -r, --nested-refresh           game refresh rate (frames per second)\n"
 	"  -m, --max-scale                maximum scale factor\n"
 	"  -S, --scaler                   upscaler type (auto, integer, fit, fill, stretch)\n"
-	"  -F, --filter                   upscaler filter (linear, nearest, fsr, nis, pixel, subpixel_rgb, subpixel_oled)\n"
+"  -F, --filter                   upscaler/downscaler filter (linear, nearest, fsr, nis, pixel, subpixel_rgb, subpixel_vbgr, subpixel_oled, subpixel_qdoled)\n"
 	"                                     fsr => AMD FidelityFX™ Super Resolution 1.0\n"
 	"                                     nis => NVIDIA Image Scaling v1.0.3\n"
+	"                                     subpixel_rgb => horizontal RGB subpixel layout (3:1 downscale)\n"
+	"                                     subpixel_vbgr => vertical BGR subpixel layout (3:1 downscale)\n"
+	"                                     subpixel_oled => RG/B subpixel layout (2:1 downscale)\n"
+	"                                     subpixel_qdoled => G/RB subpixel layout (2:1 downscale)\n"
 	"  --sharpness, --fsr-sharpness   upscaler sharpness from 0 (max) to 20 (min)\n"
 	"  --expose-wayland               support wayland clients using xdg-shell\n"
 	"  -s, --mouse-sensitivity        multiply mouse movement by given decimal number\n"
@@ -414,6 +418,10 @@ static enum GamescopeUpscaleFilter parse_upscaler_filter(const char *str)
 		return GamescopeUpscaleFilter::SUBPIXEL_RGB;
 	} else if (strcmp(str, "subpixel_oled") == 0) {
 		return GamescopeUpscaleFilter::SUBPIXEL_OLED;
+	} else if (strcmp(str, "subpixel_vbgr") == 0) {
+		return GamescopeUpscaleFilter::SUBPIXEL_VBGR;
+	} else if (strcmp(str, "subpixel_qdoled") == 0) {
+		return GamescopeUpscaleFilter::SUBPIXEL_QDOLED;
 	} else {
 		fprintf( stderr, "gamescope: invalid value for --filter\n" );
 		exit(1);

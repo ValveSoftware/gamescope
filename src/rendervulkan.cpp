@@ -3642,9 +3642,11 @@ struct SubpixelFilterDefinition
 	const char *pName;
 };
 
-static constexpr std::array<SubpixelFilterDefinition, 2> g_SubpixelFilterDefinitions = {{
+static constexpr std::array<SubpixelFilterDefinition, 4> g_SubpixelFilterDefinitions = {{
 	{ GamescopeUpscaleFilter::SUBPIXEL_RGB,   { 3.0f, 3.0f },   "horizontal RGB" },
 	{ GamescopeUpscaleFilter::SUBPIXEL_OLED,  { 2.0f, 2.0f },   "RG/B OLED" },
+	{ GamescopeUpscaleFilter::SUBPIXEL_VBGR,  { 3.0f, 3.0f },   "vertical BGR" },
+	{ GamescopeUpscaleFilter::SUBPIXEL_QDOLED,{ 2.0f, 2.0f },   "G/RB QD-OLED" },
 }};
 
 static const SubpixelFilterDefinition *FindSubpixelFilterDefinition( GamescopeUpscaleFilter eFilter )
@@ -3665,7 +3667,7 @@ static GamescopeUpscaleFilter GetLayerShaderFilter( const FrameInfo_t::Layer_t &
 
 	if ( const auto *definition = FindSubpixelFilterDefinition( layer.filter ) )
 	{
-		static int s_lastState[ g_SubpixelFilterDefinitions.size() ] = { -1, -1 };
+		static int s_lastState[ g_SubpixelFilterDefinitions.size() ] = { -1, -1, -1, -1 };
 		size_t idx = definition - g_SubpixelFilterDefinitions.data();
 
 		float dimRatioX = 0.0f;
