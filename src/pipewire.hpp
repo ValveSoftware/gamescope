@@ -8,8 +8,7 @@
 #include "pipewire_gamescope.hpp"
 
 struct pipewire_state {
-	struct pw_loop *loop;
-	bool running;
+	struct pw_thread_loop *loop;
 	struct spa_source *nudge_source;
 	int nudge_fd;
 

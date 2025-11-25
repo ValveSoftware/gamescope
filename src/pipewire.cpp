@@ -607,22 +607,17 @@ static const struct pw_stream_events stream_events = {
 	.process = stream_handle_process,
 };
 
-static void run_pipewire(struct pipewire_state *state)
+void pipewire_exit()
 {
-	pthread_setname_np( pthread_self(), "gamescope-pw" );
-
-	while (state->running) {
-		int ret = pw_loop_iterate(state->loop, -1);
-		if (ret < 0) {
-			pwr_log.errorf("pw_loop_iterate failed");
-		}
-	}
+	struct pipewire_state *state = &pipewire_state;
 
 	pwr_log.infof("exiting");
-	pw_loop_destroy_source(state->loop, state->nudge_source);
+
+	pw_thread_loop_stop(state->loop);
+	pw_loop_destroy_source(pw_thread_loop_get_loop(state->loop), state->nudge_source);
 	close(state->nudge_fd);
 	pw_stream_destroy(state->stream);
-	pw_loop_destroy(state->loop);
+	pw_thread_loop_destroy(state->loop);
 	pw_deinit();
 }
 
@@ -632,11 +627,14 @@ bool pipewire_init()
 
 	pw_init(nullptr, nullptr);
 
-	state->loop = pw_loop_new(nullptr);
+	state->loop = pw_thread_loop_new("gamescope-pw", nullptr);
 	if (!state->loop) {
-		pwr_log.errorf("pw_loop_new failed");
+		pwr_log.errorf("pw_thread_loop_new failed");
 		return false;
 	}
+	pw_thread_loop_lock(state->loop);
+	pw_thread_loop_start(state->loop);
+	struct pw_loop *loop = pw_thread_loop_get_loop(state->loop);
 
 	int nudgePipe[2];
 	if (pipe2(nudgePipe, O_CLOEXEC | O_NONBLOCK) != 0) {
@@ -645,14 +643,14 @@ bool pipewire_init()
 	}
 	state->nudge_fd = nudgePipe[1];
 
-	state->nudge_source = pw_loop_add_io(state->loop, nudgePipe[0], SPA_IO_IN, true, on_nudge, state);
+	state->nudge_source = pw_loop_add_io(loop, nudgePipe[0], SPA_IO_IN, true, on_nudge, state);
 	if (state->nudge_source == nullptr) {
 		pwr_log.errorf("pw_loop_add_io failed");
 		return false;
 	}
 
 	state->stream = pw_stream_new_simple(
-		state->loop,
+		loop,
 		"gamescope",
 		pw_properties_new(
 			PW_KEY_MEDIA_CLASS, "Video/Source",
@@ -681,19 +679,8 @@ bool pipewire_init()
 		return false;
 	}
 
-	state->running = true;
-
-	std::thread thread(run_pipewire, state);
-	thread.detach();
-
+	pw_thread_loop_unlock(state->loop);
 	return true;
-}
-
-void pipewire_exit()
-{
-	struct pipewire_state *state = &pipewire_state;
-	state->running = false;
-	pipewire_nudge();
 }
 
 uint32_t pipewire_get_stream_node_id()
