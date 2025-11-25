@@ -81,14 +81,14 @@ static void calculate_capture_size()
 	}
 }
 
-static void build_format_params(struct spa_pod_builder *builder, spa_video_format format, std::vector<const struct spa_pod *> &params) {
+static const struct spa_pod *build_format_params(struct spa_pod_builder *builder, const enum spa_video_format format, const std::span<const uint64_t>& modifiers)
+{
 	struct spa_rectangle size = SPA_RECTANGLE(s_nCaptureWidth, s_nCaptureHeight);
 	struct spa_rectangle min_requested_size = { 0, 0 };
 	struct spa_rectangle max_requested_size = { UINT32_MAX, UINT32_MAX };
 	struct spa_fraction framerate = SPA_FRACTION(0, 1);
-	uint64_t modifier = DRM_FORMAT_MOD_LINEAR;
 
-	struct spa_pod_frame obj_frame, choice_frame;
+	struct spa_pod_frame obj_frame;
 	spa_pod_builder_push_object(builder, &obj_frame, SPA_TYPE_OBJECT_Format, SPA_PARAM_EnumFormat);
 	spa_pod_builder_add(builder,
 		SPA_FORMAT_mediaType, SPA_POD_Id(SPA_MEDIA_TYPE_video),
@@ -111,39 +111,21 @@ static void build_format_params(struct spa_pod_builder *builder, spa_video_forma
 							SPA_VIDEO_COLOR_RANGE_0_255),
 			0);
 	}
-	spa_pod_builder_prop(builder, SPA_FORMAT_VIDEO_modifier, SPA_POD_PROP_FLAG_MANDATORY);
-	spa_pod_builder_push_choice(builder, &choice_frame, SPA_CHOICE_Enum, 0);
-	spa_pod_builder_long(builder, modifier); // default
-	spa_pod_builder_long(builder, modifier);
-	spa_pod_builder_pop(builder, &choice_frame);
-	params.push_back((const struct spa_pod *) spa_pod_builder_pop(builder, &obj_frame));
-
-	spa_pod_builder_push_object(builder, &obj_frame, SPA_TYPE_OBJECT_Format, SPA_PARAM_EnumFormat);
-	spa_pod_builder_add(builder,
-		SPA_FORMAT_mediaType, SPA_POD_Id(SPA_MEDIA_TYPE_video),
-		SPA_FORMAT_mediaSubtype, SPA_POD_Id(SPA_MEDIA_SUBTYPE_raw),
-		SPA_FORMAT_VIDEO_format, SPA_POD_Id(format),
-		SPA_FORMAT_VIDEO_size, SPA_POD_Rectangle(&size),
-		SPA_FORMAT_VIDEO_framerate, SPA_POD_Fraction(&framerate),
-		SPA_FORMAT_VIDEO_requested_size, SPA_POD_CHOICE_RANGE_Rectangle( &min_requested_size, &min_requested_size, &max_requested_size ),
-		SPA_FORMAT_VIDEO_gamescope_focus_appid, SPA_POD_CHOICE_RANGE_Long( 0ll, INT64_MIN, INT64_MAX ),
-		0);
-	if (format == SPA_VIDEO_FORMAT_NV12) {
-		spa_pod_builder_add(builder,
-			SPA_FORMAT_VIDEO_colorMatrix, SPA_POD_CHOICE_ENUM_Id(3,
-							SPA_VIDEO_COLOR_MATRIX_BT601,
-							SPA_VIDEO_COLOR_MATRIX_BT601,
-							SPA_VIDEO_COLOR_MATRIX_BT709),
-			SPA_FORMAT_VIDEO_colorRange, SPA_POD_CHOICE_ENUM_Id(3,
-							SPA_VIDEO_COLOR_RANGE_16_235,
-							SPA_VIDEO_COLOR_RANGE_16_235,
-							SPA_VIDEO_COLOR_RANGE_0_255),
-			0);
+	if (modifiers.size() == 1) {
+		// Pre-fixate if there is only one modifier
+		spa_pod_builder_prop(builder, SPA_FORMAT_VIDEO_modifier, SPA_POD_PROP_FLAG_MANDATORY);
+		spa_pod_builder_long(builder, modifiers[0]);
+	} else if (modifiers.size() > 0) {
+		struct spa_pod_frame choice_frame;
+		spa_pod_builder_prop(builder, SPA_FORMAT_VIDEO_modifier, SPA_POD_PROP_FLAG_MANDATORY | SPA_POD_PROP_FLAG_DONT_FIXATE);
+		spa_pod_builder_push_choice(builder, &choice_frame, SPA_CHOICE_Enum, 0);
+		spa_pod_builder_long(builder, modifiers[0]); // default, but should be ignored because of FLAG_DONT_FIXATE
+		for (const uint64_t modifier : modifiers) {
+			spa_pod_builder_long(builder, modifier);
+		}
+		spa_pod_builder_pop(builder, &choice_frame);
 	}
-	params.push_back((const struct spa_pod *) spa_pod_builder_pop(builder, &obj_frame));
-
-//	for (auto& param : params)
-//		spa_debug_format(2, nullptr, param);
+	return (const struct spa_pod *) spa_pod_builder_pop(builder, &obj_frame);
 }
 
 
@@ -151,9 +133,18 @@ static std::vector<const struct spa_pod *> build_format_params(struct spa_pod_bu
 {
 	std::vector<const struct spa_pod *> params;
 
-	build_format_params(builder, SPA_VIDEO_FORMAT_BGRx, params);
-	build_format_params(builder, SPA_VIDEO_FORMAT_NV12, params);
+	for (const enum spa_video_format format : {
+		SPA_VIDEO_FORMAT_BGRx,
+		SPA_VIDEO_FORMAT_NV12,
+	}) {
+		// TODO: Get supported modifiers for format
+		std::vector<uint64_t> modifiers = { DRM_FORMAT_MOD_LINEAR };
+		params.push_back(build_format_params(builder, format, modifiers));
+		params.push_back(build_format_params(builder, format, {}));
+	}
 
+//	for (auto& param : params)
+//		spa_debug_format(2, nullptr, param);
 	return params;
 }
 
