@@ -2412,8 +2412,7 @@ static void paint_pipewire()
 	{
 		vulkan_wait( *oPipewireSequence, true );
 
-		pipewire_push_buffer( s_pPipewireBuffer );
-		s_pPipewireBuffer = nullptr;
+		s_pPipewireBuffer = pipewire_push_buffer( s_pPipewireBuffer );
 	}
 }
 #endif
@@ -8946,8 +8945,7 @@ steamcompmgr_main(int argc, char **argv)
 			GetVBlankTimer().ArmNextVBlank( true );
 
 #if HAVE_PIPEWIRE
-			if ( pipewire_is_streaming() )
-				paint_pipewire();
+			paint_pipewire();
 #endif
 		}
 

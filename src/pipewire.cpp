@@ -165,25 +165,40 @@ static std::vector<const struct spa_pod *> build_format_params(struct spa_pod_bu
 	return params;
 }
 
-static void request_buffer(struct pipewire_state *state)
+static struct pipewire_buffer *dequeue_buffer(struct pipewire_state *state)
 {
 	struct pw_buffer *pw_buffer = pw_stream_dequeue_buffer(state->stream);
 	if (!pw_buffer) {
-		pwr_log.errorf("warning: out of buffers");
+		pwr_log.warnf("out of buffers");
+		return nullptr;
+	}
+	struct pipewire_buffer *buffer = (struct pipewire_buffer *) pw_buffer->user_data;
+	// Past this exchange, the PipeWire thread shares the buffer with the steamcompmgr thread
+	buffer->copying = true;
+	return buffer;
+}
+
+static void stream_handle_process(void *data)
+{
+	struct pipewire_state *state = (struct pipewire_state *) data;
+
+	if (out_buffer == nullptr) {
+		out_buffer = dequeue_buffer(state);
+	}
+
+	struct pipewire_buffer *buffer = in_buffer.exchange(nullptr);
+	if (buffer == nullptr) {
+		// Nothing was submitted
+		return;
+	}
+	// We now completely own the buffer, it's no longer shared with the steamcompmgr thread.
+	buffer->copying = false;
+
+	if (buffer->IsStale()) {
+		destroy_buffer(buffer);
 		return;
 	}
 
-	struct pipewire_buffer *buffer = (struct pipewire_buffer *) pw_buffer->user_data;
-	buffer->copying = true;
-
-	// Past this exchange, the PipeWire thread shares the buffer with the
-	// steamcompmgr thread
-	struct pipewire_buffer *old = out_buffer.exchange(buffer);
-	assert(old == nullptr);
-}
-
-static void copy_buffer(struct pipewire_state *state, struct pipewire_buffer *buffer)
-{
 	gamescope::OwningRc<CVulkanTexture> &tex = buffer->texture;
 	assert(tex != nullptr);
 
@@ -262,6 +277,11 @@ static void copy_buffer(struct pipewire_state *state, struct pipewire_buffer *bu
 	default:
 		assert(false); // unreachable
 	}
+
+	int ret = pw_stream_queue_buffer(state->stream, pw_buffer);
+	if (ret < 0) {
+		pwr_log.errorf("pw_stream_queue_buffer failed");
+	}
 }
 
 static void dispatch_nudge(struct pipewire_state *state, int fd)
@@ -293,30 +313,6 @@ static void dispatch_nudge(struct pipewire_state *state, int fd)
 	}
 
 	pw_stream_trigger_process(state->stream);
-}
-
-static void stream_handle_process(void *data)
-{
-	struct pipewire_state *state = (struct pipewire_state *) data;
-
-	struct pipewire_buffer *buffer = in_buffer.exchange(nullptr);
-	if (buffer != nullptr) {
-		// We now completely own the buffer, it's no longer shared with the
-		// steamcompmgr thread.
-
-		buffer->copying = false;
-
-		if (buffer->buffer != nullptr) {
-			copy_buffer(state, buffer);
-
-			int ret = pw_stream_queue_buffer(state->stream, buffer->buffer);
-			if (ret < 0) {
-				pwr_log.errorf("pw_stream_queue_buffer failed");
-			}
-		} else {
-			destroy_buffer(buffer);
-		}
-	}
 }
 
 static void stream_handle_state_changed(void *data, enum pw_stream_state old_stream_state, enum pw_stream_state stream_state, const char *error)
@@ -378,7 +374,6 @@ static void stream_handle_param_changed(void *data, uint32_t id, const struct sp
 	uint8_t buf[1024];
 	struct spa_pod_builder builder = SPA_POD_BUILDER_INIT(buf, sizeof(buf));
 
-	int buffers = 4;
 	int shm_size = state->shm_stride * state->video_info.size.height;
 	if (state->video_info.format == SPA_VIDEO_FORMAT_NV12) {
 		shm_size += ((state->video_info.size.height + 1) / 2) * state->shm_stride;
@@ -388,7 +383,7 @@ static void stream_handle_param_changed(void *data, uint32_t id, const struct sp
 	const struct spa_pod *buffers_param =
 		(const struct spa_pod *) spa_pod_builder_add_object(&builder,
 		SPA_TYPE_OBJECT_ParamBuffers, SPA_PARAM_Buffers,
-		SPA_PARAM_BUFFERS_buffers, SPA_POD_CHOICE_RANGE_Int(buffers, 1, 8),
+		SPA_PARAM_BUFFERS_buffers, SPA_POD_CHOICE_RANGE_Int(4, 1, 8),
 		SPA_PARAM_BUFFERS_blocks, SPA_POD_Int(1),
 		SPA_PARAM_BUFFERS_size, SPA_POD_Int(shm_size),
 		SPA_PARAM_BUFFERS_stride, SPA_POD_Int(state->shm_stride),
@@ -748,29 +743,24 @@ uint32_t pipewire_get_stream_node_id()
 	return pipewire_state.stream_node_id;
 }
 
-bool pipewire_is_streaming()
-{
-	struct pipewire_state *state = &pipewire_state;
-	return state->streaming;
-}
-
 struct pipewire_buffer *pipewire_dequeue_buffer()
 {
 	struct pipewire_state *state = &pipewire_state;
-	if (state->streaming) {
-		request_buffer(state);
+
+	struct pipewire_buffer *buffer = out_buffer.exchange(nullptr);
+	if (buffer == nullptr && state->streaming) {
+		pipewire_nudge();
 	}
-	return out_buffer.exchange(nullptr);
+	return buffer;
 }
 
-void pipewire_push_buffer(struct pipewire_buffer *buffer)
+struct pipewire_buffer *pipewire_push_buffer(struct pipewire_buffer *buffer)
 {
 	struct pipewire_buffer *old = in_buffer.exchange(buffer);
-	if ( old != nullptr )
-	{
-		pwr_log.errorf_errno("push_buffer: Already had a buffer?!");
-	}
 	pipewire_nudge();
+	// This will be `nullptr` if the pipewire thread is keeping up, otherwise the
+	// compositor should reuse this old (previous) buffer
+	return old;
 }
 
 void pipewire_nudge()
