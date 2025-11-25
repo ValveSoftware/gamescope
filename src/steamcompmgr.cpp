@@ -2402,8 +2402,7 @@ static void paint_pipewire()
 	{
 		vulkan_wait( *oPipewireSequence, true );
 
-		pipewire_push_buffer( s_pPipewireBuffer );
-		s_pPipewireBuffer = nullptr;
+		s_pPipewireBuffer = pipewire_push_buffer( s_pPipewireBuffer );
 	}
 }
 #endif
