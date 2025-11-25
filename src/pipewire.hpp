@@ -10,6 +10,8 @@
 struct pipewire_state {
 	struct pw_loop *loop;
 	bool running;
+	struct spa_source *nudge_source;
+	int nudge_fd;
 
 	struct pw_stream *stream;
 	uint32_t stream_node_id;

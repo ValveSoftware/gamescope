@@ -1,7 +1,6 @@
 
 #include <assert.h>
 #include <fcntl.h>
-#include <poll.h>
 #include <stdio.h>
 #include <sys/mman.h>
 #include <unistd.h>
@@ -19,7 +18,6 @@
 static LogScope pwr_log("pipewire");
 
 static struct pipewire_state pipewire_state = { .stream_node_id = SPA_ID_INVALID };
-static int nudgePipe[2] = { -1, -1 };
 
 // Pending buffer for PipeWire → steamcompmgr
 static std::atomic<struct pipewire_buffer *> out_buffer;
@@ -284,8 +282,10 @@ static void stream_handle_process(void *data)
 	}
 }
 
-static void dispatch_nudge(struct pipewire_state *state, int fd)
+static void on_nudge(void *data, int fd, uint32_t mask)
 {
+	struct pipewire_state *state = (struct pipewire_state *) data;
+
 	while (true) {
 		static char buf[1024];
 		if (read(fd, buf, sizeof(buf)) < 0) {
@@ -607,55 +607,20 @@ static const struct pw_stream_events stream_events = {
 	.process = stream_handle_process,
 };
 
-enum pipewire_event_type {
-	EVENT_PIPEWIRE,
-	EVENT_NUDGE,
-	EVENT_COUNT // keep last
-};
-
 static void run_pipewire(struct pipewire_state *state)
 {
 	pthread_setname_np( pthread_self(), "gamescope-pw" );
 
-	struct pollfd pollfds[] = {
-		[EVENT_PIPEWIRE] = {
-			.fd = pw_loop_get_fd(state->loop),
-			.events = POLLIN,
-		},
-		[EVENT_NUDGE] = {
-			.fd = nudgePipe[0],
-			.events = POLLIN,
-		},
-	};
-
 	while (state->running) {
-		int ret = poll(pollfds, EVENT_COUNT, -1);
+		int ret = pw_loop_iterate(state->loop, -1);
 		if (ret < 0) {
-			pwr_log.errorf_errno("poll failed");
-			break;
-		}
-
-		if (pollfds[EVENT_PIPEWIRE].revents & POLLHUP) {
-			pwr_log.errorf("lost connection to server");
-			break;
-		}
-
-		assert(!(pollfds[EVENT_NUDGE].revents & POLLHUP));
-
-		if (pollfds[EVENT_PIPEWIRE].revents & POLLIN) {
-			ret = pw_loop_iterate(state->loop, -1);
-			if (ret < 0) {
-				pwr_log.errorf("pw_loop_iterate failed");
-				break;
-			}
-		}
-
-		if (pollfds[EVENT_NUDGE].revents & POLLIN) {
-			dispatch_nudge(state, nudgePipe[0]);
+			pwr_log.errorf("pw_loop_iterate failed");
 		}
 	}
 
 	pwr_log.infof("exiting");
+	pw_loop_destroy_source(state->loop, state->nudge_source);
+	close(state->nudge_fd);
 	pw_stream_destroy(state->stream);
 	pw_loop_destroy(state->loop);
 	pw_deinit();
@@ -667,14 +632,22 @@ bool pipewire_init()
 
 	pw_init(nullptr, nullptr);
 
+	state->loop = pw_loop_new(nullptr);
+	if (!state->loop) {
+		pwr_log.errorf("pw_loop_new failed");
+		return false;
+	}
+
+	int nudgePipe[2];
 	if (pipe2(nudgePipe, O_CLOEXEC | O_NONBLOCK) != 0) {
 		pwr_log.errorf_errno("pipe2 failed");
 		return false;
 	}
+	state->nudge_fd = nudgePipe[1];
 
-	state->loop = pw_loop_new(nullptr);
-	if (!state->loop) {
-		pwr_log.errorf("pw_loop_new failed");
+	state->nudge_source = pw_loop_add_io(state->loop, nudgePipe[0], SPA_IO_IN, true, on_nudge, state);
+	if (state->nudge_source == nullptr) {
+		pwr_log.errorf("pw_loop_add_io failed");
 		return false;
 	}
 
@@ -750,6 +723,8 @@ struct pipewire_buffer *pipewire_push_buffer(struct pipewire_buffer *buffer)
 
 void pipewire_nudge()
 {
-	if (write(nudgePipe[1], "\n", 1) < 0)
+	struct pipewire_state *state = &pipewire_state;
+
+	if (write(state->nudge_fd, "\n", 1) < 0)
 		pwr_log.errorf_errno("nudge: write failed");
 }
