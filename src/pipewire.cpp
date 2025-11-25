@@ -661,7 +661,7 @@ static void run_pipewire(struct pipewire_state *state)
 	pw_loop_destroy(state->loop);
 }
 
-bool init_pipewire(void)
+bool pipewire_init()
 {
 	struct pipewire_state *state = &pipewire_state;
 
@@ -736,7 +736,7 @@ bool init_pipewire(void)
 	return true;
 }
 
-uint32_t get_pipewire_stream_node_id(void)
+uint32_t pipewire_get_stream_node_id()
 {
 	return pipewire_state.stream_node_id;
 }
@@ -747,7 +747,7 @@ bool pipewire_is_streaming()
 	return state->streaming;
 }
 
-struct pipewire_buffer *dequeue_pipewire_buffer(void)
+struct pipewire_buffer *pipewire_dequeue_buffer()
 {
 	struct pipewire_state *state = &pipewire_state;
 	if (state->streaming) {
@@ -756,18 +756,18 @@ struct pipewire_buffer *dequeue_pipewire_buffer(void)
 	return out_buffer.exchange(nullptr);
 }
 
-void push_pipewire_buffer(struct pipewire_buffer *buffer)
+void pipewire_push_buffer(struct pipewire_buffer *buffer)
 {
 	struct pipewire_buffer *old = in_buffer.exchange(buffer);
 	if ( old != nullptr )
 	{
-		pwr_log.errorf_errno("push_pipewire_buffer: Already had a buffer?!");
+		pwr_log.errorf_errno("push_buffer: Already had a buffer?!");
 	}
-	nudge_pipewire();
+	pipewire_nudge();
 }
 
-void nudge_pipewire(void)
+void pipewire_nudge()
 {
 	if (write(nudgePipe[1], "\n", 1) < 0)
-		pwr_log.errorf_errno("nudge_pipewire: write failed");
+		pwr_log.errorf_errno("nudge: write failed");
 }

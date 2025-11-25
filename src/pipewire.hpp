@@ -26,8 +26,8 @@ struct pipewire_state {
 
 /**
  * PipeWire buffers are allocated by the PipeWire thread, and are temporarily
- * shared with the steamcompmgr thread (via dequeue_pipewire_buffer and
- * push_pipewire_buffer) for copying.
+ * shared with the steamcompmgr thread (via pipewire_dequeue_buffer and
+ * pipewire_push_buffer) for copying.
  */
 struct pipewire_buffer {
 	enum spa_data_type type; // SPA_DATA_MemFd or SPA_DATA_DmaBuf
@@ -55,10 +55,10 @@ struct pipewire_buffer {
 	bool copying;
 };
 
-bool init_pipewire(void);
-uint32_t get_pipewire_stream_node_id(void);
-struct pipewire_buffer *dequeue_pipewire_buffer(void);
+bool pipewire_init();
+uint32_t pipewire_get_stream_node_id();
+struct pipewire_buffer *pipewire_dequeue_buffer();
 bool pipewire_is_streaming();
 void pipewire_destroy_buffer(struct pipewire_buffer *buffer);
-void push_pipewire_buffer(struct pipewire_buffer *buffer);
-void nudge_pipewire(void);
+void pipewire_push_buffer(struct pipewire_buffer *buffer);
+void pipewire_nudge();
