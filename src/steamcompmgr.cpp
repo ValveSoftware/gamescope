@@ -2307,7 +2307,7 @@ static void paint_pipewire()
 
 	// Queue up a buffer with some metadata.
 	if ( !s_pPipewireBuffer )
-		s_pPipewireBuffer = dequeue_pipewire_buffer();
+		s_pPipewireBuffer = pipewire_dequeue_buffer();
 
 	if ( !s_pPipewireBuffer || !s_pPipewireBuffer->texture )
 		return;
@@ -2412,7 +2412,7 @@ static void paint_pipewire()
 	{
 		vulkan_wait( *oPipewireSequence, true );
 
-		push_pipewire_buffer( s_pPipewireBuffer );
+		pipewire_push_buffer( s_pPipewireBuffer );
 		s_pPipewireBuffer = nullptr;
 	}
 }
@@ -8572,7 +8572,7 @@ steamcompmgr_main(int argc, char **argv)
 			currentHDRForce = g_bForceHDRSupportDebug;
 
 #if HAVE_PIPEWIRE
-			nudge_pipewire();
+			pipewire_nudge();
 #endif
 		}
 
