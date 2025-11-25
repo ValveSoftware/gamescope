@@ -292,6 +292,13 @@ static void dispatch_nudge(struct pipewire_state *state, int fd)
 		}
 	}
 
+	pw_stream_trigger_process(state->stream);
+}
+
+static void stream_handle_process(void *data)
+{
+	struct pipewire_state *state = (struct pipewire_state *) data;
+
 	struct pipewire_buffer *buffer = in_buffer.exchange(nullptr);
 	if (buffer != nullptr) {
 		// We now completely own the buffer, it's no longer shared with the
@@ -603,7 +610,7 @@ static const struct pw_stream_events stream_events = {
 	.param_changed = stream_handle_param_changed,
 	.add_buffer = stream_handle_add_buffer,
 	.remove_buffer = stream_handle_remove_buffer,
-	.process = nullptr,
+	.process = stream_handle_process,
 };
 
 enum pipewire_event_type {
