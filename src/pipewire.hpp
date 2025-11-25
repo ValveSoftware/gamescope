@@ -56,6 +56,7 @@ struct pipewire_buffer {
 };
 
 bool pipewire_init();
+void pipewire_exit();
 uint32_t pipewire_get_stream_node_id();
 struct pipewire_buffer *pipewire_dequeue_buffer();
 void pipewire_destroy_buffer(struct pipewire_buffer *buffer);
