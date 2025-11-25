@@ -6419,6 +6419,10 @@ steamcompmgr_exit(void)
     wlserver_lock();
     wlserver_shutdown();
     wlserver_unlock(false);
+
+#if HAVE_PIPEWIRE
+	pipewire_exit();
+#endif
 }
 
 [[noreturn]] static int

@@ -359,7 +359,7 @@ static void stream_handle_state_changed(void *data, enum pw_stream_state old_str
 		break;
 	case PW_STREAM_STATE_ERROR:
 	case PW_STREAM_STATE_UNCONNECTED:
-		state->running = false;
+		state->streaming = false;
 		break;
 	default:
 		break;
@@ -686,6 +686,7 @@ static void run_pipewire(struct pipewire_state *state)
 	pw_core_disconnect(state->core);
 	pw_context_destroy(state->context);
 	pw_loop_destroy(state->loop);
+	pw_deinit();
 }
 
 bool pipewire_init()
@@ -752,6 +753,13 @@ bool pipewire_init()
 	thread.detach();
 
 	return true;
+}
+
+void pipewire_exit()
+{
+	struct pipewire_state *state = &pipewire_state;
+	state->running = false;
+	pipewire_nudge();
 }
 
 uint32_t pipewire_get_stream_node_id()
