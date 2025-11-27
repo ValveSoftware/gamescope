@@ -2382,6 +2382,15 @@ static void paint_pipewire()
 	if ( pFocus->overrideWindow && !pFocus->focusWindow->isSteamStreamingClient )
 		paint_window( pFocus->overrideWindow, pFocus->focusWindow, &frameInfo, nullptr, PaintWindowFlag::NoFilter, 1.0f, pFocus->overrideWindow );
 
+	if ( ShouldDrawCursor() )
+	{
+		MouseCursor *cursor = steamcompmgr_get_current_cursor();
+		if ( cursor )
+		{
+			cursor->paint( pFocus->focusWindow, pFocus->focusWindow, &frameInfo );
+		}
+	}
+
 	gamescope::Rc<CVulkanTexture> pRGBTexture = s_pPipewireBuffer->texture->isYcbcr()
 		? vulkan_acquire_screenshot_texture( uWidth, uHeight, false, DRM_FORMAT_XRGB2101010 )
 		: gamescope::Rc<CVulkanTexture>{ s_pPipewireBuffer->texture };
