@@ -2079,7 +2079,11 @@ bool wlserver_init( void ) {
 
 	wl_log.infof("Running compositor on wayland display '%s'", wlserver.wl_display_name);
 
-	if (!wlr_backend_start( wlserver.wlr.multi_backend ))
+	wlserver_lock();
+	bool bBackendStarted = wlr_backend_start( wlserver.wlr.multi_backend );
+	wlserver_unlock();
+
+	if (!bBackendStarted)
 	{
 		wl_log.errorf("Failed to start backend");
 		wlr_backend_destroy( wlserver.wlr.multi_backend );
@@ -2121,8 +2125,11 @@ bool wlserver_init( void ) {
 	for (size_t i = 0; i < wlserver.wlr.xwayland_servers.size(); i++)
 	{
 		while (!wlserver.wlr.xwayland_servers[i]->is_xwayland_ready()) {
+			wlserver_lock();
 			wl_display_flush_clients(wlserver.display);
-			if (wl_event_loop_dispatch(wlserver.event_loop, -1) < 0) {
+			int ret = wl_event_loop_dispatch(wlserver.event_loop, -1);
+			wlserver_unlock();
+			if (ret < 0) {
 				wl_log.errorf("wl_event_loop_dispatch failed\n");
 				return false;
 			}
