@@ -694,7 +694,9 @@ struct pipewire_buffer *pipewire_dequeue_buffer()
 
 	struct pipewire_buffer *buffer = out_buffer.exchange(nullptr);
 	if (buffer == nullptr && state->streaming) {
-		pipewire_nudge();
+		pw_thread_loop_lock(state->loop);
+		buffer = dequeue_buffer(state);
+		pw_thread_loop_unlock(state->loop);
 	}
 	return buffer;
 }
