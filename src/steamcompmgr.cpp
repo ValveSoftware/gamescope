@@ -2358,12 +2358,32 @@ static void paint_pipewire()
 	uint64_t ulFocusCommitId = window_last_done_commit_id( pFocus->focusWindow );
 	uint64_t ulOverrideCommitId = window_last_done_commit_id( pFocus->overrideWindow );
 
+	bool bDrawCursor = ShouldDrawCursor();
+	MouseCursor *cursor = steamcompmgr_get_current_cursor();
+	int nCursorX = cursor ? cursor->x() : 0;
+	int nCursorY = cursor ? cursor->y() : 0;
+
+	static int s_nLastCursorX = 0;
+	static int s_nLastCursorY = 0;
+	static bool s_bLastDrawCursor = false;
+
+	bool bCursorChanged = bDrawCursor != s_bLastDrawCursor;
+	if ( bDrawCursor )
+	{
+		if ( nCursorX != s_nLastCursorX || nCursorY != s_nLastCursorY )
+			bCursorChanged = true;
+	}
+
 	if ( ulFocusCommitId == s_ulLastFocusCommitId &&
-	     ulOverrideCommitId == s_ulLastOverrideCommitId )
+	     ulOverrideCommitId == s_ulLastOverrideCommitId &&
+	     !bCursorChanged )
 		return;
 
 	s_ulLastFocusCommitId = ulFocusCommitId;
 	s_ulLastOverrideCommitId = ulOverrideCommitId;
+	s_nLastCursorX = nCursorX;
+	s_nLastCursorY = nCursorY;
+	s_bLastDrawCursor = bDrawCursor;
 
 	uint32_t uWidth = s_pPipewireBuffer->texture->width();
 	uint32_t uHeight = s_pPipewireBuffer->texture->height();
