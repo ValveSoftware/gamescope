@@ -2483,37 +2483,40 @@ namespace gamescope
 					pHDRStaticMetadata->desired_content_min_luminance
 					? nits_to_u16_dark( pHDRStaticMetadata->desired_content_min_luminance )
 					: nits_to_u16_dark( 0.0f );
-
-				// Generate a default HDR10 infoframe.
-				hdr_output_metadata defaultHDRMetadata{};
-				hdr_metadata_infoframe *pInfoframe = &defaultHDRMetadata.hdmi_metadata_type1;
-
-				// To be filled in by the app based on the scene, default to desired_content_max_luminance
-				//
-		 		// Using display's max_fall for the default metadata max_cll to avoid displays
-		 		// overcompensating with tonemapping for SDR content.
-				uint16_t uDefaultInfoframeLuminances = m_Mutable.HDR.uMaxFrameAverageLuminance;
-
-				pInfoframe->display_primaries[0].x = color_xy_to_u16( m_Mutable.DisplayColorimetry.primaries.r.x );
-				pInfoframe->display_primaries[0].y = color_xy_to_u16( m_Mutable.DisplayColorimetry.primaries.r.y );
-				pInfoframe->display_primaries[1].x = color_xy_to_u16( m_Mutable.DisplayColorimetry.primaries.g.x );
-				pInfoframe->display_primaries[1].y = color_xy_to_u16( m_Mutable.DisplayColorimetry.primaries.g.y );
-				pInfoframe->display_primaries[2].x = color_xy_to_u16( m_Mutable.DisplayColorimetry.primaries.b.x );
-				pInfoframe->display_primaries[2].y = color_xy_to_u16( m_Mutable.DisplayColorimetry.primaries.b.y );
-				pInfoframe->white_point.x = color_xy_to_u16( m_Mutable.DisplayColorimetry.white.x );
-				pInfoframe->white_point.y = color_xy_to_u16( m_Mutable.DisplayColorimetry.white.y );
-				pInfoframe->max_display_mastering_luminance = uDefaultInfoframeLuminances;
-				pInfoframe->min_display_mastering_luminance = m_Mutable.HDR.uMinContentLightLevel;
-				pInfoframe->max_cll = uDefaultInfoframeLuminances;
-				pInfoframe->max_fall = uDefaultInfoframeLuminances;
-				pInfoframe->eotf = HDMI_EOTF_ST2084;
-
-				m_Mutable.HDR.pDefaultMetadataBlob = GetBackend()->CreateBackendBlob( defaultHDRMetadata );
 			}
 			else
 			{
 				m_Mutable.HDR.bExposeHDRSupport = false;
 			}
+		}
+
+		// Generate a default HDR10 infoframe.
+		if ( m_Mutable.HDR.IsHDR10() )
+		{
+			hdr_output_metadata defaultHDRMetadata{};
+			hdr_metadata_infoframe *pInfoframe = &defaultHDRMetadata.hdmi_metadata_type1;
+
+			// To be filled in by the app based on the scene, default to desired_content_max_luminance
+			//
+			// Using display's max_fall for the default metadata max_cll to avoid displays
+			// overcompensating with tonemapping for SDR content.
+			uint16_t uDefaultInfoframeLuminances = m_Mutable.HDR.uMaxFrameAverageLuminance;
+
+			pInfoframe->display_primaries[0].x = color_xy_to_u16( m_Mutable.DisplayColorimetry.primaries.r.x );
+			pInfoframe->display_primaries[0].y = color_xy_to_u16( m_Mutable.DisplayColorimetry.primaries.r.y );
+			pInfoframe->display_primaries[1].x = color_xy_to_u16( m_Mutable.DisplayColorimetry.primaries.g.x );
+			pInfoframe->display_primaries[1].y = color_xy_to_u16( m_Mutable.DisplayColorimetry.primaries.g.y );
+			pInfoframe->display_primaries[2].x = color_xy_to_u16( m_Mutable.DisplayColorimetry.primaries.b.x );
+			pInfoframe->display_primaries[2].y = color_xy_to_u16( m_Mutable.DisplayColorimetry.primaries.b.y );
+			pInfoframe->white_point.x = color_xy_to_u16( m_Mutable.DisplayColorimetry.white.x );
+			pInfoframe->white_point.y = color_xy_to_u16( m_Mutable.DisplayColorimetry.white.y );
+			pInfoframe->max_display_mastering_luminance = uDefaultInfoframeLuminances;
+			pInfoframe->min_display_mastering_luminance = m_Mutable.HDR.uMinContentLightLevel;
+			pInfoframe->max_cll = uDefaultInfoframeLuminances;
+			pInfoframe->max_fall = uDefaultInfoframeLuminances;
+			pInfoframe->eotf = HDMI_EOTF_ST2084;
+
+			m_Mutable.HDR.pDefaultMetadataBlob = GetBackend()->CreateBackendBlob( defaultHDRMetadata );
 		}
 	}
 
