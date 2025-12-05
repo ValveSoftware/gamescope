@@ -309,7 +309,7 @@ static void press_key(struct wlserver_input_method *ime, uint32_t keycode, struc
 	wlr_seat_keyboard_notify_key(seat, 0, keycode, WL_KEYBOARD_KEY_STATE_PRESSED);
 	ime->held_keycode = keycode;
 
-	wl_event_source_timer_update(ime->ime_reset_ime_keyboard_event_source, 30 /* ms */);
+	wl_event_source_timer_update(ime->ime_release_ime_keypress_event_source, 30 /* ms */);
 }
 
 static bool try_type_keysym(struct wlserver_input_method *ime, xkb_keysym_t keysym)
