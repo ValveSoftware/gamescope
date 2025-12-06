@@ -296,7 +296,7 @@ vec3 bt2446a_inverse_tonemapping(
 
         // Colour scaling function
         float col_scale = 0.f;
-        if (y_ > 0.f) // avoid divison by zero
+        if (y_ > 0.f) // avoid divisor by zero
           col_scale = y_sdr /
                       (1.1f * y_);
 

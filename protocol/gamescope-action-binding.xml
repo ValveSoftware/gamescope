@@ -75,7 +75,7 @@
     </request>
 
     <event name="triggered">
-      <arg name="sequence" type="uint" summary="global sequence no of actions that have been trigged"/>
+      <arg name="sequence" type="uint" summary="global sequence no of actions that have been triggered"/>
       <arg name="time_lo" type="uint" summary="lower bits of 64-bit timestamp in nanos (CLOCK_MONOTONIC)"/>
       <arg name="time_hi" type="uint" summary="upper bits of 64-bit timestamp in nanos (CLOCK_MONOTONIC)"/>
       <arg name="trigger_flags" type="uint" enum="trigger_flag" summary="flags for this trigger"/>
