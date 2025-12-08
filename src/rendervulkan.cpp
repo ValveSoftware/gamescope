@@ -189,6 +189,7 @@ struct wsi_memory_allocate_info {
     VkStructureType sType;
     const void *pNext;
     bool implicit_sync;
+    bool dma_buf_sync_file;
 };
 
 // DRM doesn't have 32bit floating point formats, so add our own
