@@ -746,20 +746,12 @@ return (what + to - 1) & ~(to - 1);
 
 class CVulkanDevice;
 
-struct VulkanTimelineSemaphore_t
+struct VulkanSemaphore_t
 {
-	~VulkanTimelineSemaphore_t();
+	~VulkanSemaphore_t();
 
 	CVulkanDevice *pDevice = nullptr;
 	VkSemaphore pVkSemaphore = VK_NULL_HANDLE;
-
-	int GetFd() const;
-};
-
-struct VulkanTimelinePoint_t
-{
-	std::shared_ptr<VulkanTimelineSemaphore_t> pTimelineSemaphore;
-	uint64_t ulPoint;
 };
 
 class CVulkanDevice
@@ -783,8 +775,7 @@ public:
 		return ret;
 	}
 
-	std::shared_ptr<VulkanTimelineSemaphore_t> CreateTimelineSemaphore( uint64_t ulStartingPoint, bool bShared = false );
-	std::shared_ptr<VulkanTimelineSemaphore_t> ImportTimelineSemaphore( gamescope::CTimeline *pTimeline );
+	std::shared_ptr<VulkanSemaphore_t> ImportSyncFd( int syncFd );
 
 	static const uint32_t upload_buffer_size = 1920 * 1080 * 4;
 
@@ -953,11 +944,13 @@ public:
 	VkQueue queue() { return m_queue; }
 	uint32_t queueFamily() { return m_queueFamily; }
 
-	void AddDependency( std::shared_ptr<VulkanTimelineSemaphore_t> pTimelineSemaphore, uint64_t ulPoint );
-	void AddSignal( std::shared_ptr<VulkanTimelineSemaphore_t> pTimelineSemaphore, uint64_t ulPoint );
+	void AddDependency( std::shared_ptr<gamescope::CAcquireTimelinePoint> pAcquirePoint );
+	void AddSignal( std::shared_ptr<VulkanSemaphore_t> pSemaphore );
+	void AddSignalTimeline( std::shared_ptr<gamescope::CTimeline> pTimeline, uint64_t ulPoint );
 
-	const std::vector<VulkanTimelinePoint_t> &GetExternalDependencies() const { return m_ExternalDependencies; }
-	const std::vector<VulkanTimelinePoint_t> &GetExternalSignals() const { return m_ExternalSignals; }
+	const std::vector<std::shared_ptr<VulkanSemaphore_t>> &GetExternalDependencies() const { return m_ExternalDependencies; }
+	const std::vector<std::shared_ptr<VulkanSemaphore_t>> &GetExternalSignals() const { return m_ExternalSignals; }
+	const std::vector<std::shared_ptr<gamescope::CAcquireTimelinePoint>> &GetExternalSignalTimelinePoints() const { return m_ExternalSignalTimelinePoints; }
 
 private:
 	VkCommandBuffer m_cmdBuffer;
@@ -979,8 +972,9 @@ private:
 	std::array<CVulkanTexture *, VKR_LUT3D_COUNT> m_shaperLut;
 	std::array<CVulkanTexture *, VKR_LUT3D_COUNT> m_lut3D;
 
-	std::vector<VulkanTimelinePoint_t> m_ExternalDependencies;
-	std::vector<VulkanTimelinePoint_t> m_ExternalSignals;
+	std::vector<std::shared_ptr<gamescope::CAcquireTimelinePoint>> m_ExternalSignalTimelinePoints;
+	std::vector<std::shared_ptr<VulkanSemaphore_t>> m_ExternalDependencies;
+	std::vector<std::shared_ptr<VulkanSemaphore_t>> m_ExternalSignals;
 
 	uint32_t m_renderBufferOffset = 0;
 };
