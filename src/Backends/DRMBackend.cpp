@@ -2275,6 +2275,7 @@ namespace gamescope
 		m_Mutable.ValidDynamicRefreshRates.clear();
 		m_Mutable.fnDynamicModeGenerator = nullptr;
 		{
+#if HAVE_SCRIPTING
 			CScriptScopedLock script;
 
 			auto oKnownDisplay = script.Manager().Gamescope().Config.LookupDisplay( script, m_Mutable.szMakePNP, pProduct->product, m_Mutable.szModel, m_Mutable.szDataString );
@@ -2374,6 +2375,7 @@ namespace gamescope
 				}
 			}
 			else
+#endif
 			{
 				// Unknown display, see if there are any other refresh rates in the EDID we can get.
 				if ( GetScreenType() == GAMESCOPE_SCREEN_TYPE_INTERNAL || cv_drm_allow_dynamic_modes_for_external_display )
