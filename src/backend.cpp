@@ -221,4 +221,9 @@ namespace gamescope
         GetBackend()->DirtyState( true, true );
     });
 
+    ConCommand cc_backend_fullscreen( "fullscreen", "Toggle backend fullscreen state",
+    []( std::span<std::string_view> svArgs ) -> void
+    {
+        GetBackend()->ToggleFullscreen();
+    });
 }
