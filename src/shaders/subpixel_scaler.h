@@ -1,24 +1,6 @@
 #ifndef SUBPIXEL_SCALER_H
 #define SUBPIXEL_SCALER_H
 
-// Generic subpixel-aware downscale helpers.
-// Current implementations:
-//  - horizontal RGB subpixel-aware downscale filter (3:1 ratio).
-//  - vertical BGR subpixel-aware downscale kernel (3:1 ratio).
-//  - RG/B subpixel-aware downscale filter (2:1 ratio).
-
-const float kSubpixelRatioTolerance = 0.05f;
-const vec2 kSubpixelRGBDownscale = vec2(3.0f, 3.0f);
-const ivec2 kSubpixelRGBDownscaleInt = ivec2(3);
-const float kSubpixelRGBAlphaWeight = 1.0f / 49.0f;
-
-const vec2 kSubpixelOLEDDownscale = vec2(2.0f, 2.0f);
-const ivec2 kSubpixelOLEDDownscaleInt = ivec2(2);
-const float kSubpixelOLEDAlphaWeight = 1.0f / 25.0f;
-const vec2 kSubpixelQDOLEDDownscale = vec2(2.0f, 2.0f);
-const ivec2 kSubpixelQDOLEDDownscaleInt = ivec2(2);
-const float kSubpixelQDOLEDAlphaWeight = 1.0f / 25.0f;
-
 const vec4 kSubpixelHorizontalRGBKernel[7][7] = vec4[7][7](
 	vec4[7](
 		vec4( 7.1068e-03f, -5.4910e-03f, -1.7302e-03f, 0.0f),
@@ -86,8 +68,8 @@ const vec4 kSubpixelHorizontalRGBKernel[7][7] = vec4[7][7](
 );
 
 const vec4 kSubpixelVerticalBGRKernel[7][7] = vec4[7][7](
-    vec4[7](
-        vec4(-1.3703e-03f, -2.7128e-03f, -8.9400e-03f, 0.0f),
+	vec4[7](
+		vec4(-1.3703e-03f, -2.7128e-03f, -8.9400e-03f, 0.0f),
 		vec4(-1.3076e-02f, -2.9120e-03f,  2.4325e-03f, 0.0f),
 		vec4(-4.6088e-03f, -1.8820e-02f,  2.6776e-02f, 0.0f),
 		vec4(-1.8680e-02f, -5.5206e-02f,  2.7558e-03f, 0.0f),
@@ -148,46 +130,46 @@ const vec4 kSubpixelVerticalBGRKernel[7][7] = vec4[7][7](
 		vec4(-4.0417e-03f, -1.6621e-02f, -1.7116e-02f, 0.0f),
 		vec4(-6.7143e-03f, -3.3482e-03f, -8.2083e-03f, 0.0f),
 		vec4( 6.7830e-03f, -4.3232e-03f, -7.8619e-04f, 0.0f)
-    )
+	)
 );
 
 // G/RB QD-OLED subpixel-aware downscale kernel (2:1 ratio).
 const vec4 kSubpixelQDOLEDKernel[5][5] = vec4[5][5](
-    vec4[5](
-        vec4(-2.2206e-03f, -1.7716e-03f,  2.1434e-03f, 0.0f),
-        vec4(-1.4392e-02f,  4.7502e-03f,  1.3392e-02f, 0.0f),
-        vec4(-1.9470e-02f, -6.1152e-02f, -4.5265e-02f, 0.0f),
-        vec4(-1.2906e-02f, -6.2232e-02f, -4.2550e-02f, 0.0f),
-        vec4( 2.6931e-03f, -1.4399e-04f, -1.1285e-02f, 0.0f)
-    ),
-    vec4[5](
-        vec4( 1.6583e-02f, -3.0740e-02f, -7.2153e-03f, 0.0f),
-        vec4(-5.8073e-03f,  3.0652e-02f,  1.6279e-02f, 0.0f),
-        vec4(-1.1306e-01f,  1.5502e-01f,  1.4186e-02f, 0.0f),
-        vec4(-3.2931e-03f,  1.4972e-01f, -3.5163e-02f, 0.0f),
-        vec4( 1.4865e-02f,  8.6307e-03f,  1.2385e-02f, 0.0f)
-    ),
-    vec4[5](
-        vec4(-5.5262e-03f, -7.3926e-02f, -2.5914e-02f, 0.0f),
-        vec4( 7.8208e-02f, -2.7367e-02f, -4.4307e-02f, 0.0f),
-        vec4( 1.7748e-01f,  3.8761e-01f,  1.5539e-01f, 0.0f),
-        vec4( 8.9775e-02f,  3.8712e-01f,  1.8995e-01f, 0.0f),
-        vec4(-2.2427e-02f, -1.0061e-01f,  5.5693e-02f, 0.0f)
-    ),
-    vec4[5](
-        vec4(-1.4519e-01f, -3.1293e-02f, -3.9569e-03f, 0.0f),
-        vec4( 1.7445e-01f,  1.9616e-02f, -5.5174e-02f, 0.0f),
-        vec4( 5.6130e-01f,  1.5526e-01f,  1.4462e-01f, 0.0f),
-        vec4( 1.7025e-01f,  1.5754e-01f,  3.1903e-01f, 0.0f),
-        vec4(-1.2829e-01f, -5.1410e-03f,  8.4568e-02f, 0.0f)
-    ),
-    vec4[5](
-        vec4( 5.4248e-03f,  4.0236e-03f, -1.7954e-02f, 0.0f),
-        vec4( 5.4035e-02f,  3.5357e-03f, -2.3790e-02f, 0.0f),
-        vec4( 4.6402e-02f, -4.9542e-02f,  1.2279e-01f, 0.0f),
-        vec4( 6.5886e-02f, -5.4416e-02f,  1.1734e-01f, 0.0f),
-        vec4(-4.2627e-03f,  5.0940e-03f,  4.4279e-02f, 0.0f)
-    )
+	vec4[5](
+		vec4(-2.2206e-03f, -1.7716e-03f,  2.1434e-03f, 0.0f),
+		vec4(-1.4392e-02f,  4.7502e-03f,  1.3392e-02f, 0.0f),
+		vec4(-1.9470e-02f, -6.1152e-02f, -4.5265e-02f, 0.0f),
+		vec4(-1.2906e-02f, -6.2232e-02f, -4.2550e-02f, 0.0f),
+		vec4( 2.6931e-03f, -1.4399e-04f, -1.1285e-02f, 0.0f)
+	),
+	vec4[5](
+		vec4( 1.6583e-02f, -3.0740e-02f, -7.2153e-03f, 0.0f),
+		vec4(-5.8073e-03f,  3.0652e-02f,  1.6279e-02f, 0.0f),
+		vec4(-1.1306e-01f,  1.5502e-01f,  1.4186e-02f, 0.0f),
+		vec4(-3.2931e-03f,  1.4972e-01f, -3.5163e-02f, 0.0f),
+		vec4( 1.4865e-02f,  8.6307e-03f,  1.2385e-02f, 0.0f)
+	),
+	vec4[5](
+		vec4(-5.5262e-03f, -7.3926e-02f, -2.5914e-02f, 0.0f),
+		vec4( 7.8208e-02f, -2.7367e-02f, -4.4307e-02f, 0.0f),
+		vec4( 1.7748e-01f,  3.8761e-01f,  1.5539e-01f, 0.0f),
+		vec4( 8.9775e-02f,  3.8712e-01f,  1.8995e-01f, 0.0f),
+		vec4(-2.2427e-02f, -1.0061e-01f,  5.5693e-02f, 0.0f)
+	),
+	vec4[5](
+		vec4(-1.4519e-01f, -3.1293e-02f, -3.9569e-03f, 0.0f),
+		vec4( 1.7445e-01f,  1.9616e-02f, -5.5174e-02f, 0.0f),
+		vec4( 5.6130e-01f,  1.5526e-01f,  1.4462e-01f, 0.0f),
+		vec4( 1.7025e-01f,  1.5754e-01f,  3.1903e-01f, 0.0f),
+		vec4(-1.2829e-01f, -5.1410e-03f,  8.4568e-02f, 0.0f)
+	),
+	vec4[5](
+		vec4( 5.4248e-03f,  4.0236e-03f, -1.7954e-02f, 0.0f),
+		vec4( 5.4035e-02f,  3.5357e-03f, -2.3790e-02f, 0.0f),
+		vec4( 4.6402e-02f, -4.9542e-02f,  1.2279e-01f, 0.0f),
+		vec4( 6.5886e-02f, -5.4416e-02f,  1.1734e-01f, 0.0f),
+		vec4(-4.2627e-03f,  5.0940e-03f,  4.4279e-02f, 0.0f)
+	)
 );
 const vec4 kSubpixelOLEDKernel[5][5] = vec4[5][5](
 	vec4[5](
@@ -227,95 +209,100 @@ const vec4 kSubpixelOLEDKernel[5][5] = vec4[5][5](
 	)
 );
 
-bool try_sample_subpixel_filter(uint shaderFilter, sampler2D layerSampler, vec2 coord, ivec2 texSize, vec2 scale, uint colorspace, out vec4 outColor)
-{
-	if (shaderFilter != filter_subpixel_rgb && shaderFilter != filter_subpixel_oled && shaderFilter != filter_subpixel_vbgr && shaderFilter != filter_subpixel_qdoled)
-		return false;
+#define SAMPLE_SUBPIXEL_OLED_FILTER(layerSampler, coord, texSize, scale, colorspace, outColor) \
+	do { \
+		const vec2 _downscale = vec2(2.0f, 2.0f); \
+		const ivec2 _downscaleInt = ivec2(2); \
+		const float _alphaWeight = 1.0f / 25.0f; \
+		ivec2 _outputIndex = ivec2(floor(((coord) - vec2(0.5f)) / _downscale)); \
+		ivec2 _start = _outputIndex * _downscaleInt - ivec2(2); \
+		ivec2 _maxCoord = (texSize) - ivec2(1); \
+		vec3 _accum = vec3(0.0f); \
+		float _alpha = 0.0f; \
+		for (int ky = 0; ky < 5; ky++) { \
+			int sy = clamp(_start.y + ky, 0, _maxCoord.y); \
+			for (int kx = 0; kx < 5; kx++) { \
+				int sx = clamp(_start.x + kx, 0, _maxCoord.x); \
+				vec4 _texel = texelFetch((layerSampler), ivec2(sx, sy), 0); \
+				vec3 _linearSample = colorspace_plane_degamma_tf(_texel.rgb, (colorspace)); \
+				vec3 _kernel = kSubpixelOLEDKernel[ky][kx].rgb; \
+				_accum += _linearSample * _kernel; \
+				_alpha += _texel.a * _alphaWeight; \
+			} \
+		} \
+		(outColor) = vec4(_accum, clamp(_alpha, 0.0f, 1.0f)); \
+	} while (false)
 
-	// Select ratio/stride/alpha per filter.
-	vec2 ratio;
-	ivec2 ratioInt;
-	float alphaWeight;
-	if (shaderFilter == filter_subpixel_oled) {
-		ratio = kSubpixelOLEDDownscale;
-		ratioInt = kSubpixelOLEDDownscaleInt;
-		alphaWeight = kSubpixelOLEDAlphaWeight;
-	} else if (shaderFilter == filter_subpixel_qdoled) {
-		ratio = kSubpixelQDOLEDDownscale;
-		ratioInt = kSubpixelQDOLEDDownscaleInt;
-		alphaWeight = kSubpixelQDOLEDAlphaWeight;
-	} else {
-		ratio = kSubpixelRGBDownscale;
-		ratioInt = kSubpixelRGBDownscaleInt;
-		alphaWeight = kSubpixelRGBAlphaWeight;
-	}
+#define SAMPLE_SUBPIXEL_QDOLED_FILTER(layerSampler, coord, texSize, scale, colorspace, outColor) \
+	do { \
+		const vec2 _downscale = vec2(2.0f, 2.0f); \
+		const ivec2 _downscaleInt = ivec2(2); \
+		const float _alphaWeight = 1.0f / 25.0f; \
+		ivec2 _outputIndex = ivec2(floor(((coord) - vec2(0.5f)) / _downscale)); \
+		ivec2 _start = _outputIndex * _downscaleInt - ivec2(2); \
+		ivec2 _maxCoord = (texSize) - ivec2(1); \
+		vec3 _accum = vec3(0.0f); \
+		float _alpha = 0.0f; \
+		for (int ky = 0; ky < 5; ky++) { \
+			int sy = clamp(_start.y + ky, 0, _maxCoord.y); \
+			for (int kx = 0; kx < 5; kx++) { \
+				int sx = clamp(_start.x + kx, 0, _maxCoord.x); \
+				vec4 _texel = texelFetch((layerSampler), ivec2(sx, sy), 0); \
+				vec3 _linearSample = colorspace_plane_degamma_tf(_texel.rgb, (colorspace)); \
+				vec3 _kernel = kSubpixelQDOLEDKernel[ky][kx].rgb; \
+				_accum += _linearSample * _kernel; \
+				_alpha += _texel.a * _alphaWeight; \
+			} \
+		} \
+		(outColor) = vec4(_accum, clamp(_alpha, 0.0f, 1.0f)); \
+	} while (false)
 
-	if (any(greaterThan(abs(scale - ratio), vec2(kSubpixelRatioTolerance))))
-		return false;
+#define SAMPLE_SUBPIXEL_RGB_FILTER(layerSampler, coord, texSize, scale, colorspace, outColor) \
+	do { \
+		const vec2 _downscale = vec2(3.0f, 3.0f); \
+		const ivec2 _downscaleInt = ivec2(3); \
+		const float _alphaWeight = 1.0f / 49.0f; \
+		ivec2 _outputIndex = ivec2(floor(((coord) - vec2(0.5f)) / _downscale)); \
+		ivec2 _start = _outputIndex * _downscaleInt - ivec2(2); \
+		ivec2 _maxCoord = (texSize) - ivec2(1); \
+		vec3 _accum = vec3(0.0f); \
+		float _alpha = 0.0f; \
+		for (int ky = 0; ky < 7; ky++) { \
+			int sy = clamp(_start.y + ky, 0, _maxCoord.y); \
+			for (int kx = 0; kx < 7; kx++) { \
+				int sx = clamp(_start.x + kx, 0, _maxCoord.x); \
+				vec4 _texel = texelFetch((layerSampler), ivec2(sx, sy), 0); \
+				vec3 _linearSample = colorspace_plane_degamma_tf(_texel.rgb, (colorspace)); \
+				vec3 _kernel = kSubpixelHorizontalRGBKernel[ky][kx].rgb; \
+				_accum += _linearSample * _kernel; \
+				_alpha += _texel.a * _alphaWeight; \
+			} \
+		} \
+		(outColor) = vec4(_accum, clamp(_alpha, 0.0f, 1.0f)); \
+	} while (false)
 
-	ivec2 outputIndex = ivec2(floor((coord - vec2(0.5f)) / ratio));
-	ivec2 start = outputIndex * ratioInt - ivec2(2);
-	ivec2 maxCoord = texSize - ivec2(1);
+#define SAMPLE_SUBPIXEL_VBGR_FILTER(layerSampler, coord, texSize, scale, colorspace, outColor) \
+	do { \
+		const vec2 _downscale = vec2(3.0f, 3.0f); \
+		const ivec2 _downscaleInt = ivec2(3); \
+		const float _alphaWeight = 1.0f / 49.0f; \
+		ivec2 _outputIndex = ivec2(floor(((coord) - vec2(0.5f)) / _downscale)); \
+		ivec2 _start = _outputIndex * _downscaleInt - ivec2(2); \
+		ivec2 _maxCoord = (texSize) - ivec2(1); \
+		vec3 _accum = vec3(0.0f); \
+		float _alpha = 0.0f; \
+		for (int ky = 0; ky < 7; ky++) { \
+			int sy = clamp(_start.y + ky, 0, _maxCoord.y); \
+			for (int kx = 0; kx < 7; kx++) { \
+				int sx = clamp(_start.x + kx, 0, _maxCoord.x); \
+				vec4 _texel = texelFetch((layerSampler), ivec2(sx, sy), 0); \
+				vec3 _linearSample = colorspace_plane_degamma_tf(_texel.rgb, (colorspace)); \
+				vec3 _kernel = kSubpixelVerticalBGRKernel[ky][kx].rgb; \
+				_accum += _linearSample * _kernel; \
+				_alpha += _texel.a * _alphaWeight; \
+			} \
+		} \
+		(outColor) = vec4(_accum, clamp(_alpha, 0.0f, 1.0f)); \
+	} while (false)
 
-	vec3 accum = vec3(0.0f);
-	float alpha = 0.0f;
-
-	switch (shaderFilter) {
-	case filter_subpixel_oled:
-		for (int ky = 0; ky < 5; ky++) {
-			int sy = clamp(start.y + ky, 0, maxCoord.y);
-			for (int kx = 0; kx < 5; kx++) {
-				int sx = clamp(start.x + kx, 0, maxCoord.x);
-				vec4 texel = texelFetch(layerSampler, ivec2(sx, sy), 0);
-				vec3 linearSample = colorspace_plane_degamma_tf(texel.rgb, colorspace);
-				vec3 kernel = kSubpixelOLEDKernel[ky][kx].rgb;
-				accum += linearSample * kernel;
-				alpha += texel.a * alphaWeight;
-			}
-		}
-		break;
-	case filter_subpixel_qdoled:
-		for (int ky = 0; ky < 5; ky++) {
-			int sy = clamp(start.y + ky, 0, maxCoord.y);
-			for (int kx = 0; kx < 5; kx++) {
-				int sx = clamp(start.x + kx, 0, maxCoord.x);
-				vec4 texel = texelFetch(layerSampler, ivec2(sx, sy), 0);
-				vec3 linearSample = colorspace_plane_degamma_tf(texel.rgb, colorspace);
-				vec3 kernel = kSubpixelQDOLEDKernel[ky][kx].rgb;
-				accum += linearSample * kernel;
-				alpha += texel.a * alphaWeight;
-			}
-		}
-		break;
-	case filter_subpixel_rgb:
-		for (int ky = 0; ky < 7; ky++) {
-			int sy = clamp(start.y + ky, 0, maxCoord.y);
-			for (int kx = 0; kx < 7; kx++) {
-				int sx = clamp(start.x + kx, 0, maxCoord.x);
-				vec4 texel = texelFetch(layerSampler, ivec2(sx, sy), 0);
-				vec3 linearSample = colorspace_plane_degamma_tf(texel.rgb, colorspace);
-				vec3 kernel = kSubpixelHorizontalRGBKernel[ky][kx].rgb;
-				accum += linearSample * kernel;
-				alpha += texel.a * alphaWeight;
-			}
-		}
-		break;
-	case filter_subpixel_vbgr:
-		for (int ky = 0; ky < 7; ky++) {
-			int sy = clamp(start.y + ky, 0, maxCoord.y);
-			for (int kx = 0; kx < 7; kx++) {
-				int sx = clamp(start.x + kx, 0, maxCoord.x);
-				vec4 texel = texelFetch(layerSampler, ivec2(sx, sy), 0);
-				vec3 linearSample = colorspace_plane_degamma_tf(texel.rgb, colorspace);
-				vec3 kernel = kSubpixelVerticalBGRKernel[ky][kx].rgb;
-				accum += linearSample * kernel;
-				alpha += texel.a * alphaWeight;
-			}
-		}
-		break;
-	}
-
-	outColor = vec4(accum, clamp(alpha, 0.0f, 1.0f));
-	return true;
-}
 #endif
