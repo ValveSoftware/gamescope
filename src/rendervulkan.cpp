@@ -3690,10 +3690,9 @@ static GamescopeUpscaleFilter GetLayerShaderFilter( const FrameInfo_t::Layer_t &
 		float observedX = dimRatioX > 0.0f ? dimRatioX : scaleRatioX;
 		float observedY = dimRatioY > 0.0f ? dimRatioY : scaleRatioY;
 
-		const float tolerance = 0.05f;
 		bool ratioOk =
-			close_enough( observedX, definition->downscaleRatio.x, tolerance ) &&
-			close_enough( observedY, definition->downscaleRatio.y, tolerance );
+			close_enough( observedX, definition->downscaleRatio.x ) &&
+			close_enough( observedY, definition->downscaleRatio.y );
 
 		int state = ratioOk ? 1 : 0;
 		if ( state != s_lastState[idx] )
@@ -3718,6 +3717,9 @@ static GamescopeUpscaleFilter GetLayerShaderFilter( const FrameInfo_t::Layer_t &
 			}
 			s_lastState[idx] = state;
 		}
+
+		if ( !ratioOk )
+			return GamescopeUpscaleFilter::LINEAR;
 	}
 
 	return layer.filter;

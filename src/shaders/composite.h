@@ -168,25 +168,45 @@ vec4 sampleLayerEx(sampler2D layerSampler, uint offsetLayerIdx, uint colorspaceL
 
     uint colorspace = get_layer_colorspace(colorspaceLayerIdx);
     vec4 color;
-    bool sampled = false;
     uint shaderFilter = get_layer_shaderfilter(offsetLayerIdx);
-    if (unnormalized) {
-        sampled = try_sample_subpixel_filter(shaderFilter, layerSampler, unnormalizedCoord, texSizeInt, u_scale[offsetLayerIdx], colorspace, color);
+
+    if (!unnormalized) {
+        if (shaderFilter == filter_subpixel_oled ||
+            shaderFilter == filter_subpixel_qdoled ||
+            shaderFilter == filter_subpixel_rgb ||
+            shaderFilter == filter_subpixel_vbgr)
+        {
+            shaderFilter = filter_nearest;
+        }
     }
 
-    if (!sampled) {
-        if (shaderFilter == filter_pixel) {
-            vec2 output_res = texSize / u_scale[offsetLayerIdx];
-            vec2 extent = max((texSize / output_res), vec2(1.0 / 256.0));
-            color = sampleBandLimited(layerSampler, coord, unnormalized ? vec2(1.0f) : texSize, unnormalized ? vec2(1.0f) : vec2(1.0f) / texSize, extent, colorspace, unnormalized);
-        }
-        else if (shaderFilter == filter_linear_emulated) {
-            color = sampleBilinear(layerSampler, coord, colorspace, unnormalized);
-        }
-        else {
-            color = sampleRegular(layerSampler, coord, colorspace);
-        }
+    switch (shaderFilter) {
+    case filter_subpixel_oled:
+        SAMPLE_SUBPIXEL_OLED_FILTER(layerSampler, unnormalizedCoord, texSizeInt, u_scale[offsetLayerIdx], colorspace, color);
+        break;
+    case filter_subpixel_qdoled:
+        SAMPLE_SUBPIXEL_QDOLED_FILTER(layerSampler, unnormalizedCoord, texSizeInt, u_scale[offsetLayerIdx], colorspace, color);
+        break;
+    case filter_subpixel_rgb:
+        SAMPLE_SUBPIXEL_RGB_FILTER(layerSampler, unnormalizedCoord, texSizeInt, u_scale[offsetLayerIdx], colorspace, color);
+        break;
+    case filter_subpixel_vbgr:
+        SAMPLE_SUBPIXEL_VBGR_FILTER(layerSampler, unnormalizedCoord, texSizeInt, u_scale[offsetLayerIdx], colorspace, color);
+        break;
+    case filter_pixel: {
+        vec2 output_res = texSize / u_scale[offsetLayerIdx];
+        vec2 extent = max((texSize / output_res), vec2(1.0 / 256.0));
+        color = sampleBandLimited(layerSampler, coord, unnormalized ? vec2(1.0f) : texSize, unnormalized ? vec2(1.0f) : vec2(1.0f) / texSize, extent, colorspace, unnormalized);
+        break;
     }
+    case filter_linear_emulated:
+        color = sampleBilinear(layerSampler, coord, colorspace, unnormalized);
+        break;
+    default:
+        color = sampleRegular(layerSampler, coord, colorspace);
+        break;
+    }
+
     // JoshA: AMDGPU applies 3x4 CTM like this, where A is 1.0, but it only affects .rgb.
     color.rgb = vec4(color.rgb, 1.0f) * u_ctm[colorspaceLayerIdx];
     color.rgb = apply_layer_color_mgmt(color.rgb, offsetLayerIdx, colorspace);
