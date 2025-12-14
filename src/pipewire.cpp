@@ -183,7 +183,7 @@ static void stream_handle_process(void *data)
 
 	struct spa_meta_header *header = (struct spa_meta_header *) spa_buffer_find_meta_data(spa_buffer, SPA_META_Header, sizeof(*header));
 	if (header != nullptr) {
-		header->pts = -1;
+		header->pts = buffer->pts;
 		header->flags = 0;
 		header->seq = state->seq++;
 		header->dts_offset = 0;
@@ -670,6 +670,10 @@ struct pipewire_buffer *pipewire_dequeue_buffer()
 
 struct pipewire_buffer *pipewire_push_buffer(struct pipewire_buffer *buffer)
 {
+	struct pipewire_state *state = &pipewire_state;
+
+	buffer->pts = pw_stream_get_nsec(state->stream);
+
 	struct pipewire_buffer *old = in_buffer.exchange(buffer);
 	pipewire_nudge();
 	// This will be `nullptr` if the pipewire thread is keeping up, otherwise the
