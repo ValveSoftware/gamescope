@@ -3593,7 +3593,7 @@ void vulkan_garbage_collect( void )
 	g_device.garbageCollect();
 }
 
-gamescope::Rc<CVulkanTexture> vulkan_acquire_screenshot_texture(uint32_t width, uint32_t height, bool exportable, uint32_t drmFormat, EStreamColorspace colorspace)
+gamescope::Rc<CVulkanTexture> vulkan_acquire_screenshot_texture(uint32_t width, uint32_t height, uint32_t drmFormat, EStreamColorspace colorspace)
 {
 	for (auto& pScreenshotImage : g_output.pScreenshotImages)
 	{
@@ -3605,10 +3605,6 @@ gamescope::Rc<CVulkanTexture> vulkan_acquire_screenshot_texture(uint32_t width, 
 			screenshotImageFlags.bMappable = true;
 			screenshotImageFlags.bTransferDst = true;
 			screenshotImageFlags.bStorage = true;
-			if (exportable || drmFormat == DRM_FORMAT_NV12) {
-				screenshotImageFlags.bExportable = true;
-				screenshotImageFlags.bLinear = true; // TODO: support multi-planar DMA-BUF export via PipeWire
-			}
 
 			bool bSuccess = pScreenshotImage->BInit( width, height, 1u, drmFormat, screenshotImageFlags );
 			pScreenshotImage->setStreamColorspace(colorspace);

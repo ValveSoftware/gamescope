@@ -17,7 +17,6 @@ struct pipewire_state {
 	std::atomic<bool> streaming;
 	struct spa_video_info_raw video_info;
 	struct spa_gamescope gamescope_info;
-	uint64_t focus_appid;
 	bool dmabuf;
 	int shm_stride;
 	uint64_t seq;
