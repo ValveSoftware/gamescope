@@ -95,9 +95,9 @@ static const struct spa_pod *build_format_params(struct spa_pod_builder *builder
 	if (format == SPA_VIDEO_FORMAT_NV12) {
 		spa_pod_builder_add(builder,
 			SPA_FORMAT_VIDEO_colorMatrix, SPA_POD_CHOICE_ENUM_Id(3,
-							SPA_VIDEO_COLOR_MATRIX_BT601,
-							SPA_VIDEO_COLOR_MATRIX_BT601,
-							SPA_VIDEO_COLOR_MATRIX_BT709),
+							SPA_VIDEO_COLOR_MATRIX_BT709,
+							SPA_VIDEO_COLOR_MATRIX_BT709,
+							SPA_VIDEO_COLOR_MATRIX_BT601),
 			SPA_FORMAT_VIDEO_colorRange, SPA_POD_CHOICE_ENUM_Id(3,
 							SPA_VIDEO_COLOR_RANGE_16_235,
 							SPA_VIDEO_COLOR_RANGE_16_235,
