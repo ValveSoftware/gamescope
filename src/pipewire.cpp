@@ -46,13 +46,6 @@ static void destroy_buffer(struct pipewire_buffer *buffer) {
 		assert(false); // unreachable
 	}	
 
-	// If out_buffer == buffer, then set it to nullptr.
-	// We don't care about the result.
-	struct pipewire_buffer *buffer1 = buffer;
-	out_buffer.compare_exchange_strong(buffer1, nullptr);
-	struct pipewire_buffer *buffer2 = buffer;
-	in_buffer.compare_exchange_strong(buffer2, nullptr);
-
 	delete buffer;
 }
 
@@ -558,7 +551,21 @@ static void stream_handle_remove_buffer(void *data, struct pw_buffer *pw_buffer)
 {
 	struct pipewire_buffer *buffer = (struct pipewire_buffer *) pw_buffer->user_data;
 
+	if (buffer == nullptr) {
+		return;
+	}
+	pw_buffer->user_data = nullptr;
 	buffer->buffer = nullptr;
+
+	// We want to remove any references to this buffer
+	struct pipewire_buffer *other = buffer;
+	if (out_buffer.compare_exchange_strong(other, nullptr)) {
+		buffer->copying = false;
+	}
+	other = buffer;
+	if (in_buffer.compare_exchange_strong(other, nullptr)) {
+		buffer->copying = false;
+	}
 
 	if (!buffer->copying) {
 		destroy_buffer(buffer);
