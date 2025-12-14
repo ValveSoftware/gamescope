@@ -423,14 +423,26 @@ static int anonymous_shm_open(void)
 	return -1;
 }
 
-uint32_t spa_format_to_drm(uint32_t spa_format)
+static constexpr EStreamColorspace spa_color_to_gamescope(const struct spa_video_info_raw& video_info)
 {
-	switch (spa_format)
-	{
-		case SPA_VIDEO_FORMAT_NV12: return DRM_FORMAT_NV12;
-		default:
-		case SPA_VIDEO_FORMAT_BGR: return DRM_FORMAT_XRGB8888;
+	switch (video_info.color_matrix) {
+	case SPA_VIDEO_COLOR_MATRIX_BT601:
+		switch (video_info.color_range) {
+		case SPA_VIDEO_COLOR_RANGE_16_235: return k_EStreamColorspace_BT601;
+		case SPA_VIDEO_COLOR_RANGE_0_255: return k_EStreamColorspace_BT601_Full;
+		default: break;
+		}
+		break;
+	case SPA_VIDEO_COLOR_MATRIX_BT709:
+		switch (video_info.color_range) {
+		case SPA_VIDEO_COLOR_RANGE_16_235: return k_EStreamColorspace_BT709;
+		case SPA_VIDEO_COLOR_RANGE_0_255: return k_EStreamColorspace_BT709_Full;
+		default: break;
+		}
+		break;
+	default: break;
 	}
+	return k_EStreamColorspace_Unknown;
 }
 
 static void stream_handle_add_buffer(void *user_data, struct pw_buffer *pw_buffer)
@@ -448,36 +460,7 @@ static void stream_handle_add_buffer(void *user_data, struct pw_buffer *pw_buffe
 	bool is_dmabuf = (spa_data->type & (1 << SPA_DATA_DmaBuf)) != 0;
 	bool is_memfd = (spa_data->type & (1 << SPA_DATA_MemFd)) != 0;
 
-	EStreamColorspace colorspace = k_EStreamColorspace_Unknown;
-	switch (state->video_info.color_matrix) {
-	case SPA_VIDEO_COLOR_MATRIX_BT601:
-		switch (state->video_info.color_range) {
-		case SPA_VIDEO_COLOR_RANGE_16_235:
-			colorspace = k_EStreamColorspace_BT601;
-			break;
-		case SPA_VIDEO_COLOR_RANGE_0_255:
-			colorspace = k_EStreamColorspace_BT601_Full;
-			break;
-		default:
-			break;
-		}
-		break;
-	case SPA_VIDEO_COLOR_MATRIX_BT709:
-		switch (state->video_info.color_range) {
-		case SPA_VIDEO_COLOR_RANGE_16_235:
-			colorspace = k_EStreamColorspace_BT709;
-			break;
-		case SPA_VIDEO_COLOR_RANGE_0_255:
-			colorspace = k_EStreamColorspace_BT709_Full;
-			break;
-		default:
-			break;
-		}
-		break;
-	default:
-		break;
-	}
-
+	EStreamColorspace colorspace = spa_color_to_gamescope(state->video_info);
 	uint32_t drmFormat = spa_format_to_drm(state->video_info.format);
 
 	buffer->texture = new CVulkanTexture();

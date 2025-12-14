@@ -57,16 +57,6 @@ struct pw_version {
   int micro;
 };
 
-static uint32_t spa_format_to_drm(uint32_t spa_format)
-{
-	switch (spa_format)
-	{
-		case SPA_VIDEO_FORMAT_NV12: return DRM_FORMAT_NV12;
-		default:
-		case SPA_VIDEO_FORMAT_BGR: return DRM_FORMAT_XRGB8888;
-	}
-}
- 
 struct data {
     const char *path;
  
