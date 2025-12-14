@@ -181,12 +181,10 @@ static void stream_handle_process(void *data)
 	struct pw_buffer *pw_buffer = buffer->buffer;
 	struct spa_buffer *spa_buffer = pw_buffer->buffer;
 
-	bool needs_reneg = buffer->video_info.size.width != tex->width() || buffer->video_info.size.height != tex->height();
-
 	struct spa_meta_header *header = (struct spa_meta_header *) spa_buffer_find_meta_data(spa_buffer, SPA_META_Header, sizeof(*header));
 	if (header != nullptr) {
 		header->pts = -1;
-		header->flags = needs_reneg ? SPA_META_HEADER_FLAG_CORRUPTED : 0;
+		header->flags = 0;
 		header->seq = state->seq++;
 		header->dts_offset = 0;
 	}
@@ -197,7 +195,7 @@ static void stream_handle_process(void *data)
 	}
 
 	struct spa_chunk *chunk = spa_buffer->datas[0].chunk;
-	chunk->flags = needs_reneg ? SPA_CHUNK_FLAG_CORRUPTED : 0;
+	chunk->flags = 0;
 
 	struct wlr_dmabuf_attributes dmabuf;
 	switch (buffer->type) {
@@ -206,7 +204,7 @@ static void stream_handle_process(void *data)
 		chunk->size = buffer->shm.size;
 		chunk->stride = buffer->shm.stride;
 
-		if (!needs_reneg) {
+		{
 			uint8_t *pMappedData = tex->mappedData();
 
 			if (state->video_info.format == SPA_VIDEO_FORMAT_NV12) {
@@ -448,7 +446,6 @@ static void stream_handle_add_buffer(void *user_data, struct pw_buffer *pw_buffe
 
 	struct pipewire_buffer *buffer = new pipewire_buffer();
 	buffer->buffer = pw_buffer;
-	buffer->video_info = state->video_info;
 	buffer->gamescope_info = state->gamescope_info;
 
 	bool is_dmabuf = (spa_data->type & (1 << SPA_DATA_DmaBuf)) != 0;

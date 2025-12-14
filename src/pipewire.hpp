@@ -30,7 +30,6 @@ struct pipewire_state {
  */
 struct pipewire_buffer {
 	enum spa_data_type type; // SPA_DATA_MemFd or SPA_DATA_DmaBuf
-	struct spa_video_info_raw video_info;
 	struct spa_gamescope gamescope_info;
 	gamescope::OwningRc<CVulkanTexture> texture;
 
