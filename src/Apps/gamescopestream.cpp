@@ -75,8 +75,6 @@ struct data {
 	struct spa_hook stream_listener;
 
 	struct spa_video_info format;
-	int32_t stride;
-	struct spa_rectangle size;
 
 	bool needs_decor_commit;
 
@@ -340,28 +338,18 @@ on_stream_param_changed(void *_data, uint32_t id, const struct spa_pod *param)
 
 	/* call a helper function to parse the format for us. */
 	spa_format_video_raw_parse(param, &data->format.info.raw);
-	data->size = data->format.info.raw.size;
 
 	uint32_t drm_format = spa_format_to_drm(data->format.info.raw.format);
 	if (drm_format == DRM_FORMAT_INVALID) {
 		pw_stream_set_error(stream, -EINVAL, "unknown pixel format");
 		return;
 	}
-	if (data->size.width == 0 || data->size.height == 0) {
-		pw_stream_set_error(stream, -EINVAL, "invalid size");
-		return;
-	}
-
-	data->stride = SPA_ROUND_UP_N( data->size.width * 4, 4 );
 
 	/* a SPA_TYPE_OBJECT_ParamBuffers object defines the acceptable size,
 	 * number, stride etc of the buffers */
 	params[0] = (const struct spa_pod *) spa_pod_builder_add_object(&b,
 		SPA_TYPE_OBJECT_ParamBuffers, SPA_PARAM_Buffers,
 		SPA_PARAM_BUFFERS_buffers, SPA_POD_CHOICE_RANGE_Int(8, 2, MAX_BUFFERS),
-		SPA_PARAM_BUFFERS_blocks,  SPA_POD_Int(1),
-		SPA_PARAM_BUFFERS_size,    SPA_POD_Int(data->stride * data->size.height),
-		SPA_PARAM_BUFFERS_stride,  SPA_POD_Int(data->stride),
 		SPA_PARAM_BUFFERS_dataType, SPA_POD_CHOICE_FLAGS_Int((1<<SPA_DATA_DmaBuf)));
 
 	/* we are done */
@@ -562,9 +550,7 @@ int main(int argc, char *argv[])
 	if ((res = pw_stream_connect(data.stream,
 			  PW_DIRECTION_INPUT,
 			  PW_ID_ANY,
-			  pw_stream_flags(
-			  PW_STREAM_FLAG_AUTOCONNECT |  /* try to automatically connect this stream */
-			  PW_STREAM_FLAG_MAP_BUFFERS),   /* mmap the buffer data for us */
+			  PW_STREAM_FLAG_AUTOCONNECT,  /* try to automatically connect this stream */
 			  params, n_params))        /* extra parameters, see above */ < 0) {
 		s_StreamLog.errorf( "can't connect: %s\n", spa_strerror(res) );
 		return -1;
