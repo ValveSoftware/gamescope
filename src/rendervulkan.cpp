@@ -2009,7 +2009,7 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 	m_drmFormat = drmFormat;
 	VkResult res = VK_ERROR_INITIALIZATION_FAILED;
 
-	VkImageTiling tiling = (flags.bMappable || flags.bLinear) ? VK_IMAGE_TILING_LINEAR : VK_IMAGE_TILING_OPTIMAL;
+	VkImageTiling tiling = VK_IMAGE_TILING_OPTIMAL;
 	VkImageUsageFlags usage = 0;
 	VkMemoryPropertyFlags properties;
 
@@ -2045,11 +2045,17 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 
 	if ( flags.bMappable == true )
 	{
+		flags.bLinear = true;
 		properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
 	}
 	else
 	{
 		properties = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+	}
+
+	if ( flags.bLinear == true )
+	{
+		tiling = VK_IMAGE_TILING_LINEAR;
 	}
 
 	if ( flags.bOutputImage == true )
