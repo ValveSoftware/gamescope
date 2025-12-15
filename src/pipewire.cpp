@@ -347,10 +347,6 @@ static void stream_handle_param_changed(void *data, uint32_t id, const struct sp
 	uint8_t buf[1024];
 	struct spa_pod_builder builder = SPA_POD_BUILDER_INIT(buf, sizeof(buf));
 
-	int shm_size = state->shm_stride * state->video_info.size.height;
-	if (state->video_info.format == SPA_VIDEO_FORMAT_NV12) {
-		shm_size += ((state->video_info.size.height + 1) / 2) * state->shm_stride;
-	}
 	int data_type = state->dmabuf ? (1 << SPA_DATA_DmaBuf) : (1 << SPA_DATA_MemFd);
 
 	const struct spa_pod *buffers_param =
@@ -358,8 +354,8 @@ static void stream_handle_param_changed(void *data, uint32_t id, const struct sp
 		SPA_TYPE_OBJECT_ParamBuffers, SPA_PARAM_Buffers,
 		SPA_PARAM_BUFFERS_buffers, SPA_POD_CHOICE_RANGE_Int(4, 1, 8),
 		SPA_PARAM_BUFFERS_blocks, SPA_POD_Int(1),
-		SPA_PARAM_BUFFERS_size, SPA_POD_Int(shm_size),
-		SPA_PARAM_BUFFERS_stride, SPA_POD_Int(state->shm_stride),
+		SPA_PARAM_BUFFERS_size, SPA_POD_CHOICE_RANGE_Int(0, 0, INT32_MAX),
+		SPA_PARAM_BUFFERS_stride, SPA_POD_CHOICE_RANGE_Int(0, 0, INT32_MAX),
 		SPA_PARAM_BUFFERS_dataType, SPA_POD_CHOICE_FLAGS_Int(data_type));
 	const struct spa_pod *meta_param =
 		(const struct spa_pod *) spa_pod_builder_add_object(&builder,
@@ -378,10 +374,10 @@ static void stream_handle_param_changed(void *data, uint32_t id, const struct sp
 		pwr_log.errorf("pw_stream_update_params failed");
 	}
 
-	pwr_log.debugf("format changed (size: %dx%d, requested %dx%d, format %d, stride %d, size: %d, dmabuf: %d)",
+	pwr_log.debugf("format changed (size: %dx%d, requested: %dx%d, format: %d, dmabuf: %d)",
 		state->video_info.size.width, state->video_info.size.height,
 		s_nRequestedWidth, s_nRequestedHeight,
-		state->video_info.format, state->shm_stride, shm_size, state->dmabuf);
+		state->video_info.format, state->dmabuf);
 }
 
 static void randname(char *buf)
