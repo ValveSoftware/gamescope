@@ -303,20 +303,21 @@ static void stream_handle_state_changed(void *data, enum pw_stream_state old_str
 
 	pwr_log.infof("stream state changed: %s", pw_stream_state_as_string(stream_state));
 
+	state->streaming = stream_state == PW_STREAM_STATE_STREAMING;
+
+	if (error != nullptr) {
+		pwr_log.errorf("stream error: %s", error);
+	}
+
 	switch (stream_state) {
 	case PW_STREAM_STATE_PAUSED:
 		state->stream_node_id = pw_stream_get_node_id(state->stream);
 		pwr_log.infof("stream available on node ID: %u", state->stream_node_id);
-		state->streaming = false;
 		state->seq = 0;
 		break;
 	case PW_STREAM_STATE_STREAMING:
-		state->streaming = true;
-		break;
 	case PW_STREAM_STATE_ERROR:
 	case PW_STREAM_STATE_UNCONNECTED:
-		state->streaming = false;
-		break;
 	default:
 		break;
 	}
