@@ -2414,9 +2414,12 @@ namespace gamescope
 
                 zwp_locked_pointer_v1_destroy( m_pLockedPointer );
                 m_pLockedPointer = nullptr;
+                m_bPointerLocked = false;
 
                 zwp_relative_pointer_v1_destroy( m_pRelativePointer );
                 m_pRelativePointer = nullptr;
+
+                m_pLockedSurface = nullptr;
             }
 
 			if ( bRelative )
@@ -2425,6 +2428,8 @@ namespace gamescope
 				zwp_locked_pointer_v1_add_listener( m_pLockedPointer, &s_LockedPointerListener, this );
 
 				m_pRelativePointer = zwp_relative_pointer_manager_v1_get_relative_pointer( m_pRelativePointerManager, m_pPointer );
+
+				m_pLockedSurface = pSurface;
 			}
 
             m_InputThread.SetRelativePointer( bRelative );
