@@ -1,3 +1,5 @@
+#define VK_USE_PLATFORM_WAYLAND_KHR
+
 #include "backend.h"
 #include "rendervulkan.hpp"
 #include "wlserver.hpp"
@@ -2117,7 +2119,8 @@ namespace gamescope
 
     std::span<const char *const> CWaylandBackend::GetInstanceExtensions() const
     {
-        return std::span<const char *const>{};
+        static const std::array pszInstanceExtensions {VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME};
+        return std::span<const char *const>{pszInstanceExtensions.begin(), pszInstanceExtensions.end()};
     }
 
     std::span<const char *const> CWaylandBackend::GetDeviceExtensions( VkPhysicalDevice pVkPhysicalDevice ) const
