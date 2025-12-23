@@ -1221,6 +1221,14 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 	}
 
 	drm->fd = wlsession_open_kms( drm->device_name );
+	if ( drm->fd < 0 && drm->device_name )
+	{
+		drm_log.infof("retrying with an arbitrary DRM device");
+		free( drm->device_name );
+		drm->device_name = nullptr;
+		drm->fd = wlsession_open_kms( nullptr );
+	}
+
 	if ( drm->fd < 0 )
 	{
 		drm_log.errorf("Could not open KMS device");
