@@ -8,17 +8,15 @@
 #include "pipewire_gamescope.hpp"
 
 struct pipewire_state {
-	struct pw_loop *loop;
-	struct pw_context *context;
-	struct pw_core *core;
-	bool running;
+	struct pw_thread_loop *loop;
+	struct spa_source *nudge_source;
+	int nudge_fd;
 
 	struct pw_stream *stream;
 	uint32_t stream_node_id;
 	std::atomic<bool> streaming;
 	struct spa_video_info_raw video_info;
 	struct spa_gamescope gamescope_info;
-	uint64_t focus_appid;
 	bool dmabuf;
 	int shm_stride;
 	uint64_t seq;
@@ -26,17 +24,18 @@ struct pipewire_state {
 
 /**
  * PipeWire buffers are allocated by the PipeWire thread, and are temporarily
- * shared with the steamcompmgr thread (via dequeue_pipewire_buffer and
- * push_pipewire_buffer) for copying.
+ * shared with the steamcompmgr thread (via pipewire_dequeue_buffer and
+ * pipewire_push_buffer) for copying.
  */
 struct pipewire_buffer {
 	enum spa_data_type type; // SPA_DATA_MemFd or SPA_DATA_DmaBuf
-	struct spa_video_info_raw video_info;
 	struct spa_gamescope gamescope_info;
 	gamescope::OwningRc<CVulkanTexture> texture;
+	uint64_t pts;
 
 	// Only used for SPA_DATA_MemFd
 	struct {
+		size_t size;
 		int stride;
 		uint8_t *data;
 		int fd;
@@ -55,10 +54,10 @@ struct pipewire_buffer {
 	bool copying;
 };
 
-bool init_pipewire(void);
-uint32_t get_pipewire_stream_node_id(void);
-struct pipewire_buffer *dequeue_pipewire_buffer(void);
-bool pipewire_is_streaming();
+bool pipewire_init();
+void pipewire_exit();
+uint32_t pipewire_get_stream_node_id();
+struct pipewire_buffer *pipewire_dequeue_buffer();
 void pipewire_destroy_buffer(struct pipewire_buffer *buffer);
-void push_pipewire_buffer(struct pipewire_buffer *buffer);
-void nudge_pipewire(void);
+struct pipewire_buffer *pipewire_push_buffer(struct pipewire_buffer *buffer);
+void pipewire_nudge();
