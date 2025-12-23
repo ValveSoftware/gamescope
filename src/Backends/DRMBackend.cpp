@@ -1231,7 +1231,7 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 	{
 		drm_log.errorf( "'%s' is not a KMS device", drm->device_name );
 		wlsession_close_kms();
-		return -1;
+		return false;
 	}
 
 	if (drmSetClientCap(drm->fd, DRM_CLIENT_CAP_ATOMIC, 1) != 0) {
