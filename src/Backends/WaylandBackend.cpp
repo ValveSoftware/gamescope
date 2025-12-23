@@ -996,6 +996,13 @@ namespace gamescope
 
     bool CWaylandConnector::Init()
     {
+	g_nOutputWidth = g_nPreferredOutputWidth;
+        g_nOutputHeight = g_nPreferredOutputHeight;
+        if ( g_nOutputHeight == 0 )
+            g_nOutputHeight = 720;
+        if ( g_nOutputWidth == 0 )
+            g_nOutputWidth = g_nOutputHeight * 16 / 9;
+
         for ( uint32_t i = 0; i < 8; i++ )
         {
             bool bSuccess = m_Planes[i].Init( i == 0 ? nullptr : &m_Planes[0], i == 0 ? nullptr : &m_Planes[ i - 1 ] );
