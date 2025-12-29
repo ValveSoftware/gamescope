@@ -43,6 +43,7 @@
 
 extern int g_nPreferredOutputWidth;
 extern int g_nPreferredOutputHeight;
+extern const char *g_nClassName;
 extern bool g_bForceHDR10OutputDebug;
 extern bool g_bBorderlessOutputWindow;
 extern gamescope::ConVar<bool> cv_adaptive_sync;
@@ -1404,7 +1405,7 @@ namespace gamescope
 			wl_proxy_set_tag( (wl_proxy *)m_pSurface, &GAMESCOPE_toplevel_tag );
             m_pFrame = libdecor_decorate( m_pBackend->GetLibDecor(), m_pSurface, &s_LibDecorFrameInterface, this );
             libdecor_frame_set_title( m_pFrame, "Gamescope" );
-            libdecor_frame_set_app_id( m_pFrame, "gamescope" );
+            libdecor_frame_set_app_id( m_pFrame, (g_nClassName == nullptr) ? "gamescope" : g_nClassName );
             libdecor_frame_map( m_pFrame );
         }
         else
