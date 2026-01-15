@@ -2786,16 +2786,17 @@ namespace gamescope
 
         wl_display_roundtrip(m_pDisplay);
 
-        const std::vector<const char *> &mimeTypes = m_CurrentOfferMimeTypes;
         const char *selectedMimeType = nullptr;
 
         for (const char *supportedType : supportedMimeTypes) {
-            for (const auto &offeredType : mimeTypes) {
-                if (strcmp(offeredType, supportedType) == 0) {
-                    selectedMimeType == supportedType;
-                    return;
+            for (const auto &offeredType : m_CurrentOfferMimeTypes) {
+                if (offeredType == supportedType) {
+                    selectedMimeType = supportedType;
+                    break;
                 }
             }
+            if (selectedMimeType)
+                break;
         }
 
         if (!selectedMimeType) {
@@ -2815,7 +2816,7 @@ namespace gamescope
             return;
         }
 
-        wl_data_offer_receive(pOffer, "text/plain", fds[1]);
+        wl_data_offer_receive(pOffer, selectedMimeType, fds[1]);
         close(fds[1]);
 
         wl_display_roundtrip(m_pDisplay);
@@ -2831,14 +2832,14 @@ namespace gamescope
 
         m_pClipboard = std::make_shared<std::string>(clipboardData);
 
-        char *pClipBoard = m_pClipboard->data();
-        gamescope_set_selection( pClipBoard, GAMESCOPE_SELECTION_CLIPBOARD);
+        gamescope_set_selection( clipboardData, GAMESCOPE_SELECTION_CLIPBOARD);
 
         wl_data_offer_destroy(pOffer);
+        m_CurrentOfferMimeTypes.clear();
     }
     void CWaylandBackend::Wayland_DataDevice_DataOffer(struct wl_data_device *pDevice, struct wl_data_offer *pOffer) {
         m_CurrentOfferMimeTypes.clear();
-        wl_data_offer_add_listener(pOffer, &s_DataOfferListener, nullptr);
+        wl_data_offer_add_listener(pOffer, &s_DataOfferListener, this);
     }
 
     // Data Offer
