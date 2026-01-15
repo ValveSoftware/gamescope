@@ -2750,12 +2750,17 @@ namespace gamescope
 
     // Data Source
 
-    void CWaylandBackend::Wayland_DataSource_Send( struct wl_data_source *pSource, const char *pMime, int nFd )
+	void CWaylandBackend::Wayland_DataSource_Send( struct wl_data_source *pSource, const char *pMime, int nFd )
     {
-        ssize_t len = m_pClipboard->length();
-        if ( write( nFd, m_pClipboard->c_str(), len ) != len )
-            xdg_log.infof( "Failed to write all %zd bytes to clipboard", len );
-        close( nFd );
+    	if ( !m_pClipboard )
+    	{
+    		close( nFd );
+    		return;
+    	}
+    	ssize_t len = m_pClipboard->length();
+    	if ( write( nFd, m_pClipboard->c_str(), len ) != len )
+    		xdg_log.infof( "Failed to write all %zd bytes to clipboard", len );
+    	close( nFd );
     }
     void CWaylandBackend::Wayland_DataSource_Cancelled( struct wl_data_source *pSource )
     {
@@ -2764,12 +2769,17 @@ namespace gamescope
 
     // Primary Selection Source
 
-    void CWaylandBackend::Wayland_PrimarySelectionSource_Send( struct zwp_primary_selection_source_v1 *pSource, const char *pMime, int nFd )
+	void CWaylandBackend::Wayland_PrimarySelectionSource_Send( struct zwp_primary_selection_source_v1 *pSource, const char *pMime, int nFd )
     {
-	ssize_t len = m_pPrimarySelection->length();
-        if ( write( nFd, m_pPrimarySelection->c_str(), len ) != len )
-	    xdg_log.infof( "Failed to write all %zd bytes to clipboard", len );
-        close( nFd );
+    	if ( !m_pPrimarySelection )
+    	{
+    		close( nFd );
+    		return;
+    	}
+    	ssize_t len = m_pPrimarySelection->length();
+    	if ( write( nFd, m_pPrimarySelection->c_str(), len ) != len )
+    		xdg_log.infof( "Failed to write all %zd bytes to clipboard", len );
+    	close( nFd );
     }
     void CWaylandBackend::Wayland_PrimarySelectionSource_Cancelled( struct zwp_primary_selection_source_v1 *pSource)
     {
