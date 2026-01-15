@@ -929,13 +929,17 @@ namespace gamescope
         .send      = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_PrimarySelectionSource_Send ),
         .cancelled = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_PrimarySelectionSource_Cancelled ),
     };
-    const wl_data_device_listener CWaylandBackend::s_DataDeviceListener = {
-        .data_offer = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_DataDevice_DataOffer ),
-        .selection = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_DataDevice_Selection ),
-    };
-    const wl_data_offer_listener CWaylandBackend::s_DataOfferListener = {
-        .offer = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_DataOffer_Offer ),
-    };
+	const wl_data_device_listener CWaylandBackend::s_DataDeviceListener = {
+		.data_offer = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_DataDevice_DataOffer ),
+		.enter = WAYLAND_NULL(),
+		.leave = WAYLAND_NULL(),
+		.motion = WAYLAND_NULL(),
+		.drop = WAYLAND_NULL(),
+		.selection = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_DataDevice_Selection ),
+	};
+	const wl_data_offer_listener CWaylandBackend::s_DataOfferListener = {
+		.offer = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_DataOffer_Offer ),
+	};
 
     //////////////////
     // CWaylandFb
