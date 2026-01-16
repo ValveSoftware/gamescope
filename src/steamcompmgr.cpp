@@ -3942,19 +3942,10 @@ void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win
 	w = ctx->focus.focusWindow;
 
 	if ( inputFocus == ctx->focus.focusWindow && ctx->focus.overrideWindowMouse )
-	{
-		if ( ctx->list[0].xwayland().id != ctx->focus.overrideWindowMouse->xwayland().id )
-		{
-			XRaiseWindow(ctx->dpy, ctx->focus.overrideWindowMouse->xwayland().id);
-		}
-	}
-	else
-	{
-		if ( ctx->list[0].xwayland().id != inputFocus->xwayland().id )
-		{
-			XRaiseWindow(ctx->dpy, inputFocus->xwayland().id);
-		}
-	}
+		inputFocus = ctx->focus.overrideWindow;
+
+	if ( ctx->list[0].xwayland().id != inputFocus->xwayland().id )
+		XRaiseWindow(ctx->dpy, inputFocus->xwayland().id);
 
 	if (!ctx->focus.focusWindow->nudged)
 	{
