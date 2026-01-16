@@ -186,6 +186,19 @@ struct steamcompmgr_win_t {
 			return nullptr;
 	}
 
+	void Raise() const
+	{
+		if (type != steamcompmgr_win_type_t::XWAYLAND)
+			return;
+
+		xwayland_ctx_t *ctx = xwayland().ctx;
+		Window id = xwayland().id;
+
+		XRaiseWindow(ctx->dpy, id);
+		XChangeProperty(ctx->dpy, ctx->root, ctx->atoms.netActiveWindowAtom,
+						XA_WINDOW, 32, PropModeReplace, (unsigned char *) &id, 1);
+	}
+
 	Rect GetGeometry() const
 	{
 		if (type == steamcompmgr_win_type_t::XWAYLAND)
