@@ -3945,7 +3945,7 @@ void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win
 		inputFocus = ctx->focus.overrideWindowMouse;
 
 	if ( ctx->list[0].xwayland().id != inputFocus->xwayland().id )
-		XRaiseWindow(ctx->dpy, inputFocus->xwayland().id);
+		inputFocus->Raise();
 
 	if (!ctx->focus.focusWindow->nudged)
 	{
@@ -4823,9 +4823,7 @@ map_win(xwayland_ctx_t* ctx, Window id, unsigned long sequence)
 	if ( wmHints != nullptr )
 	{
 		if ( wmHints->flags & (InputHint | StateHint ) && wmHints->input == true && wmHints->initial_state == NormalState )
-		{
-			XRaiseWindow( ctx->dpy, w->xwayland().id );
-		}
+			w->Raise();
 
 		XFree( wmHints );
 	}
@@ -5551,9 +5549,9 @@ handle_client_message(xwayland_ctx_t *ctx, XClientMessageEvent *ev)
 		{
 			handle_wl_surface_id( ctx, w, uint32_t(ev->data.l[0]));
 		}
-		else if ( ev->message_type == ctx->atoms.activeWindowAtom )
+		else if ( ev->message_type == ctx->atoms.netActiveWindowAtom )
 		{
-			XRaiseWindow( ctx->dpy, w->xwayland().id );
+			w->Raise();
 		}
 		else if ( ev->message_type == ctx->atoms.netWMStateAtom )
 		{
@@ -7786,7 +7784,7 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 	ctx->atoms.winNormalAtom = XInternAtom(ctx->dpy, "_NET_WM_WINDOW_TYPE_NORMAL", false);
 	ctx->atoms.sizeHintsAtom = XInternAtom(ctx->dpy, "WM_NORMAL_HINTS", false);
 	ctx->atoms.netWMStateFullscreenAtom = XInternAtom(ctx->dpy, "_NET_WM_STATE_FULLSCREEN", false);
-	ctx->atoms.activeWindowAtom = XInternAtom(ctx->dpy, "_NET_ACTIVE_WINDOW", false);
+	ctx->atoms.netActiveWindowAtom = XInternAtom(ctx->dpy, "_NET_ACTIVE_WINDOW", false);
 	ctx->atoms.netWMStateAtom = XInternAtom(ctx->dpy, "_NET_WM_STATE", false);
 	ctx->atoms.WMTransientForAtom = XInternAtom(ctx->dpy, "WM_TRANSIENT_FOR", false);
 	ctx->atoms.netWMStateHiddenAtom = XInternAtom(ctx->dpy, "_NET_WM_STATE_HIDDEN", false);
