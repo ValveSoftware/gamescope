@@ -3853,7 +3853,7 @@ void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win
 		inputFocus = ctx->focus.overrideWindow;
 
 	if ( ctx->list[0].xwayland().id != inputFocus->xwayland().id )
-		XRaiseWindow(ctx->dpy, inputFocus->xwayland().id);
+		inputFocus->Raise();
 
 	if (!ctx->focus.focusWindow->nudged)
 	{
@@ -4650,9 +4650,7 @@ map_win(xwayland_ctx_t* ctx, Window id, unsigned long sequence)
 	if ( wmHints != nullptr )
 	{
 		if ( wmHints->flags & (InputHint | StateHint ) && wmHints->input == true && wmHints->initial_state == NormalState )
-		{
-			XRaiseWindow( ctx->dpy, w->xwayland().id );
-		}
+			w->Raise();
 
 		XFree( wmHints );
 	}
@@ -5378,7 +5376,7 @@ handle_client_message(xwayland_ctx_t *ctx, XClientMessageEvent *ev)
 		}
 		else if ( ev->message_type == ctx->atoms.activeWindowAtom )
 		{
-			XRaiseWindow( ctx->dpy, w->xwayland().id );
+			w->Raise();
 		}
 		else if ( ev->message_type == ctx->atoms.netWMStateAtom )
 		{
