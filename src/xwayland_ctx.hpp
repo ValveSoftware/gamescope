@@ -120,7 +120,7 @@ struct xwayland_ctx_t final : public gamescope::IWaitable
 		Atom winNormalAtom;
 		Atom sizeHintsAtom;
 		Atom netWMStateFullscreenAtom;
-		Atom activeWindowAtom;
+		Atom netActiveWindowAtom;
 		Atom netWMStateAtom;
 		Atom WMTransientForAtom;
 		Atom netWMStateHiddenAtom;
