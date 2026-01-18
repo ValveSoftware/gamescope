@@ -4324,6 +4324,25 @@ determine_and_apply_focus( global_focus_t *pFocus )
 				if ( win_surface( pFocus->overrideWindow ) != nullptr )
 					wlserver_notify_dropdown( pFocus->overrideWindow->main_surface(), pFocus->overrideWindow->xwayland().a.x, pFocus->overrideWindow->xwayland().a.y );
 
+				if ( gamescope::VirtualConnectorInSteamPerAppState() && pFocus->inputFocusWindow )
+				{
+					if ( pFocus->focusWindow->type == steamcompmgr_win_type_t::XWAYLAND )
+					{
+						xwayland_ctx_t *ctx = pFocus->inputFocusWindow->xwayland().ctx;
+						bool bTouchPointerEmulation = gamescope::VirtualConnectorKeyIsNonSteamWindow( pFocus->ulVirtualFocusKey );
+
+						if ( ctx->bTouchPointerEmulation != bTouchPointerEmulation )
+						{
+							xwm_log.infof( "Changing touch pointer emulation for display %u to %s\n", ctx->xwayland_server->get_index(), bTouchPointerEmulation ? "true" : "false" );
+
+							uint32_t uValue = bTouchPointerEmulation ? 1 : 0;
+							XChangeProperty( ctx->dpy, ctx->root, ctx->atoms.steamosTouchPointerEmulation, XA_CARDINAL, 32, PropModeReplace,
+											(unsigned char *)&uValue, 1 );
+							ctx->bTouchPointerEmulation = bTouchPointerEmulation;
+						}
+					}
+				}
+
 				if ( win_surface(pFocus->inputFocusWindow) != nullptr && pFocus->cursor )
 					wlserver_mousefocus( pFocus->inputFocusWindow->main_surface(), pFocus->cursor->x(), pFocus->cursor->y() );
 
@@ -7868,6 +7887,7 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 	ctx->atoms.gamescopeDisplayDynamicRefreshBasedOnGamePresence = XInternAtom( ctx->dpy, "GAMESCOPE_DISPLAY_DYNAMIC_REFRESH_BASED_ON_GAME_PRESENCE", false );
 
 	ctx->atoms.gamescopeMainSteamVROverlay = XInternAtom( ctx->dpy, "GAMESCOPE_MAIN_STEAMVR_OVERLAY", false );
+	ctx->atoms.steamosTouchPointerEmulation = XInternAtom( ctx->dpy, "_STEAMOS_TOUCH_POINTER_EMULATION", false );
 
 	ctx->atoms.wineHwndStyle = XInternAtom( ctx->dpy, "_WINE_HWND_STYLE", false );
 	ctx->atoms.wineHwndStyleEx = XInternAtom( ctx->dpy, "_WINE_HWND_EXSTYLE", false );
