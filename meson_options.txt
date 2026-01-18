@@ -3,6 +3,7 @@ option('rt_cap',                     type: 'feature', description: 'Support for 
 option('drm_backend',                type: 'feature', description: 'DRM Atomic Backend')
 option('sdl2_backend',               type: 'feature', description: 'SDL2 Window Backend')
 option('avif_screenshots',           type: 'feature', description: 'Support for saving .AVIF HDR screenshots')
+option('jxl_screenshots',            type: 'feature', description: 'Support for saving .JXL HDR screenshots')
 option('input_emulation' ,           type: 'feature', description: 'Support for XTest/Input Emulation with libei')
 option('enable_gamescope',           type : 'boolean', value : true, description: 'Build Gamescope executable')
 option('enable_gamescope_wsi_layer', type : 'boolean', value : true, description: 'Build Gamescope layer')

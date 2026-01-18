@@ -9,6 +9,8 @@
 #include "xwayland_ctx.hpp"
 #include "gamescope-control-protocol.h"
 
+#include "screenshot_format.h"
+
 struct commit_t;
 struct wlserver_vk_swapchain_feedback;
 
@@ -282,13 +284,26 @@ namespace gamescope
 			hasRepaint = true;
 		}
 
-		void TakeScreenshot( bool bAVIF )
+		void TakeScreenshot( bool )
 		{
 			char szTimeBuffer[ 1024 ];
 			time_t currentTime = time(0);
 			struct tm *pLocalTime = localtime( &currentTime );
-			strftime( szTimeBuffer, sizeof( szTimeBuffer ), bAVIF ? "/tmp/gamescope_%Y-%m-%d_%H-%M-%S.avif" : "/tmp/gamescope_%Y-%m-%d_%H-%M-%S.png", pLocalTime );
-
+			// Set ext variable for file extension
+			const char* filename;
+			switch(format)
+			{
+				case screenshot_format::AVIF:
+					filename = "/tmp/gamescope_%Y-%m-%d_%H-%M-%S.avif";
+					break;
+				case screenshot_format::JXL:
+					filename = "/tmp/gamescope_%Y-%m-%d_%H-%M-%S.jxl";
+					break;
+				default:
+					filename = "/tmp/gamescope_%Y-%m-%d_%H-%M-%S.png";
+					break;
+			}
+			strftime( szTimeBuffer, sizeof( szTimeBuffer ), filename, pLocalTime );
 			TakeScreenshot( GamescopeScreenshotInfo
 			{
 				.szScreenshotPath = szTimeBuffer,

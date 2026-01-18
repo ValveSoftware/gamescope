@@ -105,6 +105,14 @@
 #include "avif/avif.h"
 #endif
 
+#if HAVE_JXL
+#include "jxl/encode.h"
+#include "jxl/thread_parallel_runner.h"
+#include "jxl/color_encoding.h"
+#endif
+
+#include "screenshot_format.h"
+
 static const int g_nBaseCursorScale = 36;
 
 #if HAVE_PIPEWIRE
@@ -2826,9 +2834,11 @@ paint_all( global_focus_t *pFocus, bool async )
 
 		uint32_t drmCaptureFormat = DRM_FORMAT_INVALID;
 
-		if ( path.extension() == ".avif" )
+		if ( format == screenshot_format::AVIF )
 			drmCaptureFormat = DRM_FORMAT_XRGB2101010;
-		else if ( path.extension() == ".png" )
+		else if ( format == screenshot_format::JXL )
+			drmCaptureFormat = DRM_FORMAT_XRGB2101010;
+		else if ( format == screenshot_format::PNG )
 			drmCaptureFormat = DRM_FORMAT_XRGB8888;
 		else if ( path.extension() == ".nv12.bin" )
 			drmCaptureFormat = DRM_FORMAT_NV12;
@@ -2839,7 +2849,7 @@ paint_all( global_focus_t *pFocus, bool async )
 
 		if ( pScreenshotTexture )
 		{
-			bool bHDRScreenshot = path.extension() == ".avif" &&
+			bool bHDRScreenshot = format == screenshot_format::AVIF &&
 								  frameInfo.layerCount > 0 &&
 								  ColorspaceIsHDR( frameInfo.layers[0].colorspace ) &&
 								  oScreenshotInfo->eScreenshotType != GAMESCOPE_CONTROL_SCREENSHOT_TYPE_SCREEN_BUFFER;
@@ -2959,95 +2969,234 @@ paint_all( global_focus_t *pFocus, bool async )
 					// Make our own copy of the image to remove the alpha channel.
 					constexpr uint32_t kCompCnt = 3;
 					auto imageData = std::vector<uint16_t>( g_nOutputWidth * g_nOutputHeight * kCompCnt );
-
-					for (uint32_t y = 0; y < g_nOutputHeight; y++)
+					if( format == screenshot_format::AVIF )
 					{
-						for (uint32_t x = 0; x < g_nOutputWidth; x++)
+						for (uint32_t y = 0; y < g_nOutputHeight; y++)
 						{
-							uint32_t *pInPixel = (uint32_t *)&mappedData[(y * pScreenshotTexture->rowPitch()) + x * (32 / 8)];
-							uint32_t uInPixel = *pInPixel;
+							for (uint32_t x = 0; x < g_nOutputWidth; x++)
+							{
+								uint32_t *pInPixel = (uint32_t *)&mappedData[(y * pScreenshotTexture->rowPitch()) + x * (32 / 8)];
+								uint32_t uInPixel = *pInPixel;
 
-							imageData[y * g_nOutputWidth * kCompCnt + x * kCompCnt + 0] = (uInPixel & (0b1111111111 << 20)) >> 20;
-							imageData[y * g_nOutputWidth * kCompCnt + x * kCompCnt + 1] = (uInPixel & (0b1111111111 << 10)) >> 10;
-							imageData[y * g_nOutputWidth * kCompCnt + x * kCompCnt + 2] = (uInPixel & (0b1111111111 << 0))  >> 0;
+								imageData[y * g_nOutputWidth * kCompCnt + x * kCompCnt + 0] = (uInPixel & (0b1111111111 << 20)) >> 20;
+								imageData[y * g_nOutputWidth * kCompCnt + x * kCompCnt + 1] = (uInPixel & (0b1111111111 << 10)) >> 10;
+								imageData[y * g_nOutputWidth * kCompCnt + x * kCompCnt + 2] = (uInPixel & (0b1111111111 << 0))  >> 0;
+							}
 						}
+						assert( HAVE_AVIF );
+						#if HAVE_AVIF
+						avifResult avifResult = AVIF_RESULT_OK;
+
+						avifImage *pAvifImage = avifImageCreate( g_nOutputWidth, g_nOutputHeight, 10, AVIF_PIXEL_FORMAT_YUV444 );
+						defer( avifImageDestroy( pAvifImage ) );
+						pAvifImage->yuvRange = AVIF_RANGE_FULL;
+						pAvifImage->colorPrimaries = bHDRScreenshot ? AVIF_COLOR_PRIMARIES_BT2020 : AVIF_COLOR_PRIMARIES_BT709;
+						pAvifImage->transferCharacteristics = bHDRScreenshot ? AVIF_TRANSFER_CHARACTERISTICS_SMPTE2084 : AVIF_TRANSFER_CHARACTERISTICS_SRGB;
+						// We are not actually using YUV, but storing raw GBR (yes not RGB) data
+						// This does not compress as well, but is always lossless!
+						pAvifImage->matrixCoefficients = AVIF_MATRIX_COEFFICIENTS_IDENTITY;
+
+						if ( oScreenshotInfo->eScreenshotType == GAMESCOPE_CONTROL_SCREENSHOT_TYPE_SCREEN_BUFFER )
+						{
+							// When dumping the screen output buffer for debugging,
+							// mark the primaries as UNKNOWN as stuff has likely been transformed
+							// to native if HDR on Deck OLED etc.
+							// We want everything to be seen unadulterated by a viewer/image editor.
+							pAvifImage->colorPrimaries = AVIF_COLOR_PRIMARIES_UNKNOWN;
+						}
+
+						if ( bHDRScreenshot )
+						{
+							pAvifImage->clli.maxCLL = maxCLLNits;
+							pAvifImage->clli.maxPALL = maxFALLNits;
+						}
+
+						avifRGBImage rgbAvifImage{};
+						avifRGBImageSetDefaults( &rgbAvifImage, pAvifImage );
+						rgbAvifImage.format = AVIF_RGB_FORMAT_RGB;
+						rgbAvifImage.ignoreAlpha = AVIF_TRUE;
+
+						rgbAvifImage.pixels = (uint8_t *)imageData.data();
+						rgbAvifImage.rowBytes = g_nOutputWidth * kCompCnt * sizeof( uint16_t );
+
+						if ( ( avifResult = avifImageRGBToYUV( pAvifImage, &rgbAvifImage ) ) != AVIF_RESULT_OK ) // Not really! See Matrix Coefficients IDENTITY above.
+						{
+							xwm_log.errorf( "Failed to convert RGB to YUV: %u", avifResult );
+							return;
+						}
+
+						avifEncoder *pEncoder = avifEncoderCreate();
+						defer( avifEncoderDestroy( pEncoder ) );
+						pEncoder->quality = AVIF_QUALITY_LOSSLESS;
+						pEncoder->qualityAlpha = AVIF_QUALITY_LOSSLESS;
+						pEncoder->speed = AVIF_SPEED_FASTEST;
+
+						if ( ( avifResult = avifEncoderAddImage( pEncoder, pAvifImage, 1, AVIF_ADD_IMAGE_FLAG_SINGLE ) ) != AVIF_RESULT_OK )
+						{
+							xwm_log.errorf( "Failed to add image to avif encoder: %u", avifResult );
+							return;
+						}
+
+						avifRWData avifOutput = AVIF_DATA_EMPTY;
+						defer( avifRWDataFree( &avifOutput ) );
+						if ( ( avifResult = avifEncoderFinish( pEncoder, &avifOutput ) ) != AVIF_RESULT_OK )
+						{
+							xwm_log.errorf( "Failed to finish encoder: %u", avifResult );
+							return;
+						}
+
+						FILE *pScreenshotFile = nullptr;
+						if ( ( pScreenshotFile = fopen( oScreenshotInfo->szScreenshotPath.c_str(), "wb" ) ) == nullptr )
+						{
+							xwm_log.errorf( "Failed to fopen file: %s", oScreenshotInfo->szScreenshotPath.c_str() );
+							return;
+						}
+
+						fwrite( avifOutput.data, 1, avifOutput.size, pScreenshotFile );
+						fclose( pScreenshotFile );
+
+						xwm_log.infof( "Screenshot saved to %s", oScreenshotInfo->szScreenshotPath.c_str() );
+						bScreenshotSuccess = true;
+						#endif
 					}
-
-					assert( HAVE_AVIF );
-#if HAVE_AVIF
-					avifResult avifResult = AVIF_RESULT_OK;
-
-					avifImage *pAvifImage = avifImageCreate( g_nOutputWidth, g_nOutputHeight, 10, AVIF_PIXEL_FORMAT_YUV444 );
-					defer( avifImageDestroy( pAvifImage ) );
-					pAvifImage->yuvRange = AVIF_RANGE_FULL;
-					pAvifImage->colorPrimaries = bHDRScreenshot ? AVIF_COLOR_PRIMARIES_BT2020 : AVIF_COLOR_PRIMARIES_BT709;
-					pAvifImage->transferCharacteristics = bHDRScreenshot ? AVIF_TRANSFER_CHARACTERISTICS_SMPTE2084 : AVIF_TRANSFER_CHARACTERISTICS_SRGB;
-					// We are not actually using YUV, but storing raw GBR (yes not RGB) data
-					// This does not compress as well, but is always lossless!
-					pAvifImage->matrixCoefficients = AVIF_MATRIX_COEFFICIENTS_IDENTITY;
-
-					if ( oScreenshotInfo->eScreenshotType == GAMESCOPE_CONTROL_SCREENSHOT_TYPE_SCREEN_BUFFER )
+					else if( format == screenshot_format::JXL )
 					{
-						// When dumping the screen output buffer for debugging,
-						// mark the primaries as UNKNOWN as stuff has likely been transformed
-						// to native if HDR on Deck OLED etc.
-						// We want everything to be seen unadulterated by a viewer/image editor.
-						pAvifImage->colorPrimaries = AVIF_COLOR_PRIMARIES_UNKNOWN;
-					}
+						// Make our own copy of the image to remove the alpha channel.
+						constexpr uint32_t kCompCnt = 3;
+						auto imageData = std::vector<uint16_t>( g_nOutputWidth * g_nOutputHeight * kCompCnt );
 
-					if ( bHDRScreenshot )
-					{
-						pAvifImage->clli.maxCLL = maxCLLNits;
-						pAvifImage->clli.maxPALL = maxFALLNits;
-					}
+						for (uint32_t y = 0; y < g_nOutputHeight; y++)
+						{
+							for (uint32_t x = 0; x < g_nOutputWidth; x++)
+							{
+								// Shift bits to store 10 bit data in 16 bit container
+								uint32_t uInPixel = *(const uint32_t *)(mappedData + y * pScreenshotTexture->rowPitch() + x * 4);
 
-					avifRGBImage rgbAvifImage{};
-					avifRGBImageSetDefaults( &rgbAvifImage, pAvifImage );
-					rgbAvifImage.format = AVIF_RGB_FORMAT_RGB;
-					rgbAvifImage.ignoreAlpha = AVIF_TRUE;
+								uint16_t r10 = (uInPixel >> 20) & 0x3FF;
+								uint16_t g10 = (uInPixel >> 10) & 0x3FF;
+								uint16_t b10 = (uInPixel >>  0) & 0x3FF;
 
-					rgbAvifImage.pixels = (uint8_t *)imageData.data();
-					rgbAvifImage.rowBytes = g_nOutputWidth * kCompCnt * sizeof( uint16_t );
+								imageData[(y * g_nOutputWidth + x) * 3 + 0] = (r10 << 6);
+								imageData[(y * g_nOutputWidth + x) * 3 + 1] = (g10 << 6);
+								imageData[(y * g_nOutputWidth + x) * 3 + 2] = (b10 << 6);
+							}
+						}
 
-					if ( ( avifResult = avifImageRGBToYUV( pAvifImage, &rgbAvifImage ) ) != AVIF_RESULT_OK ) // Not really! See Matrix Coefficients IDENTITY above.
-					{
-						xwm_log.errorf( "Failed to convert RGB to YUV: %u", avifResult );
-						return;
-					}
+						assert( HAVE_JXL );
+						#if HAVE_JXL
+						// Start measuring time for benchmarking
+						auto start = std::chrono::steady_clock::now();
 
-					avifEncoder *pEncoder = avifEncoderCreate();
-					defer( avifEncoderDestroy( pEncoder ) );
-					pEncoder->quality = AVIF_QUALITY_LOSSLESS;
-					pEncoder->qualityAlpha = AVIF_QUALITY_LOSSLESS;
-					pEncoder->speed = AVIF_SPEED_FASTEST;
+						// Create encoder and parallel runner for multithreading
+						JxlEncoderStatus status = JXL_ENC_SUCCESS;
+						JxlEncoder* encoder = JxlEncoderCreate( NULL);
+						// JxlThreadParallelRunnerDefaultNumWorkerThreads uses all available cores, could be reduced if desired
+						const uint32_t num_threads = JxlThreadParallelRunnerDefaultNumWorkerThreads();
+						void* runner = JxlThreadParallelRunnerCreate( NULL, num_threads );
+						JxlEncoderSetParallelRunner( encoder, JxlThreadParallelRunner, runner );
+						// Set basic info for the encoder
+						JxlBasicInfo basic_info;
+						JxlEncoderInitBasicInfo( &basic_info );
+						basic_info.xsize = g_nOutputWidth;
+						basic_info.ysize = g_nOutputHeight;
+						basic_info.bits_per_sample = 10;
+						basic_info.exponent_bits_per_sample = 0;
+						basic_info.num_color_channels = 3;
+						basic_info.num_extra_channels = 0;
+						basic_info.alpha_bits = 0;
+						basic_info.uses_original_profile = true;
+						JxlEncoderSetBasicInfo( encoder, &basic_info );
 
-					if ( ( avifResult = avifEncoderAddImage( pEncoder, pAvifImage, 1, AVIF_ADD_IMAGE_FLAG_SINGLE ) ) != AVIF_RESULT_OK )
-					{
-						xwm_log.errorf( "Failed to add image to avif encoder: %u", avifResult );
-						return;
-					}
+						JxlPixelFormat pixel_format =
+						{
+							3, JXL_TYPE_UINT16, JXL_NATIVE_ENDIAN, 0
+						};
+						// Define color
+						JxlColorEncoding color_encoding;
 
-					avifRWData avifOutput = AVIF_DATA_EMPTY;
-					defer( avifRWDataFree( &avifOutput ) );
-					if ( ( avifResult = avifEncoderFinish( pEncoder, &avifOutput ) ) != AVIF_RESULT_OK )
-					{
-						xwm_log.errorf( "Failed to finish encoder: %u", avifResult );
-						return;
-					}
+						JxlColorEncodingSetToSRGB( &color_encoding, JXL_FALSE );
 
-					FILE *pScreenshotFile = nullptr;
-					if ( ( pScreenshotFile = fopen( oScreenshotInfo->szScreenshotPath.c_str(), "wb" ) ) == nullptr )
-					{
-						xwm_log.errorf( "Failed to fopen file: %s", oScreenshotInfo->szScreenshotPath.c_str() );
-						return;
-					}
+						color_encoding.color_space = JXL_COLOR_SPACE_RGB;
+						color_encoding.white_point = JXL_WHITE_POINT_D65;
 
-					fwrite( avifOutput.data, 1, avifOutput.size, pScreenshotFile );
-					fclose( pScreenshotFile );
+						color_encoding.primaries =
+							bHDRScreenshot ? JXL_PRIMARIES_2100 : JXL_PRIMARIES_SRGB;
 
-					xwm_log.infof( "Screenshot saved to %s", oScreenshotInfo->szScreenshotPath.c_str() );
-					bScreenshotSuccess = true;
-#endif
+						color_encoding.transfer_function =
+							bHDRScreenshot ? JXL_TRANSFER_FUNCTION_PQ : JXL_TRANSFER_FUNCTION_SRGB;
+
+						JxlEncoderSetColorEncoding( encoder, &color_encoding );
+
+						// Create frame settings
+						JxlEncoderFrameSettings* frame = JxlEncoderFrameSettingsCreate( encoder, NULL );
+						// Lossless
+						JxlEncoderSetFrameLossless( frame, JXL_TRUE );
+						// Fastest effort
+						JxlEncoderFrameSettingsSetOption( frame, JXL_ENC_FRAME_SETTING_EFFORT, 1 );
+
+						size_t data_size = g_nOutputWidth * g_nOutputHeight * 3 * sizeof( uint16_t );
+
+						status = JxlEncoderAddImageFrame( frame, &pixel_format, imageData.data(), data_size );
+
+						if ( status != JXL_ENC_SUCCESS )
+						{
+							xwm_log.errorf("Failed to add image frame: %u", status);
+							return;
+						}
+
+						JxlEncoderCloseInput( encoder );
+						if ( status != JXL_ENC_SUCCESS )
+						{
+							xwm_log.errorf( "Failed to finish encoder" );
+							return;
+						}
+						// Finish the encoding
+						std::vector<uint8_t> jxlOutput;
+
+						uint8_t buffer[16384];
+						uint8_t* next_out = buffer;
+						size_t avail_out = sizeof( buffer );
+
+						status = JXL_ENC_NEED_MORE_OUTPUT;
+						while ( (status != JXL_ENC_SUCCESS) && ( status != JXL_ENC_ERROR ))
+						{
+							status = JxlEncoderProcessOutput( encoder, &next_out, &avail_out );
+							size_t written = next_out - buffer;
+							if ( written > 0 )
+							{
+								jxlOutput.insert( jxlOutput.end(), buffer, buffer + written );
+								next_out = buffer;
+								avail_out = sizeof( buffer );
+							}
+						}
+
+						if ( status != JXL_ENC_SUCCESS )
+						{
+							xwm_log.errorf("Failed to finish encoder");
+							return;
+						}
+
+						JxlEncoderDestroy( encoder );
+						JxlThreadParallelRunnerDestroy( runner );
+
+						FILE *pScreenshotFile = nullptr;
+						if ( ( pScreenshotFile = fopen( oScreenshotInfo->szScreenshotPath.c_str(), "wb" ) ) == nullptr )
+						{
+							xwm_log.errorf( "Failed to fopen file: %s", oScreenshotInfo->szScreenshotPath.c_str() );
+							return;
+						}
+
+						fwrite( jxlOutput.data(), 1, jxlOutput.size(), pScreenshotFile );
+						fclose( pScreenshotFile );
+
+						xwm_log.infof( "Screenshot saved to %s", oScreenshotInfo->szScreenshotPath.c_str() );
+						bScreenshotSuccess = true;
+						// End measuring time, print result
+						auto end = std::chrono::steady_clock::now();
+						auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+						fprintf( stderr, "JXL encode took %ld ms\n", ms );
+						#endif
+						}
 				}
 				else if (pScreenshotTexture->format() == VK_FORMAT_B8G8R8A8_UNORM)
 				{
@@ -8158,6 +8307,10 @@ steamcompmgr_main(int argc, char **argv)
 					g_flHDRItmSdrNits = atof(optarg);
 				} else if (strcmp(opt_name, "hdr-itm-target-nits") == 0) {
 					g_flHDRItmTargetNits = atof(optarg);
+				} else if (strcmp(opt_name, "screenshot-format") == 0) {
+					int img = atoi(optarg);
+					format = (img == 1) ? screenshot_format::JXL : screenshot_format::AVIF;
+					printf("format = %d\n", static_cast<int>(format));
 				} else if (strcmp(opt_name, "framerate-limit") == 0) {
 					g_nSteamCompMgrTargetFPS = atoi(optarg);
 				} else if (strcmp(opt_name, "reshade-effect") == 0) {
