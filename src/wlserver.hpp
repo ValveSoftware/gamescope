@@ -210,6 +210,7 @@ struct wlserver_pointer {
 	struct wl_listener button;
 	struct wl_listener axis;
 	struct wl_listener frame;
+	struct wl_listener destroy;
 };
 
 struct wlserver_touch {
@@ -218,6 +219,7 @@ struct wlserver_touch {
 	struct wl_listener down;
 	struct wl_listener up;
 	struct wl_listener motion;
+	struct wl_listener destroy;
 
     gamescope::IBackendConnector* connector;
 };

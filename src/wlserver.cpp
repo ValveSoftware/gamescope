@@ -475,6 +475,29 @@ static void wlserver_handle_touch_motion(struct wl_listener *listener, void *dat
 	wlserver_touchmotion( event->x, event->y, event->touch_id, event->time_msec, false, touch->connector );
 }
 
+static void wlserver_handle_pointer_destroy(struct wl_listener *listener, void *data)
+{
+	struct wlserver_pointer *pointer = wl_container_of( listener, pointer, destroy );
+
+	wl_list_remove( &pointer->motion.link );
+	wl_list_remove( &pointer->button.link );
+	wl_list_remove( &pointer->axis.link );
+	wl_list_remove( &pointer->frame.link );
+	wl_list_remove( &pointer->destroy.link );
+	free( pointer );
+}
+
+static void wlserver_handle_touch_destroy(struct wl_listener *listener, void *data)
+{
+	struct wlserver_touch *touch = wl_container_of( listener, touch, destroy );
+
+	wl_list_remove( &touch->down.link );
+	wl_list_remove( &touch->up.link );
+	wl_list_remove( &touch->motion.link );
+	wl_list_remove( &touch->destroy.link );
+	free( touch );
+}
+
 static void wlserver_new_input(struct wl_listener *listener, void *data)
 {
 	struct wlr_input_device *device = (struct wlr_input_device *) data;
@@ -504,7 +527,7 @@ static void wlserver_new_input(struct wl_listener *listener, void *data)
 		{
 			struct wlserver_pointer *pointer = (struct wlserver_pointer *) calloc( 1, sizeof( struct wlserver_pointer ) );
 
-			pointer->wlr = (struct wlr_pointer *)device;
+			pointer->wlr = wlr_pointer_from_input_device( device );
 
 			pointer->motion.notify = wlserver_handle_pointer_motion;
 			wl_signal_add( &pointer->wlr->events.motion, &pointer->motion );
@@ -514,13 +537,15 @@ static void wlserver_new_input(struct wl_listener *listener, void *data)
 			wl_signal_add( &pointer->wlr->events.axis, &pointer->axis);
 			pointer->frame.notify = wlserver_handle_pointer_frame;
 			wl_signal_add( &pointer->wlr->events.frame, &pointer->frame);
+			pointer->destroy.notify = wlserver_handle_pointer_destroy;
+			wl_signal_add( &device->events.destroy, &pointer->destroy);
 		}
 		break;
 		case WLR_INPUT_DEVICE_TOUCH:
 		{
 			struct wlserver_touch *touch = (struct wlserver_touch *) calloc( 1, sizeof( struct wlserver_touch ) );
 
-			touch->wlr = (struct wlr_touch *)device;
+			touch->wlr = wlr_touch_from_input_device( device );
 
 			touch->down.notify = wlserver_handle_touch_down;
 			wl_signal_add( &touch->wlr->events.down, &touch->down );
@@ -528,6 +553,8 @@ static void wlserver_new_input(struct wl_listener *listener, void *data)
 			wl_signal_add( &touch->wlr->events.up, &touch->up );
 			touch->motion.notify = wlserver_handle_touch_motion;
 			wl_signal_add( &touch->wlr->events.motion, &touch->motion );
+			touch->destroy.notify = wlserver_handle_touch_destroy;
+			wl_signal_add( &device->events.destroy, &touch->destroy);
 
 			wlserver_touch_associate_connector( touch );
 		}
