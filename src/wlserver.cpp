@@ -2288,7 +2288,11 @@ void wlserver_run(void)
 
 #if HAVE_SESSION
 	if ( wlserver.wlr.session )
+	{
 		wl_list_remove( &wlserver.session_active.link );
+		wlr_session_destroy( wlserver.wlr.session );
+		wlserver.wlr.session = nullptr;
+	}
 #endif
 
 	wl_display_destroy_clients(wlserver.display);
