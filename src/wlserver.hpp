@@ -125,6 +125,7 @@ struct wlserver_t {
 		struct wlr_keyboard *virtual_keyboard_device;
 
 		struct wlr_device *device;
+		struct wl_listener *device_change_listener = nullptr;
 
 		std::vector<std::unique_ptr<gamescope_xwayland_server_t>> xwayland_servers;
 	} wlr;

@@ -1732,15 +1732,21 @@ int wlsession_open_kms( const char *device_name ) {
 		}
 	}
 
-	struct wl_listener *listener = new wl_listener();
-	listener->notify = kms_device_handle_change;
-	wl_signal_add( &wlserver.wlr.device->events.change, listener );
+	wlserver.wlr.device_change_listener = new wl_listener();
+	wlserver.wlr.device_change_listener->notify = kms_device_handle_change;
+	wl_signal_add( &wlserver.wlr.device->events.change, wlserver.wlr.device_change_listener );
 
 	return wlserver.wlr.device->fd;
 }
 
 void wlsession_close_kms()
 {
+	if ( wlserver.wlr.device_change_listener )
+	{
+		wl_list_remove( &wlserver.wlr.device_change_listener->link );
+		delete wlserver.wlr.device_change_listener;
+		wlserver.wlr.device_change_listener = nullptr;
+	}
 	wlr_session_close_file( wlserver.wlr.session, wlserver.wlr.device );
 }
 
