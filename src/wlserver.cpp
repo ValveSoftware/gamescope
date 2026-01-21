@@ -1776,6 +1776,8 @@ gamescope_xwayland_server_t::~gamescope_xwayland_server_t()
 	}
 	content_overrides.clear();
 
+	wl_list_remove(&xwayland_ready_listener.link);
+
 	wlr_xwayland_server_destroy(xwayland_server);
 	xwayland_server = nullptr;
 
