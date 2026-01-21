@@ -1745,6 +1745,7 @@ void wlsession_close_kms()
 		wl_list_remove( &wlserver.wlr.device_change_listener.link );
 	}
 	wlr_session_close_file( wlserver.wlr.session, wlserver.wlr.device );
+	wlserver.wlr.device = nullptr;
 }
 
 #endif
