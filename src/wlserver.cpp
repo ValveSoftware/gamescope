@@ -2245,6 +2245,19 @@ void wlserver_run(void)
 	// wlroots will restart it automatically.
 	wlserver_lock();
 	wlserver.wlr.xwayland_servers.clear();
+
+	wl_list_remove( &new_surface_listener.link );
+	wl_list_remove( &new_input_listener.link );
+	wl_list_remove( &wlserver.new_pointer_constraint.link );
+	wl_list_remove( &wlserver.new_xdg_surface.link );
+	wl_list_remove( &wlserver.new_xdg_toplevel.link );
+	wl_list_remove( &wlserver.new_layer_shell_surface.link );
+
+#if HAVE_SESSION
+	if ( wlserver.wlr.session )
+		wl_list_remove( &wlserver.session_active.link );
+#endif
+
 	wl_display_destroy_clients(wlserver.display);
 	wl_display_destroy(wlserver.display);
     wlserver.display = NULL;
