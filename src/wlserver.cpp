@@ -610,6 +610,9 @@ static void handle_wl_surface_destroy( struct wl_listener *l, void *data )
 		wl_resource_set_user_data( pSwapchain, nullptr );
 	}
 
+	wl_list_remove( &surf->commit.link );
+	wl_list_remove( &surf->destroy.link );
+
 	delete surf;
 }
 
