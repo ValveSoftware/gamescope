@@ -2838,7 +2838,7 @@ paint_all( global_focus_t *pFocus, bool async )
 			drmCaptureFormat = DRM_FORMAT_XRGB2101010;
 		else if ( format == screenshot_format::JXL )
 			drmCaptureFormat = DRM_FORMAT_XRGB2101010;
-		else if ( format == screenshot_format::PNG )
+		else if ( path.extension() == ".png" )
 			drmCaptureFormat = DRM_FORMAT_XRGB8888;
 		else if ( path.extension() == ".nv12.bin" )
 			drmCaptureFormat = DRM_FORMAT_NV12;
@@ -2849,7 +2849,7 @@ paint_all( global_focus_t *pFocus, bool async )
 
 		if ( pScreenshotTexture )
 		{
-			bool bHDRScreenshot = format == screenshot_format::AVIF &&
+			bool bHDRScreenshot = (format == screenshot_format::AVIF || format == screenshot_format::JXL) &&
 								  frameInfo.layerCount > 0 &&
 								  ColorspaceIsHDR( frameInfo.layers[0].colorspace ) &&
 								  oScreenshotInfo->eScreenshotType != GAMESCOPE_CONTROL_SCREENSHOT_TYPE_SCREEN_BUFFER;
@@ -2985,6 +2985,8 @@ paint_all( global_focus_t *pFocus, bool async )
 						}
 						assert( HAVE_AVIF );
 						#if HAVE_AVIF
+						// Start measuring time for benchmarking
+						auto start = std::chrono::steady_clock::now();
 						avifResult avifResult = AVIF_RESULT_OK;
 
 						avifImage *pAvifImage = avifImageCreate( g_nOutputWidth, g_nOutputHeight, 10, AVIF_PIXEL_FORMAT_YUV444 );
@@ -3057,6 +3059,10 @@ paint_all( global_focus_t *pFocus, bool async )
 
 						xwm_log.infof( "Screenshot saved to %s", oScreenshotInfo->szScreenshotPath.c_str() );
 						bScreenshotSuccess = true;
+						// End measuring time, print result
+						auto end = std::chrono::steady_clock::now();
+						auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+						fprintf( stderr, "AVIF encode took %ld ms\n", ms );
 						#endif
 					}
 					else if( format == screenshot_format::JXL )
@@ -3132,7 +3138,7 @@ paint_all( global_focus_t *pFocus, bool async )
 						// Lossless
 						JxlEncoderSetFrameLossless( frame, JXL_TRUE );
 						// Fastest effort
-						JxlEncoderFrameSettingsSetOption( frame, JXL_ENC_FRAME_SETTING_EFFORT, 1 );
+						JxlEncoderFrameSettingsSetOption( frame, JXL_ENC_FRAME_SETTING_EFFORT, 2 );
 
 						size_t data_size = g_nOutputWidth * g_nOutputHeight * 3 * sizeof( uint16_t );
 
@@ -8328,8 +8334,18 @@ steamcompmgr_main(int argc, char **argv)
 				} else if (strcmp(opt_name, "hdr-itm-target-nits") == 0) {
 					g_flHDRItmTargetNits = atof(optarg);
 				} else if (strcmp(opt_name, "screenshot-format") == 0) {
-					int img = atoi(optarg);
-					format = (img == 1) ? screenshot_format::JXL : screenshot_format::AVIF;
+					// Checks for string as well as int, could be reduced to only work with int, similar as default-touch-mode
+					if (isdigit(optarg[0])) {
+						int img = atoi(optarg);
+						format = (img == 0) ? screenshot_format::AVIF
+											: screenshot_format::JXL;
+					}
+					else if (strcasecmp(optarg, "avif") == 0) {
+						format = screenshot_format::AVIF;
+					}
+					else if (strcasecmp(optarg, "jxl") == 0) {
+						format = screenshot_format::JXL;
+					}
 					printf("format = %d\n", static_cast<int>(format));
 				} else if (strcmp(opt_name, "framerate-limit") == 0) {
 					g_nSteamCompMgrTargetFPS = atoi(optarg);
