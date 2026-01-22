@@ -291,7 +291,7 @@ namespace gamescope
 			struct tm *pLocalTime = localtime( &currentTime );
 			// Set ext variable for file extension
 			const char* filename;
-			switch(format)
+			switch( format )
 			{
 				case screenshot_format::AVIF:
 					filename = "/tmp/gamescope_%Y-%m-%d_%H-%M-%S.avif";
