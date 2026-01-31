@@ -281,6 +281,7 @@ struct FrameInfo_t
 {
 	bool useFSRLayer0;
 	bool useNISLayer0;
+	bool useAnime4k2xCnnULLayer0;
 	bool bFadingOut;
 	BlurMode blurLayer0;
 	int blurRadius;
@@ -545,6 +546,11 @@ struct VulkanOutput_t
 	// NIS
 	gamescope::OwningRc<CVulkanTexture> nisScalerImage;
 	gamescope::OwningRc<CVulkanTexture> nisUsmImage;
+
+	// Anime4K UL - 7 layers × 3 textures + 3 final + 1 output
+	gamescope::OwningRc<CVulkanTexture> anime4kULLayers[7][3];
+	gamescope::OwningRc<CVulkanTexture> anime4kULLast[3];
+	gamescope::OwningRc<CVulkanTexture> anime4kULOut;
 };
 
 
@@ -557,6 +563,7 @@ enum ShaderType {
 	SHADER_TYPE_RCAS,
 	SHADER_TYPE_NIS,
 	SHADER_TYPE_RGB_TO_NV12,
+	SHADER_TYPE_ANIME4K_2X_CNN_UL,
 
 	SHADER_TYPE_COUNT
 };
@@ -769,6 +776,7 @@ public:
 
 	VkSampler sampler(SamplerState key);
 	VkPipeline pipeline(ShaderType type, uint32_t layerCount = 1, uint32_t ycbcrMask = 0, uint32_t blur_layers = 0, uint32_t colorspace_mask = 0, uint32_t output_eotf = EOTF_Gamma22, bool itm_enable = false);
+	VkPipeline anime4kULPipeline(uint32_t pass) { return m_anime4kULPipelines[pass]; }
 	int32_t findMemoryType( VkMemoryPropertyFlags properties, uint32_t requiredTypeBits );
 	std::unique_ptr<CVulkanCmdBuffer> commandBuffer();
 	uint64_t submit( std::unique_ptr<CVulkanCmdBuffer> cmdBuf);
@@ -841,6 +849,7 @@ protected:
 	bool createLayouts();
 	bool createPools();
 	bool createShaders();
+	bool createAnime4kULPipelines();
 	bool createScratchResources();
 	VkPipeline compilePipeline(uint32_t layerCount, uint32_t ycbcrMask, ShaderType type, uint32_t blur_layer_count, uint32_t composite_debug, uint32_t colorspace_mask, uint32_t output_eotf, bool itm_enable);
 	void compileAllPipelines();
@@ -875,6 +884,7 @@ protected:
 	std::unordered_map< SamplerState, VkSampler > m_samplerCache;
 	std::array<VkShaderModule, SHADER_TYPE_COUNT> m_shaderModules;
 	std::unordered_map<PipelineInfo_t, VkPipeline> m_pipelineMap;
+	VkPipeline m_anime4kULPipelines[9] = {};
 	std::mutex m_pipelineMutex;
 
 	static constexpr uint32_t k_uMaxConcurrentSubmits = 8;
@@ -935,6 +945,7 @@ public:
 	void setSamplerNearest(uint32_t slot, bool nearest);
 	void setSamplerUnnormalized(uint32_t slot, bool unnormalized);
 	void bindTarget(gamescope::Rc<CVulkanTexture> target);
+	void bindTargets(gamescope::Rc<CVulkanTexture> target0, gamescope::Rc<CVulkanTexture> target1, gamescope::Rc<CVulkanTexture> target2);
 	void clearState();
 	template<class PushData, class... Args>
 	void uploadConstants(Args&&... args);
@@ -974,7 +985,8 @@ private:
 	std::array<CVulkanTexture *, VKR_SAMPLER_SLOTS> m_boundTextures;
 	std::bitset<VKR_SAMPLER_SLOTS> m_useSrgb;
 	std::array<SamplerState, VKR_SAMPLER_SLOTS> m_samplerState;
-	CVulkanTexture *m_target;
+	std::array<CVulkanTexture *, VKR_TARGET_SLOTS> m_targets;
+	uint32_t m_targetCount = 0;
 
 	std::array<CVulkanTexture *, VKR_LUT3D_COUNT> m_shaperLut;
 	std::array<CVulkanTexture *, VKR_LUT3D_COUNT> m_lut3D;

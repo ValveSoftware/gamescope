@@ -48,6 +48,7 @@
 #include "cs_nis.h"
 #include "cs_nis_fp16.h"
 #include "cs_rgb_to_nv12.h"
+#include "cs_anime4k_2x_cnn_ul.h"
 
 #define A_CPU
 #include "shaders/ffx_a.h"
@@ -311,6 +312,8 @@ bool CVulkanDevice::BInit(VkInstance instance, VkSurfaceKHR surface)
 	if (!createPools())
 		return false;
 	if (!createShaders())
+		return false;
+	if (!createAnime4kULPipelines())
 		return false;
 	if (!createScratchResources())
 		return false;
@@ -773,7 +776,7 @@ bool CVulkanDevice::createLayouts()
 	for (auto& sampler : ycbcrSamplers)
 		sampler = m_ycbcrSampler;
 
-	std::array<VkDescriptorSetLayoutBinding, 7 > layoutBindings = {
+	std::array<VkDescriptorSetLayoutBinding, 8 > layoutBindings = {
 		VkDescriptorSetLayoutBinding {
 			.binding = 0,
 			.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
@@ -788,6 +791,12 @@ bool CVulkanDevice::createLayouts()
 		},
 		VkDescriptorSetLayoutBinding {
 			.binding = 2,
+			.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+			.descriptorCount = 1,
+			.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+		},
+		VkDescriptorSetLayoutBinding {
+			.binding = 7,
 			.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
 			.descriptorCount = 1,
 			.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
@@ -954,6 +963,7 @@ bool CVulkanDevice::createShaders()
 		SHADER(NIS, cs_nis);
 	}
 	SHADER(RGB_TO_NV12, cs_rgb_to_nv12);
+	SHADER(ANIME4K_2X_CNN_UL, cs_anime4k_2x_cnn_ul);
 #undef SHADER
 
 	for (uint32_t i = 0; i < shaderInfos.size(); i++)
@@ -968,6 +978,44 @@ bool CVulkanDevice::createShaders()
 		if ( res != VK_SUCCESS )
 		{
 			vk_errorf( res, "vkCreateShaderModule failed" );
+			return false;
+		}
+	}
+
+	return true;
+}
+
+bool CVulkanDevice::createAnime4kULPipelines()
+{
+	VkSpecializationMapEntry passEntry = {
+		.constantID = 8,
+		.offset = 0,
+		.size = sizeof(uint32_t)
+	};
+
+	for (uint32_t pass = 0; pass < 9; pass++) {
+		VkSpecializationInfo specInfo = {
+			.mapEntryCount = 1,
+			.pMapEntries = &passEntry,
+			.dataSize = sizeof(uint32_t),
+			.pData = &pass
+		};
+
+		VkComputePipelineCreateInfo pipelineInfo = {
+			.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+			.stage = {
+				.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+				.stage = VK_SHADER_STAGE_COMPUTE_BIT,
+				.module = m_shaderModules[SHADER_TYPE_ANIME4K_2X_CNN_UL],
+				.pName = "main",
+				.pSpecializationInfo = &specInfo
+			},
+			.layout = m_pipelineLayout
+		};
+
+		VkResult res = vk.CreateComputePipelines(device(), VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &m_anime4kULPipelines[pass]);
+		if (res != VK_SUCCESS) {
+			vk_errorf(res, "vkCreateComputePipelines failed for Anime4K UL pass %u", pass);
 			return false;
 		}
 	}
@@ -1594,9 +1642,24 @@ void CVulkanCmdBuffer::setSamplerUnnormalized(uint32_t slot, bool unnormalized)
 
 void CVulkanCmdBuffer::bindTarget(gamescope::Rc<CVulkanTexture> target)
 {
-	m_target = target.get();
+	m_targets[0] = target.get();
+	m_targetCount = 1;
 	if (target)
 		m_textureRefs.emplace_back(std::move(target));
+}
+
+void CVulkanCmdBuffer::bindTargets(gamescope::Rc<CVulkanTexture> target0, gamescope::Rc<CVulkanTexture> target1, gamescope::Rc<CVulkanTexture> target2)
+{
+	m_targets[0] = target0.get();
+	m_targets[1] = target1.get();
+	m_targets[2] = target2.get();
+	m_targetCount = 3;
+	if (target0)
+		m_textureRefs.emplace_back(std::move(target0));
+	if (target1)
+		m_textureRefs.emplace_back(std::move(target1));
+	if (target2)
+		m_textureRefs.emplace_back(std::move(target2));
 }
 
 void CVulkanCmdBuffer::clearState()
@@ -1607,7 +1670,9 @@ void CVulkanCmdBuffer::clearState()
 	for (auto& sampler : m_samplerState)
 		sampler = {};
 
-	m_target = nullptr;
+	for (auto& target : m_targets)
+		target = nullptr;
+	m_targetCount = 0;
 	m_useSrgb.reset();
 }
 
@@ -1633,13 +1698,17 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z)
 		if (src)
 			prepareSrcImage(src);
 	}
-	assert(m_target != nullptr);
-	prepareDestImage(m_target);
+	assert(m_targetCount > 0 && m_targets[0] != nullptr);
+	for (uint32_t i = 0; i < m_targetCount; i++)
+	{
+		if (m_targets[i])
+			prepareDestImage(m_targets[i]);
+	}
 	insertBarrier();
 
 	VkDescriptorSet descriptorSet = m_device->descriptorSet();
 
-	std::array<VkWriteDescriptorSet, 7> writeDescriptorSets;
+	std::array<VkWriteDescriptorSet, 8> writeDescriptorSets;
 	std::array<VkDescriptorImageInfo, VKR_SAMPLER_SLOTS> imageDescriptors = {};
 	std::array<VkDescriptorImageInfo, VKR_SAMPLER_SLOTS> ycbcrImageDescriptors = {};
 	std::array<VkDescriptorImageInfo, VKR_TARGET_SLOTS> targetDescriptors = {};
@@ -1680,6 +1749,16 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z)
 	writeDescriptorSets[3] = {
 		.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 		.dstSet = descriptorSet,
+		.dstBinding = 7,
+		.dstArrayElement = 0,
+		.descriptorCount = 1,
+		.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+		.pImageInfo = &targetDescriptors[2],
+	};
+
+	writeDescriptorSets[4] = {
+		.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+		.dstSet = descriptorSet,
 		.dstBinding = 3,
 		.dstArrayElement = 0,
 		.descriptorCount = imageDescriptors.size(),
@@ -1687,7 +1766,7 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z)
 		.pImageInfo = imageDescriptors.data(),
 	};
 
-	writeDescriptorSets[4] = {
+	writeDescriptorSets[5] = {
 		.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 		.dstSet = descriptorSet,
 		.dstBinding = 4,
@@ -1697,7 +1776,7 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z)
 		.pImageInfo = ycbcrImageDescriptors.data(),
 	};
 
-	writeDescriptorSets[5] = {
+	writeDescriptorSets[6] = {
 		.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 		.dstSet = descriptorSet,
 		.dstBinding = 5,
@@ -1707,7 +1786,7 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z)
 		.pImageInfo = shaperLutDescriptor.data(),
 	};
 
-	writeDescriptorSets[6] = {
+	writeDescriptorSets[7] = {
 		.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 		.dstSet = descriptorSet,
 		.dstBinding = 6,
@@ -1757,18 +1836,24 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z)
 		lut3DDescriptor[i].imageView = m_lut3D[i] ? m_lut3D[i]->srgbView() : VK_NULL_HANDLE;
 	}
 
-	if (!m_target->isYcbcr())
+	if (m_targetCount == 1 && m_targets[0]->isYcbcr())
 	{
-		targetDescriptors[0].imageView = m_target->srgbView();
+		targetDescriptors[0].imageView = m_targets[0]->lumaView();
 		targetDescriptors[0].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+		targetDescriptors[1].imageView = m_targets[0]->chromaView();
+		targetDescriptors[1].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 	}
 	else
 	{
-		targetDescriptors[0].imageView = m_target->lumaView();
-		targetDescriptors[0].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-
-		targetDescriptors[1].imageView = m_target->chromaView();
-		targetDescriptors[1].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+		for (uint32_t i = 0; i < m_targetCount; i++)
+		{
+			if (m_targets[i])
+			{
+				targetDescriptors[i].imageView = m_targets[i]->srgbView();
+				targetDescriptors[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+			}
+		}
 	}
 
 	m_device->vk.UpdateDescriptorSets(m_device->device(), writeDescriptorSets.size(), writeDescriptorSets.data(), 0, nullptr);
@@ -1777,7 +1862,11 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z)
 
 	m_device->vk.CmdDispatch(m_cmdBuffer, x, y, z);
 
-	markDirty(m_target);
+	for (uint32_t i = 0; i < m_targetCount; i++)
+	{
+		if (m_targets[i])
+			markDirty(m_targets[i]);
+	}
 }
 
 void CVulkanCmdBuffer::copyImage(gamescope::Rc<CVulkanTexture> src, gamescope::Rc<CVulkanTexture> dst)
@@ -3464,6 +3553,49 @@ static void update_tmp_images( uint32_t width, uint32_t height )
 }
 
 
+// TODO: Free the textures when anime4k UL is not used anymore
+static void update_anime4k_ul_buffers(uint32_t width, uint32_t height, uint32_t outWidth, uint32_t outHeight)
+{
+    if (g_output.anime4kULLayers[0][0] != nullptr
+        && g_output.anime4kULLayers[0][0]->width() == width
+        && g_output.anime4kULLayers[0][0]->height() == height)
+    {
+        return;
+    }
+
+    CVulkanTexture::createFlags createFlags;
+    createFlags.bSampled = true;
+    createFlags.bStorage = true;
+
+    for (int layer = 0; layer < 7; layer++) {
+        for (int tex = 0; tex < 3; tex++) {
+            g_output.anime4kULLayers[layer][tex] = new CVulkanTexture();
+            if (!g_output.anime4kULLayers[layer][tex]->BInit(width, height, 1u, DRM_FORMAT_ABGR16161616F, createFlags, nullptr))
+            {
+                vk_log.errorf("failed to create anime4k UL layer[%d][%d] buffer", layer, tex);
+                return;
+            }
+        }
+    }
+
+    for (int tex = 0; tex < 3; tex++) {
+        g_output.anime4kULLast[tex] = new CVulkanTexture();
+        if (!g_output.anime4kULLast[tex]->BInit(width, height, 1u, DRM_FORMAT_ABGR16161616F, createFlags, nullptr))
+        {
+            vk_log.errorf("failed to create anime4k UL last[%d] buffer", tex);
+            return;
+        }
+    }
+
+    g_output.anime4kULOut = new CVulkanTexture();
+    if (!g_output.anime4kULOut->BInit(outWidth, outHeight, 1u, DRM_FORMAT_ARGB8888, createFlags, nullptr))
+    {
+        vk_log.errorf("failed to create anime4k UL output buffer");
+        return;
+    }
+}
+
+
 static bool init_nis_data()
 {
 	// Create the NIS images
@@ -3865,6 +3997,17 @@ struct NisPushData_t
 			tempX, tempY);
 	}
 };
+
+struct Anime4kPushData_t {
+    uvec2_t u_inputSize;
+    uvec2_t u_outputSize;
+
+    Anime4kPushData_t(uint32_t inputX, uint32_t inputY, uint32_t outputX, uint32_t outputY)
+        : u_inputSize{inputX, inputY}
+        , u_outputSize{outputX, outputY}
+    {}
+};
+
 #pragma pack(pop)
 
 void bind_all_layers(CVulkanCmdBuffer* cmdBuffer, const struct FrameInfo_t *frameInfo)
@@ -4071,6 +4214,89 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 
 		int pixelsPerGroup = 8;
 
+		cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup));
+	}
+	else if ( frameInfo->useAnime4k2xCnnULLayer0 )
+	{
+		uint32_t inputX = frameInfo->layers[0].tex->width();
+		uint32_t inputY = frameInfo->layers[0].tex->height();
+
+		uint32_t outX = inputX * 2;
+		uint32_t outY = inputY * 2;
+
+		update_anime4k_ul_buffers(inputX, inputY, outX, outY);
+
+		const int pixelsPerGroup = 8;
+
+		cmdBuffer->bindPipeline(g_device.anime4kULPipeline(0));
+		cmdBuffer->bindTargets(g_output.anime4kULLayers[0][0], g_output.anime4kULLayers[0][1], g_output.anime4kULLayers[0][2]);
+		cmdBuffer->bindTexture(0, frameInfo->layers[0].tex);
+		cmdBuffer->setTextureSrgb(0, true);
+		cmdBuffer->setSamplerUnnormalized(0, false);
+		cmdBuffer->setSamplerNearest(0, false);
+		cmdBuffer->uploadConstants<Anime4kPushData_t>(inputX, inputY, inputX, inputY);
+		cmdBuffer->dispatch(div_roundup(inputX, pixelsPerGroup), div_roundup(inputY, pixelsPerGroup));
+
+		for (int layer = 1; layer <= 6; layer++) {
+			int passIdx = layer;
+			cmdBuffer->bindPipeline(g_device.anime4kULPipeline(passIdx));
+			cmdBuffer->bindTargets(g_output.anime4kULLayers[layer][0], g_output.anime4kULLayers[layer][1], g_output.anime4kULLayers[layer][2]);
+			
+			for (int t = 0; t < 3; t++) {
+				cmdBuffer->bindTexture(t, g_output.anime4kULLayers[layer - 1][t]);
+				cmdBuffer->setTextureSrgb(t, false);
+				cmdBuffer->setSamplerUnnormalized(t, false);
+				cmdBuffer->setSamplerNearest(t, true);
+			}
+			cmdBuffer->uploadConstants<Anime4kPushData_t>(inputX, inputY, inputX, inputY);
+			cmdBuffer->dispatch(div_roundup(inputX, pixelsPerGroup), div_roundup(inputY, pixelsPerGroup));
+		}
+
+		cmdBuffer->bindPipeline(g_device.anime4kULPipeline(7));
+		cmdBuffer->bindTargets(g_output.anime4kULLast[0], g_output.anime4kULLast[1], g_output.anime4kULLast[2]);
+		
+		int texIdx = 0;
+		for (int layer = 2; layer <= 6; layer++) {
+			for (int t = 0; t < 3; t++) {
+				cmdBuffer->bindTexture(texIdx, g_output.anime4kULLayers[layer][t]);
+				cmdBuffer->setTextureSrgb(texIdx, false);
+				cmdBuffer->setSamplerUnnormalized(texIdx, false);
+				cmdBuffer->setSamplerNearest(texIdx, true);
+				texIdx++;
+			}
+		}
+		cmdBuffer->uploadConstants<Anime4kPushData_t>(inputX, inputY, inputX, inputY);
+		cmdBuffer->dispatch(div_roundup(inputX, pixelsPerGroup), div_roundup(inputY, pixelsPerGroup));
+
+		cmdBuffer->bindPipeline(g_device.anime4kULPipeline(8));
+		cmdBuffer->bindTarget(g_output.anime4kULOut);
+
+		for (int t = 0; t < 3; t++) {
+			cmdBuffer->bindTexture(t, g_output.anime4kULLast[t]);
+			cmdBuffer->setTextureSrgb(t, false);
+			cmdBuffer->setSamplerUnnormalized(t, false);
+			cmdBuffer->setSamplerNearest(t, true);
+		}
+
+		cmdBuffer->bindTexture(3, frameInfo->layers[0].tex);
+		cmdBuffer->setTextureSrgb(3, true);
+		cmdBuffer->setSamplerUnnormalized(3, false);
+		cmdBuffer->setSamplerNearest(3, false);
+		cmdBuffer->uploadConstants<Anime4kPushData_t>(inputX, inputY, outX, outY);
+		cmdBuffer->dispatch(div_roundup(outX, pixelsPerGroup), div_roundup(outY, pixelsPerGroup));
+
+		struct FrameInfo_t anime4kFrameInfo = *frameInfo;
+		anime4kFrameInfo.layers[0].tex = g_output.anime4kULOut;
+
+		float scaleX = (float)outX / (float)currentOutputWidth;
+		float scaleY = (float)outY / (float)currentOutputHeight;
+		float uniformScale = std::max(scaleX, scaleY);
+		anime4kFrameInfo.layers[0].scale.x = uniformScale;
+		anime4kFrameInfo.layers[0].scale.y = uniformScale;
+		cmdBuffer->bindPipeline(g_device.pipeline(SHADER_TYPE_BLIT, anime4kFrameInfo.layerCount, anime4kFrameInfo.ycbcrMask(), 0u, anime4kFrameInfo.colorspaceMask(), outputTF));
+		bind_all_layers(cmdBuffer.get(), &anime4kFrameInfo);
+		cmdBuffer->bindTarget(compositeImage);
+		cmdBuffer->uploadConstants<BlitPushData_t>(&anime4kFrameInfo);
 		cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup));
 	}
 	else if ( frameInfo->blurLayer0 )

@@ -2596,6 +2596,7 @@ paint_all( global_focus_t *pFocus, bool async )
 					bool needsScaling = frameInfo.layers[0].scale.x < 0.999f && frameInfo.layers[0].scale.y < 0.999f;
 					frameInfo.useFSRLayer0 = g_upscaleFilter == GamescopeUpscaleFilter::FSR && needsScaling;
 					frameInfo.useNISLayer0 = g_upscaleFilter == GamescopeUpscaleFilter::NIS && needsScaling;
+					frameInfo.useAnime4k2xCnnULLayer0 = g_upscaleFilter == GamescopeUpscaleFilter::ANIME4K_2X_CNN_UL && needsScaling;
 				}
 				if ( pFocus == GetCurrentFocus() )
 					update_touch_scaling( &frameInfo );
@@ -2736,6 +2737,7 @@ paint_all( global_focus_t *pFocus, bool async )
 
 		frameInfo.useFSRLayer0 = false;
 		frameInfo.useNISLayer0 = false;
+		frameInfo.useAnime4k2xCnnULLayer0 = false;
 	}
 
 	g_bFSRActive = frameInfo.useFSRLayer0;
@@ -7151,6 +7153,7 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 			paint_window_commit( newCommit, w, w, &upscaledFrameInfo, nullptr );
 			upscaledFrameInfo.useFSRLayer0 = g_upscaleFilter == GamescopeUpscaleFilter::FSR;
 			upscaledFrameInfo.useNISLayer0 = g_upscaleFilter == GamescopeUpscaleFilter::NIS;
+			upscaledFrameInfo.useAnime4k2xCnnULLayer0 = g_upscaleFilter == GamescopeUpscaleFilter::ANIME4K_2X_CNN_UL;
 			globalScaleRatio = flOldGlobalScale;
 			zoomScaleRatio = flOldZoomScale;
 			flOldOverscanScale = flOldOverscanScale;
