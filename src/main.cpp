@@ -771,7 +771,7 @@ int main(int argc, char **argv)
 			case 0: // long options without a short option
 				opt_name = gamescope_options[opt_index].name;
 				if (strcmp(opt_name, "help") == 0) {
-					fprintf(stderr, "%s", usage);
+					fprintf(stdout, "%s", usage);
 					return 0;
 				} else if (strcmp(opt_name, "version") == 0) {
 					// We always print the version to stderr anyway.
