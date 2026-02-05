@@ -162,6 +162,40 @@ namespace gamescope
         return outState;
     }
 
+
+    inline bool BPlaneHasValidGeometry(const std::optional<WaylandPlaneState> &oState) 
+    {
+        // valid values for:
+        //  - src:
+        //     width & height: -1 or > 0
+        //     x & y: -1 or >= 0
+        //  - dst:
+        //     width & height: -1 or > 0
+        //     x & y: INT_MIN to INT_MAX (no restriction)
+        //
+        //  For our purposes, we won't treat src{X,Y,Width,Height} or
+        //  dst{Width,Height} values of -1 as valid Since we'll never set those
+        //  aforementioned geometry components to -1 while still intending to
+        //  present the plane
+        if (!oState) {
+            return false;
+        }
+        const double epsilon = 0.001; // same epsilon value used in close_enough()
+        const double slightlyAboveZero = 0.0 + epsilon; // avoid any possible floating point comparison weirdness
+        if (oState->flSrcX < 0.0 || oState->flSrcY < 0.0
+            || oState->flSrcWidth < slightlyAboveZero
+            || oState->flSrcHeight < slightlyAboveZero)
+        {
+            return false;
+        }
+
+        if (oState->nDstWidth <= 0 || oState->nDstHeight <= 0)
+        {
+            return false;
+        }
+        return true;
+    }
+
     static int CreateShmBuffer( uint32_t uSize, void *pData )
     {
         char szShmBufferPath[ PATH_MAX ];
@@ -1441,7 +1475,7 @@ namespace gamescope
             m_oCurrentPlaneState = oState;
         }
 
-        if ( oState )
+        if ( BPlaneHasValidGeometry(oState) )
         {
             assert( oState->pBuffer );
 
@@ -1558,7 +1592,6 @@ namespace gamescope
                         break;
                 }
             }
-
             // Fraction with denominator of 120 per. spec
             const uint32_t uScale = oState->uFractionalScale;
 
