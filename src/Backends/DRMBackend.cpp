@@ -3426,7 +3426,7 @@ namespace gamescope
         }
 		virtual bool ValidPhysicalDevice( VkPhysicalDevice pVkPhysicalDevice ) const override
 		{
-			return true;
+			return vulkan_has_drm_props();
 		}
 
 		virtual int Present( const FrameInfo_t *pFrameInfo, bool bAsync )
