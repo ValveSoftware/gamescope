@@ -3498,7 +3498,7 @@ namespace gamescope
 			if ( !bDoComposite )
 			{
 				// Scanout + Planes Path
-				m_bWasPartialCompsiting = false;
+				m_bWasPartialCompositing = false;
 				m_bWasCompositing = false;
 				if ( pFrameInfo->layerCount == 2 )
 					m_nLastSingleOverlayZPos = pFrameInfo->layers[1].zpos;
@@ -3549,7 +3549,7 @@ namespace gamescope
 			// We were already stalling for the full composition before, so it's not an issue
 			// for latency, we just need to make sure we get 1 partial frame that isn't deferred
 			// in time so we don't lose layers.
-			bool bDefer = !bNeedsFullComposite && ( !m_bWasCompositing || m_bWasPartialCompsiting );
+			bool bDefer = !bNeedsFullComposite && ( !m_bWasCompositing || m_bWasPartialCompositing );
 
 			// If doing a partial composition then remove the baseplane
 			// from our frameinfo to composite.
@@ -3608,11 +3608,11 @@ namespace gamescope
 				baseLayer->ctm = nullptr;
 				baseLayer->colorspace = pFrameInfo->outputEncodingEOTF == EOTF_PQ ? GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ : GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB;
 
-				m_bWasPartialCompsiting = false;
+				m_bWasPartialCompositing = false;
 			}
 			else
 			{
-				if ( m_bWasPartialCompsiting || !bDefer )
+				if ( m_bWasPartialCompositing || !bDefer )
 				{
 					presentCompFrameInfo.applyOutputColorMgmt = g_ColorMgmt.pending.enabled;
 					presentCompFrameInfo.layerCount = 2;
@@ -3665,7 +3665,7 @@ namespace gamescope
 					}
 				}
 
-				m_bWasPartialCompsiting = true;
+				m_bWasPartialCompositing = true;
 			}
 
 			int ret = drm_prepare( &g_DRM, bAsync, &presentCompFrameInfo );
@@ -3868,7 +3868,7 @@ namespace gamescope
 
 	private:
 		bool m_bWasCompositing = false;
-		bool m_bWasPartialCompsiting = false;
+		bool m_bWasPartialCompositing = false;
 		int m_nLastSingleOverlayZPos = 0;
 
 		uint32_t m_uNextPresentCtx = 0;
