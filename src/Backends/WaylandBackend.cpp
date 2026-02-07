@@ -3098,6 +3098,11 @@ namespace gamescope
     }
     void CWaylandInputThread::Wayland_Pointer_Axis( wl_pointer *pPointer, uint32_t uTime, uint32_t uAxis, wl_fixed_t fValue )
     {
+        if ( !cv_wayland_mouse_warp_without_keyboard_focus && !m_bKeyboardEntered )
+            return;
+
+        // Collect scroll info from touchpad
+        m_flScrollAccum[ !uAxis ] += wl_fixed_to_double( fValue );
     }
     void CWaylandInputThread::Wayland_Pointer_Axis_Source( wl_pointer *pPointer, uint32_t uAxisSource )
     {
@@ -3130,7 +3135,7 @@ namespace gamescope
         if ( !cv_wayland_mouse_warp_without_keyboard_focus && !m_bKeyboardEntered )
             return;
 
-        if ( m_uAxisSource != WL_POINTER_AXIS_SOURCE_WHEEL )
+        if ( m_uAxisSource != WL_POINTER_AXIS_SOURCE_WHEEL && m_uAxisSource != WL_POINTER_AXIS_SOURCE_FINGER )
             return;
 
         if ( flX == 0.0 && flY == 0.0 )
