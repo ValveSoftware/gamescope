@@ -1997,7 +1997,18 @@ static VkResult getModifierProps( const VkImageCreateInfo *imageInfo, uint64_t m
 		.pNext = externalFormatProps,
 	};
 
-	return g_device.vk.GetPhysicalDeviceImageFormatProperties2(g_device.physDev(), &imageFormatInfo, &imageProps);
+	VkResult res = g_device.vk.GetPhysicalDeviceImageFormatProperties2(g_device.physDev(), &imageFormatInfo, &imageProps);
+	if ( res != VK_SUCCESS )
+		return res;
+
+	if ( imageInfo->extent.width > imageProps.imageFormatProperties.maxExtent.width ||
+		 imageInfo->extent.height > imageProps.imageFormatProperties.maxExtent.height ||
+		 imageInfo->extent.depth > imageProps.imageFormatProperties.maxExtent.depth )
+	{
+		return VK_ERROR_FORMAT_NOT_SUPPORTED;
+	}
+
+	return VK_SUCCESS;
 }
 
 static VkImageViewType VulkanImageTypeToViewType(VkImageType type)
