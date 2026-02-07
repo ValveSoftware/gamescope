@@ -1054,7 +1054,7 @@ static void gamescope_pipewire_bind( struct wl_client *client, void *data, uint3
 	struct wl_resource *resource = wl_resource_create( client, &gamescope_pipewire_interface, version, id );
 	wl_resource_set_implementation( resource, &gamescope_pipewire_impl, NULL, NULL );
 
-	gamescope_pipewire_send_stream_node( resource, get_pipewire_stream_node_id() );
+	gamescope_pipewire_send_stream_node( resource, pipewire_get_stream_node_id() );
 }
 
 static void create_gamescope_pipewire( void )
