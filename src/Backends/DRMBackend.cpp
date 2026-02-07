@@ -2,6 +2,7 @@
 
 #include "Script/Script.h"
 
+#include <sys/eventfd.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -22,6 +23,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -168,6 +170,14 @@ bool drm_set_mode( struct drm_t *drm, const drmModeModeInfo *mode );
 using namespace std::literals;
 
 struct drm_t g_DRM = {};
+
+// Flip handler thread control. Keep the thread object global so we
+// can join it during shutdown instead of detaching and risking the
+// thread still using the DRM fd while we clean up.
+static std::thread g_page_flip_handler_thread;
+static std::atomic<bool> g_page_flip_handler_thread_should_exit{false};
+
+static int g_page_flip_eventfd = -1;
 
 namespace gamescope
 {
@@ -777,25 +787,52 @@ void flip_handler_thread_run(void)
 {
 	pthread_setname_np( pthread_self(), "gamescope-kms" );
 
-	struct pollfd pollfd = {
-		.fd = g_DRM.fd,
-		.events = POLLIN,
-	};
+	// Prepare pollfds: one for DRM fd and for eventfd to
+	// wake up the poll immediately when requested to exit.
+	struct pollfd fds[2];
+	int nfds = 0;
 
-	while ( true )
+	fds[nfds].fd = g_DRM.fd;
+	fds[nfds].events = POLLIN;
+	nfds++;
+
+	if ( g_page_flip_eventfd != -1 ) {
+		fds[nfds].fd = g_page_flip_eventfd;
+		fds[nfds].events = POLLIN;
+		nfds++;
+	}
+
+	while ( !g_page_flip_handler_thread_should_exit.load( std::memory_order_acquire ) )
 	{
-		int ret = poll( &pollfd, 1, -1 );
+		int ret = poll( fds, nfds, -1 );
 		if ( ret < 0 ) {
+			if ( errno == EINTR )
+				continue;
 			drm_log.errorf_errno( "polling for DRM events failed" );
 			break;
 		}
+		if ( ret == 0 ) {
+			// timeout, check exit condition again
+			continue;
+		}
 
-		drmEventContext evctx = {
-			.version = 3,
-			.page_flip_handler2 = page_flip_handler,
-		};
-		drmHandleEvent(g_DRM.fd, &evctx);
+		// Check if eventfd signaled
+		if ( nfds > 1 && (fds[1].revents & POLLIN) ) {
+			uint64_t val;
+			ssize_t r = read( g_page_flip_eventfd, &val, sizeof( val ) );
+			(void)r;
+		}
+
+		if ( (fds[0].revents & POLLIN) ) {
+			drmEventContext evctx = {
+				.version = 3,
+				.page_flip_handler2 = page_flip_handler,
+			};
+			drmHandleEvent( g_DRM.fd, &evctx );
+		}
 	}
+
+	drm_log.debugf("page_flip_handler_thread exiting");
 }
 
 static bool refresh_state( drm_t *drm )
@@ -1379,8 +1416,13 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 		}
 	}
 
-	std::thread flip_handler_thread( flip_handler_thread_run );
-	flip_handler_thread.detach();
+	// Create an eventfd to wake the flip handler poll for immediate exit.
+	g_page_flip_eventfd = eventfd( 0, EFD_NONBLOCK | EFD_CLOEXEC );
+	if ( g_page_flip_eventfd == -1 ) {
+		drm_log.errorf_errno( "page-flip eventfd creation failed" );
+	}
+
+	g_page_flip_handler_thread = std::thread( flip_handler_thread_run );
 
 	// Set log priority to the max, liftoff_log_scope will filter for us.
 	liftoff_log_set_priority(LIFTOFF_DEBUG);
@@ -1551,9 +1593,30 @@ void finish_drm(struct drm_t *drm)
 	drm->connectors.clear();
 
 
+	// Signal the page-flip handler thread to exit and join it so it won't be
+	// using the DRM fd while we clean it up. The thread polls with a
+	// timeout, so this join will return shortly.
+	if ( g_page_flip_handler_thread.joinable() ) {
+		g_page_flip_handler_thread_should_exit.store( true, std::memory_order_release );
 
-	// We can't close the DRM FD here, it might still be in use by the
-	// page-flip handler thread.
+		// Wake the eventfd so the poll wakes immediately.
+		if ( g_page_flip_eventfd != -1 ) {
+			uint64_t one = 1;
+			ssize_t w = write( g_page_flip_eventfd, &one, sizeof(one) );
+			(void)w;
+
+			g_page_flip_handler_thread.join();
+
+			close( g_page_flip_eventfd );
+			g_page_flip_eventfd = -1;
+		} else {
+			drm_log.errorf( "No eventfd for flip handler thread; waiting for page-flip thread to exit. We may hang here." );
+			g_page_flip_handler_thread.join();
+		}
+	}
+
+	wlsession_close_kms();
+	g_DRM.fd = -1;
 }
 
 gamescope::OwningRc<gamescope::IBackendFb> drm_fbid_from_dmabuf( struct drm_t *drm, struct wlr_dmabuf_attributes *dma_buf )

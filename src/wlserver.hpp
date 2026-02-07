@@ -125,6 +125,7 @@ struct wlserver_t {
 		struct wlr_keyboard *virtual_keyboard_device;
 
 		struct wlr_device *device;
+		struct wl_listener *device_change_listener = nullptr;
 
 		std::vector<std::unique_ptr<gamescope_xwayland_server_t>> xwayland_servers;
 	} wlr;
@@ -210,6 +211,7 @@ struct wlserver_pointer {
 	struct wl_listener button;
 	struct wl_listener axis;
 	struct wl_listener frame;
+	struct wl_listener destroy;
 };
 
 struct wlserver_touch {
@@ -218,6 +220,7 @@ struct wlserver_touch {
 	struct wl_listener down;
 	struct wl_listener up;
 	struct wl_listener motion;
+	struct wl_listener destroy;
 
     gamescope::IBackendConnector* connector;
 };

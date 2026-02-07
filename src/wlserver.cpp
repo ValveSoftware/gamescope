@@ -475,6 +475,29 @@ static void wlserver_handle_touch_motion(struct wl_listener *listener, void *dat
 	wlserver_touchmotion( event->x, event->y, event->touch_id, event->time_msec, false, touch->connector );
 }
 
+static void wlserver_handle_pointer_destroy(struct wl_listener *listener, void *data)
+{
+	struct wlserver_pointer *pointer = wl_container_of( listener, pointer, destroy );
+
+	wl_list_remove( &pointer->motion.link );
+	wl_list_remove( &pointer->button.link );
+	wl_list_remove( &pointer->axis.link );
+	wl_list_remove( &pointer->frame.link );
+	wl_list_remove( &pointer->destroy.link );
+	free( pointer );
+}
+
+static void wlserver_handle_touch_destroy(struct wl_listener *listener, void *data)
+{
+	struct wlserver_touch *touch = wl_container_of( listener, touch, destroy );
+
+	wl_list_remove( &touch->down.link );
+	wl_list_remove( &touch->up.link );
+	wl_list_remove( &touch->motion.link );
+	wl_list_remove( &touch->destroy.link );
+	free( touch );
+}
+
 static void wlserver_new_input(struct wl_listener *listener, void *data)
 {
 	struct wlr_input_device *device = (struct wlr_input_device *) data;
@@ -504,7 +527,7 @@ static void wlserver_new_input(struct wl_listener *listener, void *data)
 		{
 			struct wlserver_pointer *pointer = (struct wlserver_pointer *) calloc( 1, sizeof( struct wlserver_pointer ) );
 
-			pointer->wlr = (struct wlr_pointer *)device;
+			pointer->wlr = wlr_pointer_from_input_device( device );
 
 			pointer->motion.notify = wlserver_handle_pointer_motion;
 			wl_signal_add( &pointer->wlr->events.motion, &pointer->motion );
@@ -514,13 +537,15 @@ static void wlserver_new_input(struct wl_listener *listener, void *data)
 			wl_signal_add( &pointer->wlr->events.axis, &pointer->axis);
 			pointer->frame.notify = wlserver_handle_pointer_frame;
 			wl_signal_add( &pointer->wlr->events.frame, &pointer->frame);
+			pointer->destroy.notify = wlserver_handle_pointer_destroy;
+			wl_signal_add( &device->events.destroy, &pointer->destroy);
 		}
 		break;
 		case WLR_INPUT_DEVICE_TOUCH:
 		{
 			struct wlserver_touch *touch = (struct wlserver_touch *) calloc( 1, sizeof( struct wlserver_touch ) );
 
-			touch->wlr = (struct wlr_touch *)device;
+			touch->wlr = wlr_touch_from_input_device( device );
 
 			touch->down.notify = wlserver_handle_touch_down;
 			wl_signal_add( &touch->wlr->events.down, &touch->down );
@@ -528,6 +553,8 @@ static void wlserver_new_input(struct wl_listener *listener, void *data)
 			wl_signal_add( &touch->wlr->events.up, &touch->up );
 			touch->motion.notify = wlserver_handle_touch_motion;
 			wl_signal_add( &touch->wlr->events.motion, &touch->motion );
+			touch->destroy.notify = wlserver_handle_touch_destroy;
+			wl_signal_add( &device->events.destroy, &touch->destroy);
 
 			wlserver_touch_associate_connector( touch );
 		}
@@ -609,6 +636,9 @@ static void handle_wl_surface_destroy( struct wl_listener *l, void *data )
 	{
 		wl_resource_set_user_data( pSwapchain, nullptr );
 	}
+
+	wl_list_remove( &surf->commit.link );
+	wl_list_remove( &surf->destroy.link );
 
 	delete surf;
 }
@@ -1702,16 +1732,23 @@ int wlsession_open_kms( const char *device_name ) {
 		}
 	}
 
-	struct wl_listener *listener = new wl_listener();
-	listener->notify = kms_device_handle_change;
-	wl_signal_add( &wlserver.wlr.device->events.change, listener );
+	wlserver.wlr.device_change_listener = new wl_listener();
+	wlserver.wlr.device_change_listener->notify = kms_device_handle_change;
+	wl_signal_add( &wlserver.wlr.device->events.change, wlserver.wlr.device_change_listener );
 
 	return wlserver.wlr.device->fd;
 }
 
 void wlsession_close_kms()
 {
+	if ( wlserver.wlr.device_change_listener )
+	{
+		wl_list_remove( &wlserver.wlr.device_change_listener->link );
+		delete wlserver.wlr.device_change_listener;
+		wlserver.wlr.device_change_listener = nullptr;
+	}
 	wlr_session_close_file( wlserver.wlr.session, wlserver.wlr.device );
+	wlserver.wlr.device = nullptr;
 }
 
 #endif
@@ -1772,6 +1809,8 @@ gamescope_xwayland_server_t::~gamescope_xwayland_server_t()
 		free( co.second );
 	}
 	content_overrides.clear();
+
+	wl_list_remove(&xwayland_ready_listener.link);
 
 	wlr_xwayland_server_destroy(xwayland_server);
 	xwayland_server = nullptr;
@@ -2240,6 +2279,23 @@ void wlserver_run(void)
 	// wlroots will restart it automatically.
 	wlserver_lock();
 	wlserver.wlr.xwayland_servers.clear();
+
+	wl_list_remove( &new_surface_listener.link );
+	wl_list_remove( &new_input_listener.link );
+	wl_list_remove( &wlserver.new_pointer_constraint.link );
+	wl_list_remove( &wlserver.new_xdg_surface.link );
+	wl_list_remove( &wlserver.new_xdg_toplevel.link );
+	wl_list_remove( &wlserver.new_layer_shell_surface.link );
+
+#if HAVE_SESSION
+	if ( wlserver.wlr.session )
+	{
+		wl_list_remove( &wlserver.session_active.link );
+		wlr_session_destroy( wlserver.wlr.session );
+		wlserver.wlr.session = nullptr;
+	}
+#endif
+
 	wl_display_destroy_clients(wlserver.display);
 	wl_display_destroy(wlserver.display);
     wlserver.display = NULL;
