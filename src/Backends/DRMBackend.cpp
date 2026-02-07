@@ -3454,7 +3454,7 @@ namespace gamescope
 
 			bool bLayer0ScreenSize = close_enough(pFrameInfo->layers[0].scale.x, 1.0f) && close_enough(pFrameInfo->layers[0].scale.y, 1.0f);
 
-			bool bNeedsCompositeFromFilter = (g_upscaleFilter == GamescopeUpscaleFilter::NEAREST || g_upscaleFilter == GamescopeUpscaleFilter::PIXEL) && !bLayer0ScreenSize;
+			bool bNeedsCompositeFromFilter = (g_upscaleFilter == GamescopeUpscaleFilter::NEAREST || g_upscaleFilter == GamescopeUpscaleFilter::PIXEL || g_upscaleFilter == GamescopeUpscaleFilter::SUBPIXEL_RGB || g_upscaleFilter == GamescopeUpscaleFilter::SUBPIXEL_OLED || g_upscaleFilter == GamescopeUpscaleFilter::SUBPIXEL_VBGR || g_upscaleFilter == GamescopeUpscaleFilter::SUBPIXEL_QDOLED) && !bLayer0ScreenSize;
 
 			bool bNeedsFullComposite = false;
 			bNeedsFullComposite |= cv_composite_force;
@@ -4012,4 +4012,3 @@ int HackyDRMPresent( const FrameInfo_t *pFrameInfo, bool bAsync )
 {
 	return static_cast<gamescope::CDRMBackend *>( GetBackend() )->Present( pFrameInfo, bAsync );
 }
-

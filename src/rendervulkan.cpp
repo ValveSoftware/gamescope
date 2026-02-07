@@ -3643,6 +3643,96 @@ float g_flInternalDisplayBrightnessNits = 500.0f;
 float g_flHDRItmSdrNits = 100.f;
 float g_flHDRItmTargetNits = 1000.f;
 
+struct SubpixelFilterDefinition
+{
+	GamescopeUpscaleFilter eFilter;
+	vec2_t downscaleRatio;
+	const char *pName;
+};
+
+static constexpr std::array<SubpixelFilterDefinition, 4> g_SubpixelFilterDefinitions = {{
+	{ GamescopeUpscaleFilter::SUBPIXEL_RGB,   { 3.0f, 3.0f },   "horizontal RGB" },
+	{ GamescopeUpscaleFilter::SUBPIXEL_OLED,  { 2.0f, 2.0f },   "RG/B OLED" },
+	{ GamescopeUpscaleFilter::SUBPIXEL_VBGR,  { 3.0f, 3.0f },   "vertical BGR" },
+	{ GamescopeUpscaleFilter::SUBPIXEL_QDOLED,{ 2.0f, 2.0f },   "G/RB QD-OLED" },
+}};
+
+static const SubpixelFilterDefinition *FindSubpixelFilterDefinition( GamescopeUpscaleFilter eFilter )
+{
+	for ( const auto &definition : g_SubpixelFilterDefinitions )
+	{
+		if ( definition.eFilter == eFilter )
+			return &definition;
+	}
+
+	return nullptr;
+}
+
+static GamescopeUpscaleFilter GetLayerShaderFilter( const FrameInfo_t::Layer_t &layer )
+{
+	if ( layer.isScreenSize() || ( layer.filter == GamescopeUpscaleFilter::LINEAR && layer.viewConvertsToLinearAutomatically() ) )
+		return GamescopeUpscaleFilter::FROM_VIEW;
+
+	if ( const auto *definition = FindSubpixelFilterDefinition( layer.filter ) )
+	{
+		static int s_lastState[ g_SubpixelFilterDefinitions.size() ] = { -1, -1, -1, -1 };
+		size_t idx = definition - g_SubpixelFilterDefinitions.data();
+
+		float dimRatioX = 0.0f;
+		float dimRatioY = 0.0f;
+		if ( layer.tex )
+		{
+			dimRatioX = layer.tex->width()  / (float)std::max(1u, currentOutputWidth);
+			dimRatioY = layer.tex->height() / (float)std::max(1u, currentOutputHeight);
+		}
+
+		auto scaleToRatio = []( float s ) -> float {
+			if ( s == 0.0f )
+				return 0.0f;
+			return s >= 1.0f ? s : (1.0f / s);
+		};
+
+		float scaleRatioX = scaleToRatio( layer.scale.x );
+		float scaleRatioY = scaleToRatio( layer.scale.y );
+
+		float observedX = dimRatioX > 0.0f ? dimRatioX : scaleRatioX;
+		float observedY = dimRatioY > 0.0f ? dimRatioY : scaleRatioY;
+
+		bool ratioOk =
+			close_enough( observedX, definition->downscaleRatio.x ) &&
+			close_enough( observedY, definition->downscaleRatio.y );
+
+		int state = ratioOk ? 1 : 0;
+		if ( state != s_lastState[idx] )
+		{
+			if ( ratioOk )
+			{
+				vk_log.infof( "Subpixel %s filter active: scale=(%.3f, %.3f) ratio=(%.3f, %.3f) tex=%ux%u out=%ux%u target=(%.1f, %.1f)",
+					definition->pName,
+					layer.scale.x, layer.scale.y, observedX, observedY,
+					layer.tex ? layer.tex->width() : 0, layer.tex ? layer.tex->height() : 0,
+					currentOutputWidth, currentOutputHeight,
+					definition->downscaleRatio.x, definition->downscaleRatio.y );
+			}
+			else
+			{
+				vk_log.warnf( "Subpixel %s filter disabled (ratio mismatch): scale=(%.3f, %.3f) ratio=(%.3f, %.3f) tex=%ux%u out=%ux%u target=(%.1f, %.1f)",
+					definition->pName,
+					layer.scale.x, layer.scale.y, observedX, observedY,
+					layer.tex ? layer.tex->width() : 0, layer.tex ? layer.tex->height() : 0,
+					currentOutputWidth, currentOutputHeight,
+					definition->downscaleRatio.x, definition->downscaleRatio.y );
+			}
+			s_lastState[idx] = state;
+		}
+
+		if ( !ratioOk )
+			return GamescopeUpscaleFilter::LINEAR;
+	}
+
+	return layer.filter;
+}
+
 #pragma pack(push, 1)
 struct BlitPushData_t
 {
@@ -3672,10 +3762,7 @@ struct BlitPushData_t
 			scale[i] = layer->scale;
 			offset[i] = layer->offsetPixelCenter();
 			opacity[i] = layer->opacity;
-            if (layer->isScreenSize() || (layer->filter == GamescopeUpscaleFilter::LINEAR && layer->viewConvertsToLinearAutomatically()))
-                u_shaderFilter |= ((uint32_t)GamescopeUpscaleFilter::FROM_VIEW) << (i * 4);
-            else
-                u_shaderFilter |= ((uint32_t)layer->filter) << (i * 4);
+			u_shaderFilter |= ((uint32_t)GetLayerShaderFilter(*layer)) << (i * 4);
 
 			u_alphaMode |= ((uint32_t)layer->eAlphaBlendingMode) << ( i * 4 );
 
@@ -3812,10 +3899,8 @@ struct RcasPushData_t
 		{
 			const FrameInfo_t::Layer_t *layer = &frameInfo->layers[i];
 
-            if (i == 0 || layer->isScreenSize() || (layer->filter == GamescopeUpscaleFilter::LINEAR && layer->viewConvertsToLinearAutomatically()))
-                u_shaderFilter |= ((uint32_t)GamescopeUpscaleFilter::FROM_VIEW) << (i * 4);
-            else
-                u_shaderFilter |= ((uint32_t)layer->filter) << (i * 4);
+			GamescopeUpscaleFilter shaderFilter = i == 0 ? GamescopeUpscaleFilter::FROM_VIEW : GetLayerShaderFilter(*layer);
+			u_shaderFilter |= ((uint32_t)shaderFilter) << (i * 4);
 
 			u_alphaMode |= ((uint32_t)layer->eAlphaBlendingMode) << ( i * 4 );
 
