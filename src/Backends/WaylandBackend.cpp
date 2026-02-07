@@ -60,6 +60,14 @@ static const char *GAMESCOPE_proxy_tag = "gamescope-proxy";
 static const char *GAMESCOPE_plane_tag = "gamescope-plane";
 static const char *GAMESCOPE_toplevel_tag = "gamescope-toplevel";
 
+const std::vector<const char*> supportedMimeTypes = {
+    "text/plain;charset=utf-8",
+    "UTF8_STRING",
+    "text/plain",
+    "STRING",
+    "TEXT",
+};
+
 template <typename Func, typename... Args>
 auto CallWithAllButLast(Func pFunc, Args&&... args)
 {
@@ -768,6 +776,13 @@ namespace gamescope
         void Wayland_DataSource_Cancelled( struct wl_data_source *pSource );
         static const wl_data_source_listener s_DataSourceListener;
 
+        void Wayland_DataDevice_DataOffer( struct wl_data_device *pDevice, struct wl_data_offer *pOffer );
+        void Wayland_DataDevice_Selection( wl_data_device *pDataDevice, wl_data_offer *pOffer );
+        static const wl_data_device_listener s_DataDeviceListener;
+
+        void Wayland_DataOffer_Offer( struct wl_data_offer *pOffer, const char *pMime );
+        static const struct wl_data_offer_listener s_DataOfferListener;
+
         void Wayland_PrimarySelectionSource_Send( struct zwp_primary_selection_source_v1 *pSource, const char *pMime, int nFd );
         void Wayland_PrimarySelectionSource_Cancelled( struct zwp_primary_selection_source_v1 *pSource );
         static const zwp_primary_selection_source_v1_listener s_PrimarySelectionSourceListener;
@@ -803,6 +818,7 @@ namespace gamescope
         wl_data_device *m_pDataDevice = nullptr;
         std::shared_ptr<std::string> m_pClipboard = nullptr;
 
+        std::vector<std::string> m_CurrentOfferMimeTypes;
         zwp_primary_selection_device_manager_v1 *m_pPrimarySelectionDeviceManager = nullptr;
         zwp_primary_selection_device_v1 *m_pPrimarySelectionDevice = nullptr;
         std::shared_ptr<std::string> m_pPrimarySelection = nullptr;
@@ -913,6 +929,17 @@ namespace gamescope
         .send      = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_PrimarySelectionSource_Send ),
         .cancelled = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_PrimarySelectionSource_Cancelled ),
     };
+	const wl_data_device_listener CWaylandBackend::s_DataDeviceListener = {
+		.data_offer = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_DataDevice_DataOffer ),
+		.enter = WAYLAND_NULL(),
+		.leave = WAYLAND_NULL(),
+		.motion = WAYLAND_NULL(),
+		.drop = WAYLAND_NULL(),
+		.selection = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_DataDevice_Selection ),
+	};
+	const wl_data_offer_listener CWaylandBackend::s_DataOfferListener = {
+		.offer = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_DataOffer_Offer ),
+	};
 
     //////////////////
     // CWaylandFb
@@ -1302,11 +1329,9 @@ namespace gamescope
             m_pBackend->m_pClipboard = szContents;
             wl_data_source *source = wl_data_device_manager_create_data_source( m_pBackend->m_pDataDeviceManager );
             wl_data_source_add_listener( source, &m_pBackend->s_DataSourceListener, m_pBackend );
-            wl_data_source_offer( source, "text/plain" );
-            wl_data_source_offer( source, "text/plain;charset=utf-8" );
-            wl_data_source_offer( source, "TEXT" );
-            wl_data_source_offer( source, "STRING" );
-            wl_data_source_offer( source, "UTF8_STRING" );
+            for (const char *mime_type : supportedMimeTypes) {
+                wl_data_source_offer(source, mime_type);
+            }
             wl_data_device_set_selection( m_pBackend->m_pDataDevice, source, m_pBackend->m_uKeyboardEnterSerial );
         }
         else if ( eSelection == GAMESCOPE_SELECTION_PRIMARY && m_pBackend->m_pPrimarySelectionDevice )
@@ -1314,11 +1339,9 @@ namespace gamescope
             m_pBackend->m_pPrimarySelection = szContents;
             zwp_primary_selection_source_v1 *source = zwp_primary_selection_device_manager_v1_create_source( m_pBackend->m_pPrimarySelectionDeviceManager );
             zwp_primary_selection_source_v1_add_listener( source, &m_pBackend->s_PrimarySelectionSourceListener, m_pBackend );
-            zwp_primary_selection_source_v1_offer( source, "text/plain" );
-            zwp_primary_selection_source_v1_offer( source, "text/plain;charset=utf-8" );
-            zwp_primary_selection_source_v1_offer( source, "TEXT" );
-            zwp_primary_selection_source_v1_offer( source, "STRING" );
-            zwp_primary_selection_source_v1_offer( source, "UTF8_STRING" );
+            for (const char *mime_type : supportedMimeTypes) {
+                zwp_primary_selection_source_v1_offer( source, mime_type );
+            }
             zwp_primary_selection_device_v1_set_selection( m_pBackend->m_pPrimarySelectionDevice, source, m_pBackend->m_uPointerEnterSerial );
         }
     }
@@ -2077,6 +2100,16 @@ namespace gamescope
             return false;
         }
 
+        // Set up the data device listener
+        if (m_pDataDeviceManager && !m_pDataDevice) {
+            m_pDataDevice = wl_data_device_manager_get_data_device(m_pDataDeviceManager, m_pSeat);
+            if (!m_pDataDevice) {
+                xdg_log.errorf("Failed to get wl_data_device");
+                return false;
+            }
+            wl_data_device_add_listener(m_pDataDevice, &s_DataDeviceListener, this);
+        }
+
         xdg_log.infof( "Initted Wayland backend" );
 
         return true;
@@ -2717,12 +2750,17 @@ namespace gamescope
 
     // Data Source
 
-    void CWaylandBackend::Wayland_DataSource_Send( struct wl_data_source *pSource, const char *pMime, int nFd )
+	void CWaylandBackend::Wayland_DataSource_Send( struct wl_data_source *pSource, const char *pMime, int nFd )
     {
-        ssize_t len = m_pClipboard->length();
-        if ( write( nFd, m_pClipboard->c_str(), len ) != len )
-            xdg_log.infof( "Failed to write all %zd bytes to clipboard", len );
-        close( nFd );
+    	if ( !m_pClipboard )
+    	{
+    		close( nFd );
+    		return;
+    	}
+    	ssize_t len = m_pClipboard->length();
+    	if ( write( nFd, m_pClipboard->c_str(), len ) != len )
+    		xdg_log.infof( "Failed to write all %zd bytes to clipboard", len );
+    	close( nFd );
     }
     void CWaylandBackend::Wayland_DataSource_Cancelled( struct wl_data_source *pSource )
     {
@@ -2731,16 +2769,98 @@ namespace gamescope
 
     // Primary Selection Source
 
-    void CWaylandBackend::Wayland_PrimarySelectionSource_Send( struct zwp_primary_selection_source_v1 *pSource, const char *pMime, int nFd )
+	void CWaylandBackend::Wayland_PrimarySelectionSource_Send( struct zwp_primary_selection_source_v1 *pSource, const char *pMime, int nFd )
     {
-	ssize_t len = m_pPrimarySelection->length();
-        if ( write( nFd, m_pPrimarySelection->c_str(), len ) != len )
-	    xdg_log.infof( "Failed to write all %zd bytes to clipboard", len );
-        close( nFd );
+    	if ( !m_pPrimarySelection )
+    	{
+    		close( nFd );
+    		return;
+    	}
+    	ssize_t len = m_pPrimarySelection->length();
+    	if ( write( nFd, m_pPrimarySelection->c_str(), len ) != len )
+    		xdg_log.infof( "Failed to write all %zd bytes to clipboard", len );
+    	close( nFd );
     }
     void CWaylandBackend::Wayland_PrimarySelectionSource_Cancelled( struct zwp_primary_selection_source_v1 *pSource)
     {
         zwp_primary_selection_source_v1_destroy( pSource );
+    }
+
+    // Data Device
+
+    void CWaylandBackend::Wayland_DataDevice_Selection(wl_data_device *pDataDevice, wl_data_offer *pOffer) {
+        // An application has set the clipboard contents
+        if (pOffer == nullptr) {
+            // Clipboard is empty
+            m_CurrentOfferMimeTypes.clear();
+            m_pClipboard = nullptr;
+            gamescope_set_selection(std::string{}, GAMESCOPE_SELECTION_CLIPBOARD);
+            return;
+        }
+
+        wl_display_roundtrip(m_pDisplay);
+
+        const char *selectedMimeType = nullptr;
+
+        for (const char *supportedType : supportedMimeTypes) {
+            for (const auto &offeredType : m_CurrentOfferMimeTypes) {
+                if (offeredType == supportedType) {
+                    selectedMimeType = supportedType;
+                    break;
+                }
+            }
+            if (selectedMimeType)
+                break;
+        }
+
+        if (!selectedMimeType) {
+            xdg_log.debugf("No supported clipboard MIME type found. Destroying data offer.");
+            wl_data_offer_destroy(pOffer);
+            m_CurrentOfferMimeTypes.clear();
+            return;
+        }
+
+        xdg_log.debugf("Accepting clipboard MIME type: %s", selectedMimeType);
+
+        int fds[2];
+        if (pipe(fds) < 0) {
+            xdg_log.errorf("Failed to create pipe for clipboard data");
+            wl_data_offer_destroy(pOffer);
+            m_CurrentOfferMimeTypes.clear();
+            return;
+        }
+
+        wl_data_offer_receive(pOffer, selectedMimeType, fds[1]);
+        close(fds[1]);
+
+        wl_display_roundtrip(m_pDisplay);
+
+        // Read the clipboard contents and store it in a member variable.
+        std::string clipboardData;
+        char buf[1024];
+        ssize_t n;
+        while ((n = read(fds[0], buf, sizeof(buf))) > 0) {
+            clipboardData.append(buf, n);
+        }
+        close(fds[0]);
+
+        m_pClipboard = std::make_shared<std::string>(clipboardData);
+
+        gamescope_set_selection( clipboardData, GAMESCOPE_SELECTION_CLIPBOARD);
+
+        wl_data_offer_destroy(pOffer);
+        m_CurrentOfferMimeTypes.clear();
+    }
+    void CWaylandBackend::Wayland_DataDevice_DataOffer(struct wl_data_device *pDevice, struct wl_data_offer *pOffer) {
+        m_CurrentOfferMimeTypes.clear();
+        wl_data_offer_add_listener(pOffer, &s_DataOfferListener, this);
+    }
+
+    // Data Offer
+    void CWaylandBackend::Wayland_DataOffer_Offer(struct wl_data_offer* pOffer, const char* pMime)
+    {
+        m_CurrentOfferMimeTypes.emplace_back(pMime);
+        xdg_log.debugf("Clipboard supports MIME type: %s", pMime);
     }
 
     ///////////////////////
