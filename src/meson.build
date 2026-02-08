@@ -72,6 +72,7 @@ shader_src = [
   'shaders/cs_nis.comp',
   'shaders/cs_nis_fp16.comp',
   'shaders/cs_rgb_to_nv12.comp',
+  'shaders/Anime4k/CNN_x2_UL/cs_anime4k_2x_cnn_ul.comp',
 ]
 
 spirv_shaders = glsl_generator.process(shader_src)
