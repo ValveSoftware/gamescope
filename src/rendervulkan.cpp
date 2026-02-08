@@ -912,7 +912,7 @@ bool CVulkanDevice::createPools()
 		},
 		{
 			VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-			uint32_t(m_descriptorSets.size()) * 2,
+			uint32_t(m_descriptorSets.size()) * 3,
 		},
 		{
 			VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
