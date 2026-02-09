@@ -804,6 +804,7 @@ public:
 	inline bool hasDrmPrimaryDevId() {return m_bHasDrmPrimaryDevId;}
 	inline dev_t primaryDevId() {return m_drmPrimaryDevId;}
 	inline bool supportsFp16() {return m_bSupportsFp16;}
+	inline std::vector<VkExtensionProperties>& supportedExtensions() {return m_supportedExts;}
 
 	inline std::pair<void *, uint32_t> uploadBufferData(uint32_t size)
 	{
@@ -894,6 +895,9 @@ protected:
 	std::atomic<uint64_t> m_submissionSeqNo = { 0 };
 	std::vector<std::unique_ptr<CVulkanCmdBuffer>> m_unusedCmdBufs;
 	std::map<uint64_t, std::unique_ptr<CVulkanCmdBuffer>> m_pendingCmdBufs;
+
+private:
+	std::vector<VkExtensionProperties> m_supportedExts;
 };
 
 struct TextureState
@@ -995,5 +999,8 @@ gamescope::OwningRc<CVulkanTexture> vulkan_create_flat_texture( uint32_t width, 
 bool vulkan_supports_hdr10();
 
 void vulkan_wait_idle();
+
+// Whether the driver implements VK_EXT_physical_device_drm
+bool vulkan_has_drm_props();
 
 extern CVulkanDevice g_device;
