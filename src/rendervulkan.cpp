@@ -595,6 +595,27 @@ bool CVulkanDevice::createDevice()
 	for ( auto& extension : GetBackend()->GetDeviceExtensions( physDev() ) )
 		enabledExtensions.push_back( extension );
 
+	uint32_t devExtPropCount = 0;
+	vk.EnumerateDeviceExtensionProperties( physDev(), nullptr, &devExtPropCount, nullptr );
+	std::vector<VkExtensionProperties> devExtProp( devExtPropCount );
+	vk.EnumerateDeviceExtensionProperties( physDev(), nullptr, &devExtPropCount, devExtProp.data() );
+	bool anyMissing = false;
+	for ( auto& requiredExt : enabledExtensions ) {
+		bool extFound = false;
+		for ( auto & availableExt : devExtProp ) {
+			if ( strcmp( requiredExt, availableExt.extensionName ) == 0 ) {
+				extFound = true;
+				break;
+			}
+		}
+		if ( !extFound ) {
+			vk_log.errorf( "Missing required extension: %s", requiredExt );
+			anyMissing = true;
+		}
+	}
+	if ( anyMissing )
+		return false;
+
 #if 0
 	VkPhysicalDeviceMaintenance5FeaturesKHR maintenance5 = {
 		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR,
