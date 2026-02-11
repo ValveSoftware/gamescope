@@ -5437,7 +5437,10 @@ void gamescope_set_selection(std::string contents, GamescopeSelection eSelection
 	gamescope_xwayland_server_t *server = NULL;
 	for (int i = 0; (server = wlserver_get_xwayland_server(i)); i++)
 	{
-		x11_set_selection_owner(server->ctx.get(), contents, eSelection);
+		xwayland_ctx_t *ctx = server->ctx.get();
+
+		if (ctx)
+			x11_set_selection_owner(ctx, contents, eSelection);
 	}
 }
 
