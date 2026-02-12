@@ -114,6 +114,7 @@ struct wlr_surface *wlserver_surface_to_main_surface( struct wlr_surface *pSurfa
 bool wlserver_process_hotkeys( wlr_keyboard *keyboard, uint32_t key, bool press );
 
 extern std::atomic<bool> hasRepaint;
+extern std::atomic<bool> hasRepaintCursor;
 
 std::vector<ResListEntry_t>& gamescope_xwayland_server_t::retrieve_commits()
 {
@@ -2417,7 +2418,7 @@ void wlserver_oncursorevent()
 
 	if ( !wlserver.bCursorHidden && wlserver.bCursorHasImage )
 	{
-		hasRepaint = true;
+		hasRepaintCursor = true;
 	}
 }
 
@@ -2490,7 +2491,7 @@ void wlserver_mousehide()
 	if ( wlserver.bCursorHidden != true )
 	{
 		wlserver.bCursorHidden = true;
-		hasRepaint = true;
+		hasRepaintCursor = true;
 	}
 }
 

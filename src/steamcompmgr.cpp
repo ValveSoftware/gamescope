@@ -298,6 +298,8 @@ update_runtime_info();
 gamescope::ConVar<bool> cv_adaptive_sync( "adaptive_sync", false, "Whether or not adaptive sync is enabled if available." );
 gamescope::ConVar<bool> cv_adaptive_sync_ignore_overlay( "adaptive_sync_ignore_overlay", false, "Whether or not to ignore overlay planes for pushing commits with adaptive sync." );
 gamescope::ConVar<int> cv_adaptive_sync_overlay_cycles( "adaptive_sync_overlay_cycles", 1, "Number of vblank cycles to ignore overlay repaints before forcing a commit with adaptive sync." );
+gamescope::ConVar<bool> cv_adaptive_sync_ignore_cursor( "adaptive_sync_ignore_cursor", false, "Whether or not to ignore cursor plane for pushing commits with adaptive sync." );
+gamescope::ConVar<int> cv_adaptive_sync_cursor_cycles( "adaptive_sync_cursor_cycles", 1, "Number of vblank cycles to ignore cursor repaints before forcing a commit with adaptive sync." );
 
 gamescope::ConVar<bool> cv_upscale_preemptive( "upscale_preemptive", true, "Allow pre-emptive upscaling" );
 gamescope::ConVar<bool> cv_upscale_preemptive_debug_force_sync( "upscale_preemptive_debug_force_sync", false, "Force synchronize pre-emptive upscaling" );
@@ -913,6 +915,7 @@ uint32_t		lastPublishedInputCounter;
 
 std::atomic<bool> hasRepaint = false;
 bool			hasRepaintNonBasePlane = false;
+std::atomic<bool> hasRepaintCursor = false;
 
 static gamescope::ConCommand cc_debug_force_repaint( "debug_force_repaint", "Force a repaint",
 []( std::span<std::string_view> args )
@@ -8792,12 +8795,19 @@ steamcompmgr_main(int argc, char **argv)
 		bool bPainted = false;
 
 		static int nIgnoredOverlayRepaints = 0;
+		static int nIgnoredCursorRepaints = 0;
 
 		if ( !hasRepaintNonBasePlane )
 			nIgnoredOverlayRepaints = 0;
 
+		if ( !hasRepaintCursor )
+			nIgnoredCursorRepaints = 0;
+
 		if ( cv_adaptive_sync_ignore_overlay )
 			nIgnoredOverlayRepaints = 0;
+
+		if ( cv_adaptive_sync_ignore_cursor )
+			nIgnoredCursorRepaints = 0;
 
 		for ( auto &iter : g_VirtualConnectorFocuses )
 		{
@@ -8866,6 +8876,8 @@ steamcompmgr_main(int argc, char **argv)
 
 				if ( nIgnoredOverlayRepaints )
 					eFlipType = FlipType::Normal;
+				if ( nIgnoredCursorRepaints )
+					eFlipType = FlipType::Normal;
 				if ( bHasOverlay ) // Don't tear if the Steam or perf overlay is up atm.
 					eFlipType = FlipType::Normal;
 				if ( GetVBlankTimer().WasCompositing() )
@@ -8920,6 +8932,24 @@ steamcompmgr_main(int argc, char **argv)
 										nIgnoredOverlayRepaints++;
 								}
 							}
+
+							if ( hasRepaintCursor )
+							{
+								if ( nIgnoredCursorRepaints >= cv_adaptive_sync_cursor_cycles )
+								{
+									// If we hit vblank and we previously punted on drawing a cursor update
+									// we should go ahead and draw now.
+									bShouldPaint = true;
+								}
+								else if ( !bShouldPaint )
+								{
+									// If we hit vblank (ie. fastest refresh cycle since last commit),
+									// and we aren't painting and we have a pending cursor update, then:
+									// defer it until the next game update or next true vblank.
+									if ( !cv_adaptive_sync_ignore_cursor )
+										nIgnoredCursorRepaints++;
+								}
+							}
 						}
 
 						// If we have a pending page flip and doing VRR, lets not do another...
@@ -8948,6 +8978,7 @@ steamcompmgr_main(int argc, char **argv)
 		{
 			hasRepaint = false;
 			hasRepaintNonBasePlane = false;
+			hasRepaintCursor = false;
 			nIgnoredOverlayRepaints = 0;
 
 			{
