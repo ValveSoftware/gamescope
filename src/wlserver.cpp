@@ -789,7 +789,7 @@ static void gamescope_xwayland_handle_override_window_content( struct wl_client 
 	//
 	// Right now, the surface -> xwayland association comes from the
 	// handle_wl_id stuff from steamcompmgr.
-	// However, this surface has no associated X window, and won't recieve
+	// However, this surface has no associated X window, and won't receive
 	// wl_id stuff as it's meant to replace another window's surface
 	// which we can't do without knowing the x11_window's xwayland server
 	// here for it to do that override logic in the first place.
@@ -2522,7 +2522,7 @@ static void wlserver_warp_to_constraint_hint()
 		static uint32_t s_unSyntheticMoveCount = 0;
 
 		// Add a heuristic for whether the cursor is continually moving, or if
-		// this is just a simple warp to the saame place.
+		// this is just a simple warp to the same place.
 		bool bSynthetic = true;
 		if ( wlserver.ulLastMovedCursorTime + 200'000'000 >= ulNow )
 		{
