@@ -14,6 +14,7 @@ extern int g_nNestedHeight;
 extern int g_nNestedRefresh; // mHz
 extern int g_nNestedUnfocusedRefresh; // mHz
 extern int g_nNestedDisplayIndex;
+extern const char *g_nClassName;
 
 extern uint32_t g_nOutputWidth;
 extern uint32_t g_nOutputHeight;
