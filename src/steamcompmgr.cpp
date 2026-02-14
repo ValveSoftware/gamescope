@@ -3597,6 +3597,25 @@ found:;
 		}
 	}
 
+	if ( eStrategy == gamescope::VirtualConnectorStrategies::SingleApplication )
+	{
+		if ( focusControlWindow != None )
+		{
+			for ( steamcompmgr_win_t *focusable_window : vecPossibleFocusWindows )
+			{
+				if ( focusable_window->type != steamcompmgr_win_type_t::XWAYLAND )
+					continue;
+
+				if ( focusable_window->xwayland().id == focusControlWindow )
+				{
+					override_focus = focus = focusable_window;
+					localGameFocused = true;
+					break;
+				}
+			}
+		}
+	}
+
 	if ( focus )
 	{
 		if ( window_has_commits( focus ) ) 
