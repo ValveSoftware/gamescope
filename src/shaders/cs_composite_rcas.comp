@@ -89,7 +89,7 @@ void rcasComposite(uvec2 pos)
     }
 
     outputValue = encodeOutputColor(outputValue);
-    imageStore(dst, ivec2(pos), vec4(outputValue, 0));
+    imageStore(dst, ivec2(pos), applyOutputSwizzle(vec4(outputValue, 0)));
 
     if (checkDebugFlag(compositedebug_Markers))
         compositing_debug(pos);

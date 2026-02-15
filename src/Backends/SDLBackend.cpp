@@ -427,8 +427,17 @@ namespace gamescope
 
 	void CSDLBackend::GetPreferredOutputFormat( uint32_t *pPrimaryPlaneFormat, uint32_t *pOverlayPlaneFormat ) const
 	{
-		*pPrimaryPlaneFormat = VulkanFormatToDRM( VK_FORMAT_A2B10G10R10_UNORM_PACK32 );
-		*pOverlayPlaneFormat = VulkanFormatToDRM( VK_FORMAT_B8G8R8A8_UNORM );
+		// V3D swapchain only supports B8G8R8A8 formats
+		if ( g_device.isV3D() )
+		{
+			*pPrimaryPlaneFormat = DRM_FORMAT_ARGB8888;
+			*pOverlayPlaneFormat = DRM_FORMAT_ARGB8888;
+		}
+		else
+		{
+			*pPrimaryPlaneFormat = VulkanFormatToDRM( VK_FORMAT_A2B10G10R10_UNORM_PACK32 );
+			*pOverlayPlaneFormat = VulkanFormatToDRM( VK_FORMAT_B8G8R8A8_UNORM );
+		}
 	}
 
 	bool CSDLBackend::ValidPhysicalDevice( VkPhysicalDevice pVkPhysicalDevice ) const
