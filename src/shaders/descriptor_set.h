@@ -8,6 +8,7 @@ layout(constant_id = 3) const int  c_blur_layer_count = 0;
 layout(constant_id = 4) const uint c_colorspaceMask = 0;
 layout(constant_id = 5) const uint c_output_eotf = 0;
 layout(constant_id = 7) const bool c_itm_enable = false;
+layout(constant_id = 8) const bool c_swapChannels = false;  // V3D BGR output workaround
 
 const int colorspace_linear = 0;
 const int colorspace_sRGB = 1;

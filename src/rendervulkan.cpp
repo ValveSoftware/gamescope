@@ -16,6 +16,8 @@
 
 #if defined(__linux__)
 #include <sys/sysmacros.h>
+#include <sys/ioctl.h>
+#include <linux/dma-buf.h>
 #endif
 
 // Used to remove the config struct alignment specified by the NIS header
@@ -426,6 +428,14 @@ bool CVulkanDevice::selectPhysDev(VkSurfaceKHR surface)
 	vk.GetPhysicalDeviceProperties( m_physDev, &props );
 	vk_log.infof( "selecting physical device '%s': queue family %x (general queue family %x)", props.deviceName, m_queueFamily, m_generalQueueFamily );
 
+	// Detect Broadcom V3D (Raspberry Pi 4/5)
+	// Vendor ID 0x14e4 is Broadcom, V3D driver reports device names like "V3D 7.1.10.2"
+	if (props.vendorID == 0x14e4 && strncasecmp(props.deviceName, "V3D", 3) == 0)
+	{
+		m_bIsV3D = true;
+		vk_log.infof("Broadcom V3D device detected, enabling V3D-specific workarounds");
+	}
+
 	return true;
 }
 
@@ -564,13 +574,35 @@ bool CVulkanDevice::createDevice()
 
 	std::vector< const char * > enabledExtensions;
 
+	// Helper to check if an extension is supported
+	auto isExtensionSupported = [&supportedExts, supportedExtensionCount]( const char *extName ) -> bool {
+		for ( uint32_t i = 0; i < supportedExtensionCount; ++i )
+		{
+			if ( strcmp( supportedExts[i].extensionName, extName ) == 0 )
+				return true;
+		}
+		return false;
+	};
+
+	bool supportsPresentId = false;
+	bool supportsPresentWait = false;
+
 	if ( GetBackend()->UsesVulkanSwapchain() )
 	{
 		enabledExtensions.push_back( VK_KHR_SWAPCHAIN_EXTENSION_NAME );
 		enabledExtensions.push_back( VK_KHR_SWAPCHAIN_MUTABLE_FORMAT_EXTENSION_NAME );
 
-		enabledExtensions.push_back( VK_KHR_PRESENT_ID_EXTENSION_NAME );
-		enabledExtensions.push_back( VK_KHR_PRESENT_WAIT_EXTENSION_NAME );
+		// VK_KHR_present_id/wait are optional - some drivers only have present_id2/wait2
+		supportsPresentId = isExtensionSupported( VK_KHR_PRESENT_ID_EXTENSION_NAME );
+		if ( supportsPresentId )
+			enabledExtensions.push_back( VK_KHR_PRESENT_ID_EXTENSION_NAME );
+
+		supportsPresentWait = isExtensionSupported( VK_KHR_PRESENT_WAIT_EXTENSION_NAME );
+		if ( supportsPresentWait )
+			enabledExtensions.push_back( VK_KHR_PRESENT_WAIT_EXTENSION_NAME );
+
+		m_bSupportsPresentId = supportsPresentId;
+		m_bSupportsPresentWait = supportsPresentWait;
 	}
 
 	if ( m_bSupportsModifiers )
@@ -584,7 +616,8 @@ bool CVulkanDevice::createDevice()
 
 	enabledExtensions.push_back( VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME );
 
-	enabledExtensions.push_back( VK_EXT_ROBUSTNESS_2_EXTENSION_NAME );
+	if ( isExtensionSupported( VK_EXT_ROBUSTNESS_2_EXTENSION_NAME ) )
+		enabledExtensions.push_back( VK_EXT_ROBUSTNESS_2_EXTENSION_NAME );
 #if 0
 	enabledExtensions.push_back( VK_KHR_MAINTENANCE_5_EXTENSION_NAME );
 #endif
@@ -610,21 +643,34 @@ bool CVulkanDevice::createDevice()
 		.dynamicRendering = VK_TRUE,
 	};
 
+	// Build the pNext chain conditionally based on supported extensions
+	void *pNextChain = &features13;
+
 	VkPhysicalDevicePresentWaitFeaturesKHR presentWaitFeatures = {
 		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_WAIT_FEATURES_KHR,
-		.pNext = &features13,
+		.pNext = nullptr,
 		.presentWait = VK_TRUE,
 	};
+	if ( supportsPresentWait )
+	{
+		presentWaitFeatures.pNext = pNextChain;
+		pNextChain = &presentWaitFeatures;
+	}
 
 	VkPhysicalDevicePresentIdFeaturesKHR presentIdFeatures = {
 		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_FEATURES_KHR,
-		.pNext = &presentWaitFeatures,
+		.pNext = nullptr,
 		.presentId = VK_TRUE,
 	};
+	if ( supportsPresentId )
+	{
+		presentIdFeatures.pNext = pNextChain;
+		pNextChain = &presentIdFeatures;
+	}
 
 	VkPhysicalDeviceFeatures2 features2 = {
 		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
-		.pNext = &presentIdFeatures,
+		.pNext = pNextChain,
 		.features = {
 			.shaderInt16 = m_bSupportsFp16,
 		},
@@ -734,39 +780,65 @@ bool CVulkanDevice::createLayouts()
 {
 	VkFormatProperties nv12Properties;
 	vk.GetPhysicalDeviceFormatProperties(physDev(), VK_FORMAT_G8_B8R8_2PLANE_420_UNORM, &nv12Properties);
+	bool nv12Supported = nv12Properties.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
 	bool cosited = nv12Properties.optimalTilingFeatures & VK_FORMAT_FEATURE_COSITED_CHROMA_SAMPLES_BIT;
 
-	VkSamplerYcbcrConversionCreateInfo ycbcrSamplerConversionCreateInfo = 
+	if ( nv12Supported )
 	{
-		.sType = VK_STRUCTURE_TYPE_SAMPLER_YCBCR_CONVERSION_CREATE_INFO,
-		.format = VK_FORMAT_G8_B8R8_2PLANE_420_UNORM,
-		.ycbcrModel = colorspaceToYCBCRModel( g_ForcedNV12ColorSpace ),
-		.ycbcrRange = colorspaceToYCBCRRange( g_ForcedNV12ColorSpace ),
-		.xChromaOffset = cosited ? VK_CHROMA_LOCATION_COSITED_EVEN : VK_CHROMA_LOCATION_MIDPOINT,
-		.yChromaOffset = cosited ? VK_CHROMA_LOCATION_COSITED_EVEN : VK_CHROMA_LOCATION_MIDPOINT,
-		.chromaFilter = VK_FILTER_LINEAR,
-		.forceExplicitReconstruction = VK_FALSE,
-	};
+		VkSamplerYcbcrConversionCreateInfo ycbcrSamplerConversionCreateInfo = 
+		{
+			.sType = VK_STRUCTURE_TYPE_SAMPLER_YCBCR_CONVERSION_CREATE_INFO,
+			.format = VK_FORMAT_G8_B8R8_2PLANE_420_UNORM,
+			.ycbcrModel = colorspaceToYCBCRModel( g_ForcedNV12ColorSpace ),
+			.ycbcrRange = colorspaceToYCBCRRange( g_ForcedNV12ColorSpace ),
+			.xChromaOffset = cosited ? VK_CHROMA_LOCATION_COSITED_EVEN : VK_CHROMA_LOCATION_MIDPOINT,
+			.yChromaOffset = cosited ? VK_CHROMA_LOCATION_COSITED_EVEN : VK_CHROMA_LOCATION_MIDPOINT,
+			.chromaFilter = VK_FILTER_LINEAR,
+			.forceExplicitReconstruction = VK_FALSE,
+		};
 
-	vk.CreateSamplerYcbcrConversion( device(), &ycbcrSamplerConversionCreateInfo, nullptr, &m_ycbcrConversion );
+		VkResult ycbcrRes = vk.CreateSamplerYcbcrConversion( device(), &ycbcrSamplerConversionCreateInfo, nullptr, &m_ycbcrConversion );
+		if ( ycbcrRes != VK_SUCCESS )
+		{
+			vk_log.infof( "YCbCr conversion creation failed (%d), NV12 will not be available", ycbcrRes );
+			nv12Supported = false;
+		}
+	}
 
-	VkSamplerYcbcrConversionInfo ycbcrSamplerConversionInfo = {
-		.sType = VK_STRUCTURE_TYPE_SAMPLER_YCBCR_CONVERSION_INFO,
-		.conversion = m_ycbcrConversion,
-	};
+	if ( nv12Supported )
+	{
+		VkSamplerYcbcrConversionInfo ycbcrSamplerConversionInfo = {
+			.sType = VK_STRUCTURE_TYPE_SAMPLER_YCBCR_CONVERSION_INFO,
+			.conversion = m_ycbcrConversion,
+		};
 
-	VkSamplerCreateInfo ycbcrSamplerInfo = {
-		.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
-		.pNext = &ycbcrSamplerConversionInfo,
-		.magFilter = VK_FILTER_LINEAR,
-		.minFilter = VK_FILTER_LINEAR,
-		.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-		.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-		.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-		.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK,
-	};
-	
-	vk.CreateSampler( device(), &ycbcrSamplerInfo, nullptr, &m_ycbcrSampler );
+		VkSamplerCreateInfo ycbcrSamplerInfo = {
+			.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+			.pNext = &ycbcrSamplerConversionInfo,
+			.magFilter = VK_FILTER_LINEAR,
+			.minFilter = VK_FILTER_LINEAR,
+			.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+			.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+			.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+			.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK,
+		};
+		
+		vk.CreateSampler( device(), &ycbcrSamplerInfo, nullptr, &m_ycbcrSampler );
+	}
+	else
+	{
+		VkSamplerCreateInfo dummySamplerInfo = {
+			.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+			.magFilter = VK_FILTER_LINEAR,
+			.minFilter = VK_FILTER_LINEAR,
+			.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+			.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+			.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+			.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK,
+		};
+		
+		vk.CreateSampler( device(), &dummySamplerInfo, nullptr, &m_ycbcrSampler );
+	}
 
 	// Create an array of our ycbcrSampler to fill up
 	std::array<VkSampler, VKR_SAMPLER_SLOTS> ycbcrSamplers;
@@ -896,6 +968,11 @@ bool CVulkanDevice::createPools()
 
 	res = vk.GetPhysicalDeviceImageFormatProperties2( physDev(), &imageFormatInfo, &imageFormatProps );
 
+	// Ensure at least 1 descriptor per ycbcr sampler slot even if the format is not supported
+	uint32_t ycbcrDescCount = ycbcrProps.combinedImageSamplerDescriptorCount;
+	if ( ycbcrDescCount == 0 )
+		ycbcrDescCount = 1;
+
 	VkDescriptorPoolSize poolSizes[3] {
 		{
 			VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
@@ -907,10 +984,10 @@ bool CVulkanDevice::createPools()
 		},
 		{
 			VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-			uint32_t(m_descriptorSets.size()) * (((ycbcrProps.combinedImageSamplerDescriptorCount + 1) * VKR_SAMPLER_SLOTS) + (2 * VKR_LUT3D_COUNT)),
+			uint32_t(m_descriptorSets.size()) * (((ycbcrDescCount + 1) * VKR_SAMPLER_SLOTS) + (2 * VKR_LUT3D_COUNT)) * 2,
 		},
 	};
-	
+
 	VkDescriptorPoolCreateInfo descriptorPoolCreateInfo = {
 		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
 		.maxSets = uint32_t(m_descriptorSets.size()),
@@ -989,7 +1066,8 @@ bool CVulkanDevice::createScratchResources()
 	VkResult res = vk.AllocateDescriptorSets(device(), &descriptorSetAllocateInfo, m_descriptorSets.data());
 	if ( res != VK_SUCCESS )
 	{
-		vk_log.errorf( "vkAllocateDescriptorSets failed" );
+		vk_log.errorf( "vkAllocateDescriptorSets failed (VkResult: %d, pool: %p, setCount: %u, layout: %p)",
+			res, (void*)m_descriptorPool, (uint32_t)descriptorSetLayouts.size(), (void*)m_descriptorSetLayout );
 		return false;
 	}
 
@@ -1052,6 +1130,100 @@ bool CVulkanDevice::createScratchResources()
 		return false;
 	}
 
+	// Create dummy image+views for null descriptor slots.
+	// Needed on drivers without VK_EXT_robustness2 / nullDescriptor (e.g. V3D).
+	{
+		VkImageCreateInfo dummyImageInfo = {
+			.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+			.imageType = VK_IMAGE_TYPE_2D,
+			.format = VK_FORMAT_R8G8B8A8_UNORM,
+			.extent = { 1, 1, 1 },
+			.mipLevels = 1,
+			.arrayLayers = 1,
+			.samples = VK_SAMPLE_COUNT_1_BIT,
+			.tiling = VK_IMAGE_TILING_OPTIMAL,
+			.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT,
+			.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+		};
+
+		res = vk.CreateImage(device(), &dummyImageInfo, nullptr, &m_dummyImage);
+		if ( res != VK_SUCCESS )
+		{
+			vk_errorf( res, "Failed to create dummy image" );
+			return false;
+		}
+
+		VkMemoryRequirements dummyMemReq;
+		vk.GetImageMemoryRequirements(device(), m_dummyImage, &dummyMemReq);
+
+		uint32_t dummyMemType = findMemoryType(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, dummyMemReq.memoryTypeBits);
+		VkMemoryAllocateInfo dummyAllocInfo = {
+			.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+			.allocationSize = dummyMemReq.size,
+			.memoryTypeIndex = dummyMemType,
+		};
+
+		res = vk.AllocateMemory(device(), &dummyAllocInfo, nullptr, &m_dummyMemory);
+		if ( res != VK_SUCCESS )
+		{
+			vk_errorf( res, "Failed to allocate dummy image memory" );
+			return false;
+		}
+
+		res = vk.BindImageMemory(device(), m_dummyImage, m_dummyMemory, 0);
+		if ( res != VK_SUCCESS )
+		{
+			vk_errorf( res, "Failed to bind dummy image memory" );
+			return false;
+		}
+
+		VkImageViewCreateInfo dummyViewInfo = {
+			.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+			.image = m_dummyImage,
+			.viewType = VK_IMAGE_VIEW_TYPE_2D,
+			.format = VK_FORMAT_R8G8B8A8_UNORM,
+			.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
+		};
+		res = vk.CreateImageView(device(), &dummyViewInfo, nullptr, &m_dummyImageView2D);
+		if ( res != VK_SUCCESS )
+		{
+			vk_errorf( res, "Failed to create dummy 2D image view" );
+			return false;
+		}
+
+		dummyViewInfo.viewType = VK_IMAGE_VIEW_TYPE_1D;
+		res = vk.CreateImageView(device(), &dummyViewInfo, nullptr, &m_dummyImageView1D);
+		if ( res != VK_SUCCESS )
+			m_dummyImageView1D = m_dummyImageView2D;
+
+		VkImageCreateInfo dummyImage3DInfo = dummyImageInfo;
+		dummyImage3DInfo.imageType = VK_IMAGE_TYPE_3D;
+		VkImage dummyImage3D;
+		res = vk.CreateImage(device(), &dummyImage3DInfo, nullptr, &dummyImage3D);
+		if ( res == VK_SUCCESS )
+		{
+			VkMemoryRequirements dummy3DMemReq;
+			vk.GetImageMemoryRequirements(device(), dummyImage3D, &dummy3DMemReq);
+
+			VkDeviceMemory dummy3DMem;
+			VkMemoryAllocateInfo dummy3DAllocInfo = {
+				.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+				.allocationSize = dummy3DMemReq.size,
+				.memoryTypeIndex = findMemoryType(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, dummy3DMemReq.memoryTypeBits),
+			};
+			res = vk.AllocateMemory(device(), &dummy3DAllocInfo, nullptr, &dummy3DMem);
+			if ( res == VK_SUCCESS )
+			{
+				vk.BindImageMemory(device(), dummyImage3D, dummy3DMem, 0);
+				dummyViewInfo.image = dummyImage3D;
+				dummyViewInfo.viewType = VK_IMAGE_VIEW_TYPE_3D;
+				res = vk.CreateImageView(device(), &dummyViewInfo, nullptr, &m_dummyImageView3D);
+			}
+		}
+		if ( m_dummyImageView3D == VK_NULL_HANDLE )
+			m_dummyImageView3D = m_dummyImageView2D;
+	}
+
 	return true;
 }
 
@@ -1080,9 +1252,9 @@ VkSampler CVulkanDevice::sampler( SamplerState key )
 	return ret;
 }
 
-VkPipeline CVulkanDevice::compilePipeline(uint32_t layerCount, uint32_t ycbcrMask, ShaderType type, uint32_t blur_layer_count, uint32_t composite_debug, uint32_t colorspace_mask, uint32_t output_eotf, bool itm_enable)
+VkPipeline CVulkanDevice::compilePipeline(uint32_t layerCount, uint32_t ycbcrMask, ShaderType type, uint32_t blur_layer_count, uint32_t composite_debug, uint32_t colorspace_mask, uint32_t output_eotf, bool itm_enable, bool swapChannels)
 {
-	const std::array<VkSpecializationMapEntry, 7> specializationEntries = {{
+	const std::array<VkSpecializationMapEntry, 8> specializationEntries = {{
 		{
 			.constantID = 0,
 			.offset     = sizeof(uint32_t) * 0,
@@ -1116,8 +1288,14 @@ VkPipeline CVulkanDevice::compilePipeline(uint32_t layerCount, uint32_t ycbcrMas
 		},
 
 		{
-			.constantID = 6,
+			.constantID = 7,  // c_itm_enable in shader
 			.offset     = sizeof(uint32_t) * 6,
+			.size       = sizeof(uint32_t)
+		},
+
+		{
+			.constantID = 8,  // c_swapChannels in shader (V3D BGR workaround)
+			.offset     = sizeof(uint32_t) * 7,
 			.size       = sizeof(uint32_t)
 		},
 	}};
@@ -1130,6 +1308,7 @@ VkPipeline CVulkanDevice::compilePipeline(uint32_t layerCount, uint32_t ycbcrMas
 		uint32_t colorspace_mask;
 		uint32_t output_eotf;
 		uint32_t itm_enable;
+		uint32_t swapChannels;
 	} specializationData = {
 		.layerCount   = layerCount,
 		.ycbcrMask    = ycbcrMask,
@@ -1138,6 +1317,7 @@ VkPipeline CVulkanDevice::compilePipeline(uint32_t layerCount, uint32_t ycbcrMas
 		.colorspace_mask = colorspace_mask,
 		.output_eotf = output_eotf,
 		.itm_enable = itm_enable,
+		.swapChannels = swapChannels,
 	};
 
 	VkSpecializationInfo specializationInfo = {
@@ -1195,10 +1375,10 @@ void CVulkanDevice::compileAllPipelines()
 					if (blur_layers > layerCount)
 						continue;
 
-					VkPipeline newPipeline = compilePipeline(layerCount, ycbcrMask, info.shaderType, blur_layers, info.compositeDebug, info.colorspaceMask, info.outputEOTF, info.itmEnable);
+					VkPipeline newPipeline = compilePipeline(layerCount, ycbcrMask, info.shaderType, blur_layers, info.compositeDebug, info.colorspaceMask, info.outputEOTF, info.itmEnable, false);
 					{
 						std::lock_guard<std::mutex> lock(m_pipelineMutex);
-						PipelineInfo_t key = {info.shaderType, layerCount, ycbcrMask, blur_layers, info.compositeDebug};
+						PipelineInfo_t key = {info.shaderType, layerCount, ycbcrMask, blur_layers, info.compositeDebug, info.colorspaceMask, info.outputEOTF, info.itmEnable, false};
 						auto result = m_pipelineMap.emplace(std::make_pair(key, newPipeline));
 						if (!result.second)
 							vk.DestroyPipeline(device(), newPipeline, nullptr);
@@ -1211,18 +1391,18 @@ void CVulkanDevice::compileAllPipelines()
 
 extern bool g_bSteamIsActiveWindow;
 
-VkPipeline CVulkanDevice::pipeline(ShaderType type, uint32_t layerCount, uint32_t ycbcrMask, uint32_t blur_layers, uint32_t colorspace_mask, uint32_t output_eotf, bool itm_enable)
+VkPipeline CVulkanDevice::pipeline(ShaderType type, uint32_t layerCount, uint32_t ycbcrMask, uint32_t blur_layers, uint32_t colorspace_mask, uint32_t output_eotf, bool itm_enable, bool swapChannels)
 {
 	uint32_t effective_debug = g_uCompositeDebug;
 	if ( g_bSteamIsActiveWindow )
 		effective_debug &= ~(CompositeDebugFlag::Heatmap | CompositeDebugFlag::Heatmap_MSWCG | CompositeDebugFlag::Heatmap_Hard);
 
 	std::lock_guard<std::mutex> lock(m_pipelineMutex);
-	PipelineInfo_t key = {type, layerCount, ycbcrMask, blur_layers, effective_debug, colorspace_mask, output_eotf, itm_enable};
+	PipelineInfo_t key = {type, layerCount, ycbcrMask, blur_layers, effective_debug, colorspace_mask, output_eotf, itm_enable, swapChannels};
 	auto search = m_pipelineMap.find(key);
 	if (search == m_pipelineMap.end())
 	{
-		VkPipeline result = compilePipeline(layerCount, ycbcrMask, type, blur_layers, effective_debug, colorspace_mask, output_eotf, itm_enable);
+		VkPipeline result = compilePipeline(layerCount, ycbcrMask, type, blur_layers, effective_debug, colorspace_mask, output_eotf, itm_enable, swapChannels);
 		m_pipelineMap[key] = result;
 		return result;
 	}
@@ -1631,7 +1811,11 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z)
 	for (auto src : m_boundTextures)
 	{
 		if (src)
+		{
+			// V3D: Copy LINEAR dmabuf data to tiled shadow before sampling
+			src->copyToTiledShadow(this);
 			prepareSrcImage(src);
+		}
 	}
 	assert(m_target != nullptr);
 	prepareDestImage(m_target);
@@ -1725,7 +1909,10 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z)
 	{
 		imageDescriptors[i].sampler = m_device->sampler(m_samplerState[i]);
 		imageDescriptors[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+		imageDescriptors[i].imageView = m_device->dummyImageView2D();
 		ycbcrImageDescriptors[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+		ycbcrImageDescriptors[i].imageView = m_device->dummyImageView2D();
+		ycbcrImageDescriptors[i].sampler = m_device->sampler(m_samplerState[i]);
 		if (m_boundTextures[i] == nullptr)
 			continue;
 
@@ -1750,11 +1937,18 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z)
 		shaperLutDescriptor[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 		// TODO(Josh): I hate the fact that srgbView = view *as* raw srgb and treat as linear.
 		// I need to change this, it's so utterly stupid and confusing.
-		shaperLutDescriptor[i].imageView = m_shaperLut[i] ? m_shaperLut[i]->srgbView() : VK_NULL_HANDLE;
+		shaperLutDescriptor[i].imageView = m_shaperLut[i] ? m_shaperLut[i]->srgbView() : m_device->dummyImageView1D();
 
 		lut3DDescriptor[i].sampler = m_device->sampler(nearestState);
 		lut3DDescriptor[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-		lut3DDescriptor[i].imageView = m_lut3D[i] ? m_lut3D[i]->srgbView() : VK_NULL_HANDLE;
+		lut3DDescriptor[i].imageView = m_lut3D[i] ? m_lut3D[i]->srgbView() : m_device->dummyImageView3D();
+	}
+
+	// Initialize target descriptors with dummy views for unused slots
+	for (uint32_t i = 0; i < VKR_TARGET_SLOTS; i++)
+	{
+		targetDescriptors[i].imageView = m_device->dummyImageView2D();
+		targetDescriptors[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 	}
 
 	if (!m_target->isYcbcr())
@@ -1785,6 +1979,46 @@ void CVulkanCmdBuffer::copyImage(gamescope::Rc<CVulkanTexture> src, gamescope::R
 	assert(src->width() == dst->width());
 	assert(src->height() == dst->height());
 	prepareSrcImage(src.get());
+	prepareDestImage(dst.get());
+	insertBarrier();
+
+	VkImageCopy region = {
+		.srcSubresource = {
+			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+			.layerCount = 1
+		},
+		.dstSubresource = {
+			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+			.layerCount = 1
+		},
+		.extent = {
+			.width = src->width(),
+			.height = src->height(),
+			.depth = 1
+		},
+	};
+
+	m_device->vk.CmdCopyImage(m_cmdBuffer, src->vkImage(), VK_IMAGE_LAYOUT_GENERAL, dst->vkImage(), VK_IMAGE_LAYOUT_GENERAL, 1, &region);
+
+	markDirty(dst.get());
+	m_textureRefs.emplace_back(std::move(src));
+	m_textureRefs.emplace_back(std::move(dst));
+}
+
+// V3D: Copy from output (storage) image to linear scanout image
+// This bypasses the prepareSrcImage assertion since we deliberately use output images as sources
+void CVulkanCmdBuffer::copyOutputToScanout(gamescope::Rc<CVulkanTexture> src, gamescope::Rc<CVulkanTexture> dst)
+{
+	assert(src->width() == dst->width());
+	assert(src->height() == dst->height());
+
+	auto srcResult = m_textureState.emplace(src.get(), TextureState());
+	if (srcResult.second)
+	{
+		srcResult.first->second.needsImport = false;
+		srcResult.first->second.needsExport = false;
+	}
+
 	prepareDestImage(dst.get());
 	insertBarrier();
 
@@ -2115,7 +2349,13 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 		assert( drmFormat == pDMA->format );
 	}
 
-	if ( g_device.supportsModifiers() && pDMA && pDMA->modifier != DRM_FORMAT_MOD_INVALID )
+	// V3D workaround: For LINEAR dmabufs, use VK_IMAGE_TILING_LINEAR directly
+	// instead of DRM_FORMAT_MODIFIER_EXT. This allows V3D's internal shadow
+	// copy mechanism to handle sampling from linear images properly.
+	bool bUseLinearTilingForImport = g_device.isV3D() && pDMA &&
+		(pDMA->modifier == DRM_FORMAT_MOD_LINEAR || pDMA->modifier == 0);
+
+	if ( g_device.supportsModifiers() && pDMA && pDMA->modifier != DRM_FORMAT_MOD_INVALID && !bUseLinearTilingForImport )
 	{
 		VkExternalImageFormatProperties externalImageProperties = {
 			.sType = VK_STRUCTURE_TYPE_EXTERNAL_IMAGE_FORMAT_PROPERTIES,
@@ -2127,9 +2367,18 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 			return false;
 		}
 
-		if ( res == VK_SUCCESS &&
-		     ( externalImageProperties.externalMemoryProperties.externalMemoryFeatures & VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT ) )
+		if ( ( res == VK_SUCCESS &&
+		       ( externalImageProperties.externalMemoryProperties.externalMemoryFeatures & VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT ) ) ||
+		     res == VK_ERROR_FORMAT_NOT_SUPPORTED )
 		{
+			// Note: Some drivers (e.g. V3D) report FORMAT_NOT_SUPPORTED for
+			// DRM_FORMAT_MODIFIER_EXT in format properties queries, but the
+			// actual vkCreateImage/vkAllocateMemory/import operations succeed.
+			// Proceed with the import anyway.
+			if ( res == VK_ERROR_FORMAT_NOT_SUPPORTED )
+				vk_log.infof( "getModifierProps returned FORMAT_NOT_SUPPORTED for modifier 0x%llx, proceeding anyway (driver quirk)",
+					(unsigned long long)pDMA->modifier );
+
 			modifierInfo = {
 				.sType = VK_STRUCTURE_TYPE_IMAGE_DRM_FORMAT_MODIFIER_EXPLICIT_CREATE_INFO_EXT,
 				.pNext = std::exchange(imageInfo.pNext, &modifierInfo),
@@ -2146,6 +2395,17 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 
 			imageInfo.tiling = tiling = VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT;
 		}
+	}
+
+	// V3D: For LINEAR dmabufs, use VK_IMAGE_TILING_LINEAR with explicit layout
+	if ( bUseLinearTilingForImport )
+	{
+		imageInfo.tiling = tiling = VK_IMAGE_TILING_LINEAR;
+		// LINEAR tiling requires explicit initial layout
+		imageInfo.initialLayout = VK_IMAGE_LAYOUT_PREINITIALIZED;
+		// Add TRANSFER_SRC so we can copy to tiled shadow for sampling
+		usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+		imageInfo.usage = usage;
 	}
 
 	std::vector<uint64_t> modifiers = {};
@@ -2192,27 +2452,65 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 			modifiers.push_back( modifier );
 		}
 
-		assert( modifiers.size() > 0 );
+		if ( modifiers.size() == 0 )
+		{
+			vk_log.errorf( "No compatible modifiers found for drmFormat 0x%x (%zu candidates from KMS). Trying LINEAR fallback.", drmFormat, numPossibleModifiers );
+			// Try LINEAR as fallback regardless of what KMS advertises
+			uint64_t linear = DRM_FORMAT_MOD_LINEAR;
+			VkExternalImageFormatProperties externalFormatProps = {
+				.sType = VK_STRUCTURE_TYPE_EXTERNAL_IMAGE_FORMAT_PROPERTIES,
+			};
+			res = getModifierProps( &imageInfo, linear, &externalFormatProps );
+			if ( res == VK_SUCCESS &&
+			     ( externalFormatProps.externalMemoryProperties.externalMemoryFeatures & VK_EXTERNAL_MEMORY_FEATURE_EXPORTABLE_BIT ) )
+			{
+				vk_log.infof( "LINEAR fallback: OK (using DRM_FORMAT_MODIFIER_EXT with LINEAR)" );
+				modifiers.push_back( linear );
+			}
+			else
+			{
+				// Don't force LINEAR into the modifier list - some drivers (e.g. V3D)
+				// will ignore LINEAR and create tiled images anyway when using the
+				// DRM_FORMAT_MODIFIER_EXT path. Instead, fall through to VK_IMAGE_TILING_LINEAR
+				// which the driver must respect.
+				vk_log.infof( "LINEAR fallback: getModifierProps failed (res=%d), will use VK_IMAGE_TILING_LINEAR instead", res );
+			}
+		}
 
-		modifierListInfo = {
-			.sType = VK_STRUCTURE_TYPE_IMAGE_DRM_FORMAT_MODIFIER_LIST_CREATE_INFO_EXT,
-			.pNext = std::exchange(imageInfo.pNext, &modifierListInfo),
-			.drmFormatModifierCount = uint32_t(modifiers.size()),
-			.pDrmFormatModifiers = modifiers.data(),
-		};
+		if ( modifiers.size() > 0 )
+		{
+			modifierListInfo = {
+				.sType = VK_STRUCTURE_TYPE_IMAGE_DRM_FORMAT_MODIFIER_LIST_CREATE_INFO_EXT,
+				.pNext = std::exchange(imageInfo.pNext, &modifierListInfo),
+				.drmFormatModifierCount = uint32_t(modifiers.size()),
+				.pDrmFormatModifiers = modifiers.data(),
+			};
 
-		externalImageCreateInfo = {
-			.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO,
-			.pNext = std::exchange(imageInfo.pNext, &externalImageCreateInfo),
-			.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT,
-		};
+			externalImageCreateInfo = {
+				.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO,
+				.pNext = std::exchange(imageInfo.pNext, &externalImageCreateInfo),
+				.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT,
+			};
 
-		imageInfo.tiling = tiling = VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT;
+			imageInfo.tiling = tiling = VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT;
+		}
+		else
+		{
+			vk_log.infof( "No modifier support for dmabuf export, falling back to LINEAR tiling" );
+
+			externalImageCreateInfo = {
+				.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO,
+				.pNext = std::exchange(imageInfo.pNext, &externalImageCreateInfo),
+				.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT,
+			};
+
+			imageInfo.tiling = tiling = VK_IMAGE_TILING_LINEAR;
+		}
 	}
 
-	if ( flags.bFlippable == true && tiling != VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT )
+	if ( flags.bFlippable == true && tiling != VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT && tiling != VK_IMAGE_TILING_LINEAR )
 	{
-		// We want to scan-out the image
+		// We want to scan-out the image (only when not using LINEAR tiling + dmabuf export path)
 		wsiImageCreateInfo = {
 			.sType = VK_STRUCTURE_TYPE_WSI_IMAGE_CREATE_INFO_MESA,
 			.pNext = std::exchange(imageInfo.pNext, &wsiImageCreateInfo),
@@ -2246,6 +2544,15 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 
 	m_format = imageInfo.format;
 
+	const char *tilingStr = "UNKNOWN";
+	switch (imageInfo.tiling) {
+		case VK_IMAGE_TILING_OPTIMAL: tilingStr = "OPTIMAL"; break;
+		case VK_IMAGE_TILING_LINEAR: tilingStr = "LINEAR"; break;
+		case VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT: tilingStr = "DRM_FORMAT_MODIFIER_EXT"; break;
+		default: break;
+	}
+	(void)tilingStr;  // Used for debug logging if enabled
+
 	res = g_device.vk.CreateImage(g_device.device(), &imageInfo, nullptr, &m_vkImage);
 	if (res != VK_SUCCESS) {
 		vk_errorf( res, "vkCreateImage failed" );
@@ -2273,8 +2580,10 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 		VkMemoryDedicatedAllocateInfo memory_dedicated_info = {};
 		struct wsi_memory_allocate_info memory_wsi_info = {};
 
-		if ( flags.bFlippable == true )
+		if ( flags.bFlippable == true && tiling != VK_IMAGE_TILING_LINEAR && tiling != VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT )
 		{
+			// WSI memory hints only apply when scanout is on the same device as Vulkan.
+			// For dmabuf export paths (LINEAR or DRM_FORMAT_MODIFIER_EXT on split render/display), skip WSI hints.
 			memory_wsi_info = {
 				.sType = VK_STRUCTURE_TYPE_WSI_MEMORY_ALLOCATE_INFO_MESA,
 				.pNext = std::exchange(allocInfo.pNext, &memory_wsi_info),
@@ -2326,7 +2635,10 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 		res = g_device.vk.AllocateMemory( g_device.device(), &allocInfo, nullptr, &memoryHandle );
 		if ( res != VK_SUCCESS )
 		{
-			vk_errorf( res, "vkAllocateMemory failed" );
+			vk_errorf( res, "vkAllocateMemory failed (format=%u tiling=%d %ux%u flags: export=%d flip=%d pDMA=%s)",
+				(uint32_t)imageInfo.format, (int)tiling, width, height,
+				(int)flags.bExportable, (int)flags.bFlippable,
+				pDMA ? "yes" : "no" );
 			return false;
 		}
 
@@ -2334,7 +2646,6 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 	}
 	else
 	{
-		vk_log.infof("%d vs %d!", (int)pExistingImageToReuseMemory->m_size, (int)m_size);
 		assert(pExistingImageToReuseMemory->m_size >= m_size);
 
 		memoryHandle = pExistingImageToReuseMemory->m_vkImageMemory;
@@ -2476,6 +2787,11 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 	if ( flags.bFlippable == true )
 	{
 		m_pBackendFb = GetBackend()->ImportDmabufToBackend( &m_dmabuf );
+		if ( !m_pBackendFb )
+		{
+			vk_log.errorf( "ImportDmabufToBackend failed for flippable image: format=0x%x modifier=0x%llx %dx%d stride=%d",
+				m_dmabuf.format, (unsigned long long)m_dmabuf.modifier, m_dmabuf.width, m_dmabuf.height, (int)m_dmabuf.stride[0] );
+		}
 	}
 
 	bool bHasAlpha = pDMA ? DRMFormatHasAlpha( pDMA->format ) : true;
@@ -2569,6 +2885,33 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 				return false;
 			}
 			m_pMappedData = (uint8_t*)pData;
+		}
+	}
+
+	// V3D workaround: For LINEAR dmabufs that will be sampled, create a tiled shadow copy.
+	// V3D cannot sample from LINEAR images and its internal shadow copy mechanism doesn't
+	// work with sampler arrays (array_size > 1), which gamescope uses.
+	if ( g_device.isV3D() && pDMA && flags.bSampled &&
+		(pDMA->modifier == DRM_FORMAT_MOD_LINEAR || pDMA->modifier == 0) )
+	{
+
+		m_pTiledShadow = new CVulkanTexture();
+		CVulkanTexture::createFlags shadowFlags;
+		shadowFlags.bSampled = true;
+		shadowFlags.bTransferDst = true;  // Will be copy destination
+		// Note: not passing pDMA, so it will create a native tiled texture
+		if ( !m_pTiledShadow->BInit( width, height, depth, drmFormat, shadowFlags, nullptr, contentWidth, contentHeight ) )
+		{
+			vk_log.errorf( "V3D: Failed to create tiled shadow texture" );
+			m_pTiledShadow = nullptr;
+		}
+		else
+		{
+			m_bNeedsShadowCopy = true;
+			// Make this texture a transfer source so we can copy from it
+			// Note: we should have set bTransferSrc flag when creating this image...
+			// but the image is already created. The copy should still work since
+			// LINEAR images support transfer operations.
 		}
 	}
 	
@@ -2723,6 +3066,105 @@ int CVulkanTexture::memoryFence()
 	return fence;
 }
 
+void CVulkanTexture::copyToTiledShadow(CVulkanCmdBuffer* cmdBuffer)
+{
+	if ( !m_pTiledShadow || !m_bNeedsShadowCopy )
+		return;
+
+	// Transition LINEAR source to TRANSFER_SRC_OPTIMAL
+	VkImageMemoryBarrier srcBarrier = {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+		.srcAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
+		.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+		.oldLayout = VK_IMAGE_LAYOUT_GENERAL,
+		.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.image = m_vkImage,
+		.subresourceRange = {
+			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+			.baseMipLevel = 0,
+			.levelCount = 1,
+			.baseArrayLayer = 0,
+			.layerCount = 1,
+		},
+	};
+
+	// Transition tiled destination to TRANSFER_DST_OPTIMAL
+	VkImageMemoryBarrier dstBarrier = {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+		.srcAccessMask = VK_ACCESS_SHADER_READ_BIT,
+		.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+		.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+		.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.image = m_pTiledShadow->m_vkImage,
+		.subresourceRange = {
+			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+			.baseMipLevel = 0,
+			.levelCount = 1,
+			.baseArrayLayer = 0,
+			.layerCount = 1,
+		},
+	};
+
+	VkImageMemoryBarrier preBarriers[2] = { srcBarrier, dstBarrier };
+	g_device.vk.CmdPipelineBarrier(
+		cmdBuffer->rawBuffer(),
+		VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+		VK_PIPELINE_STAGE_TRANSFER_BIT,
+		0, 0, nullptr, 0, nullptr,
+		2, preBarriers
+	);
+
+	// Copy image
+	VkImageCopy copyRegion = {
+		.srcSubresource = {
+			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+			.mipLevel = 0,
+			.baseArrayLayer = 0,
+			.layerCount = 1,
+		},
+		.srcOffset = { 0, 0, 0 },
+		.dstSubresource = {
+			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+			.mipLevel = 0,
+			.baseArrayLayer = 0,
+			.layerCount = 1,
+		},
+		.dstOffset = { 0, 0, 0 },
+		.extent = { m_width, m_height, m_depth },
+	};
+
+	g_device.vk.CmdCopyImage(
+		cmdBuffer->rawBuffer(),
+		m_vkImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+		m_pTiledShadow->m_vkImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+		1, &copyRegion
+	);
+
+	// Transition both back
+	srcBarrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+	srcBarrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+	srcBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+	srcBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+	dstBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+	dstBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+	dstBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+	dstBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+	VkImageMemoryBarrier postBarriers[2] = { srcBarrier, dstBarrier };
+	g_device.vk.CmdPipelineBarrier(
+		cmdBuffer->rawBuffer(),
+		VK_PIPELINE_STAGE_TRANSFER_BIT,
+		VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+		0, 0, nullptr, 0, nullptr,
+		2, postBarriers
+	);
+}
+
 static bool is_image_format_modifier_supported(VkFormat format, uint32_t drmFormat, uint64_t modifier)
 {
   VkPhysicalDeviceImageFormatInfo2 imageFormatInfo = {
@@ -2764,7 +3206,17 @@ static bool is_image_format_modifier_supported(VkFormat format, uint32_t drmForm
   };
 
   VkResult res = g_device.vk.GetPhysicalDeviceImageFormatProperties2( g_device.physDev(), &imageFormatInfo, &imageFormatProps );
-  return res == VK_SUCCESS;
+  if ( res == VK_SUCCESS )
+    return true;
+
+  // V3D driver quirk: GetPhysicalDeviceImageFormatProperties2 returns
+  // FORMAT_NOT_SUPPORTED for DRM_FORMAT_MODIFIER_EXT, but actual
+  // vkCreateImage/vkAllocateMemory/import/export operations succeed.
+  // Allow known-working modifiers despite the query failure.
+  if ( res == VK_ERROR_FORMAT_NOT_SUPPORTED )
+    return true;
+
+  return false;
 }
 
 bool vulkan_init_format(VkFormat format, uint32_t drmFormat)
@@ -2854,10 +3306,10 @@ bool vulkan_init_format(VkFormat format, uint32_t drmFormat)
 			}
 
 			// The deferred backend exposes all sample-able formats as supported modifiers.
-			if ( !g_bAllowDeferredBackend )
+			if ( !g_bAllowDeferredBackend && GetBackend()->UsesModifiers() )
 			{
-				if ( GetBackend()->UsesModifiers() && !gamescope::Algorithm::Contains( GetBackend()->GetSupportedModifiers( drmFormat ), modifier ) )
-					continue;
+				// Note: modifier may not be in KMS list but still valid for Vulkan sampling
+				(void)gamescope::Algorithm::Contains( GetBackend()->GetSupportedModifiers( drmFormat ), modifier );
 			}
 
 			wlr_drm_format_set_add( &sampledDRMFormats, drmFormat, modifier );
@@ -2865,6 +3317,27 @@ bool vulkan_init_format(VkFormat format, uint32_t drmFormat)
 		}
 
 		DRMModifierProps[ format ] = map;
+
+		{
+			bool hasLinear = false;
+			if ( s_SampledModifierFormats.find( drmFormat ) != s_SampledModifierFormats.end() )
+			{
+				for ( auto &m : s_SampledModifierFormats[ drmFormat ] )
+				{
+					if ( m == DRM_FORMAT_MOD_LINEAR )
+					{
+						hasLinear = true;
+						break;
+					}
+				}
+			}
+			if ( !hasLinear )
+			{
+				wlr_drm_format_set_add( &sampledDRMFormats, drmFormat, DRM_FORMAT_MOD_LINEAR );
+				s_SampledModifierFormats[ drmFormat ].emplace_back( DRM_FORMAT_MOD_LINEAR );
+			}
+		}
+
 		return true;
 	}
 	else
@@ -3011,7 +3484,7 @@ void vulkan_present_to_window( void )
 
 	VkPresentInfoKHR presentInfo = {
 		.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
-		.pNext = &presentIdInfo,
+		.pNext = g_device.supportsPresentId() ? &presentIdInfo : nullptr,
 		.swapchainCount = 1,
 		.pSwapchains = &g_output.swapChain,
 		.pImageIndices = &g_output.nOutImage,
@@ -3019,8 +3492,11 @@ void vulkan_present_to_window( void )
 
 	if ( g_device.vk.QueuePresentKHR( g_device.queue(), &presentInfo ) == VK_SUCCESS )
 	{
-		g_currentPresentWaitId = presentId;
-		g_currentPresentWaitId.notify_all();
+		if ( g_device.supportsPresentWait() )
+		{
+			g_currentPresentWaitId = presentId;
+			g_currentPresentWaitId.notify_all();
+		}
 	}
 	else
 		vulkan_remake_swapchain();
@@ -3141,6 +3617,17 @@ bool vulkan_make_swapchain( VulkanOutput_t *pOutput )
 	uint32_t surfaceFormat = formatCount;
 	VkColorSpaceKHR preferredColorSpace = g_bOutputHDREnabled ? VK_COLOR_SPACE_HDR10_ST2084_EXT : VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
 
+	// V3D: Try B8G8R8A8 first (only format V3D swapchain supports)
+	if ( g_device.isV3D() && surfaceFormat == formatCount )
+	{
+		for ( surfaceFormat = 0; surfaceFormat < formatCount; surfaceFormat++ )
+		{
+			if ( pOutput->surfaceFormats[ surfaceFormat ].format == VK_FORMAT_B8G8R8A8_UNORM &&
+				 pOutput->surfaceFormats[ surfaceFormat ].colorSpace == preferredColorSpace )
+				break;
+		}
+	}
+
 	if ( surfaceFormat == formatCount )
 	{
 		for ( surfaceFormat = 0; surfaceFormat < formatCount; surfaceFormat++ )
@@ -3156,16 +3643,6 @@ bool vulkan_make_swapchain( VulkanOutput_t *pOutput )
 		for ( surfaceFormat = 0; surfaceFormat < formatCount; surfaceFormat++ )
 		{
 			if ( pOutput->surfaceFormats[ surfaceFormat ].format == VK_FORMAT_A2R10G10B10_UNORM_PACK32 &&
-				 pOutput->surfaceFormats[ surfaceFormat ].colorSpace == preferredColorSpace )
-				break;
-		}
-	}
-
-	if ( surfaceFormat == formatCount )
-	{
-		for ( surfaceFormat = 0; surfaceFormat < formatCount; surfaceFormat++ )
-		{
-			if ( pOutput->surfaceFormats[ surfaceFormat ].format == VK_FORMAT_B8G8R8A8_UNORM &&
 				 pOutput->surfaceFormats[ surfaceFormat ].colorSpace == preferredColorSpace )
 				break;
 		}
@@ -3266,12 +3743,34 @@ bool vulkan_remake_swapchain( void )
 
 static bool vulkan_make_output_images( VulkanOutput_t *pOutput )
 {
+	// V3D (Pi5) has a hardware limitation: compute shaders can only write to tiled images,
+	// but the VC4 display controller needs LINEAR images for scanout. To work around this,
+	// we create two sets of images:
+	// - outputImages: tiled storage images for compute shader writes
+	// - scanoutImages: linear flippable images for KMS scanout
+	// After compositing, we copy from outputImages to scanoutImages.
+	const bool bNeedsScanoutCopy = g_device.isV3D() && !GetBackend()->UsesVulkanSwapchain();
+	pOutput->bNeedsScanoutCopy = bNeedsScanoutCopy;
+
 	CVulkanTexture::createFlags outputImageflags;
-	outputImageflags.bFlippable = true;
-	outputImageflags.bStorage = true;
-	outputImageflags.bTransferSrc = true; // for screenshots
-	outputImageflags.bSampled = true; // for pipewire blits
-	outputImageflags.bOutputImage = true;
+	if ( bNeedsScanoutCopy )
+	{
+		// Storage images for compute shader writes (tiled/optimal)
+		outputImageflags.bFlippable = false;
+		outputImageflags.bStorage = true;
+		outputImageflags.bTransferSrc = true; // for copy to scanout image
+		outputImageflags.bSampled = true; // for pipewire blits
+		outputImageflags.bOutputImage = true;
+		vk_log.infof( "V3D: Creating separate tiled storage images and linear scanout images" );
+	}
+	else
+	{
+		outputImageflags.bFlippable = true;
+		outputImageflags.bStorage = true;
+		outputImageflags.bTransferSrc = true; // for screenshots
+		outputImageflags.bSampled = true; // for pipewire blits
+		outputImageflags.bOutputImage = true;
+	}
 
 	pOutput->outputImages.resize(3); // extra image for partial composition.
 	pOutput->outputImagesPartialOverlay.resize(3);
@@ -3309,6 +3808,33 @@ static bool vulkan_make_output_images( VulkanOutput_t *pOutput )
 		return false;
 	}
 
+	// V3D: Create separate linear scanout images
+	if ( bNeedsScanoutCopy )
+	{
+		CVulkanTexture::createFlags scanoutFlags;
+		scanoutFlags.bFlippable = true;
+		scanoutFlags.bLinear = true;
+		scanoutFlags.bStorage = false;
+		scanoutFlags.bTransferDst = true; // for copy from output image
+		scanoutFlags.bTransferSrc = true; // for screenshots
+		scanoutFlags.bSampled = false;
+		scanoutFlags.bOutputImage = true;
+
+		pOutput->scanoutImages.resize(3);
+		for ( int i = 0; i < 3; i++ )
+		{
+			pOutput->scanoutImages[i] = new CVulkanTexture();
+			bSuccess = pOutput->scanoutImages[i]->BInit( g_nOutputWidth, g_nOutputHeight, 1u, uDRMFormat, scanoutFlags );
+			if ( bSuccess != true )
+			{
+				vk_log.errorf( "failed to allocate scanout buffer for V3D" );
+				return false;
+			}
+		}
+
+		pOutput->scanoutImagesPartialOverlay.resize(3);
+	}
+
 	// Oh no.
 	pOutput->temporaryHackyBlankImage = vulkan_create_debug_blank_texture();
 
@@ -3338,6 +3864,30 @@ static bool vulkan_make_output_images( VulkanOutput_t *pOutput )
 		{
 			vk_log.errorf( "failed to allocate buffer for KMS" );
 			return false;
+		}
+
+		// V3D: Create linear scanout images for partial overlay
+		if ( bNeedsScanoutCopy )
+		{
+			CVulkanTexture::createFlags scanoutFlags;
+			scanoutFlags.bFlippable = true;
+			scanoutFlags.bLinear = true;
+			scanoutFlags.bStorage = false;
+			scanoutFlags.bTransferDst = true;
+			scanoutFlags.bTransferSrc = true;
+			scanoutFlags.bSampled = false;
+			scanoutFlags.bOutputImage = true;
+
+			for ( int i = 0; i < 3; i++ )
+			{
+				pOutput->scanoutImagesPartialOverlay[i] = new CVulkanTexture();
+				bSuccess = pOutput->scanoutImagesPartialOverlay[i]->BInit( g_nOutputWidth, g_nOutputHeight, 1u, uPartialDRMFormat, scanoutFlags );
+				if ( bSuccess != true )
+				{
+					vk_log.errorf( "failed to allocate scanout partial overlay buffer for V3D" );
+					return false;
+				}
+			}
 		}
 	}
 
@@ -3542,7 +4092,7 @@ bool vulkan_init( VkInstance instance, VkSurfaceKHR surface )
 	if (!init_nis_data())
 		return false;
 
-	if ( GetBackend()->UsesVulkanSwapchain() )
+	if ( GetBackend()->UsesVulkanSwapchain() && g_device.supportsPresentWait() )
 	{
 		std::thread present_wait_thread( present_wait_thread_func );
 		present_wait_thread.detach();
@@ -3560,9 +4110,6 @@ gamescope::OwningRc<CVulkanTexture> vulkan_create_texture_from_dmabuf( struct wl
 	CVulkanTexture::createFlags texCreateFlags;
 	texCreateFlags.bSampled = true;
 
-	//fprintf(stderr, "pDMA->width: %d pDMA->height: %d pDMA->format: 0x%x pDMA->modifier: 0x%lx pDMA->n_planes: %d\n",
-	//	pDMA->width, pDMA->height, pDMA->format, pDMA->modifier, pDMA->n_planes);
-	
 	if ( pTex->BInit( pDMA->width, pDMA->height, 1u, pDMA->format, texCreateFlags, pDMA, 0, 0, nullptr, pBackendFb ) == false )
 		return nullptr;
 	
@@ -3954,6 +4501,11 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 	if (!frameInfo->applyOutputColorMgmt)
 		outputTF = EOTF_Count; //Disable blending stuff.
 
+	// V3D workaround: swap R/B channels when outputting
+	// This is needed because shaders declare rgba8 but V3D outputs B8G8R8A8
+	// Applies to both SDL swapchain and DRM scanout (both use BGRX/BGRA formats)
+	const bool swapChannels = g_device.isV3D();
+
 	g_pLastReshadeEffect = nullptr;
 	if (!g_reshade_effect.empty())
 	{
@@ -4017,7 +4569,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 
 		cmdBuffer->dispatch(div_roundup(tempX, pixelsPerGroup), div_roundup(tempY, pixelsPerGroup));
 
-		cmdBuffer->bindPipeline(g_device.pipeline(SHADER_TYPE_RCAS, frameInfo->layerCount, frameInfo->ycbcrMask() & ~1, 0u, frameInfo->colorspaceMask(), outputTF ));
+		cmdBuffer->bindPipeline(g_device.pipeline(SHADER_TYPE_RCAS, frameInfo->layerCount, frameInfo->ycbcrMask() & ~1, 0u, frameInfo->colorspaceMask(), outputTF, false, swapChannels));
 		bind_all_layers(cmdBuffer.get(), frameInfo);
 		cmdBuffer->bindTexture(0, g_output.tmpOutput);
 		cmdBuffer->setTextureSrgb(0, true);
@@ -4064,7 +4616,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 		nisFrameInfo.layers[0].scale.x = 1.0f;
 		nisFrameInfo.layers[0].scale.y = 1.0f;
 
-		cmdBuffer->bindPipeline( g_device.pipeline(SHADER_TYPE_BLIT, nisFrameInfo.layerCount, nisFrameInfo.ycbcrMask(), 0u, nisFrameInfo.colorspaceMask(), outputTF ));
+		cmdBuffer->bindPipeline( g_device.pipeline(SHADER_TYPE_BLIT, nisFrameInfo.layerCount, nisFrameInfo.ycbcrMask(), 0u, nisFrameInfo.colorspaceMask(), outputTF, false, swapChannels));
 		bind_all_layers(cmdBuffer.get(), &nisFrameInfo);
 		cmdBuffer->bindTarget(compositeImage);
 		cmdBuffer->uploadConstants<BlitPushData_t>(&nisFrameInfo);
@@ -4102,7 +4654,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 		bool useSrgbView = frameInfo->layers[0].colorspace == GAMESCOPE_APP_TEXTURE_COLORSPACE_LINEAR;
 
 		type = frameInfo->blurLayer0 == BLUR_MODE_COND ? SHADER_TYPE_BLUR_COND : SHADER_TYPE_BLUR;
-		cmdBuffer->bindPipeline(g_device.pipeline(type, frameInfo->layerCount, frameInfo->ycbcrMask(), blur_layer_count, frameInfo->colorspaceMask(), outputTF ));
+		cmdBuffer->bindPipeline(g_device.pipeline(type, frameInfo->layerCount, frameInfo->ycbcrMask(), blur_layer_count, frameInfo->colorspaceMask(), outputTF, false, swapChannels));
 		bind_all_layers(cmdBuffer.get(), frameInfo);
 		cmdBuffer->bindTarget(compositeImage);
 		cmdBuffer->bindTexture(VKR_BLUR_EXTRA_SLOT, g_output.tmpOutput);
@@ -4114,7 +4666,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 	}
 	else
 	{
-		cmdBuffer->bindPipeline( g_device.pipeline(SHADER_TYPE_BLIT, frameInfo->layerCount, frameInfo->ycbcrMask(), 0u, frameInfo->colorspaceMask(), outputTF ));
+		cmdBuffer->bindPipeline( g_device.pipeline(SHADER_TYPE_BLIT, frameInfo->layerCount, frameInfo->ycbcrMask(), 0u, frameInfo->colorspaceMask(), outputTF, false, swapChannels));
 		bind_all_layers(cmdBuffer.get(), frameInfo);
 		cmdBuffer->bindTarget(compositeImage);
 		cmdBuffer->uploadConstants<BlitPushData_t>(frameInfo);
@@ -4186,6 +4738,32 @@ void vulkan_wait( uint64_t ulSeqNo, bool bReset )
 	return g_device.wait( ulSeqNo, bReset );
 }
 
+// V3D: Copy from tiled storage image to linear scanout image
+// Returns the wait sequence number
+std::optional<uint64_t> vulkan_copy_to_scanout_image( uint32_t nImageIndex, bool partial )
+{
+	if ( !g_output.bNeedsScanoutCopy )
+		return std::nullopt;
+
+	if ( g_output.scanoutImages.empty() )
+		return std::nullopt;
+
+	auto srcImage = partial ? g_output.outputImagesPartialOverlay[ nImageIndex ] : g_output.outputImages[ nImageIndex ];
+	auto dstImage = partial ? g_output.scanoutImagesPartialOverlay[ nImageIndex ] : g_output.scanoutImages[ nImageIndex ];
+
+	if ( !srcImage || !dstImage )
+		return std::nullopt;
+
+	auto cmdBuffer = g_device.commandBuffer();
+
+	// Use copyOutputToScanout which allows output images as sources
+	cmdBuffer->copyOutputToScanout( srcImage.get(), dstImage.get() );
+
+	uint64_t sequence = g_device.submit(std::move(cmdBuffer));
+
+	return sequence;
+}
+
 gamescope::Rc<CVulkanTexture> vulkan_get_last_output_image( bool partial, bool defer )
 {
 	// Get previous image ( +2 )
@@ -4204,11 +4782,19 @@ gamescope::Rc<CVulkanTexture> vulkan_get_last_output_image( bool partial, bool d
 
 	if ( partial )
 	{
-
-		//vk_log.infof( "Partial overlay frame: %d", nDeferredImage );
+		// V3D: Return scanout partial overlay image for DRM backend (after copy has been done)
+		if ( g_output.bNeedsScanoutCopy && !g_output.scanoutImagesPartialOverlay.empty() )
+		{
+			return g_output.scanoutImagesPartialOverlay[ nOutImage ];
+		}
 		return g_output.outputImagesPartialOverlay[ nOutImage ];
 	}
 
+	// V3D: Return scanout image for DRM backend (after copy has been done)
+	if ( g_output.bNeedsScanoutCopy && !g_output.scanoutImages.empty() )
+	{
+		return g_output.scanoutImages[ nOutImage ];
+	}
 
 	return g_output.outputImages[ nOutImage ];
 }
