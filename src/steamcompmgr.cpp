@@ -8949,11 +8949,12 @@ steamcompmgr_main(int argc, char **argv)
 			hasRepaint = false;
 			hasRepaintNonBasePlane = false;
 			nIgnoredOverlayRepaints = 0;
-
+#if HAVE_SCRIPTING
 			{
 				gamescope::CScriptScopedLock script;
 				script.Manager().CallHook( "OnPostPaint" );
 			}
+#endif
 		}
 
 		if ( bIsVBlankFromTimer )
