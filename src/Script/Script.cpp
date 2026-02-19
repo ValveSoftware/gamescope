@@ -15,7 +15,7 @@ namespace gamescope
     static LogScope s_ScriptLog{ "script" }; 
     static LogScope s_ScriptMgrLog{ "scriptmgr" };
 
-    static ConVar<bool> cv_script_use_local_scripts{ "script_use_local_scripts", false, "Whether or not to use the local scripts (../config) as opposed to the ones in /etc/gamescope.d" };
+    static ConVar<bool> cv_script_use_local_scripts{ "script_use_local_scripts", false, "Whether or not to use the local scripts (../scripts) as opposed to the ones in /etc/gamescope.d" };
     static ConVar<bool> cv_script_use_user_scripts{ "script_use_user_scripts", true, "Whether or not to use user config scripts ($XDG_CONFIG_DIR/gamescope) at all." };
 
     static std::string_view GetConfigDir()
