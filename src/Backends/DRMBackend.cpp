@@ -2198,7 +2198,7 @@ namespace gamescope
 
 			if ( this->GetScreenType() == gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL && pMode )
 			{
-				// Auto-detect portait mode for internal displays
+				// Auto-detect portrait mode for internal displays
 				m_ChosenOrientation = pMode->hdisplay < pMode->vdisplay
 					? GAMESCOPE_PANEL_ORIENTATION_270
 					: GAMESCOPE_PANEL_ORIENTATION_0;
@@ -3698,7 +3698,7 @@ namespace gamescope
 					// but lets be more friendly and just avoid a commit and try again later.
 					// Let's re-poll our state, and force grab the best connector again.
 					//
-					// Some intense connector hotplugging could be occuring and the
+					// Some intense connector hotplugging could be occurring and the
 					// connector could become destroyed before we had a chance to use it
 					// as we hadn't reffed it in a commit yet.
 					this->DirtyState( true, false );
