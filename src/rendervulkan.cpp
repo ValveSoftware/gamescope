@@ -471,14 +471,20 @@ bool CVulkanDevice::createDevice()
 	// We need to refactor some Vulkan stuff to do that though.
 	if ( hasDrmProps )
 	{
+		VkPhysicalDeviceDriverProperties driverProps = {
+			.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES,
+		};
 		VkPhysicalDeviceDrmPropertiesEXT drmProps = {
 			.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRM_PROPERTIES_EXT,
+			.pNext = &driverProps,
 		};
 		VkPhysicalDeviceProperties2 props2 = {
 			.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
 			.pNext = &drmProps,
 		};
 		vk.GetPhysicalDeviceProperties2( physDev(), &props2 );
+
+		m_bIsNvidiaProprietaryDriver = driverProps.driverID == VK_DRIVER_ID_NVIDIA_PROPRIETARY;
 
 		if ( !GetBackend()->UsesVulkanSwapchain() && !drmProps.hasPrimary ) {
 			vk_log.errorf( "physical device has no primary node" );
@@ -3613,6 +3619,7 @@ gamescope::Rc<CVulkanTexture> vulkan_acquire_screenshot_texture(uint32_t width, 
 			screenshotImageFlags.bMappable = true;
 			screenshotImageFlags.bTransferDst = true;
 			screenshotImageFlags.bStorage = true;
+			screenshotImageFlags.bSampled = true; // required for RGB-to-NV12 shader to sample this texture
 			if (exportable || drmFormat == DRM_FORMAT_NV12) {
 				screenshotImageFlags.bExportable = true;
 				screenshotImageFlags.bLinear = true; // TODO: support multi-planar DMA-BUF export via PipeWire

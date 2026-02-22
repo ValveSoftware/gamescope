@@ -804,6 +804,7 @@ public:
 	inline bool hasDrmPrimaryDevId() {return m_bHasDrmPrimaryDevId;}
 	inline dev_t primaryDevId() {return m_drmPrimaryDevId;}
 	inline bool supportsFp16() {return m_bSupportsFp16;}
+	inline bool isNvidiaProprietaryDriver() {return m_bIsNvidiaProprietaryDriver;}
 
 	inline std::pair<void *, uint32_t> uploadBufferData(uint32_t size)
 	{
@@ -867,6 +868,7 @@ protected:
 	bool m_bSupportsFp16 = false;
 	bool m_bHasDrmPrimaryDevId = false;
 	bool m_bSupportsModifiers = false;
+	bool m_bIsNvidiaProprietaryDriver = false;
 	bool m_bInitialized = false;
 
 
