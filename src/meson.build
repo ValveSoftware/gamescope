@@ -106,6 +106,7 @@ src = [
   'BufferMemo.cpp',
   'steamcompmgr.cpp',
   'convar.cpp',
+  'convar_script.cpp',
   'commit.cpp',
   'color_helpers.cpp',
   'main.cpp',
