@@ -12,7 +12,6 @@
 #include <functional>
 #include <cassert>
 
-#include "Script/Script.h"
 #include "Utils/Dict.h"
 
 #include "log.hpp"
@@ -84,13 +83,14 @@ namespace gamescope
         return tokens;
     }
 
+    namespace detail { struct ConVarScriptRegistrar; }
+
     class ConCommand
     {
+        friend struct detail::ConVarScriptRegistrar;
         using ConCommandFunc = std::function<void( std::span<std::string_view> )>;
 
     public:
-        DECLARE_SCRIPTDESC( ConCommand );
-
         ConCommand( std::string_view pszName, std::string_view pszDescription, ConCommandFunc func, bool bRegisterScript = true );
         ~ConCommand();
 
@@ -116,25 +116,20 @@ namespace gamescope
         std::string_view GetDescription() const { return m_pszDescription; }
 
         static Dict<ConCommand *>& GetCommands();
+        static void RegisterScript( std::string_view name, ConCommand *cmd );
     protected:
         std::string_view m_pszName;
         std::string_view m_pszDescription;
         ConCommandFunc m_Func;
     };
 
-    START_SCRIPTDESC( ConCommand, "concommand" )
-        SCRIPTDESC( "name", &ConCommand::m_pszName )
-        SCRIPTDESC( "description", &ConCommand::m_pszDescription )
-        SCRIPTDESC( "call", &ConCommand::CallWithArgString )
-    END_SCRIPTDESC()
 
     template <typename T>
     class ConVar : public ConCommand
     {
+        friend struct detail::ConVarScriptRegistrar;
         using ConVarCallbackFunc = std::function<void(ConVar<T> &)>;
     public:
-        DECLARE_SCRIPTDESC( ConVar<T> );
-
         ConVar( std::string_view pszName, T defaultValue = T{}, std::string_view pszDescription = "", ConVarCallbackFunc func = nullptr, bool bRunCallbackAtStartup = false, bool bRegisterScript = true )
             : ConCommand( pszName, pszDescription, [this]( std::span<std::string_view> pArgs ){ this->InvokeFunc( pArgs ); }, false )
             , m_Value{ defaultValue }
@@ -145,12 +140,10 @@ namespace gamescope
                 RunCallback();
             }
 
-#if HAVE_SCRIPTING
             if ( bRegisterScript )
             {
-                CScriptScopedLock().Manager().Gamescope().Convars.Base[pszName] = this;
+                RegisterScript( pszName, this );
             }
-#endif
         }
 
         const T& Get() const
@@ -237,13 +230,5 @@ namespace gamescope
         bool m_bInCallback;
     };
 
-    SCRIPTDESC_TEMPLATE( T )
-    START_SCRIPTDESC_ANON( ConVar<T> )
-        SCRIPTDESC( "name", &ConVar<T>::m_pszName )
-        SCRIPTDESC( "description", &ConVar<T>::m_pszDescription )
-        SCRIPTDESC( "call", &ConVar<T>::CallWithArgString )
-
-        SCRIPTDESC( "value", &ConVar<T>::m_Value )
-    END_SCRIPTDESC()
 
 }

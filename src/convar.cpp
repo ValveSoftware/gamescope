@@ -16,10 +16,8 @@ namespace gamescope
         assert( !GetCommands().contains( pszName ) );
         GetCommands()[ std::string( pszName ) ] = this;
 
-#if HAVE_SCRIPTING
         if ( bRegisterScript )
-            CScriptScopedLock().Manager().Gamescope().Convars.Base[pszName] = this;
-#endif
+            RegisterScript( pszName, this );
     }
 
     ConCommand::~ConCommand()
@@ -81,4 +79,10 @@ namespace gamescope
     {
         PrintVersion();
     });
+
+#if !HAVE_SCRIPTING
+    void ConCommand::RegisterScript( std::string_view, ConCommand * )
+    {
+    }
+#endif
 }
