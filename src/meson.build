@@ -23,6 +23,8 @@ cap_dep = dependency('libcap', required: get_option('rt_cap'))
 epoll_dep = dependency('epoll-shim', required: false)
 sdl2_dep = dependency('SDL2', required: get_option('sdl2_backend'))
 avif_dep = dependency('libavif', version: '>=1.0.0', required: get_option('avif_screenshots'))
+jxl_dep = dependency('libjxl', version: '>=0.7.0', required: get_option('jxl_screenshots'))
+jxl_threads_dep = dependency('libjxl_threads', version: '>=0.7.0', required: get_option('jxl_screenshots'))
 pixman_dep = dependency('pixman-1')
 udev_dep = dependency('libudev')
 
@@ -105,6 +107,7 @@ src = [
   'Script/Script.cpp',
   'BufferMemo.cpp',
   'steamcompmgr.cpp',
+  'screenshot_format.cpp',
   'convar.cpp',
   'commit.cpp',
   'color_helpers.cpp',
@@ -149,6 +152,7 @@ endif
 gamescope_cpp_args += '-DHAVE_DRM=@0@'.format(drm_dep.found().to_int())
 gamescope_cpp_args += '-DHAVE_SDL2=@0@'.format(sdl2_dep.found().to_int())
 gamescope_cpp_args += '-DHAVE_AVIF=@0@'.format(avif_dep.found().to_int())
+gamescope_cpp_args += '-DHAVE_JXL=@0@'.format(jxl_dep.found().to_int())
 gamescope_cpp_args += '-DHAVE_LIBCAP=@0@'.format(cap_dep.found().to_int())
 gamescope_cpp_args += '-DHAVE_LIBEIS=@0@'.format(eis_dep.found().to_int())
 gamescope_cpp_args += '-DHAVE_LIBSYSTEMD=@0@'.format(libsystemd_dep.found().to_int())
@@ -198,7 +202,7 @@ gamescope_version = configure_file(
       dep_xxf86vm, dep_xres, glm_dep, drm_dep, wayland_server,
       xkbcommon, thread_dep, sdl2_dep, wlroots_dep,
       vulkan_dep, liftoff_dep, dep_xtst, dep_xmu, cap_dep, epoll_dep, pipewire_dep, librt_dep,
-      stb_dep, displayinfo_dep, openvr_dep, dep_xcursor, avif_dep, dep_xi,
+      stb_dep, displayinfo_dep, openvr_dep, dep_xcursor, avif_dep, jxl_dep, jxl_threads_dep, dep_xi,
       libdecor_dep, eis_dep, luajit_dep, libinput_dep, libsystemd_dep, pixman_dep, udev_dep,
     ],
     install: true,
