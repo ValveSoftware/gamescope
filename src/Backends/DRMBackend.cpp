@@ -554,6 +554,7 @@ namespace gamescope
 
 	struct CDRMColorPipeline
 	{
+		uint32_t id;
 		std::unique_ptr<gamescope::CDRMColorOp> degamma;
 		std::unique_ptr<gamescope::CDRMColorOp> HDRMult;
 		std::unique_ptr<gamescope::CDRMColorOp> CTM;
@@ -958,6 +959,7 @@ static std::optional<gamescope::CDRMColorPipeline> get_color_pipeline( struct dr
 		return {};
 
 	gamescope::CDRMColorPipeline p {
+		.id = uHeadId,
 		.degamma = std::move(pipeline[0]),
 		.HDRMult = std::move(pipeline[1]),
 		.CTM = std::move(pipeline[2]),
