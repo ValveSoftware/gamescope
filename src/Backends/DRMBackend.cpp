@@ -599,6 +599,7 @@ extern std::string g_reshade_effect;
 
 bool drm_update_color_mgmt(struct drm_t *drm);
 bool drm_supports_color_mgmt(struct drm_t *drm);
+bool drm_supports_color_pipeline(struct drm_t *drm);
 bool drm_set_connector( struct drm_t *drm, gamescope::CDRMConnector *conn );
 
 struct drm_color_ctm2 {
@@ -2928,6 +2929,39 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 		}
 	}
 
+	if ( ret == 0 && drm_supports_color_pipeline( drm ) )
+	{
+		auto entry = FrameInfoToLiftoffStateCacheEntry( drm, frameInfo );
+		for ( int i = 0; i < frameInfo->layerCount; i++ )
+		{
+			if ( !frameInfo->layers[i].applyColorMgmt )
+				continue;
+
+			struct liftoff_plane *plane = liftoff_layer_get_plane( drm->lo_layers[ i ] );
+			uint32_t plane_id = plane ? liftoff_plane_get_id( plane ) : 0;
+
+			if ( plane_id == 0 )
+				continue;
+
+			for ( std::unique_ptr< gamescope::CDRMPlane > &pPlane : drm->planes )
+			{
+				if ( pPlane->GetObjectId() != plane_id )
+					continue;
+
+				bool bYCbCr = entry.layerState[i].ycbcr;
+				std::optional<gamescope::CDRMColorPipeline> p = get_plane_color_pipelines( drm, pPlane );
+				if ( !p ) {
+					drm_log.debugf( "drm_prepare_liftoff: No color pipeline fits color mgmt needs of plane_id %d", plane_id );
+					break;
+				}
+
+				pPlane->GetProperties().COLOR_PIPELINE->SetPendingValue( drm->req, p->id, true );
++
+				break;
+			}
+		}
+	}
+
 	if ( ret == 0 )
 	{
 		// We don't support partial composition yet
@@ -3040,7 +3074,7 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 
 	bool bSinglePlane = frameInfo->layerCount < 2 && cv_drm_single_plane_optimizations;
 
-	if ( drm_supports_color_mgmt( &g_DRM ) && frameInfo->applyOutputColorMgmt )
+	if ( ( drm_supports_color_mgmt( &g_DRM ) || drm_supports_color_pipeline( &g_DRM ) ) && frameInfo->applyOutputColorMgmt )
 	{
 		if ( !cv_drm_debug_disable_output_tf && !bSinglePlane )
 		{
@@ -3317,7 +3351,7 @@ gamescope::GamescopeScreenType drm_get_screen_type(struct drm_t *drm)
 
 bool drm_update_color_mgmt(struct drm_t *drm)
 {
-	if ( !drm_supports_color_mgmt( drm ) )
+	if ( !drm_supports_color_mgmt( drm ) && !drm_supports_color_pipeline ( &g_DRM ) )
 		return true;
 
 	if ( g_ColorMgmt.serial == drm->current.color_mgmt_serial )
@@ -4063,7 +4097,7 @@ namespace gamescope
 
 		bool SupportsColorManagement() const
 		{
-			return drm_supports_color_mgmt( &g_DRM );
+			return drm_supports_color_mgmt( &g_DRM ) || drm_supports_color_pipeline( &g_DRM );
 		}
 
 		int Commit( const FrameInfo_t *pFrameInfo )
