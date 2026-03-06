@@ -45,6 +45,7 @@ using namespace std::literals;
 
 EStreamColorspace g_ForcedNV12ColorSpace = k_EStreamColorspace_Unknown;
 extern gamescope::ConVar<bool> cv_adaptive_sync;
+extern gamescope::ConVar<bool> cv_adaptive_sync_ignore_cursor;
 extern gamescope::ConVar<bool> cv_shutdown_on_primary_child_death;
 
 const char *gamescope_optstring = nullptr;
@@ -74,6 +75,7 @@ const struct option *gamescope_options = (struct option[]){
 	{ "mouse-sensitivity", required_argument, nullptr, 's' },
 	{ "mangoapp", no_argument, nullptr, 0 },
 	{ "adaptive-sync", no_argument, nullptr, 0 },
+	{ "adaptive-sync-ignore-cursor", no_argument, nullptr, 0 },
 
 	{ "backend", required_argument, nullptr, 0 },
 
@@ -215,6 +217,7 @@ const char usage[] =
 	"  --framerate-limit              Set a simple framerate limit. Used as a divisor of the refresh rate, rounds down eg 60 / 59 -> 60fps, 60 / 25 -> 30fps. Default: 0, disabled.\n"
 	"  --mangoapp                     Launch with the mangoapp (mangohud) performance overlay enabled. You should use this instead of using mangohud on the game or gamescope.\n"
 	"  --adaptive-sync                Enable adaptive sync if available (variable rate refresh)\n"
+	"  --adaptive-sync-ignore-cursor  Do not synchronize the cursor to the refresh rate\n"
 	"\n"
 	"Nested mode options:\n"
 	"  -o, --nested-unfocused-refresh game refresh rate when unfocused\n"
@@ -812,6 +815,8 @@ int main(int argc, char **argv)
 					g_nNestedDisplayIndex = parse_integer( optarg, opt_name );
 				} else if (strcmp(opt_name, "adaptive-sync") == 0) {
 					cv_adaptive_sync = true;
+				} else if (strcmp(opt_name, "adaptive-sync-ignore-cursor") == 0) {
+					cv_adaptive_sync_ignore_cursor = true;
 				} else if (strcmp(opt_name, "expose-wayland") == 0) {
 					g_bExposeWayland = true;
 				} else if (strcmp(opt_name, "backend") == 0) {
