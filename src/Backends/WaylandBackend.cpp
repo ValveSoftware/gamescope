@@ -767,6 +767,13 @@ namespace gamescope
         void Wayland_DataSource_Send( struct wl_data_source *pSource, const char *pMime, int nFd );
         void Wayland_DataSource_Cancelled( struct wl_data_source *pSource );
         static const wl_data_source_listener s_DataSourceListener;
+        
+        void Wayland_DataDevice_DataOffer( struct wl_data_device *pDevice, struct wl_data_offer *pOffer );
+        void Wayland_DataDevice_Selection( wl_data_device *pDataDevice, wl_data_offer *pOffer );
+        static const wl_data_device_listener s_DataDeviceListener;
+
+        void Wayland_DataOffer_Offer( struct wl_data_offer *pOffer, const char *pMime );
+        static const struct wl_data_offer_listener s_DataOfferListener;
 
         void Wayland_PrimarySelectionSource_Send( struct zwp_primary_selection_source_v1 *pSource, const char *pMime, int nFd );
         void Wayland_PrimarySelectionSource_Cancelled( struct zwp_primary_selection_source_v1 *pSource );
@@ -912,6 +919,13 @@ namespace gamescope
     {
         .send      = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_PrimarySelectionSource_Send ),
         .cancelled = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_PrimarySelectionSource_Cancelled ),
+    };
+    const wl_data_device_listener CWaylandBackend::s_DataDeviceListener = {
+        .data_offer = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_DataDevice_DataOffer ),
+        .selection = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_DataDevice_Selection ),
+    };
+    const wl_data_offer_listener CWaylandBackend::s_DataOfferListener = {
+        .offer = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_DataOffer_Offer ),
     };
 
     //////////////////
@@ -2076,6 +2090,16 @@ namespace gamescope
             xdg_log.errorf( "Failed to initialize input thread" );
             return false;
         }
+        
+        // Set up the data device listener
+        if (m_pDataDeviceManager && !m_pDataDevice) {
+            m_pDataDevice = wl_data_device_manager_get_data_device(m_pDataDeviceManager, m_pSeat);
+            if (!m_pDataDevice) {
+                xdg_log.errorf("Failed to get wl_data_device");
+                return false;
+            }
+            wl_data_device_add_listener(m_pDataDevice, &s_DataDeviceListener, this);
+        }
 
         xdg_log.infof( "Initted Wayland backend" );
 
@@ -2741,6 +2765,54 @@ namespace gamescope
     void CWaylandBackend::Wayland_PrimarySelectionSource_Cancelled( struct zwp_primary_selection_source_v1 *pSource)
     {
         zwp_primary_selection_source_v1_destroy( pSource );
+    }
+
+    // Data Device
+
+    void CWaylandBackend::Wayland_DataDevice_Selection(wl_data_device *pDataDevice, wl_data_offer *pOffer) {
+        // An application has set the clipboard contents
+        if (pOffer == nullptr) {
+            // Clipboard is empty
+            m_pClipboard = nullptr;
+            gamescope_set_selection(std::string{}, GAMESCOPE_SELECTION_CLIPBOARD);
+            return;
+        }
+        
+        int fds[2];
+        if (pipe(fds) < 0) {
+            xdg_log.errorf("Failed to create pipe for clipboard data");
+            return;
+        }
+        
+        wl_data_offer_receive(pOffer, "text/plain", fds[1]);
+        close(fds[1]);
+
+        wl_display_roundtrip(m_pDisplay);
+
+        // Read the clipboard contents and store it in a member variable.
+        std::string clipboardData;
+        char buf[1024];
+        ssize_t n;
+        while ((n = read(fds[0], buf, sizeof(buf))) > 0) {
+            clipboardData.append(buf, n);
+        }
+        close(fds[0]);
+
+        m_pClipboard = std::make_shared<std::string>(clipboardData);
+
+        char *pClipBoard = m_pClipboard->data();
+        gamescope_set_selection( pClipBoard, GAMESCOPE_SELECTION_CLIPBOARD);
+
+        wl_data_offer_destroy(pOffer);
+    }
+    void CWaylandBackend::Wayland_DataDevice_DataOffer(struct wl_data_device *pDevice, struct wl_data_offer *pOffer) {
+        wl_data_offer_add_listener(pOffer, &s_DataOfferListener, nullptr);
+    }
+
+    // Data Offer
+    void CWaylandBackend::Wayland_DataOffer_Offer(struct wl_data_offer* pOffer, const char* pMime)
+    {
+        xdg_log.debugf("Clipboard supports MIME type: %s", pMime);
     }
 
     ///////////////////////
