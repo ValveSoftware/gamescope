@@ -494,6 +494,7 @@ namespace gamescope
         wl_buffer *m_pHostBuffer = nullptr;
         wlr_buffer *m_pClientBuffer = nullptr;
         bool m_bCompositorAcquired = false;
+        bool m_bSawReleaseWithoutAcquire = false;
     };
     const wl_buffer_listener CWaylandFb::s_BufferListener =
     {
@@ -929,7 +930,10 @@ namespace gamescope
     CWaylandFb::~CWaylandFb()
     {
         // I own the pHostBuffer.
-        wl_buffer_destroy( m_pHostBuffer );
+        if ( m_bSawReleaseWithoutAcquire )
+            wl_proxy_destroy( (wl_proxy *)m_pHostBuffer );
+        else
+            wl_buffer_destroy( m_pHostBuffer );
         m_pHostBuffer = nullptr;
     }
 
@@ -956,6 +960,7 @@ namespace gamescope
         }
         else
         {
+            m_bSawReleaseWithoutAcquire = true;
             xdg_log.errorf( "Compositor released us but we were not acquired. Oh no." );
         }
     }
