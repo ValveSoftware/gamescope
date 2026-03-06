@@ -802,6 +802,18 @@ namespace gamescope
 					if ( event.key.repeat )
 						break;
 
+					// Ignore synthetic repeat KEYUPs when SDL still reports the key down.
+					if ( event.type == SDL_KEYUP )
+					{
+						const uint8_t *pKeyboardState = SDL_GetKeyboardState( nullptr );
+						SDL_Scancode scancode = event.key.keysym.scancode;
+						if ( pKeyboardState &&
+							 scancode >= 0 &&
+							 scancode < SDL_NUM_SCANCODES &&
+							 pKeyboardState[ scancode ] )
+							break;
+					}
+
 					wlserver_lock();
 					wlserver_key( key, event.type == SDL_KEYDOWN, fake_timestamp );
 					wlserver_unlock();
