@@ -101,6 +101,7 @@ namespace gamescope
 
 struct drm_t {
 	bool bUseLiftoff;
+	bool bSplitDisplay = false; // true when render GPU != display GPU (V3D+VC4)
 
 	int fd = -1;
 
@@ -1229,9 +1230,63 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 
 	if ( !drmIsKMS( drm->fd ) )
 	{
-		drm_log.errorf( "'%s' is not a KMS device", drm->device_name );
+		drm_log.infof( "'%s' is not a KMS device, searching for a separate KMS display device (split render/display architecture)...", drm->device_name );
 		wlsession_close_kms();
-		return -1;
+
+		bool bFoundKmsDevice = false;
+		drmDevice **drmDevices = nullptr;
+		int nDevices = drmGetDevices2( 0, nullptr, 0 );
+		if ( nDevices > 0 )
+		{
+			drmDevices = (drmDevice **)calloc( nDevices, sizeof(drmDevice *) );
+			nDevices = drmGetDevices2( 0, drmDevices, nDevices );
+		}
+		for ( int i = 0; i < nDevices; i++ )
+		{
+			drmDevice *pDevice = drmDevices[i];
+			if ( !( pDevice->available_nodes & ( 1 << DRM_NODE_PRIMARY ) ) )
+				continue;
+
+			const char *pPrimaryNode = pDevice->nodes[DRM_NODE_PRIMARY];
+
+			// Skip the Vulkan device's node that we already tried
+			if ( drm->device_name && strcmp( pPrimaryNode, drm->device_name ) == 0 )
+				continue;
+
+			int fd = open( pPrimaryNode, O_RDWR | O_CLOEXEC );
+			if ( fd < 0 )
+				continue;
+
+			if ( drmIsKMS( fd ) )
+			{
+				close( fd );
+				free( drm->device_name );
+				drm->device_name = strdup( pPrimaryNode );
+				drm_log.infof( "Found separate KMS display device: '%s'", drm->device_name );
+				drm->fd = wlsession_open_kms( drm->device_name );
+				if ( drm->fd >= 0 )
+				{
+					drm->bSplitDisplay = true;
+					bFoundKmsDevice = true;
+					break;
+				}
+			}
+			else
+			{
+				close( fd );
+			}
+		}
+		if ( drmDevices )
+		{
+			drmFreeDevices( drmDevices, nDevices );
+			free( drmDevices );
+		}
+
+		if ( !bFoundKmsDevice )
+		{
+			drm_log.errorf( "No KMS-capable display device found" );
+			return false;
+		}
 	}
 
 	if (drmSetClientCap(drm->fd, DRM_CLIENT_CAP_ATOMIC, 1) != 0) {
@@ -1338,6 +1393,20 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 	// 2. When compositing HDR content as a fallback when we undock, it avoids introducing
 	// a bunch of horrible banding when going to G2.2 curve.
 	// It ensures that we can dither that.
+	if ( drm->bSplitDisplay )
+	{
+		drm_log.infof( "Split display mode: preferring 8-bit formats for cross-device compatibility" );
+		g_nDRMFormat = pick_plane_format(&drm->primary_formats, DRM_FORMAT_XRGB8888, DRM_FORMAT_ARGB8888);
+		if ( g_nDRMFormat == DRM_FORMAT_INVALID ) {
+			g_nDRMFormat = pick_plane_format(&drm->primary_formats, DRM_FORMAT_XRGB2101010, DRM_FORMAT_ARGB2101010);
+			if ( g_nDRMFormat == DRM_FORMAT_INVALID ) {
+				drm_log.errorf("Primary plane doesn't support any formats >= 8888");
+				return false;
+			}
+		}
+	}
+	else
+	{
 	g_nDRMFormat = pick_plane_format(&drm->primary_formats, DRM_FORMAT_XRGB2101010, DRM_FORMAT_ARGB2101010);
 	if ( g_nDRMFormat == DRM_FORMAT_INVALID ) {
 		g_nDRMFormat = pick_plane_format(&drm->primary_formats, DRM_FORMAT_XBGR2101010, DRM_FORMAT_ABGR2101010);
@@ -1349,9 +1418,23 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 			}
 		}
 	}
+	}
 
 	if (have_overlay_planes(drm)) {
 		// ARGB8888 is the Xformat and AFormat here in this function as we want transparent overlay
+		if ( drm->bSplitDisplay )
+		{
+			g_nDRMFormatOverlay = pick_plane_format(&drm->formats, DRM_FORMAT_ARGB8888, DRM_FORMAT_ARGB8888);
+			if ( g_nDRMFormatOverlay == DRM_FORMAT_INVALID ) {
+				g_nDRMFormatOverlay = pick_plane_format(&drm->formats, DRM_FORMAT_ARGB2101010, DRM_FORMAT_ARGB2101010);
+				if ( g_nDRMFormatOverlay == DRM_FORMAT_INVALID ) {
+					drm_log.errorf("Overlay plane doesn't support any formats >= 8888");
+					return false;
+				}
+			}
+		}
+		else
+		{
 		g_nDRMFormatOverlay = pick_plane_format(&drm->formats, DRM_FORMAT_ARGB2101010, DRM_FORMAT_ARGB2101010);
 		if ( g_nDRMFormatOverlay == DRM_FORMAT_INVALID ) {
 			g_nDRMFormatOverlay = pick_plane_format(&drm->formats, DRM_FORMAT_ABGR2101010, DRM_FORMAT_ABGR2101010);
@@ -1362,6 +1445,7 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 					return false;
 				}
 			}
+		}
 		}
 	} else {
 		switch (g_nDRMFormat) {
@@ -3468,6 +3552,11 @@ namespace gamescope
 			bNeedsFullComposite |= pFrameInfo->bFadingOut;
 			bNeedsFullComposite |= !g_reshade_effect.empty();
 
+			// V3D (Pi5) split render/display: Always composite because V3D creates UIF-tiled
+			// textures that VC4 display controller cannot scanout directly.
+			// This avoids wasted drm_prepare attempts that will always fail.
+			bNeedsFullComposite |= g_DRM.bSplitDisplay;
+
 			if ( g_bOutputHDREnabled )
 			{
 				bNeedsFullComposite |= g_bHDRItmEnable;
@@ -3585,6 +3674,18 @@ namespace gamescope
 			}
 
 			vulkan_wait( *oCompositeResult, true );
+
+			// V3D: Copy from tiled storage to linear scanout image
+			// The image index that was just written to is (nOutImage + 2) % 3 after increment
+			// vulkan_copy_to_scanout_image uses the same logic as vulkan_get_last_output_image
+			{
+				uint32_t nRegularImage = ( g_output.nOutImage + 2 ) % 3;
+				std::optional oCopyResult = vulkan_copy_to_scanout_image( nRegularImage, !bNeedsFullComposite );
+				if ( oCopyResult )
+				{
+					vulkan_wait( *oCopyResult, true );
+				}
+			}
 
 			FrameInfo_t presentCompFrameInfo = {};
 			presentCompFrameInfo.allowVRR = pFrameInfo->allowVRR;
@@ -3909,13 +4010,13 @@ namespace gamescope
 			m_uNextPresentCtx = ( m_uNextPresentCtx + 1 ) % 3;
 			m_PresentCtxs[uCurrentPresentCtx].ulPendingFlipCount = GetCurrentConnector()->PresentationFeedback().m_uQueuedPresents;
 
-			drm_log.debugf("flip commit %" PRIu64, (uint64_t)GetCurrentConnector()->PresentationFeedback().m_uQueuedPresents);
+			drm_log.debugf("flip commit %" PRIu64 " flags=0x%x", (uint64_t)GetCurrentConnector()->PresentationFeedback().m_uQueuedPresents, drm->flags);
 			gpuvis_trace_printf( "flip commit %" PRIu64, (uint64_t)GetCurrentConnector()->PresentationFeedback().m_uQueuedPresents );
 
 			ret = drmModeAtomicCommit(drm->fd, drm->req, drm->flags, &m_PresentCtxs[uCurrentPresentCtx] );
 			if ( ret != 0 )
 			{
-				drm_log.errorf_errno( "flip error" );
+				drm_log.errorf_errno( "flip error ret=%d", ret );
 
 				if ( ret != -EBUSY && ret != -EACCES )
 				{
