@@ -2386,8 +2386,15 @@ static void paint_pipewire()
 	if ( pFocus->overrideWindow && !pFocus->focusWindow->isSteamStreamingClient )
 		paint_window( pFocus->overrideWindow, pFocus->focusWindow, &frameInfo, nullptr, PaintWindowFlag::NoFilter, 1.0f, pFocus->overrideWindow );
 
+	// On the NVIDIA proprietary driver, sampling VK_FORMAT_A2R10G10B10_UNORM_PACK32
+	// (DRM_FORMAT_XRGB2101010) storage images returns R and B swapped, causing colour
+	// inversion in the RGB-to-NV12 conversion shader. Use DRM_FORMAT_XBGR2101010
+	// (VK_FORMAT_A2B10G10R10_UNORM_PACK32) instead so components arrive in the correct
+	// order. This does not affect non-proprietary NVIDIA drivers or other vendors.
+	const uint32_t uRGBCaptureFormat = g_device.isNvidiaProprietaryDriver()
+		? DRM_FORMAT_XBGR2101010 : DRM_FORMAT_XRGB2101010;
 	gamescope::Rc<CVulkanTexture> pRGBTexture = s_pPipewireBuffer->texture->isYcbcr()
-		? vulkan_acquire_screenshot_texture( uWidth, uHeight, false, DRM_FORMAT_XRGB2101010 )
+		? vulkan_acquire_screenshot_texture( uWidth, uHeight, false, uRGBCaptureFormat )
 		: gamescope::Rc<CVulkanTexture>{ s_pPipewireBuffer->texture };
 
 	gamescope::Rc<CVulkanTexture> pYUVTexture = s_pPipewireBuffer->texture->isYcbcr() ? s_pPipewireBuffer->texture : nullptr;
