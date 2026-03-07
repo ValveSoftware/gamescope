@@ -277,7 +277,7 @@ namespace gamescope
         virtual void SetBuffer( wlr_buffer *pClientBuffer ) = 0;
         virtual void SetReleasePoint( std::shared_ptr<CReleaseTimelinePoint> pReleasePoint ) = 0;
 
-        virtual IBackendFb *Unwrap() = 0;
+        virtual IBackendFb *EnsureImported() = 0;
     };
 
     class IBackendPlane
@@ -298,7 +298,7 @@ namespace gamescope
         void SetBuffer( wlr_buffer *pClientBuffer ) override;
         void SetReleasePoint( std::shared_ptr<CReleaseTimelinePoint> pReleasePoint ) override;
 
-        virtual IBackendFb *Unwrap() override { return this; };
+        virtual IBackendFb *EnsureImported() override { return this; };
 
     private:
         wlr_buffer *m_pClientBuffer = nullptr;
@@ -394,6 +394,8 @@ namespace gamescope
 
         virtual bool ShouldFitWindows() = 0;
 
+        virtual void OnEndFrame() = 0;
+
         static IBackend *Get();
         template <typename T>
         static bool Set();
@@ -430,6 +432,8 @@ namespace gamescope
         virtual bool NewlyInitted() override { return false; }
 
         virtual bool ShouldFitWindows() override { return true; }
+
+        virtual void OnEndFrame() override {}
     };
 
     // This is a blob of data that may be associated with

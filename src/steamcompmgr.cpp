@@ -78,6 +78,7 @@
 #include <linux/input-event-codes.h>
 #include <X11/Xmu/CurUtil.h>
 #include "waitable.h"
+#include <inttypes.h>
 
 #include "main.hpp"
 #include "wlserver.hpp"
@@ -120,16 +121,12 @@ static const int g_nBaseCursorScale = 36;
 #define GPUVIS_TRACE_IMPLEMENTATION
 #include "gpuvis_trace_utils.h"
 
-#if HAVE_LIBSYSTEMD
-
-#include <systemd/sd-bus.h>
-
-#endif
-
 LogScope xwm_log("xwm");
 LogScope g_WaitableLog("waitable");
 
 gamescope::ConVar<bool> cv_overlay_unmultiplied_alpha{ "overlay_unmultiplied_alpha", false };
+
+gamescope::ConVar<bool> cv_vr_show_forwarded_overlays{ "vr_show_forwarded_overlays", false };
 
 std::string *g_pVROverlayKey = nullptr;
 bool g_bWasPartialComposite = false;
@@ -182,81 +179,77 @@ namespace gamescope
 	extern std::shared_ptr<INestedHints::CursorInfo> GetX11HostCursor();
 }
 
-#if HAVE_LIBSYSTEMD
-static sd_bus *g_dbus;
 static std::unordered_map<std::string, uint64_t> g_vramCapacities;
 
-static const char *unit_from_pid(pid_t pid) {
+static const char *cgroupPathFromPID(pid_t pid) {
 	if (!pid)
 		return NULL;
 
-	sd_bus_message *reply = NULL;
-	const char *path = NULL;
+	char procfsPath[512];
+	if (snprintf(procfsPath, 512, "/proc/%ld/cgroup", (long)pid) < 0)
+		return NULL;
 
-	if (sd_bus_call_method(g_dbus, "org.freedesktop.systemd1", "/org/freedesktop/systemd1",
-								  "org.freedesktop.systemd1.Manager", "GetUnitByPID", NULL, &reply, "u", pid) < 0) {
-		xwm_log.warnf("D-Bus call to get unit corresponding to pid %u failed!\n", pid);
-		goto fail;
+	FILE *procfsFile = fopen(procfsPath, "r");
+	if (!procfsFile)
+		return NULL;
+
+	char *retPath = NULL;
+
+	char *line = NULL;
+	size_t lineSize;
+	while (getline(&line, &lineSize, procfsFile) > 0) {
+		/* cgroup v2 pathsi are always in the format "0::$PATH" */
+		const char *pathHeader = "0::";
+		/* Does the line start with "0::"? */
+		if (strncmp(line, pathHeader, strlen(pathHeader)))
+			continue;
+		char *path = line;
+		/* Skip over the header */
+		path = path + strlen(pathHeader);
+
+		/* According to https://docs.kernel.org/admin-guide/cgroup-v2.html,
+		 * (deleted) is added to the path if pid refers to a zombie process,
+		 * and the process's cgroup has been deleted.
+		 * It's nonsensical for us to try setting cgroup limits in such a case,
+		 * so bail out.
+		 */
+		if (strstr(path, "(deleted)"))
+			break;
+
+		/* Remove trailing newlines. */
+		char *delim = strstr(path, "\n");
+		if (delim)
+			*delim = '\0';
+
+		retPath = strdup(path);
+		break;
 	}
 
-	if (sd_bus_message_read(reply, "o", &path) < 0)
-		xwm_log.warnf("Failed to extract unit from D-Bus reply for PID %u!\n", pid);
-
-	path = strdup(path);
-	fail:
-	sd_bus_message_unref(reply);
-	return path;
+	free(line);
+	fclose(procfsFile);
+	return retPath;
 }
 
-static int set_memory_low(const char *unit_path, bool focused) {
-	sd_bus_message *message;
-	sd_bus_message *reply;
+static int setDMemMemoryLow(const char *cgroupPath, bool focused) {
+	char *limitPath;
 
-#define CHECK_MESSAGE(expr)   \
-   ret = expr;                \
-   if (ret < 0) {             \
-      fprintf(stderr, #expr "failed with ret %d\n", ret);                        \
-      goto fail_message;      \
-}
+	int r = asprintf(&limitPath, "/sys/fs/cgroup%s/dmem.low", cgroupPath);
+	if (r < 0)
+		return r;
 
+	FILE *limitFile = fopen(limitPath, "w");
 
-	int ret = sd_bus_message_new_method_call(g_dbus, &message, "org.freedesktop.systemd1", unit_path,
-														  "org.freedesktop.systemd1.Unit", "SetProperties");
-	if (ret < 0)
-		return ret;
-	CHECK_MESSAGE(sd_bus_message_append(message, "b", false));
-	CHECK_MESSAGE(sd_bus_message_open_container(message, SD_BUS_TYPE_ARRAY, "(sv)"));
-	{
-		CHECK_MESSAGE(sd_bus_message_open_container(message, SD_BUS_TYPE_STRUCT, "sv"));
-		{
-			CHECK_MESSAGE(sd_bus_message_append(message, "s", "DevMemoryLow"));
-			CHECK_MESSAGE(sd_bus_message_open_container(message, SD_BUS_TYPE_VARIANT, "a(st)"));
-			{
-				CHECK_MESSAGE(sd_bus_message_open_container(message, SD_BUS_TYPE_ARRAY, "(st)"));
-				for (auto &cap: g_vramCapacities) {
-					CHECK_MESSAGE(
-							  sd_bus_message_append(message, "(st)", cap.first.c_str(), focused ? cap.second : 0u));
-				}
-				CHECK_MESSAGE(sd_bus_message_close_container(message));
-			}
-			CHECK_MESSAGE(sd_bus_message_close_container(message));
-		}
-		CHECK_MESSAGE(sd_bus_message_close_container(message));
+	free(limitPath);
+	if (!limitFile)
+		return -1;
+
+	for (const auto& cap : g_vramCapacities) {
+		fprintf(limitFile, "%s %" PRIu64 "\n", cap.first.c_str(), focused ? cap.second : 0);
 	}
-	CHECK_MESSAGE(sd_bus_message_close_container(message));
 
-	CHECK_MESSAGE(sd_bus_call(g_dbus, message, UINT64_MAX, NULL, &reply));
-
-
-	sd_bus_message_unref(reply);
-
-	fail_message:
-	sd_bus_message_unref(message);
-
-	return ret;
+	fclose(limitFile);
+	return 0;
 }
-
-#endif
 
 static std::vector< steamcompmgr_win_t* > GetGlobalPossibleFocusWindows();
 static bool
@@ -913,6 +906,8 @@ uint32_t		lastPublishedInputCounter;
 
 std::atomic<bool> hasRepaint = false;
 bool			hasRepaintNonBasePlane = false;
+
+bool			g_bUpdateForwardedVROverlays = false;
 
 static gamescope::ConCommand cc_debug_force_repaint( "debug_force_repaint", "Force a repaint",
 []( std::span<std::string_view> args )
@@ -2450,22 +2445,26 @@ static void ForwardVROverlayTargets()
 	{
 		for ( steamcompmgr_win_t *w = server->ctx->list; w; w = w->xwayland().next )
 		{
-			if ( w->oulTargetVROverlay )
+			if ( w->oulTargetVROverlay && w->bNeedsForwarding )
 			{
 				gamescope::Rc<commit_t> lastCommit;
 				get_window_last_done_commit( w, lastCommit );
 				if ( !lastCommit )
 					continue;
 
-                gamescope::IBackendFb* pFb = lastCommit->vulkanTex->GetBackendFb()->Unwrap();
+                gamescope::IBackendFb* pFb = lastCommit->vulkanTex->GetBackendFb();
 				if ( !pFb )
 					continue;
 
 				const uint64_t ulOverlayHandle = *w->oulTargetVROverlay;
 				GetBackend()->ForwardFramebuffer( w->pForwarderPlane, pFb, &ulOverlayHandle );
+
+				w->bNeedsForwarding = false;
 			}
 		}
 	}
+
+	gpuvis_trace_printf( "Forward VR Overlays" );
 }
 
 gamescope::ConVar<bool> cv_paint_primary_plane{ "paint_primary_plane", true };
@@ -2816,8 +2815,6 @@ paint_all( global_focus_t *pFocus, bool async )
 			frameInfo.lut3D[i] = g_ColorMgmtLuts[i].vk_lut3d;
 		}
 	}
-
-	ForwardVROverlayTargets();
 
 	if ( pConnector && pConnector->Present( &frameInfo, async ) != 0 )
 	{
@@ -3674,7 +3671,7 @@ found:;
 		}
 
 		// Skip overlay targets
-		if ( w->oulTargetVROverlay )
+		if ( w->oulTargetVROverlay && !cv_vr_show_forwarded_overlays )
 		{
 			continue;
 		}
@@ -4243,19 +4240,17 @@ determine_and_apply_focus( global_focus_t *pFocus )
 		s_ulPreviousGlobalFocusKey = pFocus->ulVirtualFocusKey;
 	}
 
-#if HAVE_LIBSYSTEMD
 	pid_t newFocusedWindowPID = pFocus->focusWindow ? pFocus->focusWindow->pid : 0;
-	if (g_dbus && sdFocusWindow_pid != newFocusedWindowPID) {
-		const char *unfocusedWindowUnit = unit_from_pid(sdFocusWindow_pid);
-		const char *focusedWindowUnit = unit_from_pid(newFocusedWindowPID);
-		bool sameUnit = unfocusedWindowUnit && focusedWindowUnit && !strcmp(unfocusedWindowUnit, focusedWindowUnit);
+	if (sdFocusWindow_pid != newFocusedWindowPID) {
+		const char *unfocusedWindowCGroup = cgroupPathFromPID(sdFocusWindow_pid);
+		const char *focusedWindowCGroup = cgroupPathFromPID(newFocusedWindowPID);
+		bool sameUnit = unfocusedWindowCGroup && focusedWindowCGroup && !strcmp(unfocusedWindowCGroup, focusedWindowCGroup);
 
-		if (unfocusedWindowUnit && !sameUnit)
-			set_memory_low(unfocusedWindowUnit, false);
-		if (focusedWindowUnit && !sameUnit)
-			set_memory_low(focusedWindowUnit, true);
+		if (unfocusedWindowCGroup && !sameUnit)
+			setDMemMemoryLow(unfocusedWindowCGroup, false);
+		if (focusedWindowCGroup && !sameUnit)
+			setDMemMemoryLow(focusedWindowCGroup, true);
 	}
-#endif
 
 	if ( pFocus->pVirtualConnector && pFocus->inputFocusWindow )
 	{
@@ -4566,7 +4561,7 @@ handle_desktop_window(steamcompmgr_win_t *w)
 	if ( w->type != steamcompmgr_win_type_t::XWAYLAND )
 		return;
 
-	if ( w->xwayland().a.override_redirect || w->oulTargetVROverlay )
+	if ( w->xwayland().a.override_redirect || ( w->oulTargetVROverlay && !cv_vr_show_forwarded_overlays ) )
 		return;
 
 	if ( win_maybe_a_dropdown( w ) || win_is_useless( w ) )
@@ -4655,6 +4650,11 @@ map_win(xwayland_ctx_t* ctx, Window id, unsigned long sequence)
 		w->appID = 0;
 
 	w->oulTargetVROverlay = get_u64_prop(ctx, w->xwayland().id, ctx->atoms.steamGamescopeVROverlayTarget);
+	if ( w->oulTargetVROverlay )
+	{
+		g_bUpdateForwardedVROverlays = true;
+		w->bNeedsForwarding = true;
+	}
 	w->pForwarderPlane = nullptr;
 
 	get_size_hints(ctx, w);
@@ -5224,7 +5224,7 @@ damage_win(xwayland_ctx_t *ctx, XDamageNotifyEvent *de)
 	bool bCareAboutWindow = true;
 
 	if ( win_is_useless( w ) || w->IsAnyOverlay() ||
-	    w->oulTargetVROverlay || w->isSysTrayIcon ||
+	    ( w->oulTargetVROverlay && !cv_vr_show_forwarded_overlays ) || w->isSysTrayIcon ||
 		w->xwayland().a.map_state != IsViewable )
 	{
 		bCareAboutWindow = false;
@@ -5799,6 +5799,8 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 			w->pForwarderPlane = nullptr;
 			MakeFocusDirty();
 			hasRepaint = true;
+			g_bUpdateForwardedVROverlays = true;
+			w->bNeedsForwarding = true;
 		}
 	}
 	if (ev->atom == ctx->atoms.gamescopeCtrlAppIDAtom )
@@ -6677,7 +6679,8 @@ bool handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint64_t co
 			// If this is a forwarded vr plane, repaint
 			if ( w->oulTargetVROverlay )
 			{
-				hasRepaint = true;
+				g_bUpdateForwardedVROverlays = true;
+				w->bNeedsForwarding = true;
 			}
 
 			for ( auto &iter : g_VirtualConnectorFocuses )
@@ -8303,14 +8306,6 @@ steamcompmgr_main(int argc, char **argv)
 	// ie. color.rgb = color.rgba * u_ctm[offsetLayerIdx];
 	s_scRGB709To2020Matrix = GetBackend()->CreateBackendBlob( glm::mat3x4( glm::transpose( k_2020_from_709 ) ) );
 
-#if HAVE_LIBSYSTEMD
-	int res = sd_bus_default(&g_dbus);
-	if (res < 0) {
-		g_dbus = NULL;
-		s_LaunchLogScope.warnf(
-				  "Failed to open systemd message bus, there will be no cgroup protection for focused windows.\n");
-	}
-
 	FILE *sysfs_caps = fopen("/sys/fs/cgroup/dmem.capacity", "r");
 	if (sysfs_caps != nullptr) {
 		char *line = NULL;
@@ -8326,7 +8321,6 @@ steamcompmgr_main(int argc, char **argv)
 			g_vramCapacities.emplace(idString, vramSize);
 		}
 	}
-#endif
 
 	for (;;)
 	{
@@ -8451,7 +8445,8 @@ steamcompmgr_main(int argc, char **argv)
 				{
 					// Exclude windows that are useless (1x1), or override redirect windows
 					if ( win_is_useless( pWindow ) ||
-						( pWindow->type == steamcompmgr_win_type_t::XWAYLAND && pWindow->xwayland().a.override_redirect ) )
+						( pWindow->type == steamcompmgr_win_type_t::XWAYLAND && pWindow->xwayland().a.override_redirect &&
+						 !pWindow->isSteamLegacyBigPicture ) ) // bootstrapper is override redirect :(
 					{
 						continue;
 					}
@@ -8951,8 +8946,19 @@ steamcompmgr_main(int argc, char **argv)
 			}
 		}
 
+		if ( vblank && g_bUpdateForwardedVROverlays )
+		{
+			ForwardVROverlayTargets();
+
+			g_bUpdateForwardedVROverlays = false;
+
+			bPainted = true;
+		}
+
 		if ( bPainted )
 		{
+			GetBackend()->OnEndFrame();
+
 			hasRepaint = false;
 			hasRepaintNonBasePlane = false;
 			nIgnoredOverlayRepaints = 0;

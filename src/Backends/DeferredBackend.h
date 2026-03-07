@@ -14,27 +14,6 @@ namespace gamescope
 {
     class CDeferredBackend;
 
-    class CDeferredFb final : public CBaseBackendFb
-    {
-    public:
-        CDeferredFb( CDeferredBackend *pDeferredBackend, struct wlr_dmabuf_attributes *attributes )
-            : m_pDeferredBackend{ pDeferredBackend }
-        {
-            wlr_dmabuf_attributes_copy( &m_attributes, attributes );
-        }
-
-        ~CDeferredFb()
-        {
-            wlr_dmabuf_attributes_finish( &m_attributes );
-        }
-        
-        IBackendFb *Unwrap() override;
-    private:
-        CDeferredBackend *m_pDeferredBackend = nullptr;
-        struct wlr_dmabuf_attributes m_attributes;
-        OwningRc<IBackendFb> m_pChild;
-    };
-
 	class CDeferredBackend final : public CBaseBackend
 	{
 	public:
@@ -181,7 +160,7 @@ namespace gamescope
 
 		virtual OwningRc<IBackendFb> ImportDmabufToBackend( wlr_dmabuf_attributes *pDmaBuf ) override
 		{
-			return new CDeferredFb( this, pDmaBuf );
+            return m_pChild->ImportDmabufToBackend( pDmaBuf );
 		}
 
 		virtual bool UsesModifiers() const override
@@ -381,6 +360,15 @@ namespace gamescope
             return m_pChild->ShouldFitWindows();
         }
 
+        void OnEndFrame() override
+        {
+            {
+                std::shared_lock lock{ m_mutInit };
+                if ( m_bInittedChild )
+                    m_pChild->OnEndFrame();
+            }
+        }
+
 	protected:
 
 		virtual void OnBackendBlobDestroyed( BackendBlob *pBlob ) override
@@ -421,17 +409,5 @@ namespace gamescope
         std::atomic<bool> m_bJustInittedClient = { false };
         std::atomic<bool> m_bJustInittedPoll = { false };
 	};
-
-    IBackendFb *CDeferredFb::Unwrap()
-    {
-        assert( m_pDeferredBackend->IsChildInitted() );
-
-        if ( !m_pChild )
-        {
-            m_pChild = m_pDeferredBackend->GetChild()->ImportDmabufToBackend( &m_attributes );
-        }
-
-        return m_pChild.get();
-    }
 
 }
