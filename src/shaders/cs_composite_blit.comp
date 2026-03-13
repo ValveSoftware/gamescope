@@ -42,7 +42,7 @@ void main() {
     }
 
     outputValue.rgb = encodeOutputColor(outputValue.rgb);
-    imageStore(dst, ivec2(coord), outputValue);
+    imageStore(dst, ivec2(coord), applyOutputSwizzle(outputValue));
 
     // Indicator to quickly tell if we're in the compositing path or not.
     if (checkDebugFlag(compositedebug_Markers))

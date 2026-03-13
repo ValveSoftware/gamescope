@@ -165,9 +165,19 @@ public:
 
 	bool IsInUse();
 
-	inline VkImageView view( bool linear ) { return linear ? m_linearView : m_srgbView; }
-	inline VkImageView linearView() { return m_linearView; }
-	inline VkImageView srgbView() { return m_srgbView; }
+	// For V3D LINEAR textures with tiled shadow, return the shadow's views (which are tiled and can be sampled)
+	inline VkImageView view( bool linear ) {
+		if ( m_pTiledShadow ) return m_pTiledShadow->view( linear );
+		return linear ? m_linearView : m_srgbView;
+	}
+	inline VkImageView linearView() {
+		if ( m_pTiledShadow ) return m_pTiledShadow->linearView();
+		return m_linearView;
+	}
+	inline VkImageView srgbView() {
+		if ( m_pTiledShadow ) return m_pTiledShadow->srgbView();
+		return m_srgbView;
+	}
 	inline VkImageView lumaView() { return m_lumaView; }
 	inline VkImageView chromaView() { return m_chromaView; }
 	inline uint32_t width() { return m_width; }
@@ -200,6 +210,11 @@ public:
 	}
 
 	int memoryFence();
+
+	// V3D workaround: copy from LINEAR to tiled shadow before sampling
+	bool needsShadowCopy() const { return m_bNeedsShadowCopy; }
+	CVulkanTexture* tiledShadow() { return m_pTiledShadow.get(); }
+	void copyToTiledShadow(CVulkanCmdBuffer* cmdBuffer);
 
 	CVulkanTexture( void );
 	~CVulkanTexture( void );
@@ -239,6 +254,9 @@ private:
 	
 	// If this texture owns the backend Fb (ie. it's an internal texture)
 	gamescope::OwningRc<gamescope::IBackendFb> m_pBackendFb;
+
+	gamescope::OwningRc<CVulkanTexture> m_pTiledShadow;
+	bool m_bNeedsShadowCopy = false;
 
 	uint8_t *m_pMappedData = nullptr;
 
@@ -410,6 +428,7 @@ gamescope::OwningRc<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struc
 
 std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamescope::Rc<CVulkanTexture> pScreenshotTexture, bool partial, gamescope::Rc<CVulkanTexture> pOutputOverride = nullptr, bool increment = true, std::unique_ptr<CVulkanCmdBuffer> pInCommandBuffer = nullptr );
 void vulkan_wait( uint64_t ulSeqNo, bool bReset );
+std::optional<uint64_t> vulkan_copy_to_scanout_image( uint32_t nImageIndex, bool partial );
 gamescope::Rc<CVulkanTexture> vulkan_get_last_output_image( bool partial, bool defer );
 gamescope::Rc<CVulkanTexture> vulkan_acquire_screenshot_texture(uint32_t width, uint32_t height, bool exportable, uint32_t drmFormat, EStreamColorspace colorspace = k_EStreamColorspace_Unknown);
 
@@ -534,6 +553,11 @@ struct VulkanOutput_t
 	std::vector<gamescope::OwningRc<CVulkanTexture>> outputImagesPartialOverlay;
 	gamescope::OwningRc<CVulkanTexture> temporaryHackyBlankImage;
 
+	// V3D-specific: separate scanout images for cross-GPU copy (V3D can't write LINEAR from compute)
+	std::vector<gamescope::OwningRc<CVulkanTexture>> scanoutImages;
+	std::vector<gamescope::OwningRc<CVulkanTexture>> scanoutImagesPartialOverlay;
+	bool bNeedsScanoutCopy = false;
+
 	uint32_t uOutputFormat = DRM_FORMAT_INVALID;
 	uint32_t uOutputFormatOverlay = DRM_FORMAT_INVALID;
 
@@ -606,6 +630,7 @@ struct PipelineInfo_t
 	uint32_t colorspaceMask;
 	uint32_t outputEOTF;
 	bool itmEnable;
+	bool swapChannels;
 
 	bool operator==(const PipelineInfo_t& o) const {
 		return
@@ -616,7 +641,8 @@ struct PipelineInfo_t
 		compositeDebug == o.compositeDebug &&
 		colorspaceMask == o.colorspaceMask &&
 		outputEOTF == o.outputEOTF &&
-		itmEnable == o.itmEnable;
+		itmEnable == o.itmEnable &&
+		swapChannels == o.swapChannels;
 	}
 };
 
@@ -640,6 +666,7 @@ namespace std
 			hash = hash_combine(hash, k.colorspaceMask);
 			hash = hash_combine(hash, k.outputEOTF);
 			hash = hash_combine(hash, k.itmEnable);
+			hash = hash_combine(hash, k.swapChannels);
 			return hash;
 		}
 	};
@@ -768,7 +795,7 @@ public:
 	bool BInit(VkInstance instance, VkSurfaceKHR surface);
 
 	VkSampler sampler(SamplerState key);
-	VkPipeline pipeline(ShaderType type, uint32_t layerCount = 1, uint32_t ycbcrMask = 0, uint32_t blur_layers = 0, uint32_t colorspace_mask = 0, uint32_t output_eotf = EOTF_Gamma22, bool itm_enable = false);
+	VkPipeline pipeline(ShaderType type, uint32_t layerCount = 1, uint32_t ycbcrMask = 0, uint32_t blur_layers = 0, uint32_t colorspace_mask = 0, uint32_t output_eotf = EOTF_Gamma22, bool itm_enable = false, bool swapChannels = false);
 	int32_t findMemoryType( VkMemoryPropertyFlags properties, uint32_t requiredTypeBits );
 	std::unique_ptr<CVulkanCmdBuffer> commandBuffer();
 	uint64_t submit( std::unique_ptr<CVulkanCmdBuffer> cmdBuf);
@@ -804,6 +831,12 @@ public:
 	inline bool hasDrmPrimaryDevId() {return m_bHasDrmPrimaryDevId;}
 	inline dev_t primaryDevId() {return m_drmPrimaryDevId;}
 	inline bool supportsFp16() {return m_bSupportsFp16;}
+	inline bool supportsPresentWait() {return m_bSupportsPresentWait;}
+	inline bool supportsPresentId() {return m_bSupportsPresentId;}
+	inline bool isV3D() {return m_bIsV3D;}
+	inline VkImageView dummyImageView2D() { return m_dummyImageView2D; }
+	inline VkImageView dummyImageView1D() { return m_dummyImageView1D; }
+	inline VkImageView dummyImageView3D() { return m_dummyImageView3D; }
 
 	inline std::pair<void *, uint32_t> uploadBufferData(uint32_t size)
 	{
@@ -842,7 +875,7 @@ protected:
 	bool createPools();
 	bool createShaders();
 	bool createScratchResources();
-	VkPipeline compilePipeline(uint32_t layerCount, uint32_t ycbcrMask, ShaderType type, uint32_t blur_layer_count, uint32_t composite_debug, uint32_t colorspace_mask, uint32_t output_eotf, bool itm_enable);
+	VkPipeline compilePipeline(uint32_t layerCount, uint32_t ycbcrMask, ShaderType type, uint32_t blur_layer_count, uint32_t composite_debug, uint32_t colorspace_mask, uint32_t output_eotf, bool itm_enable, bool swapChannels);
 	void compileAllPipelines();
 
 	VkDevice m_device = nullptr;
@@ -867,7 +900,17 @@ protected:
 	bool m_bSupportsFp16 = false;
 	bool m_bHasDrmPrimaryDevId = false;
 	bool m_bSupportsModifiers = false;
+	bool m_bSupportsPresentWait = false;
+	bool m_bSupportsPresentId = false;
+	bool m_bIsV3D = false;  // Broadcom V3D (Pi 4/5)
 	bool m_bInitialized = false;
+
+	// Dummy image/views for null descriptor slots (needed on V3D without robustness2)
+	VkImage m_dummyImage = VK_NULL_HANDLE;
+	VkDeviceMemory m_dummyMemory = VK_NULL_HANDLE;
+	VkImageView m_dummyImageView2D = VK_NULL_HANDLE;
+	VkImageView m_dummyImageView1D = VK_NULL_HANDLE;
+	VkImageView m_dummyImageView3D = VK_NULL_HANDLE;
 
 
 	VkPhysicalDeviceMemoryProperties m_memoryProperties;
@@ -941,6 +984,7 @@ public:
 	void bindPipeline(VkPipeline pipeline);
 	void dispatch(uint32_t x, uint32_t y = 1, uint32_t z = 1);
 	void copyImage(gamescope::Rc<CVulkanTexture> src, gamescope::Rc<CVulkanTexture> dst);
+	void copyOutputToScanout(gamescope::Rc<CVulkanTexture> src, gamescope::Rc<CVulkanTexture> dst);
 	void copyBufferToImage(VkBuffer buffer, VkDeviceSize offset, uint32_t stride, gamescope::Rc<CVulkanTexture> dst);
 
 
