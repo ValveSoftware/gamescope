@@ -20135,7 +20135,7 @@ namespace sol {
 			using uFx = meta::unqualified_t<Fx>;
 			if constexpr (sizeof...(Args) < 1) {
 				using C = typename meta::bind_traits<uFx>::object_type;
-				lua_CFunction freefunc = &function_detail::upvalue_this_member_variable<C, Fx>::template call<is_yielding, no_trampoline>;
+				lua_CFunction freefunc = [](lua_State* pl) -> int { return function_detail::upvalue_this_member_variable<C, Fx>::template call<is_yielding, no_trampoline>(pl); };
 
 				int upvalues = 0;
 				upvalues += stack::push(L, nullptr);
@@ -20147,7 +20147,7 @@ namespace sol {
 				constexpr bool is_reference = meta::is_specialization_of_v<Tu, std::reference_wrapper> || std::is_pointer_v<Tu>;
 				if constexpr (meta::is_specialization_of_v<Tu, function_detail::class_indicator>) {
 					lua_CFunction freefunc
-					     = &function_detail::upvalue_this_member_variable<typename Tu::type, Fx>::template call<is_yielding, no_trampoline>;
+					     = [](lua_State* pl) -> auto { return function_detail::upvalue_this_member_variable<typename Tu::type, Fx>::template call<is_yielding, no_trampoline>(pl); };
 
 					int upvalues = 0;
 					upvalues += stack::push(L, nullptr);
@@ -20158,8 +20158,8 @@ namespace sol {
 					typedef std::decay_t<Fx> dFx;
 					dFx memfxptr(std::forward<Fx>(fx));
 					auto userptr = detail::ptr(std::forward<Args>(args)...);
-					lua_CFunction freefunc = &function_detail::upvalue_member_variable<std::decay_t<decltype(*userptr)>,
-					     meta::unqualified_t<Fx>>::template call<is_yielding, no_trampoline>;
+					lua_CFunction freefunc = [](lua_State* pl) -> auto { return function_detail::upvalue_member_variable<std::decay_t<decltype(*userptr)>,
+					     meta::unqualified_t<Fx>>::template call<is_yielding, no_trampoline>(pl); };
 
 					int upvalues = 0;
 					upvalues += stack::push(L, nullptr);
@@ -20188,7 +20188,7 @@ namespace sol {
 			if constexpr (meta::is_specialization_of_v<Tu, function_detail::class_indicator>) {
 				(void)obj;
 				using C = typename Tu::type;
-				lua_CFunction freefunc = &function_detail::upvalue_this_member_function<C, dFx>::template call<is_yielding, no_trampoline>;
+				lua_CFunction freefunc = [](lua_State* pl) -> auto { return function_detail::upvalue_this_member_function<C, dFx>::template call<is_yielding, no_trampoline>(pl); };
 
 				int upvalues = 0;
 				upvalues += stack::push(L, nullptr);
@@ -20200,7 +20200,7 @@ namespace sol {
 				if constexpr (is_reference) {
 					auto userptr = detail::ptr(std::forward<T>(obj));
 					lua_CFunction freefunc
-					     = &function_detail::upvalue_member_function<std::decay_t<decltype(*userptr)>, dFx>::template call<is_yielding, no_trampoline>;
+					     = [](lua_State* pl) -> auto { return function_detail::upvalue_member_function<std::decay_t<decltype(*userptr)>, dFx>::template call<is_yielding, no_trampoline>(pl); };
 
 					int upvalues = 0;
 					upvalues += stack::push(L, nullptr);
@@ -20220,7 +20220,7 @@ namespace sol {
 			using dFx = std::decay_t<Fx>;
 			if constexpr (sizeof...(Args) < 1) {
 				using C = typename meta::bind_traits<meta::unqualified_t<Fx>>::object_type;
-				lua_CFunction freefunc = &function_detail::upvalue_this_member_function<C, dFx>::template call<is_yielding, no_trampoline>;
+				lua_CFunction freefunc = [](lua_State* pl) -> auto { return function_detail::upvalue_this_member_function<C, dFx>::template call<is_yielding, no_trampoline>(pl); };
 
 				int upvalues = 0;
 				upvalues += stack::push(L, nullptr);
@@ -20282,7 +20282,7 @@ namespace sol {
 			}
 			else if constexpr (std::is_function_v<std::remove_pointer_t<uFx>>) {
 				std::decay_t<Fx> target(std::forward<Fx>(fx), std::forward<Args>(args)...);
-				lua_CFunction freefunc = &function_detail::upvalue_free_function<Fx>::template call<is_yielding, no_trampoline>;
+				lua_CFunction freefunc = [](lua_State* pl) -> auto { return function_detail::upvalue_free_function<Fx>::template call<is_yielding, no_trampoline>(pl); };
 
 				int upvalues = 0;
 				upvalues += stack::push(L, nullptr);
