@@ -179,7 +179,10 @@ namespace gamescope
         {
             void *pMappedData = mmap( nullptr, uSize, PROT_READ | PROT_WRITE, MAP_SHARED, nFd, 0 );
             if ( pMappedData == MAP_FAILED )
+            {
+                close( nFd );
                 return -1;
+            }
             defer( munmap( pMappedData, uSize ) );
 
             memcpy( pMappedData, pData, uSize );
