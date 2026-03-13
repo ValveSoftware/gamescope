@@ -2304,7 +2304,7 @@ static void paint_pipewire()
 
 	// Queue up a buffer with some metadata.
 	if ( !s_pPipewireBuffer )
-		s_pPipewireBuffer = dequeue_pipewire_buffer();
+		s_pPipewireBuffer = pipewire_dequeue_buffer();
 
 	if ( !s_pPipewireBuffer || !s_pPipewireBuffer->texture )
 		return;
@@ -2390,7 +2390,7 @@ static void paint_pipewire()
 		paint_window( pFocus->overrideWindow, pFocus->focusWindow, &frameInfo, nullptr, PaintWindowFlag::NoFilter, 1.0f, pFocus->overrideWindow );
 
 	gamescope::Rc<CVulkanTexture> pRGBTexture = s_pPipewireBuffer->texture->isYcbcr()
-		? vulkan_acquire_screenshot_texture( uWidth, uHeight, false, DRM_FORMAT_XRGB2101010 )
+		? vulkan_acquire_screenshot_texture( uWidth, uHeight, DRM_FORMAT_XRGB2101010 )
 		: gamescope::Rc<CVulkanTexture>{ s_pPipewireBuffer->texture };
 
 	gamescope::Rc<CVulkanTexture> pYUVTexture = s_pPipewireBuffer->texture->isYcbcr() ? s_pPipewireBuffer->texture : nullptr;
@@ -2409,8 +2409,7 @@ static void paint_pipewire()
 	{
 		vulkan_wait( *oPipewireSequence, true );
 
-		push_pipewire_buffer( s_pPipewireBuffer );
-		s_pPipewireBuffer = nullptr;
+		s_pPipewireBuffer = pipewire_push_buffer( s_pPipewireBuffer );
 	}
 }
 #endif
@@ -2835,7 +2834,7 @@ paint_all( global_focus_t *pFocus, bool async )
 
 		gamescope::Rc<CVulkanTexture> pScreenshotTexture;
 		if ( drmCaptureFormat != DRM_FORMAT_INVALID )
-			pScreenshotTexture = vulkan_acquire_screenshot_texture( g_nOutputWidth, g_nOutputHeight, false, drmCaptureFormat );
+			pScreenshotTexture = vulkan_acquire_screenshot_texture( g_nOutputWidth, g_nOutputHeight, drmCaptureFormat );
 
 		if ( pScreenshotTexture )
 		{
@@ -6561,6 +6560,10 @@ steamcompmgr_exit(void)
     wlserver_lock();
     wlserver_shutdown();
     wlserver_unlock(false);
+
+#if HAVE_PIPEWIRE
+	pipewire_exit();
+#endif
 }
 
 [[noreturn]] static int
@@ -8594,7 +8597,7 @@ steamcompmgr_main(int argc, char **argv)
 			currentHDRForce = g_bForceHDRSupportDebug;
 
 #if HAVE_PIPEWIRE
-			nudge_pipewire();
+			pipewire_nudge();
 #endif
 		}
 
@@ -8980,8 +8983,7 @@ steamcompmgr_main(int argc, char **argv)
 			GetVBlankTimer().ArmNextVBlank( true );
 
 #if HAVE_PIPEWIRE
-			if ( pipewire_is_streaming() )
-				paint_pipewire();
+			paint_pipewire();
 #endif
 		}
 

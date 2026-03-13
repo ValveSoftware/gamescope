@@ -2017,7 +2017,7 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 	m_drmFormat = drmFormat;
 	VkResult res = VK_ERROR_INITIALIZATION_FAILED;
 
-	VkImageTiling tiling = (flags.bMappable || flags.bLinear) ? VK_IMAGE_TILING_LINEAR : VK_IMAGE_TILING_OPTIMAL;
+	VkImageTiling tiling = VK_IMAGE_TILING_OPTIMAL;
 	VkImageUsageFlags usage = 0;
 	VkMemoryPropertyFlags properties;
 
@@ -2053,6 +2053,7 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 
 	if ( flags.bMappable == true )
 	{
+		flags.bLinear = true;
 		properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
 	}
 	else
@@ -2060,12 +2061,15 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 		properties = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
 	}
 
+	if ( flags.bLinear == true )
+	{
+		tiling = VK_IMAGE_TILING_LINEAR;
+	}
+
 	if ( flags.bOutputImage == true )
 	{
 		m_bOutputImage = true;	
 	}
-
-	m_bExternal = pDMA || flags.bExportable == true;
 
 	// Possible extensions for below
 	wsi_image_create_info wsiImageCreateInfo = {};
@@ -2201,12 +2205,6 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 			.pDrmFormatModifiers = modifiers.data(),
 		};
 
-		externalImageCreateInfo = {
-			.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO,
-			.pNext = std::exchange(imageInfo.pNext, &externalImageCreateInfo),
-			.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT,
-		};
-
 		imageInfo.tiling = tiling = VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT;
 	}
 
@@ -2220,13 +2218,15 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 		};
 	}
 	
-	if ( pDMA != nullptr )
+	if ( flags.bExportable == true || pDMA != nullptr )
 	{
 		externalImageCreateInfo = {
 			.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO,
 			.pNext = std::exchange(imageInfo.pNext, &externalImageCreateInfo),
 			.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT,
 		};
+
+		m_bExternal = true;
 	}
 
 	m_width = width;
@@ -3601,7 +3601,7 @@ void vulkan_garbage_collect( void )
 	g_device.garbageCollect();
 }
 
-gamescope::Rc<CVulkanTexture> vulkan_acquire_screenshot_texture(uint32_t width, uint32_t height, bool exportable, uint32_t drmFormat, EStreamColorspace colorspace)
+gamescope::Rc<CVulkanTexture> vulkan_acquire_screenshot_texture(uint32_t width, uint32_t height, uint32_t drmFormat, EStreamColorspace colorspace)
 {
 	for (auto& pScreenshotImage : g_output.pScreenshotImages)
 	{
@@ -3613,10 +3613,6 @@ gamescope::Rc<CVulkanTexture> vulkan_acquire_screenshot_texture(uint32_t width, 
 			screenshotImageFlags.bMappable = true;
 			screenshotImageFlags.bTransferDst = true;
 			screenshotImageFlags.bStorage = true;
-			if (exportable || drmFormat == DRM_FORMAT_NV12) {
-				screenshotImageFlags.bExportable = true;
-				screenshotImageFlags.bLinear = true; // TODO: support multi-planar DMA-BUF export via PipeWire
-			}
 
 			bool bSuccess = pScreenshotImage->BInit( width, height, 1u, drmFormat, screenshotImageFlags );
 			pScreenshotImage->setStreamColorspace(colorspace);
