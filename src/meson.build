@@ -108,6 +108,7 @@ src = [
   'color_helpers.cpp',
   'main.cpp',
   'edid.cpp',
+  'hotkey.cpp',
   'wlserver.cpp',
   'vblankmanager.cpp',
   'rendervulkan.cpp',
