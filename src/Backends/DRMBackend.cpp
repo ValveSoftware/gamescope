@@ -134,6 +134,8 @@ struct drm_t {
 		uint32_t color_mgmt_serial;
 		std::shared_ptr<gamescope::BackendBlob> lut3d_id[ EOTF_Count ];
 		std::shared_ptr<gamescope::BackendBlob> shaperlut_id[ EOTF_Count ];
+		std::shared_ptr<gamescope::BackendBlob> lut3d_colorop_id[ EOTF_Count ];
+		std::shared_ptr<gamescope::BackendBlob> shaperlut_colorop_id[ EOTF_Count ];
 		amdgpu_transfer_function output_tf = AMDGPU_TRANSFER_FUNCTION_DEFAULT;
 	} current, pending;
 
@@ -3042,6 +3044,20 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 					p->shaper->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
 				}
 
+				if ( bUseShaperAnd3DLUT )
+				{
+					p->shaperLut->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
+					p->shaperLut->GetProperties().DATA->SetPendingValue( drm->req, drm->pending.shaperlut_colorop_id[ ColorSpaceToEOTFIndex( colorspace ) ]->GetBlobValue(), true );
+
+					p->lut3D->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
+					p->lut3D->GetProperties().DATA->SetPendingValue( drm->req, drm->pending.lut3d_colorop_id[ ColorSpaceToEOTFIndex( colorspace ) ]->GetBlobValue(), true );
+				}
+				else
+				{
+					p->shaperLut->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
+					p->lut3D->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
+				}
+
 				std::optional<drm_colorop_curve_1d_type> blend_tf =  amd_tf_to_drm_curve(drm->pending.output_tf);
 				if (!cv_drm_debug_disable_blend_tf && !bSinglePlane && blend_tf.has_value() )
 				{
@@ -3460,6 +3476,15 @@ gamescope::GamescopeScreenType drm_get_screen_type(struct drm_t *drm)
 	return drm->pConnector->GetScreenType();
 }
 
+template <size_t N>
+static std::array<uint32_t, N> lut_convert_16bit_to_32bit( const uint16_t (&lut)[N] )
+{
+	std::array<uint32_t, N> out;
+	for ( size_t i = 0; i < N; i++ )
+		out[i] = (uint32_t)lut[i] * 0x10001u;
+	return out;
+}
+
 bool drm_update_color_mgmt(struct drm_t *drm)
 {
 	if ( !drm_supports_color_mgmt( drm ) && !drm_supports_color_pipeline ( &g_DRM ) )
@@ -3474,6 +3499,8 @@ bool drm_update_color_mgmt(struct drm_t *drm)
 	{
 		drm->pending.shaperlut_id[ i ] = 0;
 		drm->pending.lut3d_id[ i ] = 0;
+		drm->pending.shaperlut_colorop_id[ i ] = 0;
+		drm->pending.lut3d_colorop_id[ i ] = 0;
 	}
 
 	for ( uint32_t i = 0; i < EOTF_Count; i++ )
@@ -3483,6 +3510,9 @@ bool drm_update_color_mgmt(struct drm_t *drm)
 
 		drm->pending.shaperlut_id[ i ] = GetBackend()->CreateBackendBlob( g_ColorMgmtLuts[i].lut1d );
 		drm->pending.lut3d_id[ i ] = GetBackend()->CreateBackendBlob( g_ColorMgmtLuts[i].lut3d );
+
+		drm->pending.shaperlut_colorop_id[ i ] = GetBackend()->CreateBackendBlob( lut_convert_16bit_to_32bit( g_ColorMgmtLuts[i].lut1d ) );
+		drm->pending.lut3d_colorop_id[ i ] = GetBackend()->CreateBackendBlob( lut_convert_16bit_to_32bit( g_ColorMgmtLuts[i].lut3d ) );
 	}
 
 	return true;
