@@ -2005,6 +2005,27 @@ static inline amdgpu_transfer_function inverse_tf(amdgpu_transfer_function tf)
 	}
 }
 
+static inline std::optional<drm_colorop_curve_1d_type> amd_tf_to_drm_curve ( amdgpu_transfer_function tf )
+{
+	switch ( tf )
+	{
+		case AMDGPU_TRANSFER_FUNCTION_SRGB_EOTF:
+			return DRM_COLOROP_1D_CURVE_SRGB_EOTF;
+		case AMDGPU_TRANSFER_FUNCTION_PQ_EOTF:
+			return DRM_COLOROP_1D_CURVE_PQ_125_EOTF;
+		case AMDGPU_TRANSFER_FUNCTION_SRGB_INV_EOTF:
+			return DRM_COLOROP_1D_CURVE_SRGB_INV_EOTF;
+		case AMDGPU_TRANSFER_FUNCTION_PQ_INV_EOTF:
+			return DRM_COLOROP_1D_CURVE_PQ_125_INV_EOTF;
+		case AMDGPU_TRANSFER_FUNCTION_GAMMA22_EOTF:
+			return DRM_COLOROP_1D_CURVE_GAMMA22;
+		case AMDGPU_TRANSFER_FUNCTION_GAMMA22_INV_EOTF:
+			return DRM_COLOROP_1D_CURVE_GAMMA22_INV;
+		default:
+			return std::nullopt;
+	}
+}
+
 static inline uint32_t ColorSpaceToEOTFIndex( GamescopeAppTextureColorspace colorspace )
 {
 	switch ( colorspace )
@@ -3020,6 +3041,19 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 				{
 					p->shaper->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
 				}
+
+				std::optional<drm_colorop_curve_1d_type> blend_tf =  amd_tf_to_drm_curve(drm->pending.output_tf);
+				if (!cv_drm_debug_disable_blend_tf && !bSinglePlane && blend_tf.has_value() )
+				{
+					p->blend->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
+					p->blend->GetProperties().CURVE_1D_TYPE->SetPendingValue( drm->req, *blend_tf, true );
+				}
+				else
+				{
+					p->blend->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
+				}
+
+				p->blendLut->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
 
 				break;
 			}
