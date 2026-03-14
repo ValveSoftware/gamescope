@@ -1662,6 +1662,10 @@ void finish_drm(struct drm_t *drm)
 
 		if ( pPlane->GetProperties().AMD_PLANE_BLEND_LUT )
 			pPlane->GetProperties().AMD_PLANE_BLEND_LUT->SetPendingValue( req, 0, true );
+
+		if ( pPlane->GetProperties().COLOR_PIPELINE )
+			pPlane->GetProperties().COLOR_PIPELINE->SetPendingValue( req, 0, true );
+
 	}
 
 	// We can't do a non-blocking commit here or else risk EBUSY in case the
