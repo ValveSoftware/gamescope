@@ -1953,6 +1953,22 @@ static inline amdgpu_transfer_function colorspace_to_plane_shaper_tf(GamescopeAp
 	}
 }
 
+static inline std::optional<drm_colorop_curve_1d_type> colorspace_to_drm_plane_shaper_curve(GamescopeAppTextureColorspace colorspace)
+{
+	switch ( colorspace )
+	{
+		default: // Linear in this sense is SRGB. Linear = sRGB image view doing automatic sRGB -> Linear which doesn't happen on DRM side.
+		case GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB:
+			return DRM_COLOROP_1D_CURVE_SRGB_INV_EOTF;
+		case GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ:
+		case GAMESCOPE_APP_TEXTURE_COLORSPACE_SCRGB:
+			return DRM_COLOROP_1D_CURVE_PQ_125_INV_EOTF;
+		case GAMESCOPE_APP_TEXTURE_COLORSPACE_PASSTHRU:
+			return std::nullopt; // DEFAULT doesn't exist anymore
+	}
+}
+
+
 static inline amdgpu_transfer_function inverse_tf(amdgpu_transfer_function tf)
 {
 	switch ( tf )
@@ -2975,10 +2991,12 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 
 				GamescopeAppTextureColorspace colorspace = entry.layerState[i].colorspace;
 				std::optional<drm_colorop_curve_1d_type> degamma_tf = colorspace_to_drm_plane_degamma_curve( colorspace );
+				std::optional<drm_colorop_curve_1d_type> shaper_tf = colorspace_to_drm_plane_shaper_curve( colorspace );
 
 				if ( bYCbCr )
 				{
 					degamma_tf = DRM_COLOROP_1D_CURVE_BT2020_INV_OETF;
+					shaper_tf = DRM_COLOROP_1D_CURVE_BT2020_OETF;
 				}
 
 				bool bUseDegamma = !cv_drm_debug_disable_degamma_tf;
@@ -2991,6 +3009,18 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 				{
 					p->degamma->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
 				}
+
+				bool bUseShaperAnd3DLUT = !cv_drm_debug_disable_shaper_and_3dlut;
+				if ( bUseShaperAnd3DLUT && shaper_tf.has_value() )
+				{
+					p->shaper->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
+					p->shaper->GetProperties().CURVE_1D_TYPE->SetPendingValue( drm->req, *shaper_tf, true );
+				}
+				else
+				{
+					p->shaper->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
+				}
+
 				break;
 			}
 		}
