@@ -553,8 +553,8 @@ namespace gamescope
 		{
 			std::optional<CDRMAtomicProperty> TYPE; // Immutable
 			std::optional<CDRMAtomicProperty> NEXT; // Immutable
-			std::optional<CDRMAtomicProperty> BYPASS; // Immutable
-
+			std::optional<CDRMAtomicProperty> BYPASS;
+			std::optional<CDRMAtomicProperty> CURVE_1D_TYPE;
 			std::optional<CDRMAtomicProperty> DATA;
 			std::optional<CDRMAtomicProperty> MULTIPLIER;
 		};
@@ -2245,6 +2245,21 @@ static inline amdgpu_transfer_function colorspace_to_plane_degamma_tf(GamescopeA
 	}
 }
 
+static inline std::optional<drm_colorop_curve_1d_type> colorspace_to_drm_plane_degamma_curve(GamescopeAppTextureColorspace colorspace)
+{
+	switch ( colorspace )
+	{
+		default: // Linear in this sense is SRGB. Linear = sRGB image view doing automatic sRGB -> Linear which doesn't happen on DRM side.
+		case GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB:
+			return DRM_COLOROP_1D_CURVE_SRGB_EOTF;
+		case GAMESCOPE_APP_TEXTURE_COLORSPACE_PASSTHRU:
+		case GAMESCOPE_APP_TEXTURE_COLORSPACE_SCRGB:
+			return std::nullopt; // DEFAULT doesn't exist anymore
+		case GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ:
+			return DRM_COLOROP_1D_CURVE_PQ_125_EOTF;
+	}
+}
+
 static inline amdgpu_transfer_function colorspace_to_plane_shaper_tf(GamescopeAppTextureColorspace colorspace)
 {
 	switch ( colorspace )
@@ -2997,6 +3012,7 @@ namespace gamescope
 			m_Props.NEXT = CDRMAtomicProperty::Instantiate( "NEXT", this, *rawProperties );
 			m_Props.BYPASS = CDRMAtomicProperty::Instantiate( "BYPASS", this, *rawProperties );
 			m_Props.DATA = CDRMAtomicProperty::Instantiate( "DATA", this, *rawProperties );
+			m_Props.CURVE_1D_TYPE = CDRMAtomicProperty::Instantiate( "CURVE_1D_TYPE", this, *rawProperties );
 			m_Props.MULTIPLIER = CDRMAtomicProperty::Instantiate( "MULTIPLIER", this, *rawProperties );
 		}
 	}
@@ -3244,9 +3260,6 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 		auto entry = FrameInfoToLiftoffStateCacheEntry( drm, frameInfo );
 		for ( int i = 0; i < frameInfo->layers.count(); i++ )
 		{
-			if ( !frameInfo->layers.get( i ).applyColorMgmt )
-				continue;
-
 			struct liftoff_plane *plane = liftoff_layer_get_plane( drm->lo_layers[ i ] );
 			uint32_t plane_id = plane ? liftoff_plane_get_id( plane ) : 0;
 
@@ -3265,6 +3278,27 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 				}
 
 				pPlane->GetProperties().COLOR_PIPELINE->SetPendingValue( drm->req, p->id, true );
+
+				bool bApplyColorMgmt = frameInfo->layers.get( i ).applyColorMgmt;
+				bool bYCbCr = bApplyColorMgmt && entry.layerState[i].ycbcr;
+				GamescopeAppTextureColorspace colorspace = entry.layerState[i].colorspace;
+				std::optional<drm_colorop_curve_1d_type> degamma_tf = colorspace_to_drm_plane_degamma_curve( colorspace );
+
+				if ( bYCbCr )
+				{
+					degamma_tf = DRM_COLOROP_1D_CURVE_BT2020_INV_OETF;
+				}
+
+				bool bUseDegamma = bApplyColorMgmt && !cv_drm_debug_disable_degamma_tf;
+				if ( bUseDegamma && degamma_tf.has_value() )
+				{
+					p->degamma->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
+					p->degamma->GetProperties().CURVE_1D_TYPE->SetPendingValue( drm->req, *degamma_tf, true );
+				}
+				else
+				{
+					p->degamma->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
+				}
 				break;
 			}
 		}
