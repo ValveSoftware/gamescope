@@ -3065,6 +3065,9 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 					p->CTM->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
 				}
 
+				p->HDRMult->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
+				p->HDRMult->GetProperties().MULTIPLIER->SetPendingValue( drm->req, 0x100000000ULL, true );
+
 				break;
 			}
 		}
