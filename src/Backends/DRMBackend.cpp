@@ -3055,6 +3055,16 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 
 				p->blendLut->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
 
+				if ( frameInfo->layers[i].ctm != nullptr )
+				{
+					p->CTM->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
+					p->CTM->GetProperties().DATA->SetPendingValue( drm->req, frameInfo->layers[i].ctm->GetBlobValue(), true );
+				}
+				else
+				{
+					p->CTM->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
+				}
+
 				break;
 			}
 		}
