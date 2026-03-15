@@ -3875,7 +3875,7 @@ void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win
 
 	if ( win_has_game_id( w ) )
 	{
-		if ( window_is_fullscreen( ctx->focus.focusWindow ) )
+		if ( window_is_fullscreen( ctx->focus.focusWindow ) || ctx->force_windows_fullscreen )
 		{
 			bool bIsSteam = window_is_steam( ctx->focus.focusWindow );
 			int fs_width  = ctx->root_width;
@@ -4565,7 +4565,7 @@ handle_desktop_window(steamcompmgr_win_t *w)
 
 	xwayland_ctx_t *ctx = w->xwayland().ctx;
 
-	if ( w->sizeHintsSpecified && !window_is_fullscreen( w ) )
+	if ( w->sizeHintsSpecified && !(window_is_fullscreen( w ) || ctx->force_windows_fullscreen) )
 	{
 		if ((unsigned)w->GetGeometry().nWidth != w->requestedWidth || (unsigned)w->GetGeometry().nHeight != w->requestedHeight)
 		{
