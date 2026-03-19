@@ -2993,9 +2993,6 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 		auto entry = FrameInfoToLiftoffStateCacheEntry( drm, frameInfo );
 		for ( int i = 0; i < frameInfo->layerCount; i++ )
 		{
-			if ( !frameInfo->layers[i].applyColorMgmt )
-				continue;
-
 			struct liftoff_plane *plane = liftoff_layer_get_plane( drm->lo_layers[ i ] );
 			uint32_t plane_id = plane ? liftoff_plane_get_id( plane ) : 0;
 
@@ -3006,6 +3003,12 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 			{
 				if ( pPlane->GetObjectId() != plane_id )
 					continue;
+
+				if ( !frameInfo->layers[i].applyColorMgmt )
+				{
+					pPlane->GetProperties().COLOR_PIPELINE->SetPendingValue( drm->req, 0, true );
+					break;
+				}
 
 				bool bYCbCr = entry.layerState[i].ycbcr;
 				std::optional<gamescope::CDRMColorPipeline> p = get_plane_color_pipelines( drm, pPlane );
