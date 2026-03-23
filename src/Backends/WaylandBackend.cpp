@@ -41,6 +41,7 @@
 #include "wayland/CreateShmBuffer.hpp"
 #include "wayland/callback_macro.hpp"
 #include "wayland/libdecor_utils.hpp"
+#include "wayland/tag_identify.hpp"
 #include "wayland/tags.hpp"
 
 #define WL_FRACTIONAL_SCALE_DENOMINATOR 120
@@ -65,36 +66,6 @@ static inline uint32_t WaylandScaleToPhysical( uint32_t pValue, uint32_t pFactor
 }
 static inline uint32_t WaylandScaleToLogical( uint32_t pValue, uint32_t pFactor ) {
     return div_roundup( pValue * WL_FRACTIONAL_SCALE_DENOMINATOR, pFactor );
-}
-
-[[maybe_unused]] static bool IsGamescopeProxy( void *pProxy ) {
-	// HACK: this probably should never be called with a null pointer, but it
-	// was happening after a window was closed.
-	if ( !pProxy )
-		return false;
-
-	const char* const* pTag = wl_proxy_get_tag( (wl_proxy *)pProxy );
-
-	return pTag == &GAMESCOPE_proxy_tag ||
-		pTag == &GAMESCOPE_plane_tag ||
-		pTag == &GAMESCOPE_toplevel_tag;
-}
-
-[[maybe_unused]] static bool IsGamescopePlane( wl_surface *pSurface ) {
-	// HACK: this probably should never be called with a null pointer, but it
-	// was happening after a window was closed.
-	if ( !pSurface )
-		return false;
-	const char* const* pTag = wl_proxy_get_tag( (wl_proxy *)pSurface );
-
-	return pTag == &GAMESCOPE_plane_tag ||
-		pTag == &GAMESCOPE_toplevel_tag;
-}
-
-static bool IsGamescopeToplevel( wl_surface *pSurface ) {
-	// HACK: this probably should never be called with a null pointer, but it
-	// was happening after a window was closed.
-	return pSurface && (wl_proxy_get_tag( (wl_proxy *)pSurface ) == &GAMESCOPE_toplevel_tag);
 }
 
 extern gamescope::ConVar<bool> cv_hdr_enabled;
