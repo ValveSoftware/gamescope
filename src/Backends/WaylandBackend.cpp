@@ -40,32 +40,18 @@
 
 #include "wayland/CreateShmBuffer.hpp"
 #include "wayland/callback_macro.hpp"
+#include "wayland/externs_core.hpp"
+#include "wayland/externs_gs.hpp"
+#include "wayland/externs_std.hpp"
 #include "wayland/frac_scale.hpp"
 #include "wayland/libdecor_utils.hpp"
 #include "wayland/tag_identify.hpp"
 #include "wayland/tags.hpp"
 
-extern int g_nPreferredOutputWidth;
-extern int g_nPreferredOutputHeight;
-extern bool g_bForceHDR10OutputDebug;
-extern bool g_bBorderlessOutputWindow;
-extern gamescope::ConVar<bool> cv_adaptive_sync;
-
-extern gamescope::ConVar<bool> cv_composite_force;
-extern bool g_bColorSliderInUse;
-extern bool fadingOut;
-extern std::string g_reshade_effect;
-
-using namespace std::literals;
-
 static LogScope xdg_log( "xdg_backend" );
-
-extern gamescope::ConVar<bool> cv_hdr_enabled;
 
 namespace gamescope
 {
-    extern std::shared_ptr<INestedHints::CursorInfo> GetX11HostCursor();
-
     gamescope::ConVar<bool> cv_wayland_mouse_warp_without_keyboard_focus( "wayland_mouse_warp_without_keyboard_focus", true, "Should we only forward mouse warps to the app when we have keyboard focus?" );
     gamescope::ConVar<bool> cv_wayland_mouse_relmotion_without_keyboard_focus( "wayland_mouse_relmotion_without_keyboard_focus", false, "Should we only forward mouse relative motion to the app when we have keyboard focus?" );
     gamescope::ConVar<bool> cv_wayland_use_modifiers( "wayland_use_modifiers", true, "Use DMA-BUF modifiers?" );
