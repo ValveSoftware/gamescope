@@ -40,11 +40,10 @@
 
 #include "wayland/CreateShmBuffer.hpp"
 #include "wayland/callback_macro.hpp"
+#include "wayland/frac_scale.hpp"
 #include "wayland/libdecor_utils.hpp"
 #include "wayland/tag_identify.hpp"
 #include "wayland/tags.hpp"
-
-#define WL_FRACTIONAL_SCALE_DENOMINATOR 120
 
 extern int g_nPreferredOutputWidth;
 extern int g_nPreferredOutputHeight;
@@ -60,13 +59,6 @@ extern std::string g_reshade_effect;
 using namespace std::literals;
 
 static LogScope xdg_log( "xdg_backend" );
-
-static inline uint32_t WaylandScaleToPhysical( uint32_t pValue, uint32_t pFactor ) {
-    return pValue * pFactor / WL_FRACTIONAL_SCALE_DENOMINATOR;
-}
-static inline uint32_t WaylandScaleToLogical( uint32_t pValue, uint32_t pFactor ) {
-    return div_roundup( pValue * WL_FRACTIONAL_SCALE_DENOMINATOR, pFactor );
-}
 
 extern gamescope::ConVar<bool> cv_hdr_enabled;
 
