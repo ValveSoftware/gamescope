@@ -39,6 +39,7 @@
 
 #include "drm_include.h"
 
+#include "wayland/callback_macro.hpp"
 #include "wayland/tags.hpp"
 
 #define WL_FRACTIONAL_SCALE_DENOMINATOR 120
@@ -104,9 +105,6 @@ static bool IsGamescopeToplevel( wl_surface *pSurface ) {
 	// was happening after a window was closed.
 	return pSurface && (wl_proxy_get_tag( (wl_proxy *)pSurface ) == &GAMESCOPE_toplevel_tag);
 }
-
-#define WAYLAND_NULL() []<typename... Args> ( void *pData, Args... args ) { }
-#define WAYLAND_USERDATA_TO_THIS(type, name) []<typename... Args> ( void *pData, Args... args ) { type *pThing = (type *)pData; pThing->name( std::forward<Args>(args)... ); }
 
 // Libdecor puts its userdata ptr at the end... how fun! I shouldn't have spent so long writing this total atrocity to mankind.
 #define LIBDECOR_USERDATA_TO_THIS(type, name) []<typename... Args> ( Args... args ) { type *pThing = (type *)std::get<sizeof...(Args)-1>(std::forward_as_tuple(args...)); CallWithAllButLast([&]<typename... Args2>(Args2... args2){ pThing->name(std::forward<Args2>(args2)...); }, std::forward<Args>(args)...); }
