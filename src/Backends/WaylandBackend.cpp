@@ -39,6 +39,8 @@
 
 #include "drm_include.h"
 
+#include "wayland/tags.hpp"
+
 #define WL_FRACTIONAL_SCALE_DENOMINATOR 120
 
 extern int g_nPreferredOutputWidth;
@@ -55,10 +57,6 @@ extern std::string g_reshade_effect;
 using namespace std::literals;
 
 static LogScope xdg_log( "xdg_backend" );
-
-static const char *GAMESCOPE_proxy_tag = "gamescope-proxy";
-static const char *GAMESCOPE_plane_tag = "gamescope-plane";
-static const char *GAMESCOPE_toplevel_tag = "gamescope-toplevel";
 
 template <typename Func, typename... Args>
 auto CallWithAllButLast(Func pFunc, Args&&... args)
