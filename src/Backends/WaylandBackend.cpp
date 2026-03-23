@@ -40,6 +40,7 @@
 #include "drm_include.h"
 
 #include "wayland/callback_macro.hpp"
+#include "wayland/libdecor_utils.hpp"
 #include "wayland/tags.hpp"
 
 #define WL_FRACTIONAL_SCALE_DENOMINATOR 120
@@ -58,16 +59,6 @@ extern std::string g_reshade_effect;
 using namespace std::literals;
 
 static LogScope xdg_log( "xdg_backend" );
-
-template <typename Func, typename... Args>
-auto CallWithAllButLast(Func pFunc, Args&&... args)
-{
-    auto Forwarder = [&] <typename Tuple, size_t... idx> (Tuple&& tuple, std::index_sequence<idx...>)
-    {
-        return pFunc(std::get<idx>(std::forward<Tuple>(tuple))...);
-    };
-    return Forwarder(std::forward_as_tuple(args...), std::make_index_sequence<sizeof...(Args) - 1>());
-}
 
 static inline uint32_t WaylandScaleToPhysical( uint32_t pValue, uint32_t pFactor ) {
     return pValue * pFactor / WL_FRACTIONAL_SCALE_DENOMINATOR;
@@ -105,9 +96,6 @@ static bool IsGamescopeToplevel( wl_surface *pSurface ) {
 	// was happening after a window was closed.
 	return pSurface && (wl_proxy_get_tag( (wl_proxy *)pSurface ) == &GAMESCOPE_toplevel_tag);
 }
-
-// Libdecor puts its userdata ptr at the end... how fun! I shouldn't have spent so long writing this total atrocity to mankind.
-#define LIBDECOR_USERDATA_TO_THIS(type, name) []<typename... Args> ( Args... args ) { type *pThing = (type *)std::get<sizeof...(Args)-1>(std::forward_as_tuple(args...)); CallWithAllButLast([&]<typename... Args2>(Args2... args2){ pThing->name(std::forward<Args2>(args2)...); }, std::forward<Args>(args)...); }
 
 extern gamescope::ConVar<bool> cv_hdr_enabled;
 
