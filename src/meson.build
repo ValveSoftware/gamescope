@@ -98,6 +98,7 @@ src = [
   'Backends/HeadlessBackend.cpp',
   'Backends/wayland/CreateShmBuffer.cpp',
   'Backends/wayland/WaylandFb.cpp',
+  'Backends/wayland/WaylandInputThread.cpp',
   'Backends/wayland/WaylandPlane.cpp',
   'Backends/wayland/tags.cpp',
   'Backends/wayland/xdg_log.cpp',
