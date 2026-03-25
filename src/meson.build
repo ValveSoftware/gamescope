@@ -105,7 +105,6 @@ src = [
   'Backends/wayland/convars.cpp',
   'Backends/wayland/tags.cpp',
   'Backends/wayland/xdg_log.cpp',
-  'Backends/WaylandBackend.cpp',
   'Utils/DirHelpers.cpp',
   'Utils/TempFiles.cpp',
   'Utils/Version.cpp',
