@@ -59,14 +59,11 @@ static LogScope xdg_log( "xdg_backend" );
 static const char *GAMESCOPE_proxy_tag = "gamescope-proxy";
 static const char *GAMESCOPE_plane_tag = "gamescope-plane";
 static const char *GAMESCOPE_toplevel_tag = "gamescope-toplevel";
-
-const std::vector<const char*> supportedMimeTypes = {
-    "text/plain;charset=utf-8",
-    "UTF8_STRING",
-    "text/plain",
-    "STRING",
-    "TEXT",
+static constexpr std::array supportedMimeTypesArr = {
+    "text/plain;charset=utf-8", "UTF8_STRING", "text/plain", "STRING", "TEXT",
 };
+
+static const std::span<const char* const> supportedMimeTypes = supportedMimeTypesArr;
 
 template <typename Func, typename... Args>
 auto CallWithAllButLast(Func pFunc, Args&&... args)
@@ -2800,15 +2797,11 @@ namespace gamescope
 
         const char *selectedMimeType = nullptr;
 
-        for (const char *supportedType : supportedMimeTypes) {
-            for (const auto &offeredType : m_CurrentOfferMimeTypes) {
-                if (offeredType == supportedType) {
-                    selectedMimeType = supportedType;
-                    break;
-                }
-            }
-            if (selectedMimeType)
+        for (const char* supportedType : supportedMimeTypes) {
+            if (std::find(m_CurrentOfferMimeTypes.begin(), m_CurrentOfferMimeTypes.end(), supportedType) != m_CurrentOfferMimeTypes.end()) {
+                selectedMimeType = supportedType;
                 break;
+            }
         }
 
         if (!selectedMimeType) {
