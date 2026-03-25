@@ -86,10 +86,6 @@ namespace gamescope
     // WaylandConnector.hpp
 
     // WaylandFb.hpp
-    const wl_buffer_listener CWaylandFb::s_BufferListener =
-    {
-        .release = WAYLAND_USERDATA_TO_THIS( CWaylandFb, Wayland_Buffer_Release ),
-    };
 
 	// WaylandInputThread.hpp
     const wl_registry_listener CWaylandInputThread::s_RegistryListener =
