@@ -165,6 +165,7 @@ struct steamcompmgr_win_t {
 
 	std::optional<uint64_t> oulTargetVROverlay;
 	std::shared_ptr<gamescope::IBackendPlane> pForwarderPlane;
+	bool bNeedsForwarding = false;
 
 	steamcompmgr_xwayland_win_t& xwayland() { return std::get<steamcompmgr_xwayland_win_t>(_window_types); }
 	const steamcompmgr_xwayland_win_t& xwayland() const { return std::get<steamcompmgr_xwayland_win_t>(_window_types); }
