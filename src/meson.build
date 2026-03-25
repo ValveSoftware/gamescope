@@ -97,6 +97,7 @@ required_wlroots_features = ['xwayland']
 src = [
   'Backends/HeadlessBackend.cpp',
   'Backends/wayland/CreateShmBuffer.cpp',
+  'Backends/wayland/WaylandBackend.cpp',
   'Backends/wayland/WaylandFb.cpp',
   'Backends/wayland/WaylandInputThread.cpp',
   'Backends/wayland/WaylandPlane.cpp',
