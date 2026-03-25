@@ -47,8 +47,7 @@
 #include "wayland/libdecor_utils.hpp"
 #include "wayland/tag_identify.hpp"
 #include "wayland/tags.hpp"
-
-static LogScope xdg_log( "xdg_backend" );
+#include "wayland/xdg_log.hpp"
 
 namespace gamescope
 {
