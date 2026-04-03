@@ -7167,7 +7167,7 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 			upscaledFrameInfo.useNISLayer0 = g_upscaleFilter == GamescopeUpscaleFilter::NIS;
 			globalScaleRatio = flOldGlobalScale;
 			zoomScaleRatio = flOldZoomScale;
-			flOldOverscanScale = flOldOverscanScale;
+			overscanScaleRatio = flOldOverscanScale;
 
 			TempUpscaleImage_t *pTempImage = GetTempUpscaleImage( g_nOutputWidth, g_nOutputHeight, g_output.uOutputFormat );
 			if ( pTempImage )
