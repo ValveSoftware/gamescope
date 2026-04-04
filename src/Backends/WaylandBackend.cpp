@@ -62,7 +62,6 @@ static const char *GAMESCOPE_toplevel_tag = "gamescope-toplevel";
 static constexpr std::array supportedMimeTypesArr = {
     "text/plain;charset=utf-8", "UTF8_STRING", "text/plain", "STRING", "TEXT",
 };
-
 static const std::span<const char* const> supportedMimeTypes = supportedMimeTypesArr;
 
 template <typename Func, typename... Args>
@@ -936,6 +935,8 @@ namespace gamescope
     };
     const wl_data_offer_listener CWaylandBackend::s_DataOfferListener = {
         .offer = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_DataOffer_Offer ),
+    	.source_actions = WAYLAND_NULL(),
+    	.action = WAYLAND_NULL(),
     };
 
     //////////////////
