@@ -63,6 +63,7 @@ static constexpr std::array supportedMimeTypesArr = {
     "text/plain;charset=utf-8", "UTF8_STRING", "text/plain", "STRING", "TEXT",
 };
 static const std::span<const char* const> supportedMimeTypes = supportedMimeTypesArr;
+static bool g_bClipboardProcessing = false;
 
 template <typename Func, typename... Args>
 auto CallWithAllButLast(Func pFunc, Args&&... args)
@@ -638,6 +639,7 @@ namespace gamescope
     {
     public:
         CWaylandBackend();
+    	~CWaylandBackend();
 
         /////////////
         // IBackend
@@ -772,10 +774,10 @@ namespace gamescope
         void Wayland_DataSource_Cancelled( struct wl_data_source *pSource );
         static const wl_data_source_listener s_DataSourceListener;
 
+    	wl_event_queue *m_pDataDeviceQueue = nullptr;
         void Wayland_DataDevice_DataOffer( struct wl_data_device *pDevice, struct wl_data_offer *pOffer );
         void Wayland_DataDevice_Selection( wl_data_device *pDataDevice, wl_data_offer *pOffer );
         static const wl_data_device_listener s_DataDeviceListener;
-
         void Wayland_DataOffer_Offer( struct wl_data_offer *pOffer, const char *pMime );
         static const struct wl_data_offer_listener s_DataOfferListener;
 
@@ -1970,6 +1972,13 @@ namespace gamescope
     {
     }
 
+	CWaylandBackend::~CWaylandBackend(){
+		if (m_pDataDeviceQueue) {
+			wl_event_queue_destroy(m_pDataDeviceQueue);
+			m_pDataDeviceQueue = nullptr;
+		}
+    }
+
     bool CWaylandBackend::Init()
     {
         g_nOutputWidth = g_nPreferredOutputWidth;
@@ -2097,6 +2106,14 @@ namespace gamescope
             xdg_log.errorf( "Failed to initialize input thread" );
             return false;
         }
+    	
+    	// Set up the data device queue
+    	m_pDataDeviceQueue = wl_display_create_queue(m_pDisplay);
+    	if (!m_pDataDeviceQueue) {
+    		xdg_log.errorf("Failed to create data device queue");
+    		return false;
+    	}
+    	wl_proxy_set_queue(reinterpret_cast<wl_proxy*>(m_pDataDevice), m_pDataDeviceQueue);
 
         // Set up the data device listener
         if (m_pDataDeviceManager && !m_pDataDevice) {
@@ -2787,7 +2804,14 @@ namespace gamescope
     // Data Device
 
     void CWaylandBackend::Wayland_DataDevice_Selection(wl_data_device *pDataDevice, wl_data_offer *pOffer) {
-        // An application has set the clipboard contents
+    	if (g_bClipboardProcessing) {
+    		if (pOffer) wl_data_offer_destroy(pOffer);
+    		return;
+    	}
+
+    	g_bClipboardProcessing = true;
+    	
+    	// An application has set the clipboard contents
         if (pOffer == nullptr) {
             // Clipboard is empty
             m_CurrentOfferMimeTypes.clear();
@@ -2824,8 +2848,9 @@ namespace gamescope
 
         wl_data_offer_receive(pOffer, selectedMimeType, fds[1]);
         close(fds[1]);
-
         wl_display_flush(m_pDisplay);
+    	
+    	while (wl_display_dispatch_queue(m_pDisplay, m_pDataDeviceQueue) > 0) {}
 
         // Read the clipboard contents and store it in a member variable.
         std::string clipboardData;
@@ -2837,7 +2862,6 @@ namespace gamescope
         close(fds[0]);
 
         m_pClipboard = std::make_shared<std::string>(clipboardData);
-
         gamescope_set_selection( clipboardData, GAMESCOPE_SELECTION_CLIPBOARD);
 
         wl_data_offer_destroy(pOffer);
