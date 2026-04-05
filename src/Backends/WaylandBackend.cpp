@@ -776,15 +776,32 @@ namespace gamescope
 		static constexpr std::span<const char *const> supportedMimeTypes = supportedMimeTypesArr;
 	private:
 		struct CWaylandDataOffer {
-			int m_fd;
 			wl_data_offer *m_pOffer;
+			int m_fd;
 		};
 		struct CWaylandClipboardState {
-			std::queue<CWaylandDataOffer> m_PendingOffers;
-			std::mutex m_PendingOffersMutex;
-			std::condition_variable m_PendingOffersCV;
 			std::thread m_ClipboardReadThread;
+			std::condition_variable m_PendingOffersCV;
+			std::mutex m_PendingOffersMutex;
+			std::queue<CWaylandDataOffer> m_PendingOffers;
 			std::atomic<bool> m_ClipboardThreadRunning = { false };
+
+			~CWaylandClipboardState() {
+				m_ClipboardThreadRunning = false;
+				m_PendingOffersCV.notify_one();
+
+				if (m_ClipboardReadThread.joinable()) {
+					m_ClipboardReadThread.join();
+				}
+
+				std::lock_guard<std::mutex> lock(m_PendingOffersMutex);
+				while (!m_PendingOffers.empty()) {
+					auto& offer = m_PendingOffers.front();
+					close(offer.m_fd);
+					wl_data_offer_destroy(offer.m_pOffer);
+					m_PendingOffers.pop();
+				}
+			}
 		};
 		CWaylandClipboardState m_ClipboardState;
 		void CWaylandReaderThread();
@@ -2121,6 +2138,10 @@ namespace gamescope
 			}
 			wl_data_device_add_listener(m_pDataDevice, &s_DataDeviceListener, this);
 		}
+		
+		// Set up the clipboard reader
+		m_ClipboardState.m_ClipboardThreadRunning = true;
+		m_ClipboardState.m_ClipboardReadThread = std::thread(&CWaylandBackend::CWaylandReaderThread, this);
 
 		xdg_log.infof( "Initialized Wayland backend" );
 		return true;
@@ -2803,15 +2824,17 @@ namespace gamescope
 
 	void CWaylandBackend::CWaylandReaderThread() {
 		while (m_ClipboardState.m_ClipboardThreadRunning) {
-			std::unique_lock<std::mutex> lock(m_ClipboardState.m_PendingOffersMutex);
-			m_ClipboardState.m_PendingOffersCV.wait(lock, [this] { return !m_ClipboardState.m_PendingOffers.empty() || !m_ClipboardState.m_ClipboardThreadRunning; });
+			CWaylandDataOffer pending;
+			{
+				std::unique_lock<std::mutex> mcs_lock(m_ClipboardState.m_PendingOffersMutex);
+				m_ClipboardState.m_PendingOffersCV.wait(mcs_lock, [this] { return !m_ClipboardState.m_PendingOffers.empty() || !m_ClipboardState.m_ClipboardThreadRunning; });
 
-			if (!m_ClipboardState.m_ClipboardThreadRunning) break;
-			if (m_ClipboardState.m_PendingOffers.empty()) continue;
+				if (!m_ClipboardState.m_ClipboardThreadRunning) break;
+				if (m_ClipboardState.m_PendingOffers.empty()) continue;
 
-			CWaylandDataOffer pending = m_ClipboardState.m_PendingOffers.front();
-			m_ClipboardState.m_PendingOffers.pop();
-			lock.unlock();
+				pending = m_ClipboardState.m_PendingOffers.front();
+				m_ClipboardState.m_PendingOffers.pop();
+			}
 			
 			// Read the clipboard contents and store it in a member variable.
 			std::string clipboardData;
@@ -2821,6 +2844,12 @@ namespace gamescope
 				clipboardData.append(buf, n);
 			}
 			close(pending.m_fd);
+
+			{
+				std::lock_guard<std::mutex> c_lock(m_ClipboardMutex);
+				m_pClipboard = std::make_shared<std::string>(clipboardData);
+				m_CurrentOfferMimeTypes.clear();
+			}
 
 			m_pClipboard = std::make_shared<std::string>(clipboardData);
 			gamescope_set_selection( clipboardData, GAMESCOPE_SELECTION_CLIPBOARD);
@@ -2874,7 +2903,7 @@ namespace gamescope
 
 		{
 			std::lock_guard<std::mutex> queueLock(m_ClipboardState.m_PendingOffersMutex);
-			m_ClipboardState.m_PendingOffers.push({ fds[0], pOffer });
+			m_ClipboardState.m_PendingOffers.push({ pOffer, fds[0] });
 		}
 		m_ClipboardState.m_PendingOffersCV.notify_one();
 	}
