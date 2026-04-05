@@ -2798,7 +2798,7 @@ namespace gamescope
 
 		const char *selectedMimeType = nullptr;
 
-		for (const char* supportedType : supportedMimeTypes) {
+		for (const char *supportedType : supportedMimeTypes) {
 			if (std::find(m_CurrentOfferMimeTypes.begin(), m_CurrentOfferMimeTypes.end(), supportedType) != m_CurrentOfferMimeTypes.end()) {
 				selectedMimeType = supportedType;
 				break;
@@ -2847,7 +2847,7 @@ namespace gamescope
 	}
 
 	// Data Offer
-	void CWaylandBackend::Wayland_DataOffer_Offer(struct wl_data_offer* pOffer, const char* pMime)
+	void CWaylandBackend::Wayland_DataOffer_Offer(struct wl_data_offer *pOffer, const char *pMime)
 	{
 		m_CurrentOfferMimeTypes.emplace_back(pMime);
 		xdg_log.debugf("Clipboard supports MIME type: %s", pMime);
