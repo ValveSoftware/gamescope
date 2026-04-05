@@ -39,6 +39,9 @@
 
 #include "drm_include.h"
 
+#include <condition_variable>
+#include <queue>
+
 #define WL_FRACTIONAL_SCALE_DENOMINATOR 120
 
 extern int g_nPreferredOutputWidth;
@@ -59,10 +62,6 @@ static LogScope xdg_log( "xdg_backend" );
 static const char *GAMESCOPE_proxy_tag = "gamescope-proxy";
 static const char *GAMESCOPE_plane_tag = "gamescope-plane";
 static const char *GAMESCOPE_toplevel_tag = "gamescope-toplevel";
-static constexpr std::array supportedMimeTypesArr = {
-	"text/plain;charset=utf-8", "UTF8_STRING", "text/plain", "STRING", "TEXT",
-};
-static const std::span<const char* const> supportedMimeTypes = supportedMimeTypesArr;
 
 template <typename Func, typename... Args>
 auto CallWithAllButLast(Func pFunc, Args&&... args)
@@ -730,9 +729,7 @@ namespace gamescope
 		{
 			m_pFocusConnector.compare_exchange_strong( pConnector, nullptr );
 		}
-
 	private:
-
 		void Wayland_Registry_Global( wl_registry *pRegistry, uint32_t uName, const char *pInterface, uint32_t uVersion );
 		static const wl_registry_listener s_RegistryListener;
 
@@ -772,6 +769,25 @@ namespace gamescope
 		void Wayland_DataSource_Cancelled( struct wl_data_source *pSource );
 		static const wl_data_source_listener s_DataSourceListener;
 
+		static constexpr std::array<const char *, 5> supportedMimeTypesArr = {
+			"text/plain;charset=utf-8", "UTF8_STRING", "text/plain", "STRING", "TEXT"
+		};
+	public:
+		static constexpr std::span<const char *const> supportedMimeTypes = supportedMimeTypesArr;
+	private:
+		struct CWaylandDataOffer {
+			int m_fd;
+			wl_data_offer *m_pOffer;
+		};
+		struct CWaylandClipboardState {
+			std::queue<CWaylandDataOffer> m_PendingOffers;
+			std::mutex m_PendingOffersMutex;
+			std::condition_variable m_PendingOffersCV;
+			std::thread m_ClipboardReadThread;
+			std::atomic<bool> m_ClipboardThreadRunning = { false };
+		};
+		CWaylandClipboardState m_ClipboardState;
+		void CWaylandReaderThread();
 		std::mutex m_ClipboardMutex;
 		void Wayland_DataDevice_DataOffer( struct wl_data_device *pDevice, struct wl_data_offer *pOffer );
 		void Wayland_DataDevice_Selection( wl_data_device *pDataDevice, wl_data_offer *pOffer );
@@ -1327,7 +1343,7 @@ namespace gamescope
 			m_pBackend->m_pClipboard = szContents;
 			wl_data_source *source = wl_data_device_manager_create_data_source( m_pBackend->m_pDataDeviceManager );
 			wl_data_source_add_listener( source, &m_pBackend->s_DataSourceListener, m_pBackend );
-			for (const char *mime_type : supportedMimeTypes) {
+			for (const char *mime_type : m_pBackend->supportedMimeTypes) {
 				wl_data_source_offer(source, mime_type);
 			}
 			wl_data_device_set_selection( m_pBackend->m_pDataDevice, source, m_pBackend->m_uKeyboardEnterSerial );
@@ -1337,7 +1353,7 @@ namespace gamescope
 			m_pBackend->m_pPrimarySelection = szContents;
 			zwp_primary_selection_source_v1 *source = zwp_primary_selection_device_manager_v1_create_source( m_pBackend->m_pPrimarySelectionDeviceManager );
 			zwp_primary_selection_source_v1_add_listener( source, &m_pBackend->s_PrimarySelectionSourceListener, m_pBackend );
-			for (const char *mime_type : supportedMimeTypes) {
+			for (const char *mime_type : m_pBackend->supportedMimeTypes) {
 				zwp_primary_selection_source_v1_offer( source, mime_type );
 			}
 			zwp_primary_selection_device_v1_set_selection( m_pBackend->m_pPrimarySelectionDevice, source, m_pBackend->m_uPointerEnterSerial );
@@ -2106,8 +2122,7 @@ namespace gamescope
 			wl_data_device_add_listener(m_pDataDevice, &s_DataDeviceListener, this);
 		}
 
-		xdg_log.infof( "Initted Wayland backend" );
-
+		xdg_log.infof( "Initialized Wayland backend" );
 		return true;
 	}
 
@@ -2748,6 +2763,8 @@ namespace gamescope
 
 	void CWaylandBackend::Wayland_DataSource_Send( struct wl_data_source *pSource, const char *pMime, int nFd )
 	{
+		std::lock_guard<std::mutex> lock(m_ClipboardMutex);
+
 		if ( !m_pClipboard )
 		{
 			close( nFd );
@@ -2784,11 +2801,40 @@ namespace gamescope
 
 	// Data Device
 
+	void CWaylandBackend::CWaylandReaderThread() {
+		while (m_ClipboardState.m_ClipboardThreadRunning) {
+			std::unique_lock<std::mutex> lock(m_ClipboardState.m_PendingOffersMutex);
+			m_ClipboardState.m_PendingOffersCV.wait(lock, [this] { return !m_ClipboardState.m_PendingOffers.empty() || !m_ClipboardState.m_ClipboardThreadRunning; });
+
+			if (!m_ClipboardState.m_ClipboardThreadRunning) break;
+			if (m_ClipboardState.m_PendingOffers.empty()) continue;
+
+			CWaylandDataOffer pending = m_ClipboardState.m_PendingOffers.front();
+			m_ClipboardState.m_PendingOffers.pop();
+			lock.unlock();
+			
+			// Read the clipboard contents and store it in a member variable.
+			std::string clipboardData;
+			char buf[1024];
+			ssize_t n;
+			while ((n = read(pending.m_fd, buf, sizeof(buf))) > 0) {
+				clipboardData.append(buf, n);
+			}
+			close(pending.m_fd);
+
+			m_pClipboard = std::make_shared<std::string>(clipboardData);
+			gamescope_set_selection( clipboardData, GAMESCOPE_SELECTION_CLIPBOARD);
+
+			wl_data_offer_destroy(pending.m_pOffer);
+			m_CurrentOfferMimeTypes.clear();
+		}
+	}
+
 	void CWaylandBackend::Wayland_DataDevice_Selection(wl_data_device *pDataDevice, wl_data_offer *pOffer) {
 		std::lock_guard<std::mutex> lock(m_ClipboardMutex);
 
 		// An application has set the clipboard contents
-		if (pOffer == nullptr) {
+		if (!pOffer) {
 			// Clipboard is empty
 			m_CurrentOfferMimeTypes.clear();
 			m_pClipboard = nullptr;
@@ -2826,20 +2872,11 @@ namespace gamescope
 		close(fds[1]);
 		wl_display_flush(m_pDisplay);
 
-		// Read the clipboard contents and store it in a member variable.
-		std::string clipboardData;
-		char buf[1024];
-		ssize_t n;
-		while ((n = read(fds[0], buf, sizeof(buf))) > 0) {
-			clipboardData.append(buf, n);
+		{
+			std::lock_guard<std::mutex> queueLock(m_ClipboardState.m_PendingOffersMutex);
+			m_ClipboardState.m_PendingOffers.push({ fds[0], pOffer });
 		}
-		close(fds[0]);
-
-		m_pClipboard = std::make_shared<std::string>(clipboardData);
-		gamescope_set_selection( clipboardData, GAMESCOPE_SELECTION_CLIPBOARD);
-
-		wl_data_offer_destroy(pOffer);
-		m_CurrentOfferMimeTypes.clear();
+		m_ClipboardState.m_PendingOffersCV.notify_one();
 	}
 	void CWaylandBackend::Wayland_DataDevice_DataOffer(struct wl_data_device *pDevice, struct wl_data_offer *pOffer) {
 		m_CurrentOfferMimeTypes.clear();
