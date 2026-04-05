@@ -2106,14 +2106,6 @@ namespace gamescope
             xdg_log.errorf( "Failed to initialize input thread" );
             return false;
         }
-    	
-    	// Set up the data device queue
-    	m_pDataDeviceQueue = wl_display_create_queue(m_pDisplay);
-    	if (!m_pDataDeviceQueue) {
-    		xdg_log.errorf("Failed to create data device queue");
-    		return false;
-    	}
-    	wl_proxy_set_queue(reinterpret_cast<wl_proxy*>(m_pDataDevice), m_pDataDeviceQueue);
 
         // Set up the data device listener
         if (m_pDataDeviceManager && !m_pDataDevice) {
@@ -2123,6 +2115,14 @@ namespace gamescope
                 return false;
             }
             wl_data_device_add_listener(m_pDataDevice, &s_DataDeviceListener, this);
+        	
+            // Set up the data device queue
+            m_pDataDeviceQueue = wl_display_create_queue(m_pDisplay);
+            if (!m_pDataDeviceQueue) {
+                xdg_log.errorf("Failed to create data device queue");
+                return false;
+            }
+            wl_proxy_set_queue(reinterpret_cast<wl_proxy*>(m_pDataDevice), m_pDataDeviceQueue);
         }
 
         xdg_log.infof( "Initted Wayland backend" );
