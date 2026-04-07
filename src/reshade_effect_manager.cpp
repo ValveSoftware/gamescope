@@ -17,7 +17,11 @@
 
 #include <stb_image.h>
 #define STB_IMAGE_RESIZE_IMPLEMENTATION
+#if __has_include(<stb_image_resize2.h>)
+#include <stb_image_resize2.h>
+#else
 #include <stb_image_resize.h>
+#endif
 
 #include <mutex>
 #include <unistd.h>
@@ -1150,7 +1154,13 @@ bool ReshadeEffectPipeline::init(CVulkanDevice *device, const ReshadeEffectKey &
                 if (w != (int)texture->width() || h != (int)texture->height())
                 {
                     resized_data.resize(texture->width() * texture->height() * 4);
+#if __has_include(<stb_image_resize2.h>)
+                    // stb_image_resize2 renames stbir_resize_uint8 to stbir_resize_uint8_linear
+                    // (stbir_resize_uint8_srgb is the gamma-aware variant).
+                    stbir_resize_uint8_linear(data, w, h, 0, resized_data.data(), texture->width(), texture->height(), 0, STBIR_RGBA);
+#else
                     stbir_resize_uint8(data, w, h, 0, resized_data.data(), texture->width(), texture->height(), 0, STBI_rgb_alpha);
+#endif
 
                     w = texture->width();
                     h = texture->height();

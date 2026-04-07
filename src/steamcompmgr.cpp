@@ -116,7 +116,11 @@ static const int g_nBaseCursorScale = 36;
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb_image.h>
 #include <stb_image_write.h>
+#if __has_include(<stb_image_resize2.h>)
+#include <stb_image_resize2.h>
+#else
 #include <stb_image_resize.h>
+#endif
 
 #define GPUVIS_TRACE_IMPLEMENTATION
 #include "gpuvis_trace_utils.h"
@@ -1789,9 +1793,17 @@ bool MouseCursor::getTexture()
 				}
 			} 
 			std::vector<uint32_t> resizeBuffer( nDesiredWidth * nDesiredHeight );
+#if __has_include(<stb_image_resize2.h>)
+			// stb_image_resize2 replaces (num_channels=4, alpha_channel=3,
+			// STBIR_FLAG_ALPHA_PREMULTIPLIED) with a single STBIR_RGBA_PM enum.
+			stbir_resize_uint8_srgb( (unsigned char *)pixels.data(),       image->width,  image->height,  0,
+									 (unsigned char *)resizeBuffer.data(), nDesiredWidth, nDesiredHeight, 0,
+									 STBIR_RGBA_PM );
+#else
 			stbir_resize_uint8_srgb( (unsigned char *)pixels.data(),       image->width,  image->height,  0,
 									 (unsigned char *)resizeBuffer.data(), nDesiredWidth, nDesiredHeight, 0,
 									 4, 3, STBIR_FLAG_ALPHA_PREMULTIPLIED );
+#endif
 
 			cursorBuffer = std::vector<uint32_t>(surfaceWidth * surfaceHeight);
 			for (int i = 0; i < nDesiredHeight; i++)
