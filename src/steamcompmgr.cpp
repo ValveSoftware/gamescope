@@ -2389,6 +2389,12 @@ static void paint_pipewire()
 	if ( pFocus->overrideWindow && !pFocus->focusWindow->isSteamStreamingClient )
 		paint_window( pFocus->overrideWindow, pFocus->focusWindow, &frameInfo, nullptr, PaintWindowFlag::NoFilter, 1.0f, pFocus->overrideWindow );
 
+	if ( !ulFocusAppId && pFocus->overlayWindow && pFocus->overlayWindow->opacity )
+	{
+		paint_window( pFocus->overlayWindow, pFocus->overlayWindow, &frameInfo, nullptr, PaintWindowFlag::DrawBorders | PaintWindowFlag::NoFilter |
+				( cv_overlay_unmultiplied_alpha ? PaintWindowFlag::CoverageMode : 0 )  );
+	}
+
 	gamescope::Rc<CVulkanTexture> pRGBTexture = s_pPipewireBuffer->texture->isYcbcr()
 		? vulkan_acquire_screenshot_texture( uWidth, uHeight, false, DRM_FORMAT_XRGB2101010 )
 		: gamescope::Rc<CVulkanTexture>{ s_pPipewireBuffer->texture };
