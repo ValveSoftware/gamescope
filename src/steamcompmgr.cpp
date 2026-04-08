@@ -5789,6 +5789,24 @@ static bool steamcompmgr_should_vblank_window( bool bShouldLimitFPS, uint64_t vb
 
 static bool steamcompmgr_should_vblank_window( steamcompmgr_win_t *w, uint64_t vblank_idx, uint64_t now )
 {
+	// Overlays skip the FPS-limit throttle, so cap them to the output refresh under VRR.
+	if ( w && w->IsAnyOverlay() &&
+	     GetBackend()->GetCurrentConnector() && GetBackend()->GetCurrentConnector()->IsVRRActive() )
+	{
+		uint64_t schedule = w->last_commit_first_latch_time + g_SteamCompMgrAppRefreshCycle;
+
+		static constexpr uint64_t k_ulVRRScheduleFudge = 200'000; // 0.2ms
+		if ( now + k_ulVRRScheduleFudge < schedule )
+		{
+			if ( !s_oLowestFPSLimitScheduleVRR )
+				s_oLowestFPSLimitScheduleVRR = schedule;
+			else
+				s_oLowestFPSLimitScheduleVRR = std::min( *s_oLowestFPSLimitScheduleVRR, schedule );
+
+			return false;
+		}
+	}
+
 	return steamcompmgr_should_vblank_window( steamcompmgr_window_should_limit_fps( w ), vblank_idx, w, now );
 }
 
