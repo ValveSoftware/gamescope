@@ -190,3 +190,11 @@ vec4 sampleLayer(sampler2D layerSampler, uint layerIdx, vec2 uv, bool unnormaliz
 vec3 encodeOutputColor(vec3 value) {
     return colorspace_output_tf(value, c_output_eotf);
 }
+
+// V3D workaround: swap R and B channels when outputting to BGR swapchain
+// Required because shader declares rgba8 but swapchain is B8G8R8A8
+vec4 applyOutputSwizzle(vec4 color) {
+    if (c_swapChannels)
+        return color.bgra;
+    return color;
+}
