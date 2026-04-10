@@ -3511,11 +3511,16 @@ namespace gamescope
 			bool bDoComposite = true;
 			if ( !bNeedsFullComposite && !bWantsPartialComposite )
 			{
+				// Save the pending mode so it can be restored after drm_rollback() and carried
+				// over to the composite path
+				std::shared_ptr<gamescope::BackendBlob> pPendingModeId = g_DRM.pending.mode_id;
 				int ret = drm_prepare( &g_DRM, bAsync, pFrameInfo );
 				if ( ret == 0 )
 					bDoComposite = false;
 				else if ( ret == -EACCES )
 					return 0;
+				else if ( g_DRM.needs_modeset )
+					g_DRM.pending.mode_id = pPendingModeId;
 			}
 
 			// Update to let the vblank manager know we are currently compositing.
