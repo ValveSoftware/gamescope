@@ -747,6 +747,8 @@ static gamescope::CDRMPlane *find_primary_plane(struct drm_t *drm)
 
 	for ( std::unique_ptr< gamescope::CDRMPlane > &pPlane : drm->planes )
 	{
+		if ( drm->leasedPlaneIds.contains( pPlane->GetObjectId() ) )
+			continue;
 		if ( pPlane->GetModePlane()->possible_crtcs & drm->pCRTC->GetCRTCMask() )
 		{
 			if ( pPlane->GetProperties().type->GetCurrentValue() == DRM_PLANE_TYPE_PRIMARY )
@@ -764,6 +766,8 @@ static bool have_overlay_planes(struct drm_t *drm)
 
 	for ( std::unique_ptr< gamescope::CDRMPlane > &pPlane : drm->planes )
 	{
+		if ( drm->leasedPlaneIds.contains( pPlane->GetObjectId() ) )
+			continue;
 		if ( pPlane->GetModePlane()->possible_crtcs & drm->pCRTC->GetCRTCMask() )
 		{
 			if ( pPlane->GetProperties().type->GetCurrentValue() == DRM_PLANE_TYPE_OVERLAY )
@@ -1410,12 +1414,6 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 		return false;
 	}
 
-	drm->lo_device = liftoff_device_create( drm->fd );
-	if ( drm->lo_device == nullptr )
-		return false;
-	if ( liftoff_device_register_all_planes( drm->lo_device ) < 0 )
-		return false;
-	
 	drm_log.infof("Connectors:");
 	for ( auto &iter : drm->connectors )
 	{
@@ -1432,6 +1430,8 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 
 	// DRM lease: if --lease-connector was specified, find the connector and
 	// create a lease for it so a companion app can drive it independently.
+	// This must happen BEFORE liftoff plane registration so leased planes
+	// are excluded from liftoff's pool.
 	if ( g_sLeaseConnectorName && g_sLeaseConnectorName[0] != '\0' )
 	{
 		gamescope::CDRMConnector *pLeaseConnector = nullptr;
@@ -1464,24 +1464,33 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 				uint32_t uConnectorId = pLeaseConnector->GetObjectId();
 				uint32_t uCRTCId = pLeaseCRTC->GetObjectId();
 
-				// Find a primary plane for this CRTC
+				// Find a primary plane for the leased CRTC.
+				// The kernel requires at least one plane in a lease.
 				uint32_t uPlaneId = 0;
 				for ( auto &pPlane : drm->planes )
 				{
-					drmModePlane *pModePlane = pPlane->GetModePlane();
-					if ( pModePlane->possible_crtcs & pLeaseCRTC->GetCRTCMask() )
+					if ( pPlane->GetModePlane()->possible_crtcs & pLeaseCRTC->GetCRTCMask() )
 					{
-						uPlaneId = pPlane->GetObjectId();
-						break;
+						if ( pPlane->GetProperties().type->GetCurrentValue() == DRM_PLANE_TYPE_PRIMARY )
+						{
+							uPlaneId = pPlane->GetObjectId();
+							break;
+						}
 					}
 				}
+
+				if ( uPlaneId == 0 )
+				{
+					drm_log.errorf( "lease-connector: no primary plane found for CRTC %u", uCRTCId );
+				}
+				else
+				{
 
 				uint32_t objects[3];
 				int nObjects = 0;
 				objects[nObjects++] = uConnectorId;
 				objects[nObjects++] = uCRTCId;
-				if ( uPlaneId != 0 )
-					objects[nObjects++] = uPlaneId;
+				objects[nObjects++] = uPlaneId;
 
 				uint32_t uLeaseId = 0;
 				int nLeaseFd = drmModeCreateLease( drm->fd, objects, nObjects, O_CLOEXEC, &uLeaseId );
@@ -1494,8 +1503,7 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 				{
 					drm->leasedConnectorIds.insert( uConnectorId );
 					drm->leasedCRTCIds.insert( uCRTCId );
-					if ( uPlaneId != 0 )
-						drm->leasedPlaneIds.insert( uPlaneId );
+					drm->leasedPlaneIds.insert( uPlaneId );
 					drm->uLeaseId = uLeaseId;
 					drm->nLeaseFd = nLeaseFd;
 
@@ -1543,8 +1551,35 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 						}
 					}
 				}
+				} // closes uPlaneId else
 			}
 		}
+	}
+
+	// Initialize liftoff AFTER lease creation so we can skip leased planes.
+	drm->lo_device = liftoff_device_create( drm->fd );
+	if ( drm->lo_device == nullptr )
+		return false;
+
+	// Register planes individually, skipping any that are leased.
+	{
+		drmModePlaneRes *pPlaneRes = drmModeGetPlaneResources( drm->fd );
+		if ( pPlaneRes == nullptr )
+			return false;
+		for ( uint32_t i = 0; i < pPlaneRes->count_planes; i++ )
+		{
+			if ( drm->leasedPlaneIds.contains( pPlaneRes->planes[i] ) )
+			{
+				drm_log.infof( "lease-connector: skipping leased plane %u from liftoff", pPlaneRes->planes[i] );
+				continue;
+			}
+			if ( liftoff_plane_create( drm->lo_device, pPlaneRes->planes[i] ) == nullptr )
+			{
+				drmModeFreePlaneResources( pPlaneRes );
+				return false;
+			}
+		}
+		drmModeFreePlaneResources( pPlaneRes );
 	}
 
 	if (!setup_best_connector(drm, true, true)) {
