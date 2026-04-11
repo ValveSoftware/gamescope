@@ -6844,7 +6844,7 @@ bool handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint64_t co
 	for ( j = 0; j < w->commit_queue.size(); j++ )
 	{
 		if (w->commit_queue[ j ]->feedback.has_value())
-			w->engineName = w->commit_queue[ j ]->feedback->vk_engine_name;
+			w->engineName = nullptr;
 
 		if ( w->commit_queue[ j ]->commitID == commitID )
 		{

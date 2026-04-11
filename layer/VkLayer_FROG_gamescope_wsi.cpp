@@ -1306,8 +1306,7 @@ namespace GamescopeWSILayer {
         uint32_t(pCreateInfo->imageColorSpace),
         uint32_t(pCreateInfo->compositeAlpha),
         uint32_t(pCreateInfo->preTransform),
-        uint32_t(pCreateInfo->clipped),
-        gamescopeInstance->engineName.c_str());
+        uint32_t(pCreateInfo->clipped));
 
       return VK_SUCCESS;
     }
