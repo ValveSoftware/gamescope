@@ -595,6 +595,14 @@ static void wlserver_new_input(struct wl_listener *listener, void *data)
 		break;
 		case WLR_INPUT_DEVICE_TOUCH:
 		{
+			if ( g_sIgnoreTouchDevice && g_sIgnoreTouchDevice[0] != '\0' &&
+				 strstr( device->name, g_sIgnoreTouchDevice ) != nullptr )
+			{
+				wl_log.infof( "ignoring touch device '%s' (matches --ignore-touch-device '%s')",
+					device->name, g_sIgnoreTouchDevice );
+				break;
+			}
+
 			struct wlserver_touch *touch = (struct wlserver_touch *) calloc( 1, sizeof( struct wlserver_touch ) );
 
 			touch->wlr = wlr_touch_from_input_device( device );

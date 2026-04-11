@@ -32,6 +32,7 @@ extern bool g_bGrabbed;
 extern float g_mouseSensitivity;
 extern const char *g_sOutputName;
 extern const char *g_sLeaseConnectorName;
+extern const char *g_sIgnoreTouchDevice;
 extern bool g_bExternalForced;
 extern std::vector<uint32_t> g_customRefreshRates;
 
