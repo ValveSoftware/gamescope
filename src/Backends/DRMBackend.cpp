@@ -183,6 +183,8 @@ using namespace std::literals;
 
 struct drm_t g_DRM = {};
 
+bool drm_supports_color_mgmt(struct drm_t *drm);
+
 // Flip handler thread control. Keep the thread object global so we
 // can join it during shutdown instead of detaching and risking the
 // thread still using the DRM fd while we clean up.
@@ -464,6 +466,12 @@ namespace gamescope
 
 		bool SupportsHDR() const override
 		{
+			// Don't enable HDR output when the DRM color management pipeline
+			// is unavailable (e.g. RDNA 3.5 lacks AMD_PLANE_BLEND_TF).
+			// Without color_mgmt the display enters HDR mode but the DRM
+			// path does identity, causing washed-out SDR content.
+			if ( !drm_supports_color_mgmt( &g_DRM ) )
+				return false;
 			return SupportsHDR10() || SupportsHDRG22();
 		}
 
@@ -594,7 +602,6 @@ extern std::string g_reshade_effect;
 #endif
 
 bool drm_update_color_mgmt(struct drm_t *drm);
-bool drm_supports_color_mgmt(struct drm_t *drm);
 bool drm_set_connector( struct drm_t *drm, gamescope::CDRMConnector *conn );
 
 struct drm_color_ctm2 {
@@ -1454,7 +1461,50 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 		}
 		else
 		{
-			gamescope::CDRMCRTC *pLeaseCRTC = find_crtc_for_connector( drm, pLeaseConnector );
+			// Find the preferred CRTC for the main (non-leased) connector
+			// so we can avoid stealing it for the lease.  The first matching
+			// CRTC typically has the color-capable primary plane
+			// (AMD_PLANE_CTM / AMD_PLANE_BLEND_TF).
+			gamescope::CDRMConnector *pMainConnector = nullptr;
+			for ( auto &iter : drm->connectors )
+			{
+				if ( &iter.second == pLeaseConnector )
+					continue;
+				if ( iter.second.GetModeConnector()->connection != DRM_MODE_CONNECTED )
+					continue;
+				pMainConnector = &iter.second;
+				break;
+			}
+
+			uint32_t uMainPreferredCRTCId = 0;
+			if ( pMainConnector )
+			{
+				gamescope::CDRMCRTC *pMainCRTC = find_crtc_for_connector( drm, pMainConnector );
+				if ( pMainCRTC )
+				{
+					uMainPreferredCRTCId = pMainCRTC->GetObjectId();
+					drm_log.infof( "lease-connector: main connector '%s' prefers CRTC %u",
+						pMainConnector->GetName(), uMainPreferredCRTCId );
+				}
+			}
+
+			// Pick a CRTC for the lease that is NOT the main connector's
+			// preferred CRTC, so the main display keeps its color-capable plane.
+			gamescope::CDRMCRTC *pLeaseCRTC = nullptr;
+			for ( auto &pCRTC : drm->crtcs )
+			{
+				if ( pCRTC->GetObjectId() == uMainPreferredCRTCId )
+					continue;
+				if ( pLeaseConnector->GetPossibleCRTCMask() & pCRTC->GetCRTCMask() )
+				{
+					pLeaseCRTC = pCRTC.get();
+					break;
+				}
+			}
+			// Fall back to any available CRTC if the above found nothing
+			if ( !pLeaseCRTC )
+				pLeaseCRTC = find_crtc_for_connector( drm, pLeaseConnector );
+
 			if ( !pLeaseCRTC )
 			{
 				drm_log.errorf( "lease-connector: no CRTC available for '%s'", g_sLeaseConnectorName );
@@ -3284,7 +3334,8 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 
 	bool bSinglePlane = frameInfo->layerCount < 2 && cv_drm_single_plane_optimizations;
 
-	if ( drm_supports_color_mgmt( &g_DRM ) && frameInfo->applyOutputColorMgmt )
+	bool bColorMgmtSupported = drm_supports_color_mgmt( &g_DRM );
+	if ( bColorMgmtSupported && frameInfo->applyOutputColorMgmt )
 	{
 		if ( !cv_drm_debug_disable_output_tf && !bSinglePlane )
 		{
