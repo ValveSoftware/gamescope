@@ -506,6 +506,9 @@ static void wlserver_handle_touch_down(struct wl_listener *listener, void *data)
 	struct wlserver_touch *touch = wl_container_of( listener, touch, down );
 	struct wlr_touch_down_event *event = (struct wlr_touch_down_event *) data;
 
+	if ( touch->bIgnoreWhileLeased && g_nActiveLeaseClients.load() > 0 )
+		return;
+
 	wlserver_touch_associate_connector( touch );
 	wlserver_touchdown( event->x, event->y, event->touch_id, event->time_msec, touch->connector );
 }
@@ -515,6 +518,9 @@ static void wlserver_handle_touch_up(struct wl_listener *listener, void *data)
 	struct wlserver_touch *touch = wl_container_of( listener, touch, up );
 	struct wlr_touch_up_event *event = (struct wlr_touch_up_event *) data;
 
+	if ( touch->bIgnoreWhileLeased && g_nActiveLeaseClients.load() > 0 )
+		return;
+
 	wlserver_touchup( event->touch_id, event->time_msec );
 }
 
@@ -522,6 +528,9 @@ static void wlserver_handle_touch_motion(struct wl_listener *listener, void *dat
 {
 	struct wlserver_touch *touch = wl_container_of( listener, touch, motion );
 	struct wlr_touch_motion_event *event = (struct wlr_touch_motion_event *) data;
+
+	if ( touch->bIgnoreWhileLeased && g_nActiveLeaseClients.load() > 0 )
+		return;
 
 	wlserver_touch_associate_connector( touch );
 	wlserver_touchmotion( event->x, event->y, event->touch_id, event->time_msec, false, touch->connector );
@@ -595,17 +604,22 @@ static void wlserver_new_input(struct wl_listener *listener, void *data)
 		break;
 		case WLR_INPUT_DEVICE_TOUCH:
 		{
-			if ( g_sIgnoreTouchDevice && g_sIgnoreTouchDevice[0] != '\0' &&
-				 strstr( device->name, g_sIgnoreTouchDevice ) != nullptr )
-			{
-				wl_log.infof( "ignoring touch device '%s' (matches --ignore-touch-device '%s')",
-					device->name, g_sIgnoreTouchDevice );
-				break;
-			}
-
 			struct wlserver_touch *touch = (struct wlserver_touch *) calloc( 1, sizeof( struct wlserver_touch ) );
 
 			touch->wlr = wlr_touch_from_input_device( device );
+
+			// If --ignore-touch-device matched, flag this device so its
+			// events are dropped while a DRM lease companion (flip-companion
+			// in Game Mode) is connected. When no companion is connected
+			// (e.g. Desktop Mode), events flow through normally so the
+			// bottom touchscreen remains usable in Plasma.
+			if ( g_sIgnoreTouchDevice && g_sIgnoreTouchDevice[0] != '\0' &&
+				 strstr( device->name, g_sIgnoreTouchDevice ) != nullptr )
+			{
+				touch->bIgnoreWhileLeased = true;
+				wl_log.infof( "touch device '%s' matches --ignore-touch-device '%s': events will be dropped while a DRM lease companion is connected",
+					device->name, g_sIgnoreTouchDevice );
+			}
 
 			touch->down.notify = wlserver_handle_touch_down;
 			wl_signal_add( &touch->wlr->events.down, &touch->down );

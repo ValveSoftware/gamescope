@@ -1284,13 +1284,49 @@ static void lease_socket_thread_run( struct drm_t *drm )
 {
 	pthread_setname_np( pthread_self(), "gs-lease-sock" );
 
+	// Keep client fds open for the lifetime of the companion process so we
+	// can detect when it exits (POLLHUP on the socket). This drives the
+	// g_nActiveLeaseClients counter, which gates whether wlserver drops
+	// touch events for the --ignore-touch-device device (Game Mode) or
+	// forwards them (Desktop Mode, companion not running).
+	std::vector<int> clientFds;
+
 	while ( drm->bLeaseThreadRunning.load() )
 	{
-		struct pollfd pfd = {};
-		pfd.fd = drm->nLeaseSocketFd;
-		pfd.events = POLLIN;
-		int ret = poll( &pfd, 1, 1000 );
+		std::vector<struct pollfd> pfds;
+		pfds.reserve( clientFds.size() + 1 );
+
+		struct pollfd listenPfd = {};
+		listenPfd.fd = drm->nLeaseSocketFd;
+		listenPfd.events = POLLIN;
+		pfds.push_back( listenPfd );
+
+		for ( int cfd : clientFds )
+		{
+			struct pollfd cp = {};
+			cp.fd = cfd;
+			cp.events = 0; // we only care about hangup/error
+			pfds.push_back( cp );
+		}
+
+		int ret = poll( pfds.data(), pfds.size(), 1000 );
 		if ( ret <= 0 )
+			continue;
+
+		// Reap any disconnected companions first.
+		for ( size_t i = clientFds.size(); i-- > 0; )
+		{
+			short revents = pfds[ i + 1 ].revents;
+			if ( revents & ( POLLHUP | POLLERR | POLLNVAL ) )
+			{
+				close( clientFds[ i ] );
+				clientFds.erase( clientFds.begin() + i );
+				int nRemaining = g_nActiveLeaseClients.fetch_sub( 1 ) - 1;
+				drm_log.infof( "lease-connector: companion app disconnected (%d still connected)", nRemaining );
+			}
+		}
+
+		if ( !( pfds[ 0 ].revents & POLLIN ) )
 			continue;
 
 		int nClientFd = accept( drm->nLeaseSocketFd, nullptr, nullptr );
@@ -1323,12 +1359,25 @@ static void lease_socket_thread_run( struct drm_t *drm )
 
 		ssize_t nSent = sendmsg( nClientFd, &msg, 0 );
 		if ( nSent < 0 )
+		{
 			drm_log.errorf( "lease-connector: sendmsg failed: %s", strerror( errno ) );
+			close( nClientFd );
+		}
 		else
-			drm_log.infof( "lease-connector: sent lease fd to companion app" );
-
-		close( nClientFd );
+		{
+			// Keep the client fd open. The companion is expected to hold its
+			// end of the socket for its entire lifetime; closing it signals
+			// us that it's gone and touch events should flow to wlserver again.
+			clientFds.push_back( nClientFd );
+			int nNow = g_nActiveLeaseClients.fetch_add( 1 ) + 1;
+			drm_log.infof( "lease-connector: sent lease fd to companion app (%d connected)", nNow );
+		}
 	}
+
+	for ( int cfd : clientFds )
+		close( cfd );
+	if ( !clientFds.empty() )
+		g_nActiveLeaseClients.fetch_sub( (int)clientFds.size() );
 }
 
 bool init_drm(struct drm_t *drm, int width, int height, int refresh)

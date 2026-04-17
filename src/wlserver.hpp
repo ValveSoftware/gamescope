@@ -224,6 +224,12 @@ struct wlserver_touch {
 	struct wl_listener destroy;
 
     gamescope::IBackendConnector* connector;
+
+    // When true, events from this device are dropped while a DRM lease
+    // companion is connected (Game Mode). Set for devices whose name
+    // matches --ignore-touch-device. Lets the companion own the touch
+    // exclusively in Game Mode without blackholing it in Desktop Mode.
+    bool bIgnoreWhileLeased;
 };
 
 void xwayland_surface_commit(struct wlr_surface *wlr_surface);
