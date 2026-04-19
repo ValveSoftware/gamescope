@@ -6575,11 +6575,8 @@ steamcompmgr_exit(void)
 [[noreturn]] static int
 handle_io_error(Display *dpy)
 {
-	xwm_log.errorf("X11 I/O error");
-	steamcompmgr_exit();
-
-	g_SteamCompMgrXWaylandServerMutex.unlock();
-	pthread_exit(NULL);
+	xwm_log.errorf("X11 I/O error! This is fatal. Aborting...");
+	abort();
 }
 
 static bool
