@@ -2899,23 +2899,28 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 			if ( frameInfo->layers[i].applyColorMgmt )
 			{
 				bool bYCbCr = entry.layerState[i].ycbcr;
+				/* If the new KMS colorop API is in use,
+				 * COLOR_ENCODING and COLOR_RANGE are deprecated
+				 */
+				if (!drm_supports_color_pipeline( drm ))
+				{
+					if ( !cv_drm_debug_disable_color_encoding && bYCbCr )
+					{
+						liftoff_layer_set_property( drm->lo_layers[ i ], "COLOR_ENCODING", entry.layerState[i].colorEncoding );
+					}
+					else
+					{
+						liftoff_layer_unset_property( drm->lo_layers[ i ], "COLOR_ENCODING" );
+					}
 
-				if ( !cv_drm_debug_disable_color_encoding && bYCbCr )
-				{
-					liftoff_layer_set_property( drm->lo_layers[ i ], "COLOR_ENCODING", entry.layerState[i].colorEncoding );
-				}
-				else
-				{
-					liftoff_layer_unset_property( drm->lo_layers[ i ], "COLOR_ENCODING" );
-				}
-
-				if ( !cv_drm_debug_disable_color_range && bYCbCr )
-				{
-					liftoff_layer_set_property( drm->lo_layers[ i ], "COLOR_RANGE",    entry.layerState[i].colorRange );
-				}
-				else
-				{
-					liftoff_layer_unset_property( drm->lo_layers[ i ], "COLOR_RANGE" );
+					if ( !cv_drm_debug_disable_color_range && bYCbCr )
+					{
+						liftoff_layer_set_property( drm->lo_layers[ i ], "COLOR_RANGE",    entry.layerState[i].colorRange );
+					}
+					else
+					{
+						liftoff_layer_unset_property( drm->lo_layers[ i ], "COLOR_RANGE" );
+					}
 				}
 
 				if ( drm_supports_color_mgmt( drm ) )
@@ -2989,8 +2994,12 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 			liftoff_layer_set_property( drm->lo_layers[ i ], "FB_ID", 0 );
 			liftoff_layer_set_property( drm->lo_layers[ i ], "IN_FENCE_FD", -1 );
 
-			liftoff_layer_unset_property( drm->lo_layers[ i ], "COLOR_ENCODING" );
-			liftoff_layer_unset_property( drm->lo_layers[ i ], "COLOR_RANGE" );
+			if (!drm_supports_color_pipeline( drm ))
+			{
+				liftoff_layer_unset_property( drm->lo_layers[ i ], "COLOR_ENCODING" );
+				liftoff_layer_unset_property( drm->lo_layers[ i ], "COLOR_RANGE" );
+			}
+
 			liftoff_layer_unset_property( drm->lo_layers[ i ], "pixel blend mode" );
 
 			if ( drm_supports_color_mgmt( drm ) )
