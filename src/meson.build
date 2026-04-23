@@ -100,7 +100,6 @@ src = [
   'Utils/TempFiles.cpp',
   'Utils/Version.cpp',
   'Utils/Process.cpp',
-  'Script/Script.cpp',
   'BufferMemo.cpp',
   'steamcompmgr.cpp',
   'convar.cpp',
@@ -149,7 +148,11 @@ gamescope_cpp_args += '-DHAVE_SDL2=@0@'.format(sdl2_dep.found().to_int())
 gamescope_cpp_args += '-DHAVE_AVIF=@0@'.format(avif_dep.found().to_int())
 gamescope_cpp_args += '-DHAVE_LIBCAP=@0@'.format(cap_dep.found().to_int())
 gamescope_cpp_args += '-DHAVE_LIBEIS=@0@'.format(eis_dep.found().to_int())
-gamescope_cpp_args += '-DHAVE_SCRIPTING=1'
+
+if get_option('enable_gamescope_scripting')
+  gamescope_cpp_args += '-DHAVE_SCRIPTING=1'
+  src += ['Script/Script.cpp']
+endif
 
 src += spirv_shaders
 src += protocols_server_src
