@@ -880,6 +880,12 @@ int main(int argc, char **argv)
 	g_pOriginalDisplay = getenv("DISPLAY");
 	g_pOriginalWaylandDisplay = getenv("WAYLAND_DISPLAY");
 
+	const char *backend_override = getenv( "GAMESCOPE_BACKEND" );
+	if ( backend_override != NULL )
+	{
+		eCurrentBackend = parse_backend_name( backend_override );
+	}
+
 	if ( eCurrentBackend == gamescope::GamescopeBackend::Auto )
 	{
 		if ( g_pOriginalWaylandDisplay != NULL )
