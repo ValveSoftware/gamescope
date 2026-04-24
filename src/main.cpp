@@ -908,6 +908,14 @@ int main(int argc, char **argv)
 	g_pOriginalDisplay = getenv("DISPLAY");
 	g_pOriginalWaylandDisplay = getenv("WAYLAND_DISPLAY");
 
+	// Allow overriding the selected backend (even the backend
+	// requested on the command line) in a startup script.
+	auto backendOverride = parse_backend_name( gamescope::cv_backend.Get().c_str() );
+	if ( backendOverride != gamescope::GamescopeBackend::Auto )
+	{
+		eCurrentBackend = backendOverride;
+	}
+
 	if ( eCurrentBackend == gamescope::GamescopeBackend::Auto )
 	{
 		if ( g_pOriginalWaylandDisplay != NULL )
