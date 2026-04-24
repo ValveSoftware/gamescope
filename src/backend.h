@@ -31,6 +31,8 @@ namespace gamescope
     class BackendBlob;
     class INestedHints;
 
+    extern ConVar<std::string> cv_backend;
+
     namespace VirtualConnectorStrategies
     {
         enum VirtualConnectorStrategy : uint32_t
@@ -504,4 +506,3 @@ inline gamescope::IBackend *GetBackend()
 {
     return gamescope::IBackend::Get();
 }
-
