@@ -393,6 +393,12 @@ namespace gamescope
 		const displaycolorimetry_t& GetDisplayColorimetry() const { return m_Mutable.DisplayColorimetry; }
 
 		std::span<const uint8_t> GetRawEDID() const override { return std::span<const uint8_t>{ m_Mutable.EdidData.begin(), m_Mutable.EdidData.end() }; }
+		bool HandleEdidChange()
+		{
+			bool bChanged = m_Mutable.bEdidChanged;
+			m_Mutable.bEdidChanged = false;
+			return bChanged;
+		}
 
 		bool SupportsHDR10() const
 		{
@@ -510,9 +516,11 @@ namespace gamescope
 			std::vector<uint32_t> ValidDynamicRefreshRates{};
 			std::vector<uint8_t> EdidData; // Raw, unmodified.
 			std::vector<BackendMode> BackendModes;
-
+			
 			displaycolorimetry_t DisplayColorimetry = displaycolorimetry_709;
 			BackendConnectorHDRInfo HDR;
+
+			bool bEdidChanged = false;
 		} m_Mutable;
 
 		GamescopePanelOrientation m_ChosenOrientation = GAMESCOPE_PANEL_ORIENTATION_AUTO;
@@ -1045,6 +1053,16 @@ static bool setup_best_connector(struct drm_t *drm, bool force, bool initial)
 		{
 			best = pConnector;
 			nBestPriority = nPriority;
+		}
+	}
+
+	if ( best && best == drm->pConnector )
+	{
+		// If the device's EDID changed from user us, force a mode-change
+		// as we might
+		if ( best->HandleEdidChange() )
+		{
+			force = true;
 		}
 	}
 
@@ -2122,6 +2140,9 @@ namespace gamescope
 			return a.vrefresh > b.vrefresh;
 		} );
 
+		std::vector<uint8_t> oldEdid = std::move( m_Mutable.EdidData );
+		m_Mutable.EdidData.clear();
+
 		// Clear this information out.
 		m_Mutable = MutableConnectorState{};
 
@@ -2160,6 +2181,11 @@ namespace gamescope
 		}
 
 		ParseEDID();
+
+		if ( m_Mutable.EdidData != oldEdid )
+		{
+			m_Mutable.bEdidChanged = true;
+		}
 	}
 
 	int CDRMConnector::Present( const FrameInfo_t *pFrameInfo, bool bAsync )
@@ -2561,7 +2587,7 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 		if ( i < frameInfo->layerCount )
 		{
 			const FrameInfo_t::Layer_t *pLayer = &frameInfo->layers[ i ];
-			gamescope::CDRMFb *pDrmFb = static_cast<gamescope::CDRMFb *>( (pLayer->tex && pLayer->tex->GetBackendFb()) ? pLayer->tex->GetBackendFb()->Unwrap() : nullptr );
+			gamescope::CDRMFb *pDrmFb = static_cast<gamescope::CDRMFb *>( (pLayer->tex && pLayer->tex->GetBackendFb()) ? pLayer->tex->GetBackendFb()->EnsureImported() : nullptr );
 
 			if ( pDrmFb == nullptr )
 			{
@@ -3499,7 +3525,7 @@ namespace gamescope
 			if ( !bDoComposite )
 			{
 				// Scanout + Planes Path
-				m_bWasPartialCompsiting = false;
+				m_bWasPartialCompositing = false;
 				m_bWasCompositing = false;
 				if ( pFrameInfo->layerCount == 2 )
 					m_nLastSingleOverlayZPos = pFrameInfo->layers[1].zpos;
@@ -3550,7 +3576,7 @@ namespace gamescope
 			// We were already stalling for the full composition before, so it's not an issue
 			// for latency, we just need to make sure we get 1 partial frame that isn't deferred
 			// in time so we don't lose layers.
-			bool bDefer = !bNeedsFullComposite && ( !m_bWasCompositing || m_bWasPartialCompsiting );
+			bool bDefer = !bNeedsFullComposite && ( !m_bWasCompositing || m_bWasPartialCompositing );
 
 			// If doing a partial composition then remove the baseplane
 			// from our frameinfo to composite.
@@ -3609,11 +3635,11 @@ namespace gamescope
 				baseLayer->ctm = nullptr;
 				baseLayer->colorspace = pFrameInfo->outputEncodingEOTF == EOTF_PQ ? GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ : GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB;
 
-				m_bWasPartialCompsiting = false;
+				m_bWasPartialCompositing = false;
 			}
 			else
 			{
-				if ( m_bWasPartialCompsiting || !bDefer )
+				if ( m_bWasPartialCompositing || !bDefer )
 				{
 					presentCompFrameInfo.applyOutputColorMgmt = g_ColorMgmt.pending.enabled;
 					presentCompFrameInfo.layerCount = 2;
@@ -3666,7 +3692,7 @@ namespace gamescope
 					}
 				}
 
-				m_bWasPartialCompsiting = true;
+				m_bWasPartialCompositing = true;
 			}
 
 			int ret = drm_prepare( &g_DRM, bAsync, &presentCompFrameInfo );
@@ -3869,7 +3895,7 @@ namespace gamescope
 
 	private:
 		bool m_bWasCompositing = false;
-		bool m_bWasPartialCompsiting = false;
+		bool m_bWasPartialCompositing = false;
 		int m_nLastSingleOverlayZPos = 0;
 
 		uint32_t m_uNextPresentCtx = 0;

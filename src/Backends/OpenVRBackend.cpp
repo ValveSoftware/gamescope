@@ -191,12 +191,19 @@ namespace gamescope
     class COpenVRFb final : public CBaseBackendFb
     {
     public:
-        COpenVRFb( COpenVRBackend *pBackend, vr::SharedTextureHandle_t ulHandle );
+        COpenVRFb( COpenVRBackend *pBackend, struct wlr_dmabuf_attributes *attributes );
         ~COpenVRFb();
+
+        IBackendFb *EnsureImported() override;
 
         vr::SharedTextureHandle_t GetSharedTextureHandle() const { return m_ulHandle; }
     private:
+        bool Import( struct wlr_dmabuf_attributes *attributes );
+        void ClearAttributes();
+
         COpenVRBackend *m_pBackend = nullptr;
+        struct wlr_dmabuf_attributes m_attributes{};
+        bool m_bHasDmabufAttributes = false;
         vr::SharedTextureHandle_t m_ulHandle = 0;
     };
 
@@ -427,9 +434,6 @@ namespace gamescope
 
                 GetVBlankTimer().MarkVBlank( ulNow, true );
 
-                // Nudge so that steamcompmgr releases commits.
-                nudge_steamcompmgr();
-
                 // Flush out any pending commits -> visible
                 // and any visible commits -> release.
                 {
@@ -455,9 +459,14 @@ namespace gamescope
                     m_pForwarderPlanesInFlight.clear();
                 }
 
+                // Nudge so that steamcompmgr releases commits.
+                nudge_steamcompmgr();
+
                 ProcessVRInput();
             }
         }
+
+        bool IsInitted() const { return m_bInitted; }
 
 		/////////////
 		// IBackend
@@ -701,59 +710,7 @@ namespace gamescope
 
 		virtual OwningRc<IBackendFb> ImportDmabufToBackend( wlr_dmabuf_attributes *pDmaBuf ) override
 		{
-            if ( UsesModifiers() )
-            {
-                vr::DmabufAttributes_t dmabufAttributes =
-                {
-                    .unWidth       = uint32_t( pDmaBuf->width ),
-                    .unHeight      = uint32_t( pDmaBuf->height ),
-                    .unDepth       = 1,
-                    .unMipLevels   = 1,
-                    .unArrayLayers = 1,
-                    .unSampleCount = 1,
-                    .unFormat      = pDmaBuf->format,
-                    .ulModifier    = pDmaBuf->modifier,
-                    .unPlaneCount  = uint32_t( pDmaBuf->n_planes ),
-                    .plane         =
-                    {
-                        {
-                            .unOffset = pDmaBuf->offset[0],
-                            .unStride = pDmaBuf->stride[0],
-                            .nFd      = pDmaBuf->fd[0],
-                        },
-                        {
-                            .unOffset = pDmaBuf->offset[1],
-                            .unStride = pDmaBuf->stride[1],
-                            .nFd      = pDmaBuf->fd[1],
-                        },
-                        {
-                            .unOffset = pDmaBuf->offset[2],
-                            .unStride = pDmaBuf->stride[2],
-                            .nFd      = pDmaBuf->fd[2],
-                        },
-                        {
-                            .unOffset = pDmaBuf->offset[3],
-                            .unStride = pDmaBuf->stride[3],
-                            .nFd      = pDmaBuf->fd[3],
-                        },
-                    }
-                };
-
-                vr::SharedTextureHandle_t ulSharedHandle = 0;
-                if ( !m_pIPCResourceManager->ImportDmabuf( vr::VRApplication_Overlay, &dmabufAttributes, &ulSharedHandle ) )
-                    return nullptr;
-                assert( ulSharedHandle != 0 );
-
-                // Take the first reference!
-                if ( !m_pIPCResourceManager->RefResource( ulSharedHandle, nullptr ) )
-                    return nullptr;
-
-                return new COpenVRFb{ this, ulSharedHandle };
-            }
-            else
-            {
-                return new COpenVRFb{ this, 0 };
-            }
+            return new COpenVRFb{ this, pDmaBuf };
 		}
 
 		virtual bool UsesModifiers() const override
@@ -949,7 +906,12 @@ namespace gamescope
         
         void ForwardFramebuffer( std::shared_ptr<IBackendPlane> &pPlane, IBackendFb *pFramebuffer, const void *pData ) override
         {
-            COpenVRFb *pVRFB = static_cast<COpenVRFb *>( pFramebuffer );
+            COpenVRFb *pVRFB = static_cast<COpenVRFb *>( pFramebuffer->EnsureImported() );
+            if ( !pVRFB )
+            {
+                openvr_log.debugf( "ForwardFramebuffer: No FB!" );
+                return;
+            }
 
             vr::VROverlayHandle_t hOverlay = static_cast<vr::VROverlayHandle_t>( *reinterpret_cast<const uint64_t*>( pData ) );
             openvr_log.debugf( "Forwarding for overlay: %lx", (unsigned long)hOverlay );
@@ -987,6 +949,18 @@ namespace gamescope
         bool SupportsColorManagement() const
         {
             return false;
+        }
+
+        void OnEndFrame() override
+        {
+            GetVBlankTimer().UpdateWasCompositing( true );
+            GetVBlankTimer().UpdateLastDrawTime( get_time_in_nanos() - g_SteamCompMgrVBlankTime.ulWakeupTime );
+
+            int32_t nNewRefreshRate = (int32_t) ConvertHztomHz( roundf( vr::VRSystem()->GetFloatTrackedDeviceProperty( vr::k_unTrackedDeviceIndex_Hmd, vr::Prop_DisplayFrequency_Float ) ) );
+            if ( g_nOutputRefresh != nNewRefreshRate )
+                g_nOutputRefresh = nNewRefreshRate;
+
+            PollState();
         }
 
         const char *GetOverlayKey() const { return m_szOverlayKey.c_str(); }
@@ -1651,16 +1625,6 @@ namespace gamescope
                 m_Planes[i].Present( nullptr );
         }
 
-
-        GetVBlankTimer().UpdateWasCompositing( true );
-        GetVBlankTimer().UpdateLastDrawTime( get_time_in_nanos() - g_SteamCompMgrVBlankTime.ulWakeupTime );
-
-        int32_t nNewRefreshRate = (int32_t) ConvertHztomHz( roundf( vr::VRSystem()->GetFloatTrackedDeviceProperty( vr::k_unTrackedDeviceIndex_Hmd, vr::Prop_DisplayFrequency_Float ) ) );
-        if ( g_nOutputRefresh != nNewRefreshRate )
-            g_nOutputRefresh = nNewRefreshRate;
-
-        m_pBackend->PollState();
-
         return 0;
     }
 
@@ -1795,18 +1759,112 @@ namespace gamescope
 	// COpenVRFb
 	/////////////////////////
 
-    COpenVRFb::COpenVRFb( COpenVRBackend *pBackend, vr::SharedTextureHandle_t ulHandle )
+    COpenVRFb::COpenVRFb( COpenVRBackend *pBackend, struct wlr_dmabuf_attributes *attributes )
         : CBaseBackendFb{}
         , m_pBackend{ pBackend }
-        , m_ulHandle{ ulHandle }
     {
+        if ( !Import( attributes ) )
+        {
+            // Defer importing until later.
+            m_bHasDmabufAttributes = true;
+            wlr_dmabuf_attributes_copy( &m_attributes, attributes );
+        }
     }
 
     COpenVRFb::~COpenVRFb()
     {
+        ClearAttributes();
+
         if ( m_ulHandle != 0 )
             m_pBackend->GetIPCResourceManager()->UnrefResource( m_ulHandle );
         m_ulHandle = 0;
+    }
+
+    IBackendFb *COpenVRFb::EnsureImported()
+    {
+        if ( m_ulHandle != 0 )
+        {
+            // We are imported! Yay.
+            return this;
+        }
+        else
+        {
+            if ( Import( &m_attributes ) )
+            {
+                // We managed to import now.
+                ClearAttributes();
+                return this;
+            }
+
+            // Couldn't import...
+            return nullptr;
+        }
+    }
+
+    bool COpenVRFb::Import( struct wlr_dmabuf_attributes *attributes )
+    {
+        if ( !m_pBackend->IsInitted() )
+            return false;
+
+        if ( !m_pBackend->UsesModifiers() )
+            return false;
+
+        vr::DmabufAttributes_t dmabufAttributes =
+        {
+            .unWidth       = uint32_t( attributes->width ),
+            .unHeight      = uint32_t( attributes->height ),
+            .unDepth       = 1,
+            .unMipLevels   = 1,
+            .unArrayLayers = 1,
+            .unSampleCount = 1,
+            .unFormat      = attributes->format,
+            .ulModifier    = attributes->modifier,
+            .unPlaneCount  = uint32_t( attributes->n_planes ),
+            .plane         =
+            {
+                {
+                    .unOffset = attributes->offset[0],
+                    .unStride = attributes->stride[0],
+                    .nFd      = attributes->fd[0],
+                },
+                {
+                    .unOffset = attributes->offset[1],
+                    .unStride = attributes->stride[1],
+                    .nFd      = attributes->fd[1],
+                },
+                {
+                    .unOffset = attributes->offset[2],
+                    .unStride = attributes->stride[2],
+                    .nFd      = attributes->fd[2],
+                },
+                {
+                    .unOffset = attributes->offset[3],
+                    .unStride = attributes->stride[3],
+                    .nFd      = attributes->fd[3],
+                },
+            }
+        };
+
+        vr::SharedTextureHandle_t ulSharedHandle = 0;
+        if ( !m_pBackend->GetIPCResourceManager()->ImportDmabuf( vr::VRApplication_Overlay, &dmabufAttributes, &ulSharedHandle ) )
+            return false;
+        assert( ulSharedHandle != 0 );
+
+        // Take the first reference!
+        if ( !m_pBackend->GetIPCResourceManager()->RefResource( ulSharedHandle, nullptr ) )
+            return false;
+
+        m_ulHandle = ulSharedHandle;
+        return true;
+    }
+
+    void COpenVRFb::ClearAttributes()
+    {
+        if ( m_bHasDmabufAttributes )
+        {
+            wlr_dmabuf_attributes_finish( &m_attributes );
+            m_bHasDmabufAttributes = false;
+        }
     }
 
 	/////////////////////////
@@ -1923,12 +1981,11 @@ namespace gamescope
 
     void COpenVRPlane::Present( std::optional<OpenVRPlaneState> oState )
     {
-        COpenVRFb *pFb = nullptr;
-
+        
         if ( oState )
         {
             vr::VROverlay()->SetOverlayAlpha( m_hOverlay, oState->flAlpha );
-
+            
             if ( m_pBackend->UsesModifiers() )
             {
                 vr::VROverlay()->SetOverlayFlag( m_hOverlay, vr::VROverlayFlags_IgnoreTextureAlpha,	oState->bOpaque || !DRMFormatHasAlpha( oState->pTexture->drmFormat() ) || cv_vr_debug_force_opaque );
@@ -1953,11 +2010,21 @@ namespace gamescope
                     vr::VROverlay()->ShowOverlay( m_hOverlay );
                 }
 
-                pFb = static_cast<COpenVRFb *>( oState->pTexture->GetBackendFb()->Unwrap() );
+                COpenVRFb *pFb = static_cast<COpenVRFb *>( oState->pTexture->GetBackendFb()->EnsureImported() );
+                if ( !pFb )
+                {
+                    openvr_log.debugf( "OpenVRPlane::Present: No FB!" );
+                    return;
+                }
                 vr::SharedTextureHandle_t ulHandle = pFb->GetSharedTextureHandle();
 
                 vr::Texture_t texture = { (void *)&ulHandle, vr::TextureType_SharedTextureHandle, vr::ColorSpace_Gamma };
                 vr::VROverlay()->SetOverlayTexture( m_hOverlay, &texture );
+
+                {
+                    std::scoped_lock lock{ m_mutFbIds };
+                    m_pQueuedFbId = pFb;
+                }
             }
             else
             {
@@ -2004,11 +2071,6 @@ namespace gamescope
             {
                 vr::VROverlay()->HideOverlay( m_hOverlay );
             }
-        }
-
-        {
-            std::scoped_lock lock{ m_mutFbIds };
-            m_pQueuedFbId = pFb;
         }
     }
 

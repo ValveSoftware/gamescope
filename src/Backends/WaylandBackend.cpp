@@ -293,6 +293,7 @@ namespace gamescope
         bool m_bHasRecievedScale = false;
 
         std::optional<WaylandPlaneColorState> m_ColorState{};
+        float m_flPreviousSaturationScale = 1.0f;
         wp_image_description_v1 *m_pCurrentImageDescription = nullptr;
 
         std::mutex m_PlaneStateLock;
@@ -1460,9 +1461,12 @@ namespace gamescope
                     .pHDRMetadata = oState->pHDRMetadata,
                 };
 
-                if ( !m_ColorState || *m_ColorState != colorState )
+                float flScale = cv_wayland_hdr10_saturation_scale;
+
+                if ( !m_ColorState || *m_ColorState != colorState || m_flPreviousSaturationScale != flScale )
                 {
                     m_ColorState = colorState;
+                    m_flPreviousSaturationScale = flScale;
 
                     if ( m_pCurrentImageDescription )
                     {
@@ -1478,7 +1482,6 @@ namespace gamescope
                     {
                         wp_image_description_creator_params_v1 *pParams = wp_color_manager_v1_create_parametric_creator( m_pBackend->GetWPColorManager() );
 
-                        double flScale = cv_wayland_hdr10_saturation_scale;
                         if ( close_enough( flScale, 1.0f ) )
                         {
                             wp_image_description_creator_params_v1_set_primaries_named( pParams, WP_COLOR_MANAGER_V1_PRIMARIES_BT2020 );
@@ -1626,7 +1629,7 @@ namespace gamescope
 
     void CWaylandPlane::Present( const FrameInfo_t::Layer_t *pLayer )
     {
-        CWaylandFb *pWaylandFb = pLayer && pLayer->tex != nullptr ? static_cast<CWaylandFb*>( pLayer->tex->GetBackendFb()->Unwrap() ) : nullptr;
+        CWaylandFb *pWaylandFb = pLayer && pLayer->tex != nullptr ? static_cast<CWaylandFb*>( pLayer->tex->GetBackendFb()->EnsureImported() ) : nullptr;
         wl_buffer *pBuffer = pWaylandFb ? pWaylandFb->GetHostBuffer() : nullptr;
 
         if ( pBuffer )
