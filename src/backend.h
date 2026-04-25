@@ -119,6 +119,8 @@ namespace gamescope
         // but don't want to expose HDR there as it is not good.
         bool bExposeHDRSupport = false;
         bool bAlwaysPatchEdid = false;
+        // Only drive a panel in HDR while an HDR app is running.
+        bool bContentDrivenHDR = false;
 
         // The output encoding to use for HDR output.
         // For typical HDR10 displays, this will be PQ.
