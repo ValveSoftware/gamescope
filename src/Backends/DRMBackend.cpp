@@ -2392,6 +2392,7 @@ namespace gamescope
 				{
 					m_Mutable.HDR.bExposeHDRSupport = otHDRInfo->get_or( "supported", false );
 					m_Mutable.HDR.eOutputEncodingEOTF = otHDRInfo->get_or( "eotf", EOTF_Gamma22 );
+					m_Mutable.HDR.bContentDrivenHDR = otHDRInfo->get_or( "content_driven", false );
 					m_Mutable.HDR.uMaxContentLightLevel = nits_to_u16( otHDRInfo->get_or( "max_content_light_level", 400.0f ) );
 					m_Mutable.HDR.uMaxFrameAverageLuminance = nits_to_u16( otHDRInfo->get_or( "max_frame_average_luminance", 400.0f ) );
 					m_Mutable.HDR.uMinContentLightLevel = nits_to_u16_dark( otHDRInfo->get_or( "min_content_light_level", 0.1f ) );
