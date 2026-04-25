@@ -1563,27 +1563,53 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 				uint32_t uConnectorId = pLeaseConnector->GetObjectId();
 				uint32_t uCRTCId = pLeaseCRTC->GetObjectId();
 
-				// Find a primary plane for the leased CRTC.
-				// The kernel requires at least one plane in a lease.
-				uint32_t uPlaneId = 0;
+				// Find a PRIMARY plane for the leased CRTC. The kernel allows any
+				// plane in the lease, but on AMD the lessee (flip-companion) needs
+				// a primary plane to enable the CRTC for scanout — leasing only
+				// an overlay leaves both screens blank because the companion
+				// cannot bring up its display, and gamescope's main-CRTC state
+				// also degrades. So: primary only.
+				//
+				// Priority among primaries:
+				//   1. exclusive primary (possible_crtcs == leased CRTC mask only)
+				//      — the main pool keeps every primary it could already use.
+				//   2. shared primary
+				//      — costs the main pool one primary slot.
+				const uint32_t uLeaseCrtcMask = pLeaseCRTC->GetCRTCMask();
+				uint32_t    uPlaneId    = 0;
+				int         nBestScore  = -1;
+				const char *pszBestKind = nullptr;
 				for ( auto &pPlane : drm->planes )
 				{
-					if ( pPlane->GetModePlane()->possible_crtcs & pLeaseCRTC->GetCRTCMask() )
+					const uint32_t uPossibleCrtcs = pPlane->GetModePlane()->possible_crtcs;
+					if ( !( uPossibleCrtcs & uLeaseCrtcMask ) )
+						continue;
+
+					if ( pPlane->GetProperties().type->GetCurrentValue() != DRM_PLANE_TYPE_PRIMARY )
+						continue;
+
+					const bool  bExclusive = ( uPossibleCrtcs == uLeaseCrtcMask );
+					const int   nScore     = bExclusive ? 1 : 0;
+					const char *pszKind    = bExclusive ? "exclusive primary" : "shared primary";
+
+					if ( nScore > nBestScore )
 					{
-						if ( pPlane->GetProperties().type->GetCurrentValue() == DRM_PLANE_TYPE_PRIMARY )
-						{
-							uPlaneId = pPlane->GetObjectId();
-							break;
-						}
+						nBestScore  = nScore;
+						uPlaneId    = pPlane->GetObjectId();
+						pszBestKind = pszKind;
+						if ( nScore == 1 )
+							break; // exclusive primary — best we can do
 					}
 				}
 
 				if ( uPlaneId == 0 )
 				{
-					drm_log.errorf( "lease-connector: no primary plane found for CRTC %u", uCRTCId );
+					drm_log.errorf( "lease-connector: no usable plane found for CRTC %u", uCRTCId );
 				}
 				else
 				{
+				drm_log.infof( "lease-connector: selected %s plane %u for CRTC %u",
+					pszBestKind, uPlaneId, uCRTCId );
 
 				uint32_t objects[3];
 				int nObjects = 0;
