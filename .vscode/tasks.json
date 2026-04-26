@@ -1,0 +1,90 @@
+
+{
+    "version": "2.0.0",
+    "inputs" : [
+        {
+            "id" : "device_ip",
+            "description" : "SteamOS Device IP or hostname",
+            "type" : "promptString",
+        },
+        {
+            "id" : "device_password",
+            "description" : "'steamos' user's password",
+            "type" : "promptString",
+        },
+    ],
+    "tasks": [
+        {
+            "label": "Build + Install on a SteamOS Device (remote)",
+            "type": "shell",
+            "command": "./tools/build_and_install_on_steamos_device_remote.sh ${input:device_ip} ${input:device_password}",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated"
+            },
+            "problemMatcher": {
+                "base": "$gcc",
+                "fileLocation": [
+                    "autoDetect",
+                    "${workspaceFolder}/src/"
+                ]
+            }
+        },
+        {
+            "label": "Restart Session (remote)",
+            "type": "shell",
+            "command": "./tools/steamos_sessionctl_remote.sh restart ${input:device_ip} ${input:device_password}",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated"
+            }
+        },
+        {
+            "label": "Start Session (remote)",
+            "type": "shell",
+            "command": "./tools/steamos_sessionctl_remote.sh start ${input:device_ip} ${input:device_password}",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated"
+            }
+        },
+        {
+            "label": "Stop Session (remote)",
+            "type": "shell",
+            "command": "./tools/steamos_sessionctl_remote.sh stop ${input:device_ip} ${input:device_password}",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated"
+            }
+        },
+        {
+            "label": "Reset to system Gamescope (remote)",
+            "type": "shell",
+            "command": "./tools/reset_to_system_gamescope_remote.sh ${input:device_ip} ${input:device_password}",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated"
+            }
+        },
+    ]
+}
