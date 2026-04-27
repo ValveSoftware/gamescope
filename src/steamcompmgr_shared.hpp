@@ -232,6 +232,14 @@ struct steamcompmgr_win_t {
 			return nullptr;
 	}
 
+	const char *debug_name() const
+	{
+		if ( title )
+			return title->c_str();
+
+		return pid_name.c_str();
+	}
+
 	gamescope::VirtualConnectorKey_t GetVirtualConnectorKey( gamescope::VirtualConnectorStrategy eStrategy )
 	{
 		switch ( eStrategy )
