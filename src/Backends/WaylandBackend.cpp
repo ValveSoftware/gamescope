@@ -2042,6 +2042,11 @@ namespace gamescope
             if ( m_WPColorManagerFeatures.bSupportsGamescopeColorManagement )
             {
                 // HDR10.
+                if (Algorithm::Contains(m_WPColorManagerFeatures.eFeatures, WP_COLOR_MANAGER_V1_FEATURE_WINDOWS_BT2100))
+                {
+                    m_pWPImageDescriptions[ GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ ] = wp_color_manager_v1_create_windows_bt2100( m_pWPColorManager );
+                }
+                else
                 {
                     wp_image_description_creator_params_v1 *pParams = wp_color_manager_v1_create_parametric_creator( m_pWPColorManager );
                     wp_image_description_creator_params_v1_set_primaries_named( pParams, WP_COLOR_MANAGER_V1_PRIMARIES_BT2020 );
@@ -2533,7 +2538,7 @@ namespace gamescope
         }
         else if ( !strcmp( pInterface, wp_color_manager_v1_interface.name ) )
         {
-            m_pWPColorManager = (wp_color_manager_v1 *)wl_registry_bind( pRegistry, uName, &wp_color_manager_v1_interface, 1u );
+            m_pWPColorManager = (wp_color_manager_v1 *)wl_registry_bind( pRegistry, uName, &wp_color_manager_v1_interface, std::min(3u, uVersion) );
             wp_color_manager_v1_add_listener( m_pWPColorManager, &s_WPColorManagerListener, this );
         }
         else if ( !strcmp( pInterface, zwp_pointer_constraints_v1_interface.name ) )
