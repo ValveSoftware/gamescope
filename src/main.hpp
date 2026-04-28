@@ -4,6 +4,13 @@
 
 #include <atomic>
 
+enum class ForceRelativeMouseMode : uint32_t
+{
+    OFF,
+    FORCE_OFF,
+    FORCE_ON,
+};
+
 extern const char *gamescope_optstring;
 extern const struct option *gamescope_options;
 
@@ -17,7 +24,7 @@ extern int g_nNestedDisplayIndex;
 
 extern uint32_t g_nOutputWidth;
 extern uint32_t g_nOutputHeight;
-extern bool g_bForceRelativeMouse;
+extern ForceRelativeMouseMode g_forceRelativeMouse;
 extern int g_nOutputRefresh; // mHz
 extern bool g_bOutputHDREnabled;
 extern bool g_bForceInternal;
