@@ -123,6 +123,9 @@ namespace gamescope
         // For displays doing "traditional HDR" such as Steam Deck OLED, this is Gamma 2.2.
         EOTF eOutputEncodingEOTF = EOTF_Gamma22;
 
+        // Only drive a panel in HDR while an HDR app is running.
+        bool bContentDrivenHDR = false;
+
         uint16_t uMaxContentLightLevel = 500;     // Nits
         uint16_t uMaxFrameAverageLuminance = 500; // Nits
         uint16_t uMinContentLightLevel = 0;       // Nits / 10000
