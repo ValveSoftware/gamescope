@@ -2077,7 +2077,7 @@ namespace gamescope
 
         vr::VROverlay()->SetOverlayFlag( m_hOverlay, vr::VROverlayFlags_EnableClickStabilization, m_pBackend->ShouldEnableClickStabilization() );
         vr::VROverlay()->SetOverlayFlag( m_hOverlay, vr::VROverlayFlags_IsPremultiplied, true );
-        vr::VROverlay()->SetOverlayInputMethod( m_hOverlay, vr::VROverlayInputMethod_Mouse );
+        vr::VROverlay()->SetOverlayInputMethod( m_hOverlay, m_bIsSubview ? vr::VROverlayInputMethod_None : vr::VROverlayInputMethod_Mouse );
         vr::VROverlay()->SetOverlaySortOrder( m_hOverlay, m_uSortOrder );
 
         return true;
