@@ -1028,6 +1028,9 @@ int main(int argc, char **argv)
 	setenv("GAMESCOPE_WAYLAND_DISPLAY", wlserver_get_wl_display_name(), 1);
 	if ( g_bExposeWayland )
 		setenv("WAYLAND_DISPLAY", wlserver_get_wl_display_name(), 1);
+	else
+		// Empty so libwayland's wayland-0 fallback doesn't escape to the parent compositor.
+		setenv("WAYLAND_DISPLAY", "", 1);
 
 #if HAVE_PIPEWIRE
 	if ( !init_pipewire() )
