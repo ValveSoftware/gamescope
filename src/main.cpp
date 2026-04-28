@@ -450,7 +450,7 @@ static enum gamescope::GamescopeBackend parse_backend_name(const char *str)
 
 static enum gamescope::GamescopeBackend auto_select_backend()
 {
-	if ( getenv( "WAYLAND_DISPLAY" ) != NULL )
+	if ( g_pOriginalWaylandDisplay != NULL )
 		return gamescope::GamescopeBackend::Wayland;
 	else if ( getenv( "DISPLAY" ) != NULL )
 		return gamescope::GamescopeBackend::SDL;
@@ -945,6 +945,9 @@ int main(int argc, char **argv)
 
 	g_pOriginalDisplay = getenv("DISPLAY");
 	g_pOriginalWaylandDisplay = getenv("WAYLAND_DISPLAY");
+	// A parent gamescope leaves this set but empty, treat that as absent.
+	if ( g_pOriginalWaylandDisplay && !*g_pOriginalWaylandDisplay )
+		g_pOriginalWaylandDisplay = nullptr;
 
 	// Allow overriding the selected backend (even the backend
 	// requested on the command line) in a startup script.
@@ -1032,8 +1035,8 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
-	// Prevent our clients from connecting to the parent compositor
-	unsetenv("WAYLAND_DISPLAY");
+	// Empty, not unset, so libwayland's wayland-0 fallback can't reach the parent compositor.
+	setenv("WAYLAND_DISPLAY", "", 1);
 
 	// If DRM format modifiers aren't supported, prevent our clients from using
 	// DCC, as this can cause tiling artifacts.
