@@ -20,7 +20,7 @@ jobs:
             xorg-xwayland pipewire cmake \
             libavif libheif aom rav1e libdecor libxdamage \
             luajit
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: recursive
       - name: Build with gcc
