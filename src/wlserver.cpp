@@ -1686,6 +1686,12 @@ int wlsession_open_kms( const char *device_name ) {
 		wlserver.wlr.device = wlr_session_open_file( wlserver.wlr.session, device_name );
 		if ( wlserver.wlr.device == nullptr )
 			return -1;
+		if ( !drmIsKMS(wlserver.wlr.device->fd) ) {
+			wl_log.errorf( "'%s' is not a KMS device", device_name );
+			wlr_session_close_file( wlserver.wlr.session, wlserver.wlr.device );
+			wlserver.wlr.device = nullptr;
+			return -1;
+		}
 	}
 	else
 	{
