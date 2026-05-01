@@ -742,6 +742,12 @@ namespace gamescope
 						{
 							break;
 						}
+						
+						// Temporary grab keyboard while Super is pressed
+						if (!g_bGrabbed && !g_bShortcutGrabbed && key == KEY_LEFTMETA) {
+							g_bShortcutGrabbed = true;
+							SDL_SetWindowKeyboardGrab(m_Connector.GetSDLWindow(), g_bShortcutGrabbed);
+						}
 					}
 				}
 				[[fallthrough]];
@@ -749,7 +755,7 @@ namespace gamescope
 				{
 					uint32_t key = SDLScancodeToLinuxKey( event.key.keysym.scancode );
 
-					if ( event.type == SDL_KEYUP && ( event.key.keysym.mod & KMOD_LGUI ) )
+					if ( event.type == SDL_KEYUP && ( (event.key.keysym.mod & KMOD_LGUI) != 0 || g_bShortcutGrabbed ) )
 					{
 						bool handled = true;
 						switch ( key )
@@ -781,14 +787,25 @@ namespace gamescope
 							case KEY_S:
 								gamescope::CScreenshotManager::Get().TakeScreenshot( true );
 								break;
-							case KEY_G:
+							case KEY_G: {
+								// Reset shortcut grab and allow normal grab w/ title change
+								if (g_bShortcutGrabbed) {
+									g_bShortcutGrabbed = false;
+								}
 								g_bGrabbed = !g_bGrabbed;
 								SDL_SetWindowKeyboardGrab( m_Connector.GetSDLWindow(), g_bGrabbed ? SDL_TRUE : SDL_FALSE );
 
 								SDL_Event event;
 								event.type = GetUserEventIndex( GAMESCOPE_SDL_EVENT_TITLE );
 								SDL_PushEvent( &event );
-								break;
+							}	break;
+							case KEY_LEFTMETA: {
+								// Release shortcut grab
+								if (g_bShortcutGrabbed) {
+									g_bShortcutGrabbed = false;
+									SDL_SetWindowKeyboardGrab(m_Connector.GetSDLWindow(), g_bShortcutGrabbed);
+								}
+							}	break;
 							default:
 								handled = false;
 						}
