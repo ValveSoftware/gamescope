@@ -5,6 +5,7 @@
 #include "hdmi.h"
 
 #include <cassert>
+#include <climits>
 #include <cstring>
 #include <cstdlib>
 
