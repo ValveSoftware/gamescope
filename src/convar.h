@@ -3,14 +3,11 @@
 #include <span>
 #include <string>
 #include <string_view>
-#include <unordered_map>
-#include <utility>
 #include <optional>
 #include <charconv>
 #include <type_traits>
 #include <cstdint>
 #include <functional>
-#include <cassert>
 
 #include "Utils/Dict.h"
 
@@ -116,7 +113,9 @@ namespace gamescope
         std::string_view GetDescription() const { return m_pszDescription; }
 
         static Dict<ConCommand *>& GetCommands();
+#if HAVE_SCRIPTING
         static void RegisterScript( std::string_view name, ConCommand *cmd );
+#endif
     protected:
         std::string_view m_pszName;
         std::string_view m_pszDescription;
@@ -140,11 +139,15 @@ namespace gamescope
                 RunCallback();
             }
 
+#if HAVE_SCRIPTING
             if ( bRegisterScript )
-            {
                 RegisterScript( pszName, this );
-            }
+#endif
         }
+
+#if HAVE_SCRIPTING
+        static void RegisterScript( std::string_view name, ConVar<T> *cv );
+#endif
 
         const T& Get() const
         {
