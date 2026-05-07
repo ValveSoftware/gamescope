@@ -7,4 +7,5 @@ option('input_emulation' ,           type: 'feature', description: 'Support for 
 option('enable_gamescope',           type : 'boolean', value : true, description: 'Build Gamescope executable')
 option('enable_gamescope_wsi_layer', type : 'boolean', value : true, description: 'Build Gamescope layer')
 option('enable_openvr_support',      type : 'boolean', value : true, description: 'OpenVR Integrations')
+option('enable_tests',               type : 'boolean', value : true, description: 'Build unit tests')
 option('benchmark', type: 'feature', description: 'Benchmark tools')
