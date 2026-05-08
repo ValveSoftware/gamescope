@@ -466,14 +466,20 @@ bool CVulkanDevice::createDevice()
 		vk_log.warnf( "physical device doesn't support VK_EXT_physical_device_drm" );
 	} else {
 #if HAVE_DRM
+		VkPhysicalDeviceDriverProperties driverProps = {
+			.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES,
+		};
 		VkPhysicalDeviceDrmPropertiesEXT drmProps = {
 			.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRM_PROPERTIES_EXT,
+			.pNext = &driverProps,
 		};
 		VkPhysicalDeviceProperties2 props2 = {
 			.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
 			.pNext = &drmProps,
 		};
 		vk.GetPhysicalDeviceProperties2( physDev(), &props2 );
+
+		m_bIsNvidiaProprietaryDriver = driverProps.driverID == VK_DRIVER_ID_NVIDIA_PROPRIETARY;
 
 		if ( !GetBackend()->UsesVulkanSwapchain() && !drmProps.hasPrimary ) {
 			vk_log.errorf( "physical device has no primary node" );
