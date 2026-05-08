@@ -3644,6 +3644,7 @@ static gamescope::Rc<CVulkanTexture> acquire_pooled_texture( auto& pool, uint32_
 			textureFlags.bMappable = true;
 			textureFlags.bTransferDst = true;
 			textureFlags.bStorage = true;
+			textureFlags.bSampled = true; // required for RGB-to-NV12 shader to sample this texture
 			if (exportable || drmFormat == DRM_FORMAT_NV12) {
 				textureFlags.bExportable = true;
 				textureFlags.bLinear = true; // TODO: support multi-planar DMA-BUF export via PipeWire
