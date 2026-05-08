@@ -3605,6 +3605,7 @@ gamescope::Rc<CVulkanTexture> vulkan_acquire_screenshot_texture(uint32_t width, 
 			screenshotImageFlags.bMappable = true;
 			screenshotImageFlags.bTransferDst = true;
 			screenshotImageFlags.bStorage = true;
+			screenshotImageFlags.bSampled = true; // required for RGB-to-NV12 shader to sample this texture
 			if (exportable || drmFormat == DRM_FORMAT_NV12) {
 				screenshotImageFlags.bExportable = true;
 				screenshotImageFlags.bLinear = true; // TODO: support multi-planar DMA-BUF export via PipeWire
