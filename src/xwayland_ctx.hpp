@@ -26,14 +26,15 @@ extern LogScope xwm_log;
 
 struct focus_t
 {
-	steamcompmgr_win_t				*focusWindow;
-	steamcompmgr_win_t				*inputFocusWindow;
-	uint32_t		inputFocusMode;
-	steamcompmgr_win_t				*overlayWindow;
-	steamcompmgr_win_t				*externalOverlayWindow;
-	steamcompmgr_win_t				*notificationWindow;
-	steamcompmgr_win_t				*overrideWindow;
-	bool			outdatedInteractiveFocus;
+	steamcompmgr_win_t				*focusWindow = nullptr;
+	steamcompmgr_win_t				*inputFocusWindow = nullptr;
+	uint32_t		inputFocusMode = 0;
+	steamcompmgr_win_t				*overlayWindow = nullptr;
+	steamcompmgr_win_t				*externalOverlayWindow = nullptr;
+	steamcompmgr_win_t				*notificationWindow = nullptr;
+	steamcompmgr_win_t				*overrideWindow = nullptr;
+	steamcompmgr_win_t				*overrideWindowMouse = nullptr;
+	bool			outdatedInteractiveFocus = false;
 	bool			bResetToCorner = false;
 	bool			bResetToCenter = false;
 
@@ -94,6 +95,8 @@ struct xwayland_ctx_t final : public gamescope::IWaitable
 
 	bool force_windows_fullscreen = false;
 
+	bool bTouchPointerEmulation = false;
+
 	std::vector< steamcompmgr_win_t* > GetPossibleFocusWindows();
 	void DetermineAndApplyFocus( const std::vector< steamcompmgr_win_t* > &vecPossibleFocusWindows );
 
@@ -135,6 +138,9 @@ struct xwayland_ctx_t final : public gamescope::IWaitable
 		Atom netSystemTrayOpcodeAtom;
 		Atom steamStreamingClientAtom;
 		Atom steamStreamingClientVideoAtom;
+		Atom steamGamescopeVROverlayTarget;
+		Atom gamescopePid;
+		Atom gamescopeVROverlayForwarding;
 		Atom gamescopeFocusableAppsAtom;
 		Atom gamescopeFocusableWindowsAtom;
 		Atom gamescopeFocusedWindowAtom;
@@ -240,12 +246,18 @@ struct xwayland_ctx_t final : public gamescope::IWaitable
 		Atom gamescopeDisplayRefreshRateFeedback;
 		Atom gamescopeDisplayDynamicRefreshBasedOnGamePresence;
 
+		Atom gamescopeMainSteamVROverlay;
+		Atom steamosTouchPointerEmulation;
+
 		Atom wineHwndStyle;
 		Atom wineHwndStyleEx;
 
 		Atom clipboard;
 		Atom primarySelection;
 		Atom targets;
+
+		Atom wm_protocols;
+		Atom wm_delete_window;
 	} atoms;
 
 	bool HasQueuedEvents();

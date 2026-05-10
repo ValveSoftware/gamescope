@@ -38,14 +38,7 @@ void main() {
 
     for (int i = 1; i < c_layerCount; i++) {
         vec4 layerColor = sampleLayer(i, uv);
-        // wl_surfaces come with premultiplied alpha, so that's them being
-        // premultiplied by layerColor.a.
-        // We need to then multiply that by the layer's opacity to get to our
-        // final premultiplied state.
-        // For the other side of things, we need to multiply by (1.0f - (layerColor.a * opacity))
-        float opacity = u_opacity[i];
-        float layerAlpha = opacity * layerColor.a;
-        outputValue = layerColor * opacity + outputValue * (1.0f - layerAlpha);
+        outputValue = BlendLayer( i, outputValue, layerColor, u_opacity[i] );
     }
 
     outputValue.rgb = encodeOutputColor(outputValue.rgb);

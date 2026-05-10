@@ -254,7 +254,10 @@ static void copy_buffer(struct pipewire_state *state, struct pipewire_buffer *bu
 		assert(dmabuf.n_planes == 1);
 		chunk->offset = dmabuf.offset[0];
 		chunk->stride = dmabuf.stride[0];
-		chunk->size = 0; // TODO
+		chunk->size = dmabuf.height * chunk->stride;
+		if (state->video_info.format == SPA_VIDEO_FORMAT_NV12) {
+			chunk->size += ((dmabuf.height + 1)/2 * chunk->stride);
+		}
 		break;
 	default:
 		assert(false); // unreachable
@@ -639,7 +642,9 @@ static void run_pipewire(struct pipewire_state *state)
 		assert(!(pollfds[EVENT_NUDGE].revents & POLLHUP));
 
 		if (pollfds[EVENT_PIPEWIRE].revents & POLLIN) {
+			pw_loop_enter(state->loop);
 			ret = pw_loop_iterate(state->loop, -1);
+			pw_loop_leave(state->loop);
 			if (ret < 0) {
 				pwr_log.errorf("pw_loop_iterate failed");
 				break;
@@ -717,12 +722,18 @@ bool init_pipewire(void)
 	}
 
 	state->running = true;
+	ret = 0;
+	pw_loop_enter(state->loop);
 	while (state->stream_node_id == SPA_ID_INVALID) {
-		int ret = pw_loop_iterate(state->loop, -1);
-		if (ret < 0) {
-			pwr_log.errorf("pw_loop_iterate failed");
-			return false;
-		}
+		ret = pw_loop_iterate(state->loop, -1);
+		if (ret < 0)
+			break;
+	}
+	pw_loop_leave(state->loop);
+
+	if (ret < 0) {
+		pwr_log.errorf("pw_loop_iterate failed");
+		return false;
 	}
 
 	pwr_log.infof("stream available on node ID: %u", state->stream_node_id);

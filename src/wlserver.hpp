@@ -57,7 +57,7 @@ bool wlserver_is_lock_held(void);
 class gamescope_xwayland_server_t
 {
 public:
-	gamescope_xwayland_server_t(wl_display *display);
+	gamescope_xwayland_server_t(wl_display *display, int nIndex);
 	~gamescope_xwayland_server_t();
 
 	void on_xwayland_ready(void *data);
@@ -86,6 +86,8 @@ public:
 
 	void update_output_info();
 
+	int get_index() const { return m_nIndex; }
+
 private:
 	struct wlr_xwayland_server *xwayland_server = NULL;
 	struct wl_listener xwayland_ready_listener = { .notify = xwayland_ready_callback };
@@ -97,6 +99,8 @@ private:
 
 	bool xwayland_ready = false;
 	_XDisplay *dpy = NULL;
+
+	int m_nIndex = 0;
 
 	std::mutex wayland_commit_lock;
 	std::vector<ResListEntry_t> wayland_commit_queue;
@@ -185,20 +189,19 @@ struct wlserver_t {
 	std::vector<ResListEntry_t> xdg_commit_queue;
 
 	std::vector<wl_resource*> gamescope_controls;
+	std::unordered_map< uint32_t, std::vector<wl_resource*> > app_perf_requests;
 
 	std::atomic<bool> bWaylandServerRunning = { false };
+
+    // Share one single keymap and state between all connected physical keyboards
+    struct wlr_keyboard_group *keyboard_group;
+    struct wl_listener keyboard_group_modifiers;
+    struct wl_listener keyboard_group_key;
 };
 
 extern struct wlserver_t wlserver;
 
 std::vector<ResListEntry_t> wlserver_xdg_commit_queue();
-
-struct wlserver_keyboard {
-	struct wlr_keyboard *wlr;
-	
-	struct wl_listener modifiers;
-	struct wl_listener key;
-};
 
 struct wlserver_pointer {
 	struct wlr_pointer *wlr;
@@ -215,6 +218,8 @@ struct wlserver_touch {
 	struct wl_listener down;
 	struct wl_listener up;
 	struct wl_listener motion;
+
+    gamescope::IBackendConnector* connector;
 };
 
 void xwayland_surface_commit(struct wlr_surface *wlr_surface);
@@ -243,8 +248,8 @@ void wlserver_mousewarp( double x, double y, uint32_t time, bool bSynthetic );
 void wlserver_mousebutton( int button, bool press, uint32_t time );
 void wlserver_mousewheel( double x, double y, uint32_t time );
 
-void wlserver_touchmotion( double x, double y, int touch_id, uint32_t time, bool bAlwaysWarpCursor = false );
-void wlserver_touchdown( double x, double y, int touch_id, uint32_t time );
+void wlserver_touchmotion( double x, double y, int touch_id, uint32_t time, bool bAlwaysWarpCursor = false, gamescope::IBackendConnector* connector = nullptr );
+void wlserver_touchdown( double x, double y, int touch_id, uint32_t time, gamescope::IBackendConnector* connector = nullptr );
 void wlserver_touchup( int touch_id, uint32_t time );
 
 void wlserver_send_frame_done( struct wlr_surface *surf, const struct timespec *when );
@@ -283,6 +288,8 @@ void wlserver_presentation_feedback_discard( struct wlr_surface *surface, std::v
 
 void wlserver_past_present_timing( struct wlr_surface *surface, uint32_t present_id, uint64_t desired_present_time, uint64_t actual_present_time, uint64_t earliest_present_time, uint64_t present_margin );
 void wlserver_refresh_cycle( struct wlr_surface *surface, uint64_t refresh_cycle );
+
+void wlserver_app_presented( uint32_t app_id, uint64_t frametime_ns );
 
 void wlserver_shutdown();
 

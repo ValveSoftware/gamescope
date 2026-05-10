@@ -40,6 +40,12 @@ enum ReshadeDescriptorSets
     GAMESCOPE_RESHADE_DESCRIPTOR_SET_COUNT,
 };
 
+namespace ReshadeEffectFlag
+{
+    static constexpr uint32_t AlwaysScanout = 1u << 0;
+}
+using ReshadeEffectFlags = uint32_t;
+
 class ReshadeEffectPipeline
 {
 public:
@@ -52,6 +58,8 @@ public:
 
     const ReshadeEffectKey& key() const { return m_key; }
     reshadefx::module *module() { return m_module.get(); }
+
+    ReshadeEffectFlags flags() const { return m_flags; }
 
     gamescope::Rc<CVulkanTexture> findTexture(std::string_view name);
 
@@ -76,6 +84,8 @@ private:
 
     VkDescriptorSetLayout m_descriptorSetLayouts[GAMESCOPE_RESHADE_DESCRIPTOR_SET_COUNT] = {};
     VkDescriptorSet m_descriptorSets[GAMESCOPE_RESHADE_DESCRIPTOR_SET_COUNT] = {};
+
+    ReshadeEffectFlags m_flags = 0;
 };
 
 class ReshadeEffectManager

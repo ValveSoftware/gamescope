@@ -124,13 +124,23 @@ namespace gamescope
 
     void CScriptManager::RunDefaultScripts()
     {
+        const char *sScriptPathEnv = getenv("GAMESCOPE_SCRIPT_PATH");
+
         if ( cv_script_use_local_scripts )
         {
             RunFolder( "../scripts", true );
         }
+        else if ( sScriptPathEnv )
+        {
+            std::vector<std::string_view> sScriptPaths = gamescope::Split( sScriptPathEnv, ":" );
+            for ( const auto &sScriptPath : sScriptPaths )
+            {
+                RunFolder( sScriptPath, true );
+            }
+        }
         else
         {
-            RunFolder( "/usr/share/gamescope/scripts", true );
+            RunFolder( SCRIPT_DIR, true );
             RunFolder( "/etc/gamescope/scripts", true );
         }
 
@@ -247,7 +257,7 @@ namespace gamescope
     // GamescopeScript_t
     //
 
-    std::optional<std::pair<std::string_view, sol::table>> GamescopeScript_t::Config_t::LookupDisplay( CScriptScopedLock &script, std::string_view psvVendor, uint16_t uProduct, std::string_view psvModel )
+    std::optional<std::pair<std::string_view, sol::table>> GamescopeScript_t::Config_t::LookupDisplay( CScriptScopedLock &script, std::string_view psvVendor,  uint16_t uProduct, std::string_view psvModel, std::string_view psvDataString )
     {
         int nMaxPrority = -1;
         std::optional<std::pair<std::string_view, sol::table>> oOutDisplay;
@@ -256,6 +266,7 @@ namespace gamescope
         tDisplay["vendor"] = psvVendor;
         tDisplay["product"] = uProduct;
         tDisplay["model"] = psvModel;
+        tDisplay["data_string"] = psvDataString;
 
         for ( auto iter : KnownDisplays )
         {

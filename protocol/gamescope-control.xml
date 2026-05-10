@@ -29,7 +29,7 @@
     it.
   </description>
 
-  <interface name="gamescope_control" version="3">
+  <interface name="gamescope_control" version="6">
     <request name="destroy" type="destructor"></request>
 
     <enum name="feature">
@@ -42,6 +42,8 @@
       <entry name="pixel_filter" value="3"/>
       <entry name="refresh_cycle_only_change_refresh_rate" value="4"/>
       <entry name="mura_correction" value="5"/>
+      <entry name="look" value="6"/>
+      <entry name="perf_query" value="7"/>
     </enum>
 
     <event name="feature_support">
@@ -97,6 +99,48 @@
 
     <event name="screenshot_taken" since="3">
       <arg name="path" type="string" summary="Path to written screenshot"></arg>
+    </event>
+
+    <enum name="display_type_flags" bitfield="true" since="4">
+      <entry name="internal_display" value="0x1" summary="The internal display of the device"/>
+      <entry name="external_display" value="0x2" summary="The external display attached to the device"/>
+    </enum>
+
+    <enum name="display_sleep_flags" bitfield="true" since="4">
+      <entry name="sleep" value="0x1" summary="Go to sleep... zzz... (Conflicts with wake)"/>
+      <entry name="wake" value="0x2" summary="Wake up! (Conflicts with sleep)"/>
+    </enum>
+
+    <request name="display_sleep" since="4">
+      <description summary="Attempts to make the display go to sleep/idle"></description>
+      <arg name="display_type" type="uint" enum="display_type_flags" summary="display type"></arg>
+      <arg name="flags" type="uint" enum="display_sleep_flags" summary="sleep flags"></arg>
+    </request>
+
+    <enum name="look_flags" bitfield="true" since="5">
+      <entry name="dummy" value="0x1"/>
+    </enum>
+
+    <request name="set_look" since="5">
+      <description summary="Sets a look for the screen based on a 3D LUT."></description>
+      <arg name="lut3d_g22" type="fd" summary="file-descriptor containing the data for the look for Gamma 2.2. Expects .cube format"></arg>
+      <arg name="lut3d_pq" type="fd" summary="file-descriptor containing the data for the look for PQ. Expects .cube format"></arg>
+      <arg name="flags" type="uint" enum="look_flags" summary="look flags"></arg>
+    </request>
+
+    <request name="unset_look" since="5">
+      <description summary="Unsets the current look."></description>
+    </request>
+
+    <request name="request_app_performance_stats" since="6">
+      <description summary="Asks the compositor to send the most recent performance stats"></description>
+      <arg name="app_id" type="uint" summary="Appid "></arg>
+    </request>
+
+    <event name="app_performance_stats" since="6">
+      <arg name="app_id" type="uint" summary="Appid for this request"></arg>
+      <arg name="frametime_ns_lo" type="uint" summary="Time delta between the two most recent frames"></arg>
+      <arg name="frametime_ns_hi" type="uint" summary="frametime_ns high bits"></arg>
     </event>
 
   </interface>

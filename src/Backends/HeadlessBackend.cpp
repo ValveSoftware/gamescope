@@ -8,7 +8,7 @@ extern int g_nPreferredOutputHeight;
 
 namespace gamescope
 {
-    class CHeadlessConnector final : public IBackendConnector
+    class CHeadlessConnector final : public CBaseBackendConnector
     {
     public:
         CHeadlessConnector()
@@ -38,6 +38,10 @@ namespace gamescope
         {
             return m_HDRInfo;
         }
+		virtual bool IsVRRActive() const override
+		{
+			return false;
+		}
         virtual std::span<const BackendMode> GetModes() const override
         {
             return std::span<const BackendMode>{};
@@ -80,6 +84,11 @@ namespace gamescope
         {
             return "Virtual Display";
         }
+
+		virtual int Present( const FrameInfo_t *pFrameInfo, bool bAsync ) override
+		{
+            return 0;
+		}
 
     private:
         BackendConnectorHDRInfo m_HDRInfo{};
@@ -157,11 +166,6 @@ namespace gamescope
 			return true;
 		}
 
-		virtual int Present( const FrameInfo_t *pFrameInfo, bool bAsync ) override
-		{
-            return 0;
-		}
-
 		virtual void DirtyState( bool bForce, bool bForceModeset ) override
 		{
 		}
@@ -176,7 +180,7 @@ namespace gamescope
 			return std::make_shared<BackendBlob>( data );
 		}
 
-		virtual OwningRc<IBackendFb> ImportDmabufToBackend( wlr_buffer *pBuffer, wlr_dmabuf_attributes *pDmaBuf ) override
+		virtual OwningRc<IBackendFb> ImportDmabufToBackend( wlr_dmabuf_attributes *pDmaBuf ) override
 		{
 			return new CBaseBackendFb();
 		}
@@ -202,11 +206,6 @@ namespace gamescope
 			return nullptr;
 		}
 
-		virtual bool IsVRRActive() const override
-		{
-			return false;
-		}
-
 		virtual bool SupportsPlaneHardwareCursor() const override
 		{
 			return false;
@@ -230,6 +229,11 @@ namespace gamescope
 		virtual bool SupportsExplicitSync() const override
 		{
 			return true;
+		}
+
+		virtual bool IsPaused() const override
+		{
+			return false;
 		}
 
 		virtual bool IsVisible() const override

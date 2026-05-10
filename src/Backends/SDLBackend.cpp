@@ -37,8 +37,6 @@ extern int g_nPreferredOutputHeight;
 
 namespace gamescope
 {
-	extern std::shared_ptr<INestedHints::CursorInfo> GetX11HostCursor();
-
 	enum class SDLInitState
 	{
 		SDLInit_Waiting,
@@ -57,10 +55,12 @@ namespace gamescope
 		GAMESCOPE_SDL_EVENT_COUNT,
 	};
 
-	class CSDLConnector final : public IBackendConnector
+	class CSDLBackend;
+
+	class CSDLConnector final : public CBaseBackendConnector, public INestedHints
 	{
 	public:
-		CSDLConnector();
+		CSDLConnector( CSDLBackend *pBackend );
 		virtual bool Init();
 
 		virtual ~CSDLConnector();
@@ -74,6 +74,7 @@ namespace gamescope
         virtual bool SupportsHDR() const override;
         virtual bool IsHDRActive() const override;
         virtual const BackendConnectorHDRInfo &GetHDRInfo() const override;
+		virtual bool IsVRRActive() const override;
 		virtual std::span<const BackendMode> GetModes() const override;
 
         virtual bool SupportsVRR() const override;
@@ -99,17 +100,36 @@ namespace gamescope
 			return "Virtual Display";
 		}
 
+        virtual INestedHints *GetNestedHints() override
+        {
+            return this;
+        }
+
+		virtual int Present( const FrameInfo_t *pFrameInfo, bool bAsync ) override;
+
+		///////////////////
+		// INestedHints
+		///////////////////
+
+        virtual void SetCursorImage( std::shared_ptr<INestedHints::CursorInfo> info ) override;
+        virtual void SetRelativeMouseMode( bool bRelative ) override;
+        virtual void SetVisible( bool bVisible ) override;
+        virtual void SetTitle( std::shared_ptr<std::string> szTitle ) override;
+        virtual void SetIcon( std::shared_ptr<std::vector<uint32_t>> uIconPixels ) override;
+        virtual void SetSelection( std::shared_ptr<std::string> szContents, GamescopeSelection eSelection ) override;
+
 		//--
 
 		SDL_Window *GetSDLWindow() const { return m_pWindow; }
 		VkSurfaceKHR GetVulkanSurface() const { return m_pVkSurface; }
 	private:
+		CSDLBackend *m_pBackend = nullptr;
 		SDL_Window *m_pWindow = nullptr;
 		VkSurfaceKHR m_pVkSurface = VK_NULL_HANDLE;
 		BackendConnectorHDRInfo m_HDRInfo{};
 	};
 
-	class CSDLBackend : public CBaseBackend, public INestedHints
+	class CSDLBackend : public CBaseBackend
 	{
 	public:
 		CSDLBackend();
@@ -126,20 +146,18 @@ namespace gamescope
 		virtual void GetPreferredOutputFormat( uint32_t *pPrimaryPlaneFormat, uint32_t *pOverlayPlaneFormat ) const override;
 		virtual bool ValidPhysicalDevice( VkPhysicalDevice pVkPhysicalDevice ) const override;
 
-        virtual int Present( const FrameInfo_t *pFrameInfo, bool bAsync ) override;
         virtual void DirtyState( bool bForce = false, bool bForceModeset = false ) override;
         virtual bool PollState() override;
 
 		virtual std::shared_ptr<BackendBlob> CreateBackendBlob( const std::type_info &type, std::span<const uint8_t> data ) override;
 
-        virtual OwningRc<IBackendFb> ImportDmabufToBackend( wlr_buffer *pBuffer, wlr_dmabuf_attributes *pDmaBuf ) override;
+        virtual OwningRc<IBackendFb> ImportDmabufToBackend( wlr_dmabuf_attributes *pDmaBuf ) override;
 		virtual bool UsesModifiers() const override;
 		virtual std::span<const uint64_t> GetSupportedModifiers( uint32_t uDrmFormat ) const override;
 
         virtual IBackendConnector *GetCurrentConnector() override;
 		virtual IBackendConnector *GetConnector( GamescopeScreenType eScreenType ) override;
 
-        virtual bool IsVRRActive() const override;
 		virtual bool SupportsPlaneHardwareCursor() const override;
 
         virtual bool SupportsTearing() const override;
@@ -148,23 +166,21 @@ namespace gamescope
 		virtual bool IsSessionBased() const override;
 		virtual bool SupportsExplicitSync() const override;
 
+		virtual bool IsPaused() const override;
 		virtual bool IsVisible() const override;
 
 		virtual glm::uvec2 CursorSurfaceSize( glm::uvec2 uvecSize ) const override;
 
-		virtual INestedHints *GetNestedHints() override;
+		////////////////////////
+		// INestedHints Compat
+		///////////////////////
 
-		///////////////////
-		// INestedHints
-		///////////////////
-
-        virtual void SetCursorImage( std::shared_ptr<INestedHints::CursorInfo> info ) override;
-        virtual void SetRelativeMouseMode( bool bRelative ) override;
-        virtual void SetVisible( bool bVisible ) override;
-        virtual void SetTitle( std::shared_ptr<std::string> szTitle ) override;
-        virtual void SetIcon( std::shared_ptr<std::vector<uint32_t>> uIconPixels ) override;
-        virtual void SetSelection( std::shared_ptr<std::string> szContents, GamescopeSelection eSelection ) override;
-        virtual std::shared_ptr<INestedHints::CursorInfo> GetHostCursor() override;
+        void SetCursorImage( std::shared_ptr<INestedHints::CursorInfo> info );
+        void SetRelativeMouseMode( bool bRelative );
+        void SetVisible( bool bVisible );
+        void SetTitle( std::shared_ptr<std::string> szTitle );
+        void SetIcon( std::shared_ptr<std::vector<uint32_t>> uIconPixels );
+        void SetSelection( std::shared_ptr<std::string> szContents, GamescopeSelection eSelection );
 	protected:
 		virtual void OnBackendBlobDestroyed( BackendBlob *pBlob ) override;
 	private:
@@ -195,7 +211,8 @@ namespace gamescope
 	// CSDLConnector
 	//////////////////
 
-	CSDLConnector::CSDLConnector()
+	CSDLConnector::CSDLConnector( CSDLBackend *pBackend )
+		: m_pBackend{ pBackend }
 	{
 	}
 
@@ -249,7 +266,7 @@ namespace gamescope
 
 		if ( !SDL_Vulkan_CreateSurface( m_pWindow, vulkan_get_instance(), &m_pVkSurface ) )
 		{
-			fprintf(stderr, "SDL_Vulkan_CreateSurface failed: %s", SDL_GetError() );
+			fprintf(stderr, "SDL_Vulkan_CreateSurface failed: %s", SDL_GetError	() );
 			return false;
 		}
 
@@ -276,6 +293,10 @@ namespace gamescope
 	const BackendConnectorHDRInfo &CSDLConnector::GetHDRInfo() const
 	{
 		return m_HDRInfo;
+	}
+	bool CSDLConnector::IsVRRActive() const
+	{
+		return false;
 	}
 	std::span<const BackendMode> CSDLConnector::GetModes() const
 	{
@@ -317,12 +338,63 @@ namespace gamescope
 		}
 	}
 
+	int CSDLConnector::Present( const FrameInfo_t *pFrameInfo, bool bAsync )
+	{
+		// TODO: Resolve const crap
+		std::optional oCompositeResult = vulkan_composite( (FrameInfo_t *)pFrameInfo, nullptr, false );
+		if ( !oCompositeResult )
+			return -EINVAL;
+
+		vulkan_present_to_window();
+
+		// TODO: Hook up PresentationFeedback.
+
+		// Wait for the composite result on our side *after* we
+		// commit the buffer to the compositor to avoid a bubble.
+		vulkan_wait( *oCompositeResult, true );
+
+		GetVBlankTimer().UpdateWasCompositing( true );
+		GetVBlankTimer().UpdateLastDrawTime( get_time_in_nanos() - g_SteamCompMgrVBlankTime.ulWakeupTime );
+
+		return 0;
+	}
+
+	void CSDLConnector::SetCursorImage( std::shared_ptr<INestedHints::CursorInfo> info )
+	{
+		m_pBackend->SetCursorImage( std::move( info ) );
+	}
+	void CSDLConnector::SetRelativeMouseMode( bool bRelative )
+	{
+		m_pBackend->SetRelativeMouseMode( bRelative );
+	}
+	void CSDLConnector::SetVisible( bool bVisible )
+	{
+		m_pBackend->SetVisible( bVisible );
+	}
+	void CSDLConnector::SetTitle( std::shared_ptr<std::string> szTitle )
+	{
+		m_pBackend->SetTitle( std::move( szTitle ) );
+	}
+	void CSDLConnector::SetIcon( std::shared_ptr<std::vector<uint32_t>> uIconPixels )
+	{
+		m_pBackend->SetIcon( std::move( uIconPixels ) );
+	}
+
+    void CSDLConnector::SetSelection( std::shared_ptr<std::string> szContents, GamescopeSelection eSelection )
+    {
+        if (eSelection == GAMESCOPE_SELECTION_CLIPBOARD)
+			SDL_SetClipboardText(szContents->c_str());
+		else if (eSelection == GAMESCOPE_SELECTION_PRIMARY)
+			SDL_SetPrimarySelectionText(szContents->c_str());
+    }
+
 	////////////////
 	// CSDLBackend
 	////////////////
 
 	CSDLBackend::CSDLBackend()
-		: m_SDLThread{ [this](){ this->SDLThreadFunc(); } }
+		: m_Connector{ this }
+		, m_SDLThread{ [this](){ this->SDLThreadFunc(); } }
 	{
 	}
 
@@ -364,26 +436,6 @@ namespace gamescope
 		return true;
 	}
 
-	int CSDLBackend::Present( const FrameInfo_t *pFrameInfo, bool bAsync )
-	{
-		// TODO: Resolve const crap
-		std::optional oCompositeResult = vulkan_composite( (FrameInfo_t *)pFrameInfo, nullptr, false );
-		if ( !oCompositeResult )
-			return -EINVAL;
-
-		vulkan_present_to_window();
-
-		// TODO: Hook up PresentationFeedback.
-
-		// Wait for the composite result on our side *after* we
-		// commit the buffer to the compositor to avoid a bubble.
-		vulkan_wait( *oCompositeResult, true );
-
-		GetVBlankTimer().UpdateWasCompositing( true );
-		GetVBlankTimer().UpdateLastDrawTime( get_time_in_nanos() - g_SteamCompMgrVBlankTime.ulWakeupTime );
-
-		return 0;
-	}
 	void CSDLBackend::DirtyState( bool bForce, bool bForceModeset )
 	{
 	}
@@ -397,7 +449,7 @@ namespace gamescope
 		return std::make_shared<BackendBlob>( data );
 	}
 
-	OwningRc<IBackendFb> CSDLBackend::ImportDmabufToBackend( wlr_buffer *pBuffer, wlr_dmabuf_attributes *pDmaBuf )
+	OwningRc<IBackendFb> CSDLBackend::ImportDmabufToBackend( wlr_dmabuf_attributes *pDmaBuf )
 	{
 		return new CBaseBackendFb();
 	}
@@ -421,10 +473,6 @@ namespace gamescope
 			return &m_Connector;
 
 		return nullptr;
-	}
-	bool CSDLBackend::IsVRRActive() const
-	{
-		return false;
 	}
 
 	bool CSDLBackend::SupportsPlaneHardwareCursor() const
@@ -454,6 +502,11 @@ namespace gamescope
 		return true;
 	}
 
+	bool CSDLBackend::IsPaused() const
+	{
+		return false;
+	}
+
 	bool CSDLBackend::IsVisible() const
 	{
 		return true;
@@ -462,11 +515,6 @@ namespace gamescope
 	glm::uvec2 CSDLBackend::CursorSurfaceSize( glm::uvec2 uvecSize ) const
 	{
 		return uvecSize;
-	}
-
-	INestedHints *CSDLBackend::GetNestedHints()
-	{
-		return this;
 	}
 
 	///////////////////
@@ -498,16 +546,13 @@ namespace gamescope
 		m_pApplicationIcon = uIconPixels;
 		PushUserEvent( GAMESCOPE_SDL_EVENT_ICON );
 	}
+
 	void CSDLBackend::SetSelection( std::shared_ptr<std::string> szContents, GamescopeSelection eSelection )
 	{
 		if (eSelection == GAMESCOPE_SELECTION_CLIPBOARD)
 			SDL_SetClipboardText(szContents->c_str());
 		else if (eSelection == GAMESCOPE_SELECTION_PRIMARY)
 			SDL_SetPrimarySelectionText(szContents->c_str());
-	}
-	std::shared_ptr<INestedHints::CursorInfo> CSDLBackend::GetHostCursor()
-	{
-		return GetX11HostCursor();
 	}
 
 	void CSDLBackend::OnBackendBlobDestroyed( BackendBlob *pBlob )

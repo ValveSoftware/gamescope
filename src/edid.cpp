@@ -5,6 +5,7 @@
 #include "hdmi.h"
 
 #include <cassert>
+#include <climits>
 #include <cstring>
 #include <cstdlib>
 
@@ -124,7 +125,7 @@ namespace gamescope
         // an external display attached.
         // (Allows for debugging undocked fallback without undocking/redocking)
         if ( !hdrInfo.ShouldPatchEDID() )
-            return std::nullopt;
+            return bRotate ? std::optional( edid ) : std::nullopt;
 
         // TODO: Allow for override of min luminance
 #if 0

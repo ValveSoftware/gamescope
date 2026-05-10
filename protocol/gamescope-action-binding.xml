@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="gamescope_action_binding">
+
+  <copyright>
+    Copyright © 2024 Valve Corporation
+
+    Permission is hereby granted, free of charge, to any person obtaining a
+    copy of this software and associated documentation files (the "Software"),
+    to deal in the Software without restriction, including without limitation
+    the rights to use, copy, modify, merge, publish, distribute, sublicense,
+    and/or sell copies of the Software, and to permit persons to whom the
+    Software is furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice (including the next
+    paragraph) shall be included in all copies or substantial portions of the
+    Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+    THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+    DEALINGS IN THE SOFTWARE.
+  </copyright>
+
+  <description summary="gamescope-specific protocol">
+    This is a private Gamescope protocol. Regular Wayland clients must not use
+    it.
+  </description>
+
+  <interface name="gamescope_action_binding_manager" version="1">
+    <request name="destroy" type="destructor"></request>
+
+    <request name="create_action_binding">
+      <arg name="callback" type="new_id" interface="gamescope_action_binding" summary="new action binding object"/>
+    </request>
+  </interface>
+
+  <interface name="gamescope_action_binding" version="1">
+    <request name="destroy" type="destructor"></request>
+
+    <enum name="arm_flag" bitfield="true">
+      <description summary="arm flags">
+        Flags that control how the action is armed.
+      </description>
+      <entry name="one_shot" value="0x1" summary="disarm this action immediately after trigger. unrelated to niko"/>
+      <entry name="no_block" value="0x2" summary="don't block the result of this shortcut being seen by the app and keep processing hotkeys"/>
+    </enum>
+
+    <enum name="trigger_flag" bitfield="true">
+      <description summary="arm flags">
+        Flags that say how the action was triggered.
+      </description>
+
+      <entry name="keyboard" value="0x1" summary="action was triggered by keyboard trigger"/>
+    </enum>
+
+    <request name="set_description">
+      <arg name="description" type="string" summary="human-readable description as to what the action is for, used for debugging purposes."/>
+    </request>
+
+    <request name="add_keyboard_trigger">
+      <arg name="keysyms" type="array" summary="array of xkb_keysym_t's"/>
+    </request>
+
+    <request name="clear_triggers">
+    </request>
+
+    <request name="arm">
+      <arg name="arm_flags" type="uint" enum="arm_flag" summary="combination of 'arm_flag' values"/>
+    </request>
+
+    <request name="disarm">
+    </request>
+
+    <event name="triggered">
+      <arg name="sequence" type="uint" summary="global sequence no of actions that have been trigged"/>
+      <arg name="time_lo" type="uint" summary="lower bits of 64-bit timestamp in nanos (CLOCK_MONOTONIC)"/>
+      <arg name="time_hi" type="uint" summary="upper bits of 64-bit timestamp in nanos (CLOCK_MONOTONIC)"/>
+      <arg name="trigger_flags" type="uint" enum="trigger_flag" summary="flags for this trigger"/>
+    </event>
+  </interface>
+
+</protocol>

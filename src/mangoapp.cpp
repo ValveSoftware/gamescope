@@ -31,6 +31,7 @@ struct mangoapp_msg_v1 {
     uint16_t displayRefresh;
     bool bAppWantsHDR : 1;
     bool bSteamFocused : 1;
+    char engineName[40];
     
     // WARNING: Always ADD fields, never remove or repurpose fields
 } __attribute__((packed)) mangoapp_msg_v1;
@@ -60,11 +61,20 @@ void mangoapp_update( uint64_t visible_frametime, uint64_t app_frametime_ns, uin
     mangoapp_msg_v1.displayRefresh = (uint16_t) gamescope::ConvertmHzToHz( g_nOutputRefresh );
     mangoapp_msg_v1.bAppWantsHDR = g_bAppWantsHDRCached;
     mangoapp_msg_v1.bSteamFocused = g_focusedBaseAppId == 769;
+    memset(mangoapp_msg_v1.engineName, 0, sizeof(mangoapp_msg_v1.engineName));
+    std::shared_ptr<std::string> engine = focusWindow_engine;
+    if (engine)
+        engine->copy(mangoapp_msg_v1.engineName, sizeof(mangoapp_msg_v1.engineName) / sizeof(char));
+    else
+        std::string("gamescope").copy(mangoapp_msg_v1.engineName, sizeof(mangoapp_msg_v1.engineName) / sizeof(char));
     msgsnd(msgid, &mangoapp_msg_v1, sizeof(mangoapp_msg_v1) - sizeof(mangoapp_msg_v1.hdr.msg_type), IPC_NOWAIT);
 }
 
 extern uint64_t g_uCurrentBasePlaneCommitID;
 extern bool g_bCurrentBasePlaneIsFifo;
+extern uint32_t g_uCurrentBasePlaneAppID;
+extern gamescope::ConVar<bool> cv_mangoapp_use_output_timing;
+
 void mangoapp_output_update( uint64_t vblanktime )
 {
     if ( !g_bCurrentBasePlaneIsFifo )
@@ -82,6 +92,14 @@ void mangoapp_output_update( uint64_t vblanktime )
 		s_uLastBasePlaneCommitID = g_uCurrentBasePlaneCommitID;
         if ( last_frametime > vblanktime )
             return;
+
 		mangoapp_update( frametime, uint64_t(~0ull), uint64_t(~0ull) );
+
+        if ( cv_mangoapp_use_output_timing )
+        {
+            wlserver_lock();
+            wlserver_app_presented( g_uCurrentBasePlaneAppID, frametime );
+            wlserver_unlock();
+        }
 	}
 }

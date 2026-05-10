@@ -1,4 +1,5 @@
 #include "backend.h"
+#include "Backends/DeferredBackend.h"
 #include "vblankmanager.hpp"
 #include "convar.h"
 #include "wlserver.hpp"
@@ -10,8 +11,12 @@
 extern void sleep_until_nanos(uint64_t nanos);
 extern bool env_to_bool(const char *env);
 
+extern bool g_bAllowDeferredBackend;
+
 namespace gamescope
 {
+    ConVar<VirtualConnectorStrategy> cv_backend_virtual_connector_strategy( "backend_virtual_connector_strategy", VirtualConnectorStrategies::SingleApplication );
+
     /////////////
     // IBackend
     /////////////
@@ -36,9 +41,22 @@ namespace gamescope
             s_pBackend = pBackend;
             if ( !s_pBackend->Init() )
             {
-                delete s_pBackend;
-                s_pBackend = nullptr;
-                return false;
+                if ( g_bAllowDeferredBackend )
+                {
+                    s_pBackend = new CDeferredBackend( pBackend );
+                    if ( !s_pBackend->Init() )
+                    {
+                        delete s_pBackend;
+                        s_pBackend = nullptr;
+                        return false;
+                    }
+                }
+                else
+                {
+                    delete s_pBackend;
+                    s_pBackend = nullptr;
+                    return false;
+                }
             }
         }
 
@@ -56,7 +74,7 @@ namespace gamescope
     CBaseBackendFb::~CBaseBackendFb()
     {
         // I do not own the client buffer, but I released that in DecRef.
-        assert( !HasLiveReferences() );
+        //assert( !HasLiveReferences() );
     }
 
     uint32_t CBaseBackendFb::IncRef()
@@ -122,6 +140,17 @@ namespace gamescope
         }
     }
 
+    /////////////////////////
+    // CBaseBackendConnector
+    /////////////////////////
+
+    VBlankScheduleTime CBaseBackendConnector::FrameSync()
+    {
+        VBlankScheduleTime schedule = GetVBlankTimer().CalcNextWakeupTime( false );
+        sleep_until_nanos( schedule.ulScheduledWakeupPoint );
+        return schedule;
+    }
+
     /////////////////
     // CBaseBackend
     /////////////////
@@ -130,18 +159,6 @@ namespace gamescope
     {
         const bool bForceTimerFd = env_to_bool( getenv( "GAMESCOPE_DISABLE_TIMERFD" ) );
         return bForceTimerFd;
-    }
-
-    INestedHints *CBaseBackend::GetNestedHints()
-    {
-        return nullptr;
-    }
-
-    VBlankScheduleTime CBaseBackend::FrameSync()
-    {
-        VBlankScheduleTime schedule = GetVBlankTimer().CalcNextWakeupTime( false );
-        sleep_until_nanos( schedule.ulScheduledWakeupPoint );
-        return schedule;
     }
 
     ConVar<bool> cv_touch_external_display_trackpad( "touch_external_display_trackpad", false, "If we are using an external display, should we treat the internal display's touch as a trackpad insteaad?" );
@@ -161,7 +178,6 @@ namespace gamescope
     void CBaseBackend::DumpDebugInfo()
     {
         console_log.infof( "Uses Modifiers: %s", this->UsesModifiers() ? "true" : "false" );
-        console_log.infof( "VRR Active: %s", this->IsVRRActive() ? "true" : "false" );
         console_log.infof( "Supports Plane Hardware Cursor: %s (not relevant for nested backends)", this->SupportsPlaneHardwareCursor() ? "true" : "false" );
         console_log.infof( "Supports Tearing: %s", this->SupportsTearing() ? "true" : "false" );
         console_log.infof( "Uses Vulkan Swapchain: %s", this->UsesVulkanSwapchain() ? "true" : "false" );
@@ -169,11 +185,22 @@ namespace gamescope
         console_log.infof( "Supports Explicit Sync: %s", this->SupportsExplicitSync() ? "true" : "false" );
         console_log.infof( "Current Screen Type: %s", this->GetScreenType() == GAMESCOPE_SCREEN_TYPE_INTERNAL ? "Internal" : "External" );
         console_log.infof( "Is Visible: %s", this->IsVisible() ? "true" : "false" );
-        console_log.infof( "Is Nested: %s", this->GetNestedHints() != nullptr ? "true" : "false" );
+        console_log.infof( "Is Paused: %s", this->IsPaused() ? "true" : "false" );
         console_log.infof( "Needs Frame Sync: %s", this->NeedsFrameSync() ? "true" : "false" );
-        console_log.infof( "Total Presents Queued: %lu", this->PresentationFeedback().TotalPresentsQueued() );
-        console_log.infof( "Total Presents Completed: %lu", this->PresentationFeedback().TotalPresentsCompleted() );
-        console_log.infof( "Current Presents In Flight: %lu", this->PresentationFeedback().CurrentPresentsInFlight() );
+        console_log.infof( "VRR Active: %s", this->GetCurrentConnector()->IsVRRActive() ? "true" : "false" );
+        console_log.infof( "Total Presents Queued: %lu", this->GetCurrentConnector()->PresentationFeedback().TotalPresentsQueued() );
+        console_log.infof( "Total Presents Completed: %lu", this->GetCurrentConnector()->PresentationFeedback().TotalPresentsCompleted() );
+        console_log.infof( "Current Presents In Flight: %lu", this->GetCurrentConnector()->PresentationFeedback().CurrentPresentsInFlight() );
+    }
+
+    bool CBaseBackend::UsesVirtualConnectors()
+    {
+        return false;
+    }
+    std::shared_ptr<IBackendConnector> CBaseBackend::CreateVirtualConnector( uint64_t ulVirtualConnectorKey )
+    {
+        assert( false );
+        return nullptr;
     }
 
     ConCommand cc_backend_info( "backend_info", "Dump debug info about the backend state",
@@ -184,4 +211,14 @@ namespace gamescope
 
         GetBackend()->DumpDebugInfo();
     });
+
+    ConCommand cc_backend_set_dirty( "backend_set_dirty", "Dirty the backend state and re-poll",
+    []( std::span<std::string_view> svArgs )
+    {
+        if ( !GetBackend() )
+            return;
+
+        GetBackend()->DirtyState( true, true );
+    });
+
 }

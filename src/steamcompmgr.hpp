@@ -109,6 +109,7 @@ private:
 
 	gamescope::OwningRc<CVulkanTexture> m_texture;
 	bool m_dirty;
+	uint64_t m_ulLastConnectorId = 0;
 	bool m_imageEmpty;
 
 	xwayland_ctx_t *m_ctx;
@@ -136,7 +137,6 @@ void nudge_steamcompmgr( void );
 void force_repaint( void );
 
 extern void mangoapp_update( uint64_t visible_frametime, uint64_t app_frametime_ns, uint64_t latency_ns );
-gamescope_xwayland_server_t *steamcompmgr_get_focused_server();
 struct wlr_surface *steamcompmgr_get_server_input_surface( size_t idx );
 wlserver_vk_swapchain_feedback* steamcompmgr_get_base_layer_swapchain_feedback();
 
@@ -144,6 +144,7 @@ struct wlserver_x11_surface_info *lookup_x11_surface_info_from_xid( gamescope_xw
 
 extern gamescope::VBlankTime g_SteamCompMgrVBlankTime;
 extern pid_t focusWindow_pid;
+extern std::atomic<std::shared_ptr<std::string>> focusWindow_engine;
 
 void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_server);
 void gamescope_set_selection(std::string contents, GamescopeSelection eSelection);

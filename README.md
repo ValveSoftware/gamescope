@@ -21,7 +21,7 @@ If running RadeonSI clients with older cards (GFX8 and below), currently have to
 git submodule update --init
 meson setup build/
 ninja -C build/
-build/gamescope -- <game>
+build/src/gamescope -- <game>
 ```
 
 Install with:
@@ -88,4 +88,4 @@ Pull requests for improving Reshade compatibility support are appreciated.
 
 ## Status of Gamescope Packages
 
-[![Packaging status](https://repology.org/badge/vertical-allrepos/gamescope.svg)](https://repology.org/project/gamescope/versions)
+[![Packaging status](https://repology.org/badge/vertical-allrepos/gamescope.svg?exclude_unsupported=1)](https://repology.org/project/gamescope/versions)

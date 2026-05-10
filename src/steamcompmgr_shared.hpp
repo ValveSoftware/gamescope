@@ -116,6 +116,19 @@ struct steamcompmgr_win_t {
 	uint32_t appID = 0;
 	bool isOverlay = false;
 	bool isExternalOverlay = false;
+
+	bool bIsSteamPid = false;
+	bool bIsSteamWebHelperPid = false;
+	bool bIsVRWebHelperPid = false;
+	bool bIsDolphin = false; // File Manager
+
+	std::string pid_name;
+
+	bool IsAnyOverlay() const
+	{
+		return isOverlay || isExternalOverlay;
+	}
+
 	bool isFullscreen = false;
 	bool isSysTrayIcon = false;
 	bool sizeHintsSpecified = false;
@@ -126,6 +139,9 @@ struct steamcompmgr_win_t {
 	bool is_dialog = false;
 	bool maybe_a_dropdown = false;
 	bool outdatedInteractiveFocus = false;
+
+	uint64_t last_commit_first_latch_time = 0;
+	uint64_t last_commit_present_time = 0;
 
 	bool hasHwndStyle = false;
 	uint32_t hwndStyle = 0;
@@ -140,10 +156,16 @@ struct steamcompmgr_win_t {
 	bool unlockedForFrameCallback = false;
 	bool receivedDoneCommit = false;
 
+	std::shared_ptr<std::string> engineName;
+
 	std::vector< gamescope::Rc<commit_t> > commit_queue;
 	std::shared_ptr<std::vector< uint32_t >> icon;
 
 	steamcompmgr_win_type_t		type;
+
+	std::optional<uint64_t> oulTargetVROverlay;
+	std::shared_ptr<gamescope::IBackendPlane> pForwarderPlane;
+	bool bNeedsForwarding = false;
 
 	steamcompmgr_xwayland_win_t& xwayland() { return std::get<steamcompmgr_xwayland_win_t>(_window_types); }
 	const steamcompmgr_xwayland_win_t& xwayland() const { return std::get<steamcompmgr_xwayland_win_t>(_window_types); }
@@ -209,7 +231,44 @@ struct steamcompmgr_win_t {
 		else
 			return nullptr;
 	}
+
+	const char *debug_name() const
+	{
+		if ( title )
+			return title->c_str();
+
+		return pid_name.c_str();
+	}
+
+	gamescope::VirtualConnectorKey_t GetVirtualConnectorKey( gamescope::VirtualConnectorStrategy eStrategy )
+	{
+		switch ( eStrategy )
+		{
+		default:
+		case gamescope::VirtualConnectorStrategies::SingleApplication:
+		case gamescope::VirtualConnectorStrategies::SteamControlled:
+			return 0;
+		case gamescope::VirtualConnectorStrategies::PerAppId:
+			if ( this->isSteamLegacyBigPicture )
+			{
+				// Steam Bootstrapper
+				return gamescope::k_ulSteamBootstrapperKey;
+			}
+			else if ( this->appID )
+			{
+				return static_cast<gamescope::VirtualConnectorKey_t>( this->appID );
+			}
+			else
+			{
+				return static_cast<gamescope::VirtualConnectorKey_t>( gamescope::k_ulNonSteamWindowBit | this->seq );	
+			}
+		case gamescope::VirtualConnectorStrategies::PerWindow:
+			return static_cast<gamescope::VirtualConnectorKey_t>( this->seq );
+		}
+	}
 };
+
+extern std::atomic<bool> hasRepaint;
 
 namespace gamescope
 {
@@ -229,6 +288,7 @@ namespace gamescope
 		{
 			std::unique_lock lock{ m_ScreenshotInfoMutex };
 			m_ScreenshotInfo = std::move( info );
+			hasRepaint = true;
 		}
 
 		void TakeScreenshot( bool bAVIF )

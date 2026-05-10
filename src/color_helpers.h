@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cmath>
 #include <vector>
+#include <memory>
 
 #include <glm/vec2.hpp> // glm::vec2
 #include <glm/vec3.hpp> // glm::vec3
@@ -352,7 +353,8 @@ struct lut3d_t
 	}
 };
 
-bool LoadCubeLut( lut3d_t * lut3d, const char * filename );
+std::shared_ptr<lut3d_t> LoadCubeLut( FILE *pFile, bool &bRaisesBlackLevelFloor );
+std::shared_ptr<lut3d_t> LoadCubeLut( const char *pchFileName, bool &bRaisesBlackLevelFloor );
 
 // Generate a color transform from the source colorspace, to the dest colorspace,
 // nLutSize1d is the number of color entries in the shaper lut

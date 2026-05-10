@@ -34,6 +34,8 @@ static std::function<void(const char*)> g_effectReadyCallback = nullptr;
 static auto g_runtimeUniforms = std::unordered_map<std::string, uint8_t*>();
 static std::mutex g_runtimeUniformsMutex;
 
+extern int g_nOutputRefresh;
+
 const char *homedir;
 
 std::string_view GetHomeDir()
@@ -100,6 +102,17 @@ public:
     FrameCountUniform(reshadefx::uniform_info uniformInfo);
     virtual void update(void* mappedBuffer) override;
     virtual ~FrameCountUniform();
+
+private:
+    int32_t count = 0;
+};
+
+class RefreshRateUniform : public ReshadeUniform
+{
+public:
+    RefreshRateUniform(reshadefx::uniform_info uniformInfo);
+    virtual void update(void* mappedBuffer) override;
+    virtual ~RefreshRateUniform();
 
 private:
     int32_t count = 0;
@@ -296,6 +309,20 @@ void FrameCountUniform::update(void* mappedBuffer)
     count++;
 }
 FrameCountUniform::~FrameCountUniform()
+{
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+RefreshRateUniform::RefreshRateUniform(reshadefx::uniform_info uniformInfo)
+    : ReshadeUniform(uniformInfo)
+{
+}
+void RefreshRateUniform::update(void* mappedBuffer)
+{
+    uint32_t unRefreshRateMhz = (uint32_t)g_nOutputRefresh;
+    copy(mappedBuffer, &unRefreshRateMhz);
+}
+RefreshRateUniform::~RefreshRateUniform()
 {
 }
 
@@ -614,7 +641,7 @@ DataUniform::~DataUniform()
 {
 }
 
-static std::vector<std::shared_ptr<ReshadeUniform>> createReshadeUniforms(const reshadefx::module& module)
+static std::vector<std::shared_ptr<ReshadeUniform>> createReshadeUniforms(const reshadefx::module& module, uint32_t *pFlags)
 {
     std::vector<std::shared_ptr<ReshadeUniform>> uniforms;
     for (auto& uniform : module.uniforms)
@@ -635,6 +662,10 @@ static std::vector<std::shared_ptr<ReshadeUniform>> createReshadeUniforms(const 
             else if (source == "framecount")
             {
                 uniforms.push_back(std::make_shared<FrameCountUniform>(uniform));
+            }
+            else if (source == "gamescope_refresh_mhz")
+            {
+                uniforms.push_back(std::make_shared<RefreshRateUniform>(uniform));
             }
             else if (source == "date")
             {
@@ -671,6 +702,10 @@ static std::vector<std::shared_ptr<ReshadeUniform>> createReshadeUniforms(const 
             else if (source == "bufready_depth")
             {
                 uniforms.push_back(std::make_shared<DepthUniform>(uniform));
+            }
+            else if (source == "gamescope_always_paint")
+            {
+                ( *pFlags ) |= ReshadeEffectFlag::AlwaysScanout;
             }
             else if (!source.empty())
             {
@@ -1058,7 +1093,7 @@ bool ReshadeEffectPipeline::init(CVulkanDevice *device, const ReshadeEffectKey &
     }
 
     // Create Uniforms
-    m_uniforms = createReshadeUniforms(*m_module);
+    m_uniforms = createReshadeUniforms(*m_module, &m_flags);
 
     // Create Textures
     {

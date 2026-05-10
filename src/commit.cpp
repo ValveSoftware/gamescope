@@ -66,10 +66,12 @@ void commit_t::OnPollIn()
 
 void commit_t::Signal()
 {
+    uint64_t now = get_time_in_nanos();
+    present_time = now;
+
     uint64_t frametime;
     if ( m_bMangoNudge )
     {
-        uint64_t now = get_time_in_nanos();
         static uint64_t lastFrameTime = now;
         frametime = now - lastFrameTime;
         lastFrameTime = now;

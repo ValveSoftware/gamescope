@@ -30,7 +30,7 @@ namespace gamescope
 
             sol::table KnownDisplays;
 
-            std::optional<std::pair<std::string_view, sol::table>> LookupDisplay( CScriptScopedLock &script, std::string_view psvVendor, uint16_t uProduct, std::string_view psvModel );
+            std::optional<std::pair<std::string_view, sol::table>> LookupDisplay( CScriptScopedLock &script, std::string_view psvVendor, uint16_t uProduct, std::string_view psvModel, std::string_view psvDataString );
         } Config;
     };
 
@@ -159,26 +159,6 @@ namespace gamescope
         return out;
     }
 
-    #define SCRIPTDESC_TEMPLATE( type ) template <typename type>
-    #define DECLARE_SCRIPTDESC( type ) \
-        static sol::usertype< type > s_ScriptType; \
-        class CEnsureScriptTypeInstantiation { public: CEnsureScriptTypeInstantiation() { (void) type :: s_ScriptType; } } m_EnsureTemplateInstantiation_ScriptDesc;
-
-    #define START_SCRIPTDESC( type, lua_name ) \
-        inline sol::usertype<type> type::s_ScriptType = CScriptScopedLock()->new_usertype<type>( lua_name
-    #define START_SCRIPTDESC_ANON( type ) \
-        inline sol::usertype<type> type::s_ScriptType = CScriptScopedLock()->new_usertype<type>( typeid( type ).name()
-    #define SCRIPTDESC( x, y ) , x, y
-    #define END_SCRIPTDESC() );
 }
-
-#else
-
-    #define SCRIPTDESC_TEMPLATE( type )
-    #define DECLARE_SCRIPTDESC( x )
-    #define START_SCRIPTDESC( type, lua_name )
-    #define START_SCRIPTDESC_ANON( type )
-    #define SCRIPTDESC( x, y )
-    #define END_SCRIPTDESC()
 
 #endif

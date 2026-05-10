@@ -45,8 +45,7 @@ namespace gamescope::WaylandServer
 
 		~CLinuxDrmSyncobjSurface()
 		{
-			assert( m_pWlSurfaceInfo->pSyncobjSurface == this );
-			m_pWlSurfaceInfo->pSyncobjSurface = nullptr;
+			Detach();
 		}
 
 		bool HasExplicitSync() const
@@ -68,6 +67,17 @@ namespace gamescope::WaylandServer
 				return nullptr;
 
 			return std::make_shared<CReleaseTimelinePoint>( m_pReleaseTimeline, m_ulReleasePoint );
+		}
+
+		void Detach()
+		{
+			if ( m_pWlSurfaceInfo )
+			{
+				assert( m_pWlSurfaceInfo->pSyncobjSurface == this );
+				m_pWlSurfaceInfo->pSyncobjSurface = nullptr;
+			}
+
+			m_pWlSurfaceInfo = nullptr;
 		}
 
 	protected:

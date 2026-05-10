@@ -40,9 +40,7 @@ void main() {
 
     for (int i = c_blur_layer_count; i < c_layerCount; i++) {
         vec4 layerColor = sampleLayer(i, uv);
-        float opacity = u_opacity[i];
-        float layerAlpha = opacity * layerColor.a;
-        outputValue = layerColor.rgb * opacity + outputValue * (1.0f - layerAlpha);
+        outputValue = BlendLayer( i, outputValue, layerColor, u_opacity[i] );
     }
 
     outputValue = encodeOutputColor(outputValue);

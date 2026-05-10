@@ -1,7 +1,6 @@
 vkroots_dep = dependency('vkroots')
 dep_xcb = dependency('xcb')
 dep_x11_xcb = dependency('x11-xcb')
-glm_dep = dependency('glm')
 wayland_client = dependency('wayland-client')
 
 gamescope_wsi_layer = shared_library('VkLayer_FROG_gamescope_wsi_' + build_machine.cpu_family(), 'VkLayer_FROG_gamescope_wsi.cpp', protocols_client_src,

@@ -13,7 +13,9 @@
 #include <sys/resource.h>
 #include <sys/wait.h>
 #if defined(__linux__)
+#if HAVE_LIBCAP
 #include <sys/capability.h>
+#endif
 #include <sys/prctl.h>
 #elif defined(__DragonFly__) || defined(__FreeBSD__)
 #include <sys/procctl.h>
@@ -234,21 +236,7 @@ namespace gamescope::Process
 
     bool CloseFd( int nFd )
     {
-        for ( ;; )
-        {
-            if ( close( nFd ) == 0 )
-            {
-                return true;
-            }
-            else
-            {
-                if ( errno == EINTR )
-                    continue;
-
-                s_ProcessLog.errorf_errno( "CloseFd failed to close FD %d", nFd );
-                return false;
-            }
-        }
+        return close( nFd ) == 0;
     }
 
     void CloseAllFds( std::span<int> nExcludedFds )

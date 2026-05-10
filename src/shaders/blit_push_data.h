@@ -9,6 +9,7 @@ uniform layers_t {
     uint u_blur_radius;
 
     uint u_shaderFilter;
+    uint u_alphaMode;
 
     // hdr
     float u_linearToNits; // sdr -> hdr

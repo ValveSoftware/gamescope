@@ -42,7 +42,7 @@ void main() {
         float opacity = u_opacity[i];
         float layerAlpha = opacity * layerColor.a;
         float revAlpha = (1.0f - layerAlpha);
-        outputValue = layerColor.rgb * opacity + outputValue * revAlpha;
+        outputValue = BlendLayer( i, outputValue, layerColor, opacity );
         finalRevAlpha *= revAlpha;
     }
 
@@ -55,7 +55,7 @@ void main() {
                 vec4 layerColor = sampleLayer(i, uv);
                 float opacity = u_opacity[i];
                 float layerAlpha = opacity * layerColor.a;
-                outputValue = layerColor.rgb * opacity + outputValue * (1.0f - layerAlpha);
+                outputValue = BlendLayer( i, outputValue, layerColor, opacity );
             }
         }
     }

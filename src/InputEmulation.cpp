@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstring>
 
+#include "backend.h"
 #include "InputEmulation.h"
 #include "wlserver.hpp"
 
@@ -167,6 +168,8 @@ namespace gamescope
 
                 case EIS_EVENT_POINTER_MOTION:
                 {
+                    GetBackend()->NotifyPhysicalInput( InputType::Mouse );
+
                     wlserver_lock();
                     wlserver_mousemotion( eis_event_pointer_get_dx( pEisEvent ), eis_event_pointer_get_dy( pEisEvent ), ++s_uSequence );
                     wlserver_unlock();
@@ -175,6 +178,8 @@ namespace gamescope
 
                 case EIS_EVENT_POINTER_MOTION_ABSOLUTE:
                 {
+                    GetBackend()->NotifyPhysicalInput( InputType::Mouse );
+
                     wlserver_lock();
                     wlserver_mousewarp( eis_event_pointer_get_absolute_x( pEisEvent ), eis_event_pointer_get_absolute_y( pEisEvent ), ++s_uSequence, true );
                     wlserver_unlock();

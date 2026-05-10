@@ -1,6 +1,7 @@
 #include "colorimetry.h"
 
 #include "shaderfilter.h"
+#include "alphamode.h"
 
 vec4 sampleRegular(sampler2D tex, vec2 coord, uint colorspace) {
     vec4 color = textureLod(tex, coord, 0);

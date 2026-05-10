@@ -112,6 +112,10 @@ namespace messagey {
         int fd_pipe[2]; /* fd_pipe[0]: read end of pipe, fd_pipe[1]: write end of pipe */
         pid_t pid1;
 
+        const char *zenityDisableEnv = getenv("GAMESCOPE_ZENITY_DISABLE");
+        if (zenityDisableEnv && *zenityDisableEnv && atoi(zenityDisableEnv) != 0)
+            return 0;
+
         if (messageboxdata->numbuttons > MaxButtons) {
             return SetError("Too many buttons (%d max allowed)", MaxButtons);
         }
