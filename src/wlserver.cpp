@@ -101,7 +101,11 @@ struct wlserver_content_override {
 std::mutex g_wlserver_xdg_shell_windows_lock;
 
 static struct wl_list pending_surfaces = {0};
-
+struct gamescope_input_ctx {
+	struct wl_listener destroy;
+	struct wlr_input_device *device;
+};
+static struct wlr_keyboard *parent_keyboard = NULL;
 static std::atomic<bool> g_bShutdownWLServer{ false };
 
 static void wlserver_x11_surface_info_set_wlr( struct wlserver_x11_surface_info *surf, struct wlr_surface *wlr_surf, bool override );
@@ -475,6 +479,17 @@ static void wlserver_handle_touch_motion(struct wl_listener *listener, void *dat
 	wlserver_touchmotion( event->x, event->y, event->touch_id, event->time_msec, false, touch->connector );
 }
 
+static void wlserver_destroy_input(struct wl_listener *listener, void *data)
+{
+	struct gamescope_input_ctx *ctx = wl_container_of(listener, ctx, destroy);
+	
+	if (parent_keyboard && &parent_keyboard->base == ctx->device) {
+		wl_log.infof("Parent keyboard destroyed");
+		parent_keyboard = NULL;
+	}
+	delete(ctx);
+}
+
 static void wlserver_new_input(struct wl_listener *listener, void *data)
 {
 	struct wlr_input_device *device = (struct wlr_input_device *) data;
@@ -484,7 +499,19 @@ static void wlserver_new_input(struct wl_listener *listener, void *data)
 		case WLR_INPUT_DEVICE_KEYBOARD:
 		{
 			struct wlr_keyboard *keyboard = wlr_keyboard_from_input_device(device);
+			struct gamescope_input_ctx *ctx = new gamescope_input_ctx {
+				.destroy = { .notify = wlserver_destroy_input },
+				.device = device
+			};
+			wl_signal_add(&device->events.destroy, &ctx->destroy);
+
+			if (!parent_keyboard) {
+				parent_keyboard = keyboard;
+				wl_log.infof("Captured parent keyboard from %s", device->name);
+			}
+
 			wlr_keyboard_set_keymap(keyboard, wlserver.keyboard_group->keyboard.keymap);
+
 			if (!wlr_keyboard_group_add_keyboard(wlserver.keyboard_group, keyboard)) {
 				wl_log.errorf("failed to add physical keyboard %s", device->name);
 				break;
@@ -1967,19 +1994,10 @@ bool wlserver_init( void ) {
 	wlserver.wlr.virtual_keyboard_device = kbd;
 
 	// Create a keyboard group to keep all externally connected keyboards
-	// in sync (one single layout and a shared state)
-	struct xkb_context *context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
-	struct xkb_rule_names rules = { 0 };
-	rules.rules = getenv("XKB_DEFAULT_RULES");
-	rules.model = getenv("XKB_DEFAULT_MODEL");
-	rules.layout = getenv("XKB_DEFAULT_LAYOUT");
-	rules.variant = getenv("XKB_DEFAULT_VARIANT");
-	rules.options = getenv("XKB_DEFAULT_OPTIONS");
-	struct xkb_keymap *keymap = xkb_keymap_new_from_names(context, &rules, XKB_KEYMAP_COMPILE_NO_FLAGS);
+	// in sync (one single layout and a shared state) - defer keymap to later
 	wlserver.keyboard_group = wlr_keyboard_group_create();
 	struct wlr_keyboard *keyboard = &wlserver.keyboard_group->keyboard;
 	wlr_keyboard_set_repeat_info(keyboard, 25, 600);
-	wlr_keyboard_set_keymap(keyboard, keymap);
 	wlserver.keyboard_group_modifiers.notify = wlserver_handle_modifiers;
 	wl_signal_add(&keyboard->events.modifiers, &wlserver.keyboard_group_modifiers);
 	wlserver.keyboard_group_key.notify = wlserver_handle_key;
@@ -2087,6 +2105,39 @@ bool wlserver_init( void ) {
 		wl_display_destroy(wlserver.display);
 		return false;
 	}
+
+	// Backend initialized, input_devices populated. Now we can extract keymap
+	// from parent, then override with any set env vars
+	struct xkb_context *context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+	struct xkb_rule_names rules = { 0 };
+	struct xkb_keymap *keymap = NULL;
+
+	// Fetch xkb env vars from session
+	const char *env_rules = getenv("XKB_DEFAULT_RULES");
+	const char *env_model = getenv("XKB_DEFAULT_MODEL");
+	const char *env_layout = getenv("XKB_DEFAULT_LAYOUT");
+	const char *env_variant = getenv("XKB_DEFAULT_VARIANT");
+	const char *env_options = getenv("XKB_DEFAULT_OPTIONS");
+
+	// priority: env > parent > default
+	if (env_rules || env_model || env_layout || env_variant || env_options) {
+		rules.rules = env_rules ?: "evdev";
+		rules.model = env_model ?: "pc105";
+		rules.layout = env_layout ?: "us";
+		rules.variant = env_variant; // NULL
+		rules.options = env_options; // NULL
+
+		keymap = xkb_keymap_new_from_names(context, &rules, XKB_KEYMAP_COMPILE_NO_FLAGS);
+	} else if (parent_keyboard && parent_keyboard->keymap) {
+		keymap = xkb_keymap_ref(parent_keyboard->keymap);
+	} else {
+		rules.rules = "evdev";
+		rules.model = "pc105";
+		rules.layout = "us";
+		keymap = xkb_keymap_new_from_names(context, &rules, XKB_KEYMAP_COMPILE_NO_FLAGS);
+	}
+
+	wlr_keyboard_set_keymap(kbd, keymap);
 
 	wl_signal_emit( &wlserver.wlr.multi_backend->events.new_input, kbd );
 
