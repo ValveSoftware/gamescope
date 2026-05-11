@@ -3605,6 +3605,15 @@ gamescope::Rc<CVulkanTexture> vulkan_acquire_screenshot_texture(uint32_t width, 
 {
 	for (auto& pScreenshotImage : g_output.pScreenshotImages)
 	{
+		// Evict a stale screenshot image, and reuse it
+		if (pScreenshotImage && pScreenshotImage->GetRefCount() == 0 &&
+			(width != pScreenshotImage->width() ||
+			 height != pScreenshotImage->height() ||
+			 drmFormat != pScreenshotImage->drmFormat()))
+		{
+			pScreenshotImage = nullptr;
+		}
+
 		if (pScreenshotImage == nullptr)
 		{
 			pScreenshotImage = new CVulkanTexture();
