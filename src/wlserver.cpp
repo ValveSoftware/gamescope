@@ -101,11 +101,6 @@ struct wlserver_content_override {
 std::mutex g_wlserver_xdg_shell_windows_lock;
 
 static struct wl_list pending_surfaces = {0};
-struct gamescope_input_ctx {
-	struct wl_listener destroy;
-	struct wlr_input_device *device;
-};
-static struct wlr_keyboard *parent_keyboard = NULL;
 static std::atomic<bool> g_bShutdownWLServer{ false };
 
 static void wlserver_x11_surface_info_set_wlr( struct wlserver_x11_surface_info *surf, struct wlr_surface *wlr_surf, bool override );
@@ -479,17 +474,6 @@ static void wlserver_handle_touch_motion(struct wl_listener *listener, void *dat
 	wlserver_touchmotion( event->x, event->y, event->touch_id, event->time_msec, false, touch->connector );
 }
 
-static void wlserver_destroy_input(struct wl_listener *listener, void *data)
-{
-	struct gamescope_input_ctx *ctx = wl_container_of(listener, ctx, destroy);
-	
-	if (parent_keyboard && &parent_keyboard->base == ctx->device) {
-		wl_log.infof("Parent keyboard destroyed");
-		parent_keyboard = NULL;
-	}
-	delete(ctx);
-}
-
 static void wlserver_new_input(struct wl_listener *listener, void *data)
 {
 	struct wlr_input_device *device = (struct wlr_input_device *) data;
@@ -499,18 +483,6 @@ static void wlserver_new_input(struct wl_listener *listener, void *data)
 		case WLR_INPUT_DEVICE_KEYBOARD:
 		{
 			struct wlr_keyboard *keyboard = wlr_keyboard_from_input_device(device);
-			struct gamescope_input_ctx *ctx = new gamescope_input_ctx {
-				.destroy = { .notify = wlserver_destroy_input },
-				.device = device
-			};
-			wl_signal_add(&device->events.destroy, &ctx->destroy);
-
-			if (!parent_keyboard) {
-				parent_keyboard = keyboard;
-				wl_log.infof("Captured parent keyboard from %s", device->name);
-			}
-
-			wlr_keyboard_set_keymap(keyboard, wlserver.keyboard_group->keyboard.keymap);
 
 			if (!wlr_keyboard_group_add_keyboard(wlserver.keyboard_group, keyboard)) {
 				wl_log.errorf("failed to add physical keyboard %s", device->name);
@@ -1963,7 +1935,7 @@ static gamescope::CAsyncWaiter g_LibEisWaiter( "gamescope-eis" );
 static std::unique_ptr<gamescope::GamescopeInputServer> g_InputServer;
 #endif
 
-bool wlserver_init( void ) {
+bool wlserver_init( ::xkb_keymap *p_keymap ) {
 	assert( wlserver.display != nullptr );
 
 	wl_list_init(&pending_surfaces);
@@ -2108,9 +2080,9 @@ bool wlserver_init( void ) {
 
 	// Backend initialized, input_devices populated. Now we can extract keymap
 	// from parent, then override with any set env vars
-	struct xkb_context *context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
-	struct xkb_rule_names rules = { 0 };
-	struct xkb_keymap *keymap = NULL;
+	::xkb_context *context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+	::xkb_rule_names rules = { 0 };
+	::xkb_keymap *keymap = nullptr;
 
 	// Fetch xkb env vars from session
 	const char *env_rules = getenv("XKB_DEFAULT_RULES");
@@ -2119,22 +2091,31 @@ bool wlserver_init( void ) {
 	const char *env_variant = getenv("XKB_DEFAULT_VARIANT");
 	const char *env_options = getenv("XKB_DEFAULT_OPTIONS");
 
-	// priority: env > parent > default
+	// priority: env overrides parent keymap overrides default
 	if (env_rules || env_model || env_layout || env_variant || env_options) {
+		// Compile from env vars
 		rules.rules = env_rules ?: "evdev";
 		rules.model = env_model ?: "pc105";
 		rules.layout = env_layout ?: "us";
-		rules.variant = env_variant; // NULL
+		rules.variant = (env_layout && env_variant) ? env_variant : NULL; // NULL
 		rules.options = env_options; // NULL
-
 		keymap = xkb_keymap_new_from_names(context, &rules, XKB_KEYMAP_COMPILE_NO_FLAGS);
-	} else if (parent_keyboard && parent_keyboard->keymap) {
-		keymap = xkb_keymap_ref(parent_keyboard->keymap);
-	} else {
+		wl_log.infof("Using XKB keymap from environment variables");
+	}
+	else {
+		if (p_keymap) {
+			keymap = xkb_keymap_ref(p_keymap);
+			wl_log.infof("Using parent session keymap");
+		}
+	}
+
+	// Fallback if nothing worked
+	if (!keymap) {
 		rules.rules = "evdev";
 		rules.model = "pc105";
 		rules.layout = "us";
 		keymap = xkb_keymap_new_from_names(context, &rules, XKB_KEYMAP_COMPILE_NO_FLAGS);
+		wl_log.infof("Using default XKB keymap");
 	}
 
 	wlr_keyboard_set_keymap(kbd, keymap);
