@@ -550,7 +550,7 @@ namespace gamescope
 
         uint32_t m_uFakeTimestamp = 0;
 
-        xkb_context *m_pXkbContext        = nullptr;
+        xkb_context *m_pXkbContext = nullptr;
         ::xkb_keymap *m_pXkbKeymap = nullptr;
 
         uint32_t m_uKeyModifiers = 0;

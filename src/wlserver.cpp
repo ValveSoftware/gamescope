@@ -1967,11 +1967,14 @@ bool wlserver_init( ::xkb_keymap *p_keymap ) {
 
 	// Create a keyboard group to keep all externally connected keyboards
 	// in sync (one single layout and a shared state) - defer keymap to later
-	wlserver.keyboard_group = wlr_keyboard_group_create();
+	wlserver.keyboard_group       = wlr_keyboard_group_create();
 	struct wlr_keyboard *keyboard = &wlserver.keyboard_group->keyboard;
 	wlr_keyboard_set_repeat_info(keyboard, 25, 600);
 	wlserver.keyboard_group_modifiers.notify = wlserver_handle_modifiers;
-	wl_signal_add(&keyboard->events.modifiers, &wlserver.keyboard_group_modifiers);
+	wl_signal_add(
+		&keyboard->events.modifiers,
+		&wlserver.keyboard_group_modifiers
+	);
 	wlserver.keyboard_group_key.notify = wlserver_handle_key;
 	wl_signal_add(&keyboard->events.key, &wlserver.keyboard_group_key);
 
@@ -2082,40 +2085,72 @@ bool wlserver_init( ::xkb_keymap *p_keymap ) {
 	// from parent, then override with any set env vars
 	::xkb_context *context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
 	::xkb_rule_names rules = { 0 };
-	::xkb_keymap *keymap = nullptr;
+	::xkb_keymap *keymap   = nullptr;
 
 	// Fetch xkb env vars from session
-	const char *env_rules = getenv("XKB_DEFAULT_RULES");
-	const char *env_model = getenv("XKB_DEFAULT_MODEL");
-	const char *env_layout = getenv("XKB_DEFAULT_LAYOUT");
+	const char *env_rules   = getenv("XKB_DEFAULT_RULES");
+	const char *env_model   = getenv("XKB_DEFAULT_MODEL");
+	const char *env_layout  = getenv("XKB_DEFAULT_LAYOUT");
 	const char *env_variant = getenv("XKB_DEFAULT_VARIANT");
 	const char *env_options = getenv("XKB_DEFAULT_OPTIONS");
 
 	// priority: env overrides parent keymap overrides default
-	if (env_rules || env_model || env_layout || env_variant || env_options) {
-		// Compile from env vars
-		rules.rules = env_rules ?: "evdev";
-		rules.model = env_model ?: "pc105";
-		rules.layout = env_layout ?: "us";
-		rules.variant = (env_layout && env_variant) ? env_variant : NULL; // NULL
-		rules.options = env_options; // NULL
-		keymap = xkb_keymap_new_from_names(context, &rules, XKB_KEYMAP_COMPILE_NO_FLAGS);
-		wl_log.infof("Using XKB keymap from environment variables");
-	}
-	else {
-		if (p_keymap) {
-			keymap = xkb_keymap_ref(p_keymap);
-			wl_log.infof("Using parent session keymap");
-		}
+	if (
+		env_rules
+		|| env_model
+		|| env_layout
+		|| env_options
+	)
+	{
+		// Build keymap from env
+		rules.rules   = env_rules ? : "evdev";
+		rules.model   = env_model ? : "pc105";
+		rules.layout  = env_layout ? : "us";
+		rules.variant = (env_layout && env_variant) ? env_variant : NULL;
+		rules.options = env_options;
+		keymap        = xkb_keymap_new_from_names(
+			context,
+			&rules,
+			XKB_KEYMAP_COMPILE_NO_FLAGS
+		);
 	}
 
-	// Fallback if nothing worked
-	if (!keymap) {
-		rules.rules = "evdev";
-		rules.model = "pc105";
-		rules.layout = "us";
-		keymap = xkb_keymap_new_from_names(context, &rules, XKB_KEYMAP_COMPILE_NO_FLAGS);
-		wl_log.infof("Using default XKB keymap");
+	// Note: xkb_keymap_new_from_names can fail and leave keymap UB. This is
+	// why we check.
+	if (keymap)
+	{
+		wl_log.infof("Using xkb_keymap from environment variables");
+	}
+	else if (p_keymap)
+	{
+		// Ref parent session's keymap
+		keymap = xkb_keymap_ref(p_keymap);
+		wl_log.infof("Using parent session xkb_keymap");
+	}
+
+	// Build default keymap as fallback
+	if (!keymap)
+	{
+		rules.rules   = "evdev";
+		rules.model   = "pc105";
+		rules.layout  = "us";
+		rules.variant = NULL;
+		rules.options = NULL;
+		keymap        = xkb_keymap_new_from_names(
+			context,
+			&rules,
+			XKB_KEYMAP_COMPILE_NO_FLAGS
+		);
+
+		if (keymap)
+		{
+			wl_log.infof("Using default xkb_keymap.");
+		}
+		else
+		{
+			wl_log.errorf("Failed to create any xkb_keymap.");
+			return false;
+		}
 	}
 
 	wlr_keyboard_set_keymap(kbd, keymap);
