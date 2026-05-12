@@ -6,12 +6,12 @@ project(
     default_options : [
         'cpp_std=c++20',
         'warning_level=2',
-        'force_fallback_for=wlroots,libliftoff,vkroots',
+        'force_fallback_for=glm,libdisplay-info,libliftoff,openvr,stb,vkroots,wlroots',
     ],
 )
 
 fallbacks = get_option('force_fallback_for')
-if not (fallbacks.contains('wlroots') and fallbacks.contains('libliftoff') and fallbacks.contains('vkroots'))
+if not (fallbacks.contains('glm') and fallbacks.contains('libdisplay-info') and fallbacks.contains('libliftoff') and fallbacks.contains('openvr') and fallbacks.contains('vkroots') and fallbacks.contains('wlroots') and fallbacks.contains('stb'))
     error('!!!"force_fallback_for" is missing entries!!!\n\tPlease do not remove entries from force_fallback_for if you are packaging the project.\n\tWe pull in these projects at specific commits/forks/builds for a reason.\n\tIf you are not packaging, remove this line to continue.')
 endif
 
@@ -29,6 +29,7 @@ add_project_arguments(
     cppc.get_supported_arguments(
         [
             '-Wno-unused-parameter',
+            '-Wno-unused-result',
             '-Wno-missing-field-initializers',
             '-Wno-c99-designator',
             '-Wno-invalid-offsetof',
@@ -56,31 +57,18 @@ pipewire_dep = dependency('libpipewire-0.3', required : get_option('pipewire'))
 librt_dep = cppc.find_library('rt', required : get_option('pipewire'))
 hwdata_dep = dependency('hwdata', required : false)
 
-dep_x11 = dependency('x11')
-dep_wayland = dependency('wayland-client')
-vulkan_dep = dependency('vulkan')
-
-glm_proj = subproject('glm')
-glm_dep = glm_proj.get_variable('glm_dep')
-stb_proj = subproject('stb')
-stb_dep = stb_proj.get_variable('stb_dep')
+dep_x11 = dependency('x11', fallback : 'x11')
+dep_wayland = dependency('wayland-client', fallback : 'wayland-client')
+vulkan_dep = dependency('vulkan', fallback : 'vulkan')
+glm_dep = dependency('glm', fallback : 'glm')
+stb_dep = dependency('stb', fallback : 'stb')
+vkroots_dep = dependency('vkroots', fallback : 'vkroots')
 
 if get_option('enable_openvr_support')
     openvr_dep = dependency('openvr', version : '>= 2.7', required : false)
     if not openvr_dep.found()
-        cmake = import('cmake')
-        openvr_var = cmake.subproject_options()
-        openvr_var.add_cmake_defines(
-            {
-                'USE_LIBCXX' : false,
-                #HACK: remove me when openvr supports CMake 4.0
-                'CMAKE_POLICY_VERSION_MINIMUM' : '3.5'
-            }
-        )
-        #ENDHACK
-        openvr_var.set_override_option('warning_level', '0')
-        openvr_proj = cmake.subproject('openvr', options : openvr_var)
-        openvr_dep = openvr_proj.dependency('openvr_api')
+        openvr_proj = subproject('openvr')
+        openvr_dep = openvr_proj.get_variable('openvr_api')
     endif
 else
     # null dep

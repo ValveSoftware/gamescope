@@ -1,0 +1,7 @@
+[wrap-git]
+url = https://github.com/misyltoad/wlroots.git
+revision = c08d99437ec8bb56a703f04ad1ef199502c62d10
+depth = 1
+
+[provide]
+wlroots = wlroots_dep

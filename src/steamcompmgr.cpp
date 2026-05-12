@@ -1453,7 +1453,10 @@ static gamescope::Rc<commit_t> import_commit(
     commit->is_steam               = window_is_steam( w );
     commit->appID                  = w->appID;
     commit->presentation_feedbacks = std::move( presentation_feedbacks );
-    if ( swapchain_feedback ) commit->feedback = *swapchain_feedback;
+    if ( swapchain_feedback )
+        commit->feedback.emplace(
+            std::make_shared<wlserver_vk_swapchain_feedback>(
+                *swapchain_feedback ) );
     commit->present_id           = present_id;
     commit->desired_present_time = desired_present_time;
     if ( window_is_vr_scene_app( w ) )
@@ -2134,7 +2137,7 @@ static void paint_cached_base_layer(
     layer->hdr_metadata_blob = nullptr;
     if ( commit->feedback )
     {
-        layer->hdr_metadata_blob = commit->feedback->hdr_metadata_blob;
+        layer->hdr_metadata_blob = commit->feedback.value( )->hdr_metadata_blob;
     }
     layer->ctm = nullptr;
     if ( layer->colorspace == GAMESCOPE_APP_TEXTURE_COLORSPACE_SCRGB )
@@ -2165,7 +2168,7 @@ steamcompmgr_get_base_layer_swapchain_feedback( )
 
     if ( !g_HeldCommits[ HELD_COMMIT_BASE ]->feedback ) return nullptr;
 
-    return &( *g_HeldCommits[ HELD_COMMIT_BASE ]->feedback );
+    return &( *g_HeldCommits[ HELD_COMMIT_BASE ]->feedback.value( ) );
 }
 
 gamescope::ConVar<bool> cv_paint_debug_pause_base_plane(
@@ -2356,7 +2359,8 @@ static FrameInfo_t::Layer_t *paint_window_commit(
     layer->hdr_metadata_blob = nullptr;
     if ( lastCommit->feedback )
     {
-        layer->hdr_metadata_blob = lastCommit->feedback->hdr_metadata_blob;
+        layer->hdr_metadata_blob =
+            lastCommit->feedback.value( )->hdr_metadata_blob;
     }
     layer->ctm = nullptr;
     if ( layer->colorspace == GAMESCOPE_APP_TEXTURE_COLORSPACE_SCRGB )
@@ -3270,9 +3274,9 @@ static void paint_all( global_focus_t *pFocus, bool async )
                 // if ( g_ColorMgmt.current.appHDRMetadata )
                 //{
                 //	maxCLLNits =
-                //g_ColorMgmt.current.appHDRMetadata->metadata.hdmi_metadata_type1.max_cll;
+                // g_ColorMgmt.current.appHDRMetadata->metadata.hdmi_metadata_type1.max_cll;
                 //	maxFALLNits =
-                //g_ColorMgmt.current.appHDRMetadata->metadata.hdmi_metadata_type1.max_fall;
+                // g_ColorMgmt.current.appHDRMetadata->metadata.hdmi_metadata_type1.max_fall;
                 //}
 
                 if ( !maxCLLNits && !maxFALLNits )
@@ -3608,12 +3612,12 @@ static void paint_all( global_focus_t *pFocus, bool async )
 __attribute__((
     __no_sanitize_address__ )) // x11 broken, returns format 32 even when it
                                // only malloc'ed one byte. :(
-                               static unsigned int get_prop(
-                                   xwayland_ctx_t *ctx,
-                                   Window          win,
-                                   Atom            prop,
-                                   unsigned int    def,
-                                   bool           *found = nullptr )
+static unsigned int get_prop(
+    xwayland_ctx_t *ctx,
+    Window          win,
+    Atom            prop,
+    unsigned int    def,
+    bool           *found = nullptr )
 {
     Atom          actual;
     int           format;
@@ -7842,7 +7846,8 @@ bool handle_done_commit(
     for ( j = 0; j < w->commit_queue.size( ); j++ )
     {
         if ( w->commit_queue[ j ]->feedback.has_value( ) )
-            w->engineName = w->commit_queue[ j ]->feedback->vk_engine_name;
+            w->engineName =
+                w->commit_queue[ j ]->feedback.value( )->vk_engine_name;
 
         if ( w->commit_queue[ j ]->commitID == commitID )
         {
@@ -10431,7 +10436,8 @@ void steamcompmgr_main( int argc, char **argv )
                     g_HeldCommits[ HELD_COMMIT_BASE ]->colorspace( );
                 if ( g_HeldCommits[ HELD_COMMIT_BASE ]->feedback )
                     app_hdr_metadata = g_HeldCommits[ HELD_COMMIT_BASE ]
-                                           ->feedback->hdr_metadata_blob;
+                                           ->feedback.value( )
+                                           ->hdr_metadata_blob;
             }
 
             bool app_wants_hdr = ColorspaceIsHDR( current_app_colorspace );

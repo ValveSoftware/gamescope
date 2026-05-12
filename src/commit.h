@@ -65,13 +65,14 @@ struct commit_t final : public gamescope::RcObject,
         return vulkanTex;
     }
 
-    uint64_t                                      commitID = 0;
-    bool                                          done     = false;
-    bool                                          async    = false;
-    bool                                          fifo     = false;
-    bool                                          is_steam = false;
-    uint32_t                                      appID    = 0;
-    std::optional<wlserver_vk_swapchain_feedback> feedback = std::nullopt;
+    uint64_t commitID = 0;
+    bool     done     = false;
+    bool     async    = false;
+    bool     fifo     = false;
+    bool     is_steam = false;
+    uint32_t appID    = 0;
+    std::optional<std::shared_ptr<wlserver_vk_swapchain_feedback>> feedback =
+        std::nullopt;
 
     uint64_t                          win_seq = 0;
     struct wlr_surface               *surf    = nullptr;

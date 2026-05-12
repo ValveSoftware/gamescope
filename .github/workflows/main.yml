@@ -27,7 +27,7 @@ jobs:
       - name: Generate file list for formatting
         id: files
         run: |
-          FILES=$(git ls-files src | grep -E '\.(c|cpp|h|hpp)$' | grep -v -E '(reshade|shaders)' | tr '\n' ' ')
+          FILES=$(git ls-files src | grep -v -E '(reshade|shaders|\.o$|\.bin$|\.a$|\.so$|\.dylib$)')
           echo "formatted_files=$FILES" >> $GITHUB_OUTPUT
       - name: Format code with clang-format
         run: |
@@ -36,28 +36,28 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          echo "${{ steps.files.outputs.formatted_files }}" | xargs -r git add
+          echo "${{ steps.files.outputs.formatted_files }}" | xargs -r git add --
           git commit -m "chore: clang-format [skip ci]" || true
       - name: Build with gcc
         run: |
           export CC=gcc CXX=g++
-          meson setup build-gcc/ -Dinput_emulation=disabled --werror --auto-features=enabled
-          ninja -C build-gcc/
+          meson setup -Dinput_emulation=disabled --werror --auto-features=enabled -- build-gcc
+          meson compile -C build-gcc
       - name: Build with gcc (no vr)
         run: |
           export CC=gcc CXX=g++
-          meson setup build-gcc-novr/ -Dinput_emulation=disabled -Denable_openvr_support=false --werror --auto-features=enabled
-          ninja -C build-gcc-novr/
+          meson setup -Dinput_emulation=disabled -Denable_openvr_support=false --werror --auto-features=enabled -- build-gcc-novr
+          meson compile -C build-gcc-novr
       - name: Build with clang
         run: |
           export CC=clang CXX=clang++
-          meson setup build-clang/ -Dinput_emulation=disabled --werror --auto-features=enabled
-          ninja -C build-clang/
+          meson setup -Dinput_emulation=disabled --werror --auto-features=enabled -- build-clang
+          meson compile -C build-clang
       - name: Build with clang (no vr)
         run: |
           export CC=clang CXX=clang++
-          meson setup build-clang-novr/ -Dinput_emulation=disabled -Denable_openvr_support=false --werror --auto-features=enabled
-          ninja -C build-clang-novr/
+          meson setup -Dinput_emulation=disabled -Denable_openvr_support=false --werror --auto-features=enabled -- build-clang-novr
+          meson compile -C build-clang-novr
       - name: Run unit tests and collect coverage (gcc)
         run: |
           export CC=gcc CXX=g++

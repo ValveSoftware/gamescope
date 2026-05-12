@@ -3,6 +3,7 @@
 #include <memory>
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wnan-infinity-disabled"
+#pragma clang diagnostic ignored "-Wsign-compare"
 #include <pipewire/pipewire.h>
 #pragma clang diagnostic pop
 #include <spa/param/video/format-utils.h>
