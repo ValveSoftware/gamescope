@@ -3163,9 +3163,6 @@ namespace gamescope
 
     void CWaylandInputThread::Wayland_Keyboard_Keymap( wl_keyboard *pKeyboard, uint32_t uFormat, int32_t nFd, uint32_t uSize )
     {
-        // We are not doing much with the keymap, we pass keycodes thru.
-        // Ideally we'd use this to influence our keymap to clients, eg. x server.
-
         defer( close( nFd ) );
         if ( uFormat != WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1 )
 		return;
