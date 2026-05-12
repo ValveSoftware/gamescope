@@ -97,6 +97,7 @@ required_wlroots_features = ['xwayland']
 src = [
   'Backends/HeadlessBackend.cpp',
   'Backends/WaylandBackend.cpp',
+  'Utils/DirHelpers.cpp',
   'Utils/TempFiles.cpp',
   'Utils/Version.cpp',
   'Utils/Process.cpp',
@@ -104,6 +105,7 @@ src = [
   'BufferMemo.cpp',
   'steamcompmgr.cpp',
   'convar.cpp',
+  'convar_script.cpp',
   'commit.cpp',
   'color_helpers.cpp',
   'main.cpp',
@@ -205,6 +207,7 @@ gamescope_version = configure_file(
 gamescope_core_src = [
   'convar.cpp',
   'log.cpp',
+  'Utils/DirHelpers.cpp',
   'Utils/Process.cpp',
   'Utils/Version.cpp',
 ]

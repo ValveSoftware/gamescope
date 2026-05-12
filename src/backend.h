@@ -33,6 +33,8 @@ namespace gamescope
     class BackendBlob;
     class INestedHints;
 
+    extern ConVar<std::string> cv_backend;
+
     namespace VirtualConnectorStrategies
     {
         enum VirtualConnectorStrategy : uint32_t
@@ -271,6 +273,8 @@ namespace gamescope
         virtual void SetTitle( std::shared_ptr<std::string> szTitle ) = 0;
         virtual void SetIcon( std::shared_ptr<std::vector<uint32_t>> uIconPixels ) = 0;
         virtual void SetSelection( std::shared_ptr<std::string> szContents, GamescopeSelection eSelection ) = 0;
+
+        virtual bool ShouldPaintCursor() { return false; }
     };
 
     class IBackendFb : public IRcObject
@@ -351,6 +355,10 @@ namespace gamescope
 		}
 
         virtual IBackendConnector *GetCurrentConnector() = 0;
+        virtual IBackendConnector *GetCurrentMouseConnector()
+        {
+            return this->GetCurrentConnector();
+        }
         virtual IBackendConnector *GetConnector( GamescopeScreenType eScreenType ) = 0;
 
         virtual bool SupportsPlaneHardwareCursor() const = 0;
@@ -502,4 +510,3 @@ inline gamescope::IBackend *GetBackend()
 {
     return gamescope::IBackend::Get();
 }
-
