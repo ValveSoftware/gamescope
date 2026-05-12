@@ -91,6 +91,7 @@
 #include "edid.h"
 #include "hdmi.h"
 #include "convar.h"
+#include "Script/Script.h"
 #include "refresh_rate.h"
 #include "commit.h"
 #include "reshade_effect_manager.hpp"
@@ -122,6 +123,7 @@ static const int g_nBaseCursorScale = 36;
 #include "gpuvis_trace_utils.h"
 
 LogScope xwm_log("xwm");
+LogScope focus_log("focus");
 LogScope g_WaitableLog("waitable");
 
 gamescope::ConVar<bool> cv_overlay_unmultiplied_alpha{ "overlay_unmultiplied_alpha", false };
@@ -134,6 +136,8 @@ bool g_bWasPartialComposite = false;
 bool ShouldDrawCursor();
 
 std::atomic<uint32_t> g_unCurrentVRSceneAppId;
+std::atomic<uint64_t> g_FocusedVROverlayMouse;
+std::atomic<uint64_t> g_FocusedVROverlayKeyboard;
 
 ///
 // Color Mgmt
@@ -823,7 +827,7 @@ Window x11_win(steamcompmgr_win_t *w) {
 	return w->xwayland().id;
 }
 
-static uint64_t s_ulFocusSerial = 0ul;
+static std::atomic<uint64_t> s_ulFocusSerial = 0ul;
 void MakeFocusDirty()
 {
 	s_ulFocusSerial++;
@@ -866,19 +870,24 @@ struct global_focus_t : public focus_t
 std::unordered_map<gamescope::VirtualConnectorKey_t, global_focus_t> g_VirtualConnectorFocuses;
 global_focus_t *GetCurrentFocus()
 {
-	if ( GetBackend()->GetCurrentConnector() )
-	{
-		uint64_t ulKey = GetBackend()->GetCurrentConnector()->GetVirtualConnectorKey();
+	uint64_t ulKey = GetBackend()->GetCurrentConnector() ? GetBackend()->GetCurrentConnector()->GetVirtualConnectorKey() : 0;
 
-		auto iter = g_VirtualConnectorFocuses.find( ulKey );
-		if ( iter != g_VirtualConnectorFocuses.end() )
-			return &iter->second;
-	}
-
-	if ( g_VirtualConnectorFocuses.size() > 0 )
-		return &g_VirtualConnectorFocuses.begin()->second;
+	auto iter = g_VirtualConnectorFocuses.find( ulKey );
+	if ( iter != g_VirtualConnectorFocuses.end() )
+		return &iter->second;
 
 	return nullptr;
+}
+
+global_focus_t *GetCurrentMouseFocus()
+{
+	uint64_t ulKey = GetBackend()->GetCurrentMouseConnector() ? GetBackend()->GetCurrentMouseConnector()->GetVirtualConnectorKey() : 0;
+
+	auto iter = g_VirtualConnectorFocuses.find( ulKey );
+	if ( iter != g_VirtualConnectorFocuses.end() )
+		return &iter->second;
+
+	return GetCurrentFocus();
 }
 
 uint32_t		currentOutputWidth, currentOutputHeight;
@@ -2437,7 +2446,10 @@ bool ShouldDrawCursor()
 	if ( !pFocus )
 		return false;
 
-	return !pFocus->GetNestedHints();
+	if ( !pFocus->GetNestedHints() )
+		return true;
+
+	return pFocus->GetNestedHints()->ShouldPaintCursor();
 }
 
 static void ForwardVROverlayTargets()
@@ -3437,6 +3449,10 @@ static bool is_good_override_candidate( steamcompmgr_win_t *override, steamcompm
 	if ( !focus )
 		return false;
 
+	// The pids should probably match for a dropdown to be a good candidate for this window.
+	if (override->pid != focus->pid)
+		return false;
+
 	auto rect = override->GetGeometry();
 	return override != focus && (rect.nX + rect.nWidth) > 0 && (rect.nY + rect.nHeight) > 0;
 } 
@@ -3773,30 +3789,33 @@ void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win
 
 	pick_primary_focus_and_override( &ctx->focus, ctx->focusControlWindow, vecPossibleFocusWindows, false, vecFocuscontrolAppIDs, ulKey, eStrategy );
 
+	if ( !ctx->focus.overrideWindowMouse )
+	{
+		ctx->focus.overrideWindowMouse = ctx->focus.overrideWindow;
+	}
+
 	if ( inputFocus == NULL )
 	{
 		inputFocus = ctx->focus.focusWindow;
 	}
 
-	if ( !ctx->focus.focusWindow )
+	if ( ctx->focus.focusWindow )
 	{
-		return;
-	}
-
-	if ( prevFocusWindow != ctx->focus.focusWindow )
-	{
-		/* Some games (e.g. DOOM Eternal) don't react well to being put back as
-		* iconic, so never do that. Only take them out of iconic. */
-		set_wm_state( ctx, ctx->focus.focusWindow->xwayland().id, ICCCM_NORMAL_STATE );
-
-		gpuvis_trace_printf( "determine_and_apply_focus focus %lu", ctx->focus.focusWindow->xwayland().id );
-
-		if ( debugFocus == true )
+		if ( prevFocusWindow != ctx->focus.focusWindow )
 		{
-			xwm_log.debugf( "determine_and_apply_focus focus %lu", ctx->focus.focusWindow->xwayland().id );
-			char buf[512];
-			sprintf( buf,  "xwininfo -id 0x%lx; xprop -id 0x%lx; xwininfo -root -tree", ctx->focus.focusWindow->xwayland().id, ctx->focus.focusWindow->xwayland().id );
-			system( buf );
+			/* Some games (e.g. DOOM Eternal) don't react well to being put back as
+			* iconic, so never do that. Only take them out of iconic. */
+			set_wm_state( ctx, ctx->focus.focusWindow->xwayland().id, ICCCM_NORMAL_STATE );
+
+			gpuvis_trace_printf( "determine_and_apply_focus focus %lu", ctx->focus.focusWindow->xwayland().id );
+
+			if ( debugFocus == true )
+			{
+				xwm_log.debugf( "determine_and_apply_focus focus %lu", ctx->focus.focusWindow->xwayland().id );
+				char buf[512];
+				sprintf( buf,  "xwininfo -id 0x%lx; xprop -id 0x%lx; xwininfo -root -tree", ctx->focus.focusWindow->xwayland().id, ctx->focus.focusWindow->xwayland().id );
+				system( buf );
+			}
 		}
 	}
 
@@ -3806,6 +3825,67 @@ void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win
 	{
 		if ( inputFocus && inputFocus->inputFocusMode == 2 )
 			keyboardFocusWin = ctx->focus.focusWindow;
+	}
+	else
+	{
+		// Handle mouse focus being totally disjoint from KB in VR.
+		if ( GetBackend() && GetBackend()->GetCurrentMouseConnector() )
+		{
+			gamescope::VirtualConnectorKey_t ulMouseKey = GetBackend()->GetCurrentMouseConnector()->GetVirtualConnectorKey();
+			
+			focus_t mouse_focus{};
+			pick_primary_focus_and_override( &mouse_focus, ctx->focusControlWindow, vecPossibleFocusWindows, false, vecFocuscontrolAppIDs, ulMouseKey, eStrategy );
+
+			if ( mouse_focus.overrideWindow || mouse_focus.focusWindow )
+			{
+				inputFocus = mouse_focus.overrideWindow ? mouse_focus.overrideWindow : mouse_focus.focusWindow;
+				ctx->focus.overrideWindowMouse = mouse_focus.overrideWindow;
+			}
+		}
+
+		uint64_t ulFocusedKeyboardOverlayVR = g_FocusedVROverlayKeyboard;
+		uint64_t ulFocusedMouseOverlayVR = g_FocusedVROverlayMouse;
+
+		if ( ulFocusedKeyboardOverlayVR || ulFocusedMouseOverlayVR )
+		{
+			for ( steamcompmgr_win_t *queryWindow = ctx->list; queryWindow; queryWindow = queryWindow->xwayland().next )
+			{
+				if ( queryWindow->oulTargetVROverlay && *queryWindow->oulTargetVROverlay == ulFocusedKeyboardOverlayVR )
+				{
+					focus_log.debugf( "[XWL] Overriding keyboard focus window with VR forwarder overlay! Overlay: 0x%lx XWindow: 0x%x Title: %s", ulFocusedKeyboardOverlayVR, queryWindow->id(), queryWindow->debug_name() );
+
+					keyboardFocusWin = queryWindow;
+					ctx->focus.focusWindow = queryWindow;
+
+					// No support for overrides with this VR path!
+					ctx->focus.overrideWindow = nullptr;
+					ctx->focus.overrideWindowMouse = nullptr;
+				}
+
+				if ( queryWindow->oulTargetVROverlay && *queryWindow->oulTargetVROverlay == ulFocusedMouseOverlayVR )
+				{
+					// We don't want to do any mouse input for target VR overlays right now.
+					// SteamWebHelper is handling this.
+
+					if ( !inputFocus )
+						inputFocus = queryWindow;
+
+					// No support for overrides with this VR path!
+					ctx->focus.overrideWindow = nullptr;
+					ctx->focus.overrideWindowMouse = nullptr;
+				}
+			}
+		}
+	}
+
+	if ( !ctx->focus.focusWindow )
+	{
+		return;
+	}
+
+	if ( !inputFocus )
+	{
+		inputFocus = ctx->focus.focusWindow;
 	}
 
 	Window keyboardFocusWindow = keyboardFocusWin ? keyboardFocusWin->xwayland().id : None;
@@ -3855,11 +3935,11 @@ void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win
 	steamcompmgr_win_t *w;
 	w = ctx->focus.focusWindow;
 
-	if ( inputFocus == ctx->focus.focusWindow && ctx->focus.overrideWindow )
+	if ( inputFocus == ctx->focus.focusWindow && ctx->focus.overrideWindowMouse )
 	{
-		if ( ctx->list[0].xwayland().id != ctx->focus.overrideWindow->xwayland().id )
+		if ( ctx->list[0].xwayland().id != ctx->focus.overrideWindowMouse->xwayland().id )
 		{
-			XRaiseWindow(ctx->dpy, ctx->focus.overrideWindow->xwayland().id);
+			XRaiseWindow(ctx->dpy, ctx->focus.overrideWindowMouse->xwayland().id);
 		}
 	}
 	else
@@ -3881,7 +3961,7 @@ void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win
 
 	if ( win_has_game_id( w ) )
 	{
-		if ( window_is_fullscreen( ctx->focus.focusWindow ) )
+		if ( window_is_fullscreen( ctx->focus.focusWindow ) || ctx->force_windows_fullscreen )
 		{
 			bool bIsSteam = window_is_steam( ctx->focus.focusWindow );
 			int fs_width  = ctx->root_width;
@@ -4023,6 +4103,8 @@ determine_and_apply_focus( global_focus_t *pFocus )
 	pFocus->pVirtualConnector = previousLocalFocus.pVirtualConnector;
 	gameFocused = false;
 
+	focus_log.debugf( "Rerolling global focus..." );
+
 	std::vector< unsigned long > focusable_appids;
 	std::vector< unsigned long > focusable_windows;
 
@@ -4127,6 +4209,38 @@ determine_and_apply_focus( global_focus_t *pFocus )
 		pFocus->keyboardFocusWindow = pFocus->overrideWindow ? pFocus->overrideWindow : pFocus->focusWindow;
 	}
 
+	if ( !gamescope::VirtualConnectorIsSingleOutput() )
+	{
+		uint64_t ulFocusedKeyboardOverlayVR = g_FocusedVROverlayKeyboard;
+		uint64_t ulFocusedMouseOverlayVR = g_FocusedVROverlayMouse;
+
+		focus_log.debugf( "Current focus VR overlays: keyboard 0x%lx | mouse 0x%lx", ulFocusedKeyboardOverlayVR, ulFocusedMouseOverlayVR );
+
+		if ( ulFocusedKeyboardOverlayVR || ulFocusedMouseOverlayVR )
+		{
+			for ( steamcompmgr_win_t *queryWindow = root_ctx->list; queryWindow; queryWindow = queryWindow->xwayland().next )
+			{
+				if ( queryWindow->oulTargetVROverlay && *queryWindow->oulTargetVROverlay == ulFocusedKeyboardOverlayVR )
+				{
+					focus_log.debugf( "[WL GLOBAL] Overriding keyboard focus window with VR forwarder overlay! Overlay: 0x%lx XWindow: 0x%x Title: %s", ulFocusedKeyboardOverlayVR, queryWindow->id(), queryWindow->debug_name() );
+					pFocus->keyboardFocusWindow = queryWindow;
+
+					pFocus->overrideWindow = nullptr;
+				}
+
+				if ( queryWindow->oulTargetVROverlay && *queryWindow->oulTargetVROverlay == ulFocusedMouseOverlayVR )
+				{
+					// We don't want to do any mouse input for target VR overlays right now.
+					// SteamWebHelper is handling this.
+
+					//pFocus->inputFocusWindow = queryWindow;
+
+					pFocus->overrideWindow = nullptr;
+				}
+			}
+		}
+	}
+
 	// Pick cursor from our input focus window
 
 	// Initially pick cursor from the ctx of our input focus.
@@ -4167,13 +4281,59 @@ determine_and_apply_focus( global_focus_t *pFocus )
 		static gamescope::VirtualConnectorKey_t s_ulPreviousGlobalFocusKey;
 
 		// Tell wlserver about our keyboard/mouse focus.
-		if ( pFocus->inputFocusWindow   != previousLocalFocus.inputFocusWindow ||
-			pFocus->keyboardFocusWindow != previousLocalFocus.keyboardFocusWindow ||
-			pFocus->overrideWindow      != previousLocalFocus.overrideWindow ||
+		if (pFocus->keyboardFocusWindow != previousLocalFocus.keyboardFocusWindow ||
 			pFocus->ulVirtualFocusKey   != s_ulPreviousGlobalFocusKey )
 		{
 			if ( win_surface(pFocus->inputFocusWindow)    != nullptr ||
 				 win_surface(pFocus->keyboardFocusWindow) != nullptr )
+			{
+				wlserver_lock();
+
+				if ( win_surface(pFocus->keyboardFocusWindow) != nullptr )
+				{
+					wlserver_keyboardfocus( pFocus->keyboardFocusWindow->main_surface() );
+					focus_log.debugf( "Setting keyboard focus to: %s (%x)", pFocus->keyboardFocusWindow->debug_name(), pFocus->keyboardFocusWindow->id() );
+				}
+
+				wlserver_unlock();
+			}
+		}
+
+		if ( pFocus->inputFocusWindow )
+		{
+			// Cannot simply XWarpPointer here as we immediately go on to
+			// do wlserver_mousefocus and need to update m_x and m_y of the cursor.
+			if ( pFocus->inputFocusWindow->GetFocus()->bResetToCorner )
+			{
+				wlserver_lock();
+				wlserver_mousewarp( pFocus->inputFocusWindow->GetGeometry().nWidth / 2, pFocus->inputFocusWindow->GetGeometry().nHeight / 2, 0, true );
+				wlserver_fake_mouse_pos( pFocus->inputFocusWindow->GetGeometry().nWidth - 1, pFocus->inputFocusWindow->GetGeometry().nHeight - 1 );
+				wlserver_unlock();
+			}
+			else if ( pFocus->inputFocusWindow->GetFocus()->bResetToCenter )
+			{
+				wlserver_lock();
+				wlserver_mousewarp( pFocus->inputFocusWindow->GetGeometry().nWidth / 2, pFocus->inputFocusWindow->GetGeometry().nHeight / 2, 0, true );
+				wlserver_unlock();
+			}
+
+			pFocus->inputFocusWindow->GetFocus()->bResetToCorner = false;
+			pFocus->inputFocusWindow->GetFocus()->bResetToCenter = false;
+		}
+
+		s_ulPreviousGlobalFocusKey = pFocus->ulVirtualFocusKey;
+	}
+
+	if ( pFocus == GetCurrentMouseFocus() )
+	{
+		static gamescope::VirtualConnectorKey_t s_ulPreviousGlobalFocusKey;
+
+		// Tell wlserver about our keyboard/mouse focus.
+		if ( pFocus->inputFocusWindow   != previousLocalFocus.inputFocusWindow ||
+			pFocus->overrideWindow      != previousLocalFocus.overrideWindow ||
+			pFocus->ulVirtualFocusKey   != s_ulPreviousGlobalFocusKey )
+		{
+			if ( win_surface(pFocus->inputFocusWindow) != nullptr )
 			{
 				wlserver_lock();
 
@@ -4183,7 +4343,7 @@ determine_and_apply_focus( global_focus_t *pFocus )
 
 				if ( gamescope::VirtualConnectorInSteamPerAppState() && pFocus->inputFocusWindow )
 				{
-					if ( pFocus->focusWindow->type == steamcompmgr_win_type_t::XWAYLAND )
+					if ( pFocus->inputFocusWindow->type == steamcompmgr_win_type_t::XWAYLAND )
 					{
 						xwayland_ctx_t *ctx = pFocus->inputFocusWindow->xwayland().ctx;
 						bool bTouchPointerEmulation = gamescope::VirtualConnectorKeyIsNonSteamWindow( pFocus->ulVirtualFocusKey );
@@ -4201,10 +4361,11 @@ determine_and_apply_focus( global_focus_t *pFocus )
 				}
 
 				if ( win_surface(pFocus->inputFocusWindow) != nullptr && pFocus->cursor )
+				{
 					wlserver_mousefocus( pFocus->inputFocusWindow->main_surface(), pFocus->cursor->x(), pFocus->cursor->y() );
+					focus_log.debugf( "Setting mouse focus to: %s (%x)", pFocus->inputFocusWindow->debug_name(), pFocus->inputFocusWindow->id() );
+				}
 
-				if ( win_surface(pFocus->keyboardFocusWindow) != nullptr )
-					wlserver_keyboardfocus( pFocus->keyboardFocusWindow->main_surface() );
 				wlserver_unlock();
 			}
 
@@ -4571,7 +4732,7 @@ handle_desktop_window(steamcompmgr_win_t *w)
 
 	xwayland_ctx_t *ctx = w->xwayland().ctx;
 
-	if ( w->sizeHintsSpecified && !window_is_fullscreen( w ) )
+	if ( w->sizeHintsSpecified && !(window_is_fullscreen( w ) || ctx->force_windows_fullscreen) )
 	{
 		if ((unsigned)w->GetGeometry().nWidth != w->requestedWidth || (unsigned)w->GetGeometry().nHeight != w->requestedHeight)
 		{
@@ -6575,11 +6736,8 @@ steamcompmgr_exit(void)
 [[noreturn]] static int
 handle_io_error(Display *dpy)
 {
-	xwm_log.errorf("X11 I/O error");
-	steamcompmgr_exit();
-
-	g_SteamCompMgrXWaylandServerMutex.unlock();
-	pthread_exit(NULL);
+	xwm_log.errorf("X11 I/O error! This is fatal. Aborting...");
+	abort();
 }
 
 static bool
@@ -7115,7 +7273,7 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 		wlserver_lock();
 		wlr_buffer_unlock( buf );
 		wlserver_unlock();
-		xwm_log.warnf( "got the same buffer committed twice, ignoring." );
+		xwm_log.debugf( "got the same buffer committed twice, ignoring." );
 
 		// If we have a duplicated commit + frame callback, ensure that is signalled.
 		// This matches Mutter and Weston behavior, so it's plausible that some application relies on forward progress.
@@ -7173,7 +7331,7 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 			upscaledFrameInfo.useNISLayer0 = g_upscaleFilter == GamescopeUpscaleFilter::NIS;
 			globalScaleRatio = flOldGlobalScale;
 			zoomScaleRatio = flOldZoomScale;
-			flOldOverscanScale = flOldOverscanScale;
+			overscanScaleRatio = flOldOverscanScale;
 
 			TempUpscaleImage_t *pTempImage = GetTempUpscaleImage( g_nOutputWidth, g_nOutputHeight, g_output.uOutputFormat );
 			if ( pTempImage )
@@ -8251,18 +8409,12 @@ steamcompmgr_main(int argc, char **argv)
 
 	globalScaleRatio = overscanScaleRatio * zoomScaleRatio;
 
-	if ( gamescope::VirtualConnectorIsSingleOutput() )
+	static constexpr uint64_t k_unSingleOutputVirtualConnectorKey = 0;
+	g_VirtualConnectorFocuses[ k_unSingleOutputVirtualConnectorKey ] = global_focus_t
 	{
-		// misyl: Make the virtual connector up-front if we are in a single-output mode.
-		// So we don't delay in getting display/output info to the game
-		static constexpr uint64_t k_unSingleOutputVirtualConnectorKey = 0;
-
-		g_VirtualConnectorFocuses[ k_unSingleOutputVirtualConnectorKey ] = global_focus_t
-		{
-			.ulVirtualFocusKey = k_unSingleOutputVirtualConnectorKey,
-			.pVirtualConnector = GetBackend()->UsesVirtualConnectors() ? GetBackend()->CreateVirtualConnector( k_unSingleOutputVirtualConnectorKey ) : nullptr,
-		};
-	}
+		.ulVirtualFocusKey = k_unSingleOutputVirtualConnectorKey,
+		.pVirtualConnector = GetBackend()->UsesVirtualConnectors() ? GetBackend()->CreateVirtualConnector( k_unSingleOutputVirtualConnectorKey ) : nullptr,
+	};
 
 	for ( auto &iter : g_VirtualConnectorFocuses )
 	{
@@ -8403,18 +8555,15 @@ steamcompmgr_main(int argc, char **argv)
 
 			xwm_log.infof( "Late init of virtual connector stuff." );
 
-			if ( gamescope::VirtualConnectorIsSingleOutput() )
-			{
-				// misyl: Make the virtual connector up-front if we are in a single-output mode.
-				// So we don't delay in getting display/output info to the game
-				static constexpr uint64_t k_unSingleOutputVirtualConnectorKey = 0;
+			// misyl: Make the virtual connector up-front if we are in a single-output mode.
+			// So we don't delay in getting display/output info to the game
+			static constexpr uint64_t k_unSingleOutputVirtualConnectorKey = 0;
 
-				g_VirtualConnectorFocuses[ k_unSingleOutputVirtualConnectorKey ] = global_focus_t
-				{
-					.ulVirtualFocusKey = k_unSingleOutputVirtualConnectorKey,
-					.pVirtualConnector = GetBackend()->UsesVirtualConnectors() ? GetBackend()->CreateVirtualConnector( k_unSingleOutputVirtualConnectorKey ) : nullptr,
-				};
-			}
+			g_VirtualConnectorFocuses[ k_unSingleOutputVirtualConnectorKey ] = global_focus_t
+			{
+				.ulVirtualFocusKey = k_unSingleOutputVirtualConnectorKey,
+				.pVirtualConnector = GetBackend()->UsesVirtualConnectors() ? GetBackend()->CreateVirtualConnector( k_unSingleOutputVirtualConnectorKey ) : nullptr,
+			};
 
 			hasRepaint = true;
 		}
@@ -8503,6 +8652,7 @@ steamcompmgr_main(int argc, char **argv)
 				for ( gamescope::VirtualConnectorKey_t ulKey : diffKeys )	
 				{
 					bool bIsSteam = gamescope::VirtualConnectorKeyIsSteam( ulKey );
+					bool bIsBaseKey = ulKey == 0;
 
 					if ( gamescope::Algorithm::Contains( newKeys, ulKey ) )
 					{
@@ -8512,7 +8662,7 @@ steamcompmgr_main(int argc, char **argv)
 							.pVirtualConnector = GetBackend()->UsesVirtualConnectors() ? GetBackend()->CreateVirtualConnector( ulKey ) : nullptr,
 						};
 					}
-					else if ( !bIsSteam ) // Never remove Steam's virtual conn	ector.
+					else if ( !bIsSteam && !bIsBaseKey ) // Never remove Steam's virtual connector or the 0th connector.
 					{
 						g_VirtualConnectorFocuses.erase( ulKey );
 					}

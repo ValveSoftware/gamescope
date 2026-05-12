@@ -64,7 +64,7 @@ static bool GetVulkanDeviceExtensionsRequired( VkPhysicalDevice pPhysicalDevice,
 
 gamescope::ConVar<bool> cv_vr_always_warp_cursor( "vr_always_warp_cursor", true, "Whether or not we should always warp the cursor, even if it is invisible so we get hover events." );
 gamescope::ConVar<bool> cv_vr_use_modifiers( "vr_use_modifiers", true, "Use DMA-BUF modifiers?" );
-gamescope::ConVar<bool> cv_vr_transparent_backing( "vr_transparent_backing", true, "Should backing be transparent or not?" );
+gamescope::ConVar<bool> cv_vr_transparent_backing( "vr_transparent_backing", false, "Should backing be transparent or not?" );
 gamescope::ConVar<bool> cv_vr_use_window_icons( "vr_use_window_icons", true, "Should we use window icons if they are available?" );
 gamescope::ConVar<bool> cv_vr_trackpad_hide_laser( "vr_trackpad_hide_laser", false, "Hide laser mouse when we are in trackpad mode." );
 gamescope::ConVar<bool> cv_vr_trackpad_relative_mouse_mode( "vr_trackpad_relative_mouse_mode", true, "If we are in relative mouse mode, treat the screen like a big trackpad?" );
@@ -77,12 +77,50 @@ gamescope::ConVar<bool> cv_vr_nudge_to_visible_per_connector( "vr_nudge_to_visib
 // Maximum interval between polling for VR events (normally paced by frame sync)
 gamescope::ConVar<uint32_t> cv_vr_poll_rate( "vr_poll_rate", 50ul, "Max time between input polls. In milliseconds." );
 
+extern std::atomic<uint64_t> g_FocusedVROverlayMouse;
+extern std::atomic<uint64_t> g_FocusedVROverlayKeyboard;
+
 // Not in public headers yet.
 namespace vr
 {
     const EVRButtonId k_EButton_Steam = (EVRButtonId)(50);
     const EVRButtonId k_EButton_QAM = (EVRButtonId)(51);
+
+    constexpr EVREventType VREvent_OverlayInputFocusChanged = ( EVREventType )(564); // data is overlayInputFocus
+
+
+    /** Used in VREvent_OverlayInputFocus_t */
+    enum EVRInputFocusEventFlags
+    {
+        // Indicates the overlay should actively have keyboard focus.
+        k_EVRInputFocusEventFlags_OverlayShouldShowAffordanceForKeyboardInput = 1 << 0,
+        // Indicates the overlay should actively have gamepad focus.
+        k_EVRInputFocusEventFlags_OverlayShouldShowAffordanceForGamepadInput = 1 << 1,
+    };
+    /** Used for a few events about overlay input focus */
+    struct VREvent_OverlayInputFocus_t
+    {
+        // Overlay that has keyboard and/or gamepad focus. If this is your overlay and its contents is a desktop or a desktop window,
+        // this event is a great oppportunity to move that window to the foreground so it receives input.
+        uint64_t overlayHandle; // VROverlayHandle_t
+        uint32_t flags; // EVRInputFocusEventFlags
+    };
+
+    typedef union
+    {
+        VREvent_OverlayInputFocus_t overlayInputFocus;
+    } VREvent_Data_Gamescope_t;
+
+    static inline const VREvent_Data_Gamescope_t &CastToGamescopeEventData( const VREvent_Data_t &eventData )
+    {
+        return reinterpret_cast< const vr::VREvent_Data_Gamescope_t & >( eventData );
+    }
+    static inline VREvent_Data_Gamescope_t &CastToGamescopeEventData( VREvent_Data_t &eventData )
+    {
+        return reinterpret_cast< vr::VREvent_Data_Gamescope_t & >( eventData );
+    }
 }
+//
 
 extern std::atomic<uint32_t> g_unCurrentVRSceneAppId;
 
@@ -330,6 +368,7 @@ namespace gamescope
         virtual void SetTitle( std::shared_ptr<std::string> szTitle ) override;
         virtual void SetIcon( std::shared_ptr<std::vector<uint32_t>> uIconPixels ) override;
         virtual void SetSelection( std::shared_ptr<std::string> szContents, GamescopeSelection eSelection ) override;
+        virtual bool ShouldPaintCursor() override { return true; }
 
         bool UpdateEdid();
 
@@ -740,8 +779,12 @@ namespace gamescope
 
 		virtual IBackendConnector *GetCurrentConnector() override
 		{
-			return m_pFocusConnector;
+			return m_pKeyboardFocusConnector;
 		}
+        virtual IBackendConnector *GetCurrentMouseConnector() override
+        {
+            return m_pMouseFocusConnector;
+        }
 		virtual IBackendConnector *GetConnector( GamescopeScreenType eScreenType ) override
 		{
 			if ( eScreenType == GAMESCOPE_SCREEN_TYPE_INTERNAL )
@@ -832,20 +875,23 @@ namespace gamescope
                 return TouchClickModes::Trackpad;
             }
 
-            if ( pConnector->IsTouchForbidden() )
+            if ( pConnector )
             {
-                return TouchClickModes::Left;
-            }
-
-            if ( VirtualConnectorKeyIsNonSteamWindow( pConnector->GetVirtualConnectorKey() ) )
-            {
-                return TouchClickModes::Passthrough;
-            }
-
-            if ( VirtualConnectorInSteamPerAppState() )
-            {
-                if ( !VirtualConnectorKeyIsSteam( pConnector->GetVirtualConnectorKey() ) )
+                if ( pConnector->IsTouchForbidden() )
+                {
                     return TouchClickModes::Left;
+                }
+
+                if ( VirtualConnectorKeyIsNonSteamWindow( pConnector->GetVirtualConnectorKey() ) )
+                {
+                    return TouchClickModes::Passthrough;
+                }
+
+                if ( VirtualConnectorInSteamPerAppState() )
+                {
+                    if ( !VirtualConnectorKeyIsSteam( pConnector->GetVirtualConnectorKey() ) )
+                        return TouchClickModes::Left;
+                }
             }
 
             return CBaseBackend::GetTouchClickMode();
@@ -859,22 +905,23 @@ namespace gamescope
         {
             std::shared_ptr<COpenVRConnector> pConnector = std::make_shared<COpenVRConnector>( this, ulVirtualConnectorKey );
 
-            bool bSetCurrentConnector = false;
-            {
-                if ( !m_pFocusConnector )
-                {
-                    SetFocus( pConnector.get() );
-                    bSetCurrentConnector = true;
-                }
-            }
-
             if ( !pConnector->Init() )
             {
-                if ( bSetCurrentConnector )
-                {
-                    SetFocus( nullptr );
-                }
                 return nullptr;
+            }
+
+            {
+                COpenVRConnector *pExpected = nullptr;
+                m_pMouseFocusConnector.compare_exchange_strong( pExpected, pConnector.get() );
+            }
+
+            {
+                COpenVRConnector *pExpected = nullptr;
+                if ( m_pKeyboardFocusConnector.compare_exchange_strong( pExpected, pConnector.get() ) )
+                {
+                    openvr_log.debugf( "Changed keyboard focus connector to %p ", pConnector.get() );
+                    update_connector_display_info_wl( NULL );
+                }
             }
 
             std::scoped_lock lock{ m_mutActiveConnectors };
@@ -998,16 +1045,6 @@ namespace gamescope
             m_nOverlaysVisible.wait( 0 );
         }
 
-        void SetFocus( COpenVRConnector *pFocus )
-        {
-            COpenVRConnector *pPreviousFocus = m_pFocusConnector.exchange( pFocus );
-            if ( pPreviousFocus != pFocus )
-            {
-                MakeFocusDirty();
-                update_connector_display_info_wl( NULL );
-            }
-        }
-
         COpenVRPlane *GetPlaneByOverlayHandle( vr::VROverlayHandle_t hOverlay )
         {
             COpenVRPlane *pPlane = nullptr;
@@ -1018,6 +1055,75 @@ namespace gamescope
                     break;
             }
             return pPlane;
+        }
+
+        void SetMouseFocus( uint64_t ulFocusOverlay )
+        {
+            uint64_t oldOverlayHandle = g_FocusedVROverlayMouse.exchange( ulFocusOverlay );
+
+            if ( oldOverlayHandle == ulFocusOverlay )
+                return;
+
+            openvr_log.debugf( "Changing mouse focus from %lx to %lx", oldOverlayHandle, ulFocusOverlay );
+
+            COpenVRConnector *pInputConnector = nullptr;
+            if ( ulFocusOverlay != vr::k_ulOverlayHandleInvalid )
+            {
+                COpenVRPlane *pInputPlane = GetPlaneByOverlayHandle( ulFocusOverlay );
+                if ( pInputPlane )
+                {
+                    pInputConnector = pInputPlane->GetConnector();
+                }
+            }
+
+            if ( pInputConnector )
+            {
+                pInputConnector->m_bUsingVRMouse = true;
+
+                COpenVRConnector *pOldConnector = m_pMouseFocusConnector.exchange( pInputConnector );
+
+                if ( pOldConnector != pInputConnector )
+                {
+                    openvr_log.debugf( "Changing mouse focus connector to %p", pInputConnector );
+
+                    // We don't do anything with mouse focus that isn't local,
+                    // so only dirty focus if the focus connector changed.
+                    //
+                    // Unlike with Keyboard where we need to focus for forwarders too!
+
+                    MakeFocusDirty();
+                    nudge_steamcompmgr();
+                }
+            }
+        }
+
+        void SetKeyboardFocus( uint64_t ulFocusOverlay )
+        {
+            uint64_t oldOverlayHandle = g_FocusedVROverlayKeyboard.exchange( ulFocusOverlay );
+
+            if ( oldOverlayHandle == ulFocusOverlay )
+                return;
+
+            openvr_log.debugf( "Changing keyboard focus from %lx to %lx", oldOverlayHandle, ulFocusOverlay );
+
+            COpenVRConnector *pInputConnector = nullptr;
+            if ( ulFocusOverlay != vr::k_ulOverlayHandleInvalid )
+            {
+                COpenVRPlane *pInputPlane = GetPlaneByOverlayHandle( ulFocusOverlay );
+                if ( pInputPlane )
+                {
+                    pInputConnector = pInputPlane->GetConnector();
+                }
+            }
+
+            if ( pInputConnector )
+            {
+                openvr_log.debugf( "Changing keyboard focus connector to %p", pInputConnector );
+                m_pKeyboardFocusConnector.exchange( pInputConnector );
+            }
+
+            MakeFocusDirty();
+            nudge_steamcompmgr();
         }
 
         void ProcessVRInput()
@@ -1161,7 +1267,8 @@ namespace gamescope
                 {
                     if (pConnector && pConnector->m_bUsingVRMouse)
                     {
-                        SetFocus(pConnector);
+                        SetMouseFocus( hOverlay );
+
                         float flX = vrEvent.data.mouse.x / float(g_nOutputWidth);
                         float flY = (g_nOutputHeight - vrEvent.data.mouse.y) / float(g_nOutputHeight);
 
@@ -1197,17 +1304,31 @@ namespace gamescope
                     break;
                 }
                 case vr::VREvent_FocusEnter:
-                    if (pConnector)
                     {
-                        pConnector->m_bUsingVRMouse = true;
-                        SetFocus(pConnector);
+                        if (pConnector)
+                        {
+                            pConnector->m_bUsingVRMouse = true;
+                            SetMouseFocus( hOverlay );
+                        }
+                    }
+                    break;
+
+                case vr::VREvent_OverlayFocusChanged:
+                    {
+                        SetMouseFocus( vrEvent.data.overlay.overlayHandle );
+                    }
+                    break;
+                case vr::VREvent_OverlayInputFocusChanged:
+                    {
+                        const vr::VREvent_Data_Gamescope_t &data = CastToGamescopeEventData( vrEvent.data );
+                        SetKeyboardFocus( data.overlayInputFocus.overlayHandle );
                     }
                     break;
                 case vr::VREvent_MouseButtonUp:
                 case vr::VREvent_MouseButtonDown:
                     if (pConnector)
                     {
-                        SetFocus(pConnector);
+                        SetMouseFocus( hOverlay );
 
                         if (!pConnector->m_bUsingVRMouse)
                         {
@@ -1289,31 +1410,14 @@ namespace gamescope
                 case vr::VREvent_ScrollSmooth:
                     if (pConnector)
                     {
-                        SetFocus(pConnector);
+                        SetMouseFocus( hOverlay );
+
                         float flX = -vrEvent.data.scroll.xdelta * m_flScrollSpeed;
                         float flY = -vrEvent.data.scroll.ydelta * m_flScrollSpeed;
                         wlserver_lock();
                         wlserver_mousewheel(flX, flY, ++m_uFakeTimestamp);
                         wlserver_unlock();
                         bDidScrollThisFrame = true;
-                    }
-                    break;
-
-                case vr::VREvent_ButtonPress:
-                    if (pConnector)
-                    {
-                        SetFocus(pConnector);
-                        vr::EVRButtonId button = (vr::EVRButtonId)vrEvent.data.controller.button;
-
-                        if (button != vr::k_EButton_Steam && button != vr::k_EButton_QAM)
-                            break;
-
-                        if (button == vr::k_EButton_Steam)
-                            openvr_log.infof("STEAM button pressed.");
-                        else
-                            openvr_log.infof("QAM button pressed.");
-
-                        wlserver_open_steam_menu(button == vr::k_EButton_QAM);
                     }
                     break;
 
@@ -1345,35 +1449,6 @@ namespace gamescope
                 wlserver_lock();
                 wlserver_touchmotion(flTouchMoveX, flTouchMoveY, 0, ++m_uFakeTimestamp, bAlwaysMoveCursor);
                 wlserver_unlock();
-            }
-
-            // Process mouse input state.
-            for (COpenVRConnector *pConnector : m_pActiveConnectors)
-            {
-                bool bUsingPhysicalMouse = GetCurrentConnector() == pConnector && !pConnector->m_bUsingVRMouse;
-
-                bool bShowCursor = !pConnector->IsRelativeMouse();
-
-                if (bUsingPhysicalMouse && bShowCursor)
-                {
-                    vr::HmdVector2_t vMousePos =
-                        {
-                            static_cast<float>(wlserver.mouse_surface_cursorx),
-                            static_cast<float>(static_cast<double>(g_nOutputHeight) - wlserver.mouse_surface_cursory),
-                        };
-
-                    vr::VROverlay()->SetOverlayCursorPositionOverride(pConnector->GetPrimaryPlane()->GetOverlay(), &vMousePos);
-                    pConnector->m_bCurrentlyOverridingPosition = true;
-                }
-                else
-                {
-                    if (!pConnector->m_bCurrentlyOverridingPosition)
-                        continue;
-
-                    vr::VROverlay()->ClearOverlayCursorPositionOverride(pConnector->GetPrimaryPlane()->GetOverlay());
-
-                    pConnector->m_bCurrentlyOverridingPosition = false;
-                }
             }
         }
 
@@ -1419,7 +1494,8 @@ namespace gamescope
         friend COpenVRConnector;
         std::vector<COpenVRConnector*> m_pActiveConnectors;
         std::mutex m_mutActiveConnectors;
-        std::atomic<COpenVRConnector *> m_pFocusConnector;
+        std::atomic<COpenVRConnector *> m_pMouseFocusConnector;
+        std::atomic<COpenVRConnector *> m_pKeyboardFocusConnector;
 
         std::atomic<bool> m_bInitted = { false };
         std::atomic<bool> m_bRunning = { false };
@@ -1462,9 +1538,10 @@ namespace gamescope
             m_pBackend->m_pActiveConnectors.erase( iter );
 
         COpenVRConnector *pThis = this;
-        m_pBackend->m_pFocusConnector.compare_exchange_strong( pThis, nullptr );
+        m_pBackend->m_pMouseFocusConnector.compare_exchange_strong( pThis, nullptr );
+        pThis = this;
+        m_pBackend->m_pKeyboardFocusConnector.compare_exchange_strong( pThis, nullptr );
     }
-
     GamescopeScreenType COpenVRConnector::GetScreenType() const
     {
         return GAMESCOPE_SCREEN_TYPE_INTERNAL;
@@ -1591,8 +1668,45 @@ namespace gamescope
                     } );
             }
 
+            bool bShouldHideCursor = true;
+
             for ( int i = 0; i < 8 && uCurrentPlane < 8; i++ )
-                m_Planes[uCurrentPlane++].Present( i < pFrameInfo->layerCount ? &pFrameInfo->layers[i] : nullptr );
+            {
+                const FrameInfo_t::Layer_t *pLayer = i < pFrameInfo->layerCount ? &pFrameInfo->layers[i] : nullptr;
+                if ( pLayer && pLayer->zpos == g_zposCursor )
+                {
+                    bool bUsingPhysicalMouse = m_pBackend->GetCurrentMouseConnector() == this && !m_bUsingVRMouse;
+
+                    bool bShowCursor = !IsRelativeMouse();
+
+                    if (bUsingPhysicalMouse && bShowCursor)
+                    {
+                        vr::HmdVector2_t vMousePos =
+                        {
+                            static_cast<float>( -pLayer->offset.x ),
+                            static_cast<float>( static_cast<float>( g_nOutputHeight ) + pLayer->offset.y ),
+                        };
+
+                        vr::VROverlay()->SetOverlayCursorPositionOverride( GetPrimaryPlane()->GetOverlay(), &vMousePos );
+                        m_bCurrentlyOverridingPosition = true;
+
+                        bShouldHideCursor = false;
+                    }
+
+                    pLayer = nullptr; // Handled here.
+                }
+                m_Planes[uCurrentPlane++].Present( pLayer );
+            }
+
+            if ( bShouldHideCursor )
+            {
+                if ( m_bCurrentlyOverridingPosition )
+                {
+                    vr::VROverlay()->ClearOverlayCursorPositionOverride( GetPrimaryPlane()->GetOverlay() );
+
+                    m_bCurrentlyOverridingPosition = false;
+                }
+            }
         }
         else
         {
@@ -1972,7 +2086,7 @@ namespace gamescope
 
         vr::VROverlay()->SetOverlayFlag( m_hOverlay, vr::VROverlayFlags_EnableClickStabilization, m_pBackend->ShouldEnableClickStabilization() );
         vr::VROverlay()->SetOverlayFlag( m_hOverlay, vr::VROverlayFlags_IsPremultiplied, true );
-        vr::VROverlay()->SetOverlayInputMethod( m_hOverlay, vr::VROverlayInputMethod_Mouse );
+        vr::VROverlay()->SetOverlayInputMethod( m_hOverlay, m_bIsSubview ? vr::VROverlayInputMethod_None : vr::VROverlayInputMethod_Mouse );
         vr::VROverlay()->SetOverlaySortOrder( m_hOverlay, m_uSortOrder );
 
         return true;

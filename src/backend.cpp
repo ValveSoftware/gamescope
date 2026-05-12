@@ -15,6 +15,8 @@ extern bool g_bAllowDeferredBackend;
 
 namespace gamescope
 {
+    ConVar<std::string> cv_backend( "backend", "auto", "Override the backend selection (auto-detected or specified on the command line)." );
+
     ConVar<VirtualConnectorStrategy> cv_backend_virtual_connector_strategy( "backend_virtual_connector_strategy", VirtualConnectorStrategies::SingleApplication );
 
     /////////////

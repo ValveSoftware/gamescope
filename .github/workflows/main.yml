@@ -19,22 +19,34 @@ jobs:
             libxtst libxkbcommon libdrm libinput wayland-protocols benchmark \
             xorg-xwayland pipewire cmake \
             libavif libheif aom rav1e libdecor libxdamage \
-            luajit
-      - uses: actions/checkout@v4
+            luajit \
+            catch2 gcovr
+      - uses: actions/checkout@v6
         with:
           submodules: recursive
       - name: Build with gcc
         run: |
           export CC=gcc CXX=g++
-          meson build-gcc/ -Dinput_emulation=disabled --werror --auto-features=enabled
+          meson setup build-gcc/ -Dinput_emulation=disabled --werror --auto-features=enabled
           ninja -C build-gcc/
       - name: Build with gcc (no vr)
         run: |
           export CC=gcc CXX=g++
-          meson build-gcc-novr/ -Dinput_emulation=disabled -Denable_openvr_support=false --werror --auto-features=enabled
+          meson setup build-gcc-novr/ -Dinput_emulation=disabled -Denable_openvr_support=false --werror --auto-features=enabled
           ninja -C build-gcc-novr/
 #      - name: Build with clang
 #        run: |
 #          export CC=clang CXX=clang++
-#          meson build-clang/ -Dinput_emulation=disabled --werror --auto-features=enabled
+#          meson setup build-clang/ -Dinput_emulation=disabled --werror --auto-features=enabled
 #          ninja -C build-clang/
+      - name: Run unit tests and collect coverage
+        run: |
+          export CC=gcc CXX=g++
+          meson configure -Db_coverage=true build-gcc
+          meson test -C build-gcc --suite gamescope -v
+          gcovr -f src --xml -o coverage.xml -s build-gcc
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v7
+        with:
+          name: code coverage
+          path: coverage.xml
