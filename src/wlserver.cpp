@@ -2832,8 +2832,19 @@ static void apply_touchscreen_orientation(GamescopePanelOrientation orientation,
 	}
 
 	if (g_bEnableDRMRotationShader) {
-		tx = 1.0 - *y;
-		ty = *x;
+		switch ( orientation )
+		{
+			case GAMESCOPE_PANEL_ORIENTATION_180:
+				tx = *y;
+				ty = 1.0 - *x;
+				break;
+			default:
+			case GAMESCOPE_PANEL_ORIENTATION_0:
+			case GAMESCOPE_PANEL_ORIENTATION_AUTO:
+				tx = 1.0 - *y;
+				ty = *x;
+				break;
+		}
 	}
 
 	*x = tx;
