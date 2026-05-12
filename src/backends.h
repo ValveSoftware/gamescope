@@ -19,4 +19,4 @@ namespace gamescope
     class COpenVRBackend;
     class CHeadlessBackend;
     class CWaylandBackend;
-}
+} // namespace gamescope

@@ -31,44 +31,48 @@ namespace gamescope
         // VBlank timer defaults and starting values.
         // Anything time-related is nanoseconds unless otherwise specified.
         static constexpr uint64_t kStartingVBlankDrawTime = 3'000'000ul;
-        static constexpr uint64_t kDefaultMinVBlankTime = 350'000ul;
-        static constexpr uint64_t kDefaultVBlankRedZone = 1'650'000ul;
-        static constexpr uint64_t kDefaultVBlankDrawTimeMinCompositing = 2'400'000ul;
-        static constexpr uint64_t kDefaultVBlankRateOfDecayPercentage = 980ul; // 98%
+        static constexpr uint64_t kDefaultMinVBlankTime   = 350'000ul;
+        static constexpr uint64_t kDefaultVBlankRedZone   = 1'650'000ul;
+        static constexpr uint64_t kDefaultVBlankDrawTimeMinCompositing =
+            2'400'000ul;
+        static constexpr uint64_t kDefaultVBlankRateOfDecayPercentage =
+            980ul;                                                // 98%
         static constexpr uint64_t kVBlankRateOfDecayMax = 1000ul; // 100%
 
         static constexpr uint64_t kVRRFlushingTime = 300'000;
 
-        CVBlankTimer();
-        ~CVBlankTimer();
+        CVBlankTimer( );
+        ~CVBlankTimer( );
 
-        int GetRefresh() const;
-        uint64_t GetLastVBlank() const;
+        int      GetRefresh( ) const;
+        uint64_t GetLastVBlank( ) const;
         uint64_t GetNextVBlank( uint64_t ulOffset ) const;
 
         VBlankScheduleTime CalcNextWakeupTime( bool bPreemptive );
-        void Reschedule();
+        void               Reschedule( );
 
-        std::optional<VBlankTime> ProcessVBlank();
+        std::optional<VBlankTime> ProcessVBlank( );
         void MarkVBlank( uint64_t ulNanos, bool bReArmTimer );
 
-        bool WasCompositing() const;
+        bool WasCompositing( ) const;
         void UpdateWasCompositing( bool bCompositing );
         void UpdateLastDrawTime( uint64_t ulNanos );
 
-        void WaitToBeArmed();
+        void WaitToBeArmed( );
         void ArmNextVBlank( bool bPreemptive );
 
-        bool UsingTimerFD() const;
-        int GetFD() final;
-        void OnPollIn() final;
-    private:
-        void VBlankDebugSpew( uint64_t ulOffset, uint64_t ulDrawTime, uint64_t ulRedZone );
+        bool UsingTimerFD( ) const;
+        int  GetFD( ) final;
+        void OnPollIn( ) final;
 
-        uint64_t m_ulTargetVBlank = 0;
-        std::atomic<uint64_t> m_ulLastVBlank = { 0 };
-        std::atomic<bool> m_bArmed = { false };
-        std::atomic<bool> m_bRunning = { true };
+    private:
+        void VBlankDebugSpew(
+            uint64_t ulOffset, uint64_t ulDrawTime, uint64_t ulRedZone );
+
+        uint64_t              m_ulTargetVBlank = 0;
+        std::atomic<uint64_t> m_ulLastVBlank   = { 0 };
+        std::atomic<bool>     m_bArmed         = { false };
+        std::atomic<bool>     m_bRunning       = { true };
 
         std::optional<VBlankTime> m_PendingVBlank;
 
@@ -78,11 +82,11 @@ namespace gamescope
         // m_bArmed is atomic so can still be .wait()'ed
         // on/read outside.
         // Does not cover m_ulLastVBlank, this is just atomic.
-        std::mutex m_ScheduleMutex;
+        std::mutex         m_ScheduleMutex;
         VBlankScheduleTime m_TimerFDSchedule{};
 
         std::thread m_NudgeThread;
-        int m_nNudgePipe[2] = { -1, -1 };
+        int         m_nNudgePipe[ 2 ] = { -1, -1 };
 
         /////////////////////////////
         // Scheduling bits and bobs.
@@ -94,7 +98,8 @@ namespace gamescope
         std::atomic<bool> m_bCurrentlyCompositing = { false };
         // This is the last time a 'draw' took from wake-up to page flip.
         // 3ms by default to get the ball rolling.
-        // This is calculated by steamcompmgr/drm and fed-back to the vblank timer.
+        // This is calculated by steamcompmgr/drm and fed-back to the vblank
+        // timer.
         std::atomic<uint64_t> m_ulLastDrawTime = { kStartingVBlankDrawTime };
 
         //////////////////////////////////
@@ -106,10 +111,11 @@ namespace gamescope
         // doing pre-emptive timer re-arms.
         uint64_t m_ulRollingMaxDrawTime = kStartingVBlankDrawTime;
 
-        // This accounts for some time we cannot account for (which (I think) is the drm_commit -> triggering the pageflip)
-        // It would be nice to make this lower if we can find a way to track that effectively
-        // Perhaps the missing time is spent elsewhere, but given we track from the pipe write
-        // to after the return from `drm_commit` -- I am very doubtful.
+        // This accounts for some time we cannot account for (which (I think) is
+        // the drm_commit -> triggering the pageflip) It would be nice to make
+        // this lower if we can find a way to track that effectively Perhaps the
+        // missing time is spent elsewhere, but given we track from the pipe
+        // write to after the return from `drm_commit` -- I am very doubtful.
         // 1.3ms by default. (kDefaultMinVBlankTime)
         uint64_t m_ulMinVBlankTime = kDefaultMinVBlankTime;
 
@@ -118,19 +124,20 @@ namespace gamescope
         uint64_t m_ulVBlankDrawBufferRedZone = kDefaultVBlankRedZone;
 
         // The minimum drawtime to use when we are compositing.
-        // Getting closer and closer to vblank when compositing means that we can get into
-        // a feedback loop with our GPU clocks. Pick a sane minimum draw time.
-        // 2.4ms by default. (kDefaultVBlankDrawTimeMinCompositing)
-        uint64_t m_ulVBlankDrawTimeMinCompositing = kDefaultVBlankDrawTimeMinCompositing;
+        // Getting closer and closer to vblank when compositing means that we
+        // can get into a feedback loop with our GPU clocks. Pick a sane minimum
+        // draw time. 2.4ms by default. (kDefaultVBlankDrawTimeMinCompositing)
+        uint64_t m_ulVBlankDrawTimeMinCompositing =
+            kDefaultVBlankDrawTimeMinCompositing;
 
-        // The rate of decay (as a percentage) of the rolling average -> current draw time
-        // 930 = 93%.
-        // 93% by default. (kDefaultVBlankRateOfDecayPercentage)
-        uint64_t m_ulVBlankRateOfDecayPercentage = kDefaultVBlankRateOfDecayPercentage;
+        // The rate of decay (as a percentage) of the rolling average -> current
+        // draw time 930 = 93%. 93% by default.
+        // (kDefaultVBlankRateOfDecayPercentage)
+        uint64_t m_ulVBlankRateOfDecayPercentage =
+            kDefaultVBlankRateOfDecayPercentage;
 
-        void NudgeThread();
+        void NudgeThread( );
     };
-}
+} // namespace gamescope
 
-gamescope::CVBlankTimer &GetVBlankTimer();
-
+gamescope::CVBlankTimer &GetVBlankTimer( );

@@ -9,17 +9,18 @@ namespace gamescope
     class GamescopeInputServer final : public IWaitable
     {
     public:
-        GamescopeInputServer();
-        ~GamescopeInputServer();
+        GamescopeInputServer( );
+        ~GamescopeInputServer( );
 
         bool Init( const char *pszSocketPath );
 
-        virtual int GetFD() override;
-        virtual void OnPollIn() override;
+        virtual int  GetFD( ) override;
+        virtual void OnPollIn( ) override;
+
     private:
         eis *m_pEis = nullptr;
-        int m_nFd = -1;
+        int  m_nFd  = -1;
 
-        double m_flScrollAccum[2]{};
+        double m_flScrollAccum[ 2 ]{};
     };
-}
+} // namespace gamescope

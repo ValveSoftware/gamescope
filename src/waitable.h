@@ -1,11 +1,11 @@
 #pragma once
 
-#include <thread>
-#include <stdint.h>
 #include <fcntl.h>
-#include <unistd.h>
+#include <stdint.h>
 #include <sys/epoll.h>
 #include <sys/timerfd.h>
+#include <thread>
+#include <unistd.h>
 
 #include <functional>
 #include <mutex>
@@ -21,40 +21,37 @@ namespace gamescope
     class IWaitable
     {
     public:
-        virtual ~IWaitable() {}
+        virtual ~IWaitable( ) {}
 
-        virtual int GetFD() { return -1; }
+        virtual int GetFD( ) { return -1; }
 
-        virtual void OnPollIn() {}
-        virtual void OnPollOut() {}
-        virtual void OnPollHangUp()
+        virtual void OnPollIn( ) {}
+        virtual void OnPollOut( ) {}
+        virtual void OnPollHangUp( )
         {
             g_WaitableLog.errorf( "IWaitable hung up. Aborting." );
-            abort();
+            abort( );
         }
 
         void HandleEvents( uint32_t nEvents )
         {
-            if ( nEvents & EPOLLIN )
-                this->OnPollIn();
-            if ( nEvents & EPOLLOUT )
-                this->OnPollOut();
-            if ( nEvents & EPOLLHUP )
-                this->OnPollHangUp();
+            if ( nEvents & EPOLLIN ) this->OnPollIn( );
+            if ( nEvents & EPOLLOUT ) this->OnPollOut( );
+            if ( nEvents & EPOLLHUP ) this->OnPollHangUp( );
         }
 
         static void Drain( int nFD )
         {
-            if ( nFD < 0 )
-                return;
+            if ( nFD < 0 ) return;
 
-            char buf[1024];
-            for (;;)
+            char buf[ 1024 ];
+            for ( ;; )
             {
                 if ( read( nFD, buf, sizeof( buf ) ) < 0 )
                 {
                     if ( errno != EAGAIN )
-                        g_WaitableLog.errorf_errno( "Failed to drain CNudgeWaitable" );
+                        g_WaitableLog.errorf_errno(
+                            "Failed to drain CNudgeWaitable" );
                     break;
                 }
             }
@@ -64,98 +61,76 @@ namespace gamescope
     class CNudgeWaitable final : public IWaitable
     {
     public:
-        CNudgeWaitable()
+        CNudgeWaitable( )
         {
-            if ( pipe2( m_nFDs, O_CLOEXEC | O_NONBLOCK ) != 0 )
-                Shutdown();
+            if ( pipe2( m_nFDs, O_CLOEXEC | O_NONBLOCK ) != 0 ) Shutdown( );
         }
 
-        ~CNudgeWaitable()
-        {
-            Shutdown();
-        }
+        ~CNudgeWaitable( ) { Shutdown( ); }
 
-        void Shutdown()
+        void Shutdown( )
         {
             for ( int i = 0; i < 2; i++ )
             {
-                if ( m_nFDs[i] >= 0 )
+                if ( m_nFDs[ i ] >= 0 )
                 {
-                    close( m_nFDs[i] );
-                    m_nFDs[i] = -1;
+                    close( m_nFDs[ i ] );
+                    m_nFDs[ i ] = -1;
                 }
             }
         }
 
-        void Drain()
-        {
-            IWaitable::Drain( m_nFDs[0] );
-        }
+        void Drain( ) { IWaitable::Drain( m_nFDs[ 0 ] ); }
 
-        void OnPollIn() final
-        {
-            Drain();
-        }
+        void OnPollIn( ) final { Drain( ); }
 
-        bool Nudge()
-        {
-            return write( m_nFDs[1], "\n", 1 ) >= 0;
-        }
+        bool Nudge( ) { return write( m_nFDs[ 1 ], "\n", 1 ) >= 0; }
 
-        int GetFD() final { return m_nFDs[0]; }
+        int GetFD( ) final { return m_nFDs[ 0 ]; }
+
     private:
-        int m_nFDs[2] = { -1, -1 };
+        int m_nFDs[ 2 ] = { -1, -1 };
     };
-
 
     class CFunctionWaitable final : public IWaitable
     {
     public:
-        CFunctionWaitable( int nFD, std::function<void()> fnPollFunc = nullptr )
-            : m_nFD{ nFD }
-            , m_fnPollFunc{ fnPollFunc }
+        CFunctionWaitable(
+            int nFD, std::function<void( )> fnPollFunc = nullptr ) :
+            m_nFD{ nFD }, m_fnPollFunc{ fnPollFunc }
+        {}
+
+        void OnPollIn( ) final
         {
+            if ( m_fnPollFunc ) m_fnPollFunc( );
         }
 
-        void OnPollIn() final
-        {
-            if ( m_fnPollFunc )
-                m_fnPollFunc();
-        }
+        void Drain( ) { IWaitable::Drain( m_nFD ); }
 
-        void Drain()
-        {
-            IWaitable::Drain( m_nFD );
-        }
+        int GetFD( ) final { return m_nFD; }
 
-        int GetFD() final
-        {
-            return m_nFD;
-        }
     private:
-        int m_nFD;
-        std::function<void()> m_fnPollFunc;
+        int                    m_nFD;
+        std::function<void( )> m_fnPollFunc;
     };
 
     class ITimerWaitable : public IWaitable
     {
     public:
-        ITimerWaitable()
+        ITimerWaitable( )
         {
-            m_nFD = timerfd_create( CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC );
-			if ( m_nFD < 0 )
-			{
-				g_WaitableLog.errorf_errno( "Failed to create timerfd." );
-				abort();
-			}
+            m_nFD =
+                timerfd_create( CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC );
+            if ( m_nFD < 0 )
+            {
+                g_WaitableLog.errorf_errno( "Failed to create timerfd." );
+                abort( );
+            }
         }
 
-        ~ITimerWaitable()
-        {
-            Shutdown();
-        }
+        ~ITimerWaitable( ) { Shutdown( ); }
 
-        void Shutdown()
+        void Shutdown( )
         {
             if ( m_nFD >= 0 )
             {
@@ -164,28 +139,25 @@ namespace gamescope
             }
         }
 
-        void ArmTimer( uint64_t ulScheduledWakeupTime, bool bRepeatingRelative = false )
+        void ArmTimer(
+            uint64_t ulScheduledWakeupTime, bool bRepeatingRelative = false )
         {
-            timespec wakeupTimeSpec = nanos_to_timespec( ulScheduledWakeupTime );
+            timespec wakeupTimeSpec =
+                nanos_to_timespec( ulScheduledWakeupTime );
 
-			itimerspec timerspec =
-			{
-				.it_interval = bRepeatingRelative ? wakeupTimeSpec : timespec{},
-				.it_value = bRepeatingRelative ? timespec{} : wakeupTimeSpec,
-			};
-			if ( timerfd_settime( m_nFD, TFD_TIMER_ABSTIME, &timerspec, NULL ) < 0 )
-				g_WaitableLog.errorf_errno( "timerfd_settime failed!" );
+            itimerspec timerspec = {
+                .it_interval = bRepeatingRelative ? wakeupTimeSpec : timespec{},
+                .it_value    = bRepeatingRelative ? timespec{} : wakeupTimeSpec,
+            };
+            if ( timerfd_settime( m_nFD, TFD_TIMER_ABSTIME, &timerspec, NULL ) <
+                 0 )
+                g_WaitableLog.errorf_errno( "timerfd_settime failed!" );
         }
 
-        void DisarmTimer()
-        {
-            ArmTimer( 0ul, false );
-        }
+        void DisarmTimer( ) { ArmTimer( 0ul, false ); }
 
-        int GetFD()
-        {
-            return m_nFD;
-        }
+        int GetFD( ) { return m_nFD; }
+
     private:
         int m_nFD = -1;
     };
@@ -193,41 +165,30 @@ namespace gamescope
     class CTimerFunction final : public ITimerWaitable
     {
     public:
-        CTimerFunction( std::function<void()> fnPollFunc )
-            : m_fnPollFunc{ fnPollFunc }
-        {
-        }
+        CTimerFunction( std::function<void( )> fnPollFunc ) :
+            m_fnPollFunc{ fnPollFunc }
+        {}
 
-        void OnPollIn() final
-        {
-            m_fnPollFunc();
-        }
+        void OnPollIn( ) final { m_fnPollFunc( ); }
+
     private:
-        std::function<void()> m_fnPollFunc;
+        std::function<void( )> m_fnPollFunc;
     };
 
-    template <size_t MaxEvents = 1024>
-    class CWaiter
+    template<size_t MaxEvents = 1024> class CWaiter
     {
     public:
-        CWaiter()
-            : m_nEpollFD{ epoll_create1( EPOLL_CLOEXEC ) }
-        {
-            AddWaitable( &m_NudgeWaitable );
-        }
+        CWaiter( ) : m_nEpollFD{ epoll_create1( EPOLL_CLOEXEC ) }
+        { AddWaitable( &m_NudgeWaitable ); }
 
-        ~CWaiter()
-        {
-            Shutdown();
-        }
+        ~CWaiter( ) { Shutdown( ); }
 
-        void Shutdown()
+        void Shutdown( )
         {
-            if ( !m_bRunning )
-                return;
+            if ( !m_bRunning ) return;
 
             m_bRunning = false;
-            Nudge();
+            Nudge( );
 
             if ( m_nEpollFD >= 0 )
             {
@@ -236,7 +197,8 @@ namespace gamescope
             }
         }
 
-        bool AddWaitable( IWaitable *pWaitable, uint32_t nEvents = EPOLLIN | EPOLLHUP )
+        bool AddWaitable(
+            IWaitable *pWaitable, uint32_t nEvents = EPOLLIN | EPOLLHUP )
         {
             epoll_event event =
             {
@@ -247,7 +209,9 @@ namespace gamescope
                 },
             };
 
-            if ( epoll_ctl( m_nEpollFD, EPOLL_CTL_ADD, pWaitable->GetFD(), &event ) != 0 )
+            if ( epoll_ctl(
+                     m_nEpollFD, EPOLL_CTL_ADD, pWaitable->GetFD( ), &event ) !=
+                 0 )
             {
                 g_WaitableLog.errorf_errno( "Failed to add waitable" );
                 return false;
@@ -258,34 +222,36 @@ namespace gamescope
 
         void RemoveWaitable( IWaitable *pWaitable )
         {
-            epoll_ctl( m_nEpollFD, EPOLL_CTL_DEL, pWaitable->GetFD(), nullptr );
+            epoll_ctl(
+                m_nEpollFD, EPOLL_CTL_DEL, pWaitable->GetFD( ), nullptr );
         }
 
         int PollEvents( int nTimeOut = -1 )
         {
-            epoll_event events[MaxEvents];
+            epoll_event events[ MaxEvents ];
 
             for ( ;; )
             {
-                int nEventCount = epoll_wait( m_nEpollFD, events, MaxEvents, nTimeOut );
+                int nEventCount =
+                    epoll_wait( m_nEpollFD, events, MaxEvents, nTimeOut );
 
-                if ( !m_bRunning )
-                    return 0;
+                if ( !m_bRunning ) return 0;
 
                 if ( nEventCount < 0 )
                 {
-                    if ( errno == EAGAIN || errno == EINTR )
-                        continue;
+                    if ( errno == EAGAIN || errno == EINTR ) continue;
 
-                    g_WaitableLog.errorf_errno( "Failed to epoll_wait in CAsyncWaiter" );
+                    g_WaitableLog.errorf_errno(
+                        "Failed to epoll_wait in CAsyncWaiter" );
                     return nEventCount;
                 }
 
                 for ( int i = 0; i < nEventCount; i++ )
                 {
-                    epoll_event &event = events[i];
+                    epoll_event &event = events[ i ];
 
-                    IWaitable *pWaitable = reinterpret_cast<IWaitable *>( event.data.ptr );
+                    IWaitable *pWaitable =
+                        reinterpret_cast<IWaitable *>( event.data.ptr );
                     pWaitable->HandleEvents( event.events );
                 }
 
@@ -293,135 +259,122 @@ namespace gamescope
             }
         }
 
-        bool Nudge()
-        {
-            return m_NudgeWaitable.Nudge();
-        }
+        bool Nudge( ) { return m_NudgeWaitable.Nudge( ); }
 
-        bool IsRunning()
-        {
-            return m_bRunning;
-        }
+        bool IsRunning( ) { return m_bRunning; }
 
     private:
         std::atomic<bool> m_bRunning = { true };
-        CNudgeWaitable m_NudgeWaitable;
+        CNudgeWaitable    m_NudgeWaitable;
 
         int m_nEpollFD = -1;
     };
 
-    // A raw pointer class that's compatible with shared/unique_ptr + Rc semantics
-    // eg. .get(), etc.
-    // for compatibility with structures that use other types that assume ownership/lifetime
-    // in some way.
-    template <typename T>
-    class CRawPointer
+    // A raw pointer class that's compatible with shared/unique_ptr + Rc
+    // semantics eg. .get(), etc. for compatibility with structures that use
+    // other types that assume ownership/lifetime in some way.
+    template<typename T> class CRawPointer
     {
     public:
-        CRawPointer() {}
+        CRawPointer( ) {}
         CRawPointer( std::nullptr_t ) {}
 
-        CRawPointer( const CRawPointer &other )
-            : m_pObject{ other.m_pObject }
-        {
-        }
+        CRawPointer( const CRawPointer &other ) : m_pObject{ other.m_pObject }
+        {}
 
-        CRawPointer( CRawPointer&& other )
-            : m_pObject{ other.m_pObject }
-        {
-            other.m_pObject = nullptr;
-        }
+        CRawPointer( CRawPointer &&other ) : m_pObject{ other.m_pObject }
+        { other.m_pObject = nullptr; }
 
-        CRawPointer( T* pObject )
-            : m_pObject{ pObject }
-        {
-        }
+        CRawPointer( T *pObject ) : m_pObject{ pObject } {}
 
-        CRawPointer& operator = ( std::nullptr_t )
+        CRawPointer &operator=( std::nullptr_t )
         {
             m_pObject = nullptr;
             return *this;
         }
 
-        CRawPointer& operator = ( const CRawPointer& other )
+        CRawPointer &operator=( const CRawPointer &other )
         {
             m_pObject = other.m_pObject;
             return *this;
         }
 
-        CRawPointer& operator = ( CRawPointer&& other )
+        CRawPointer &operator=( CRawPointer &&other )
         {
             this->m_pObject = other.m_pObject;
             other.m_pObject = nullptr;
             return *this;
         }
 
-        T& operator *  () const { return *m_pObject; }
-        T* operator -> () const { return  m_pObject; }
-        T* get() const { return m_pObject; }
+        T &operator*( ) const { return *m_pObject; }
+        T *operator->( ) const { return m_pObject; }
+        T *get( ) const { return m_pObject; }
 
-        bool operator == ( const CRawPointer& other ) const { return m_pObject == other.m_pObject; }
-        bool operator != ( const CRawPointer& other ) const { return m_pObject != other.m_pObject; }
+        bool operator==( const CRawPointer &other ) const
+        { return m_pObject == other.m_pObject; }
+        bool operator!=( const CRawPointer &other ) const
+        { return m_pObject != other.m_pObject; }
 
-        bool operator == ( T *pOther ) const { return m_pObject == pOther; }
-        bool operator != ( T *pOther ) const { return m_pObject == pOther; }
+        bool operator==( T *pOther ) const { return m_pObject == pOther; }
+        bool operator!=( T *pOther ) const { return m_pObject == pOther; }
 
-        bool operator == ( std::nullptr_t ) const { return m_pObject == nullptr; }
-        bool operator != ( std::nullptr_t ) const { return m_pObject != nullptr; }
+        bool operator==( std::nullptr_t ) const { return m_pObject == nullptr; }
+        bool operator!=( std::nullptr_t ) const { return m_pObject != nullptr; }
+
     private:
-        T* m_pObject = nullptr;
+        T *m_pObject = nullptr;
     };
 
-    template <typename WaitableType = CRawPointer<IWaitable>, size_t MaxEvents = 1024>
+    template<
+        typename WaitableType = CRawPointer<IWaitable>,
+        size_t MaxEvents      = 1024>
     class CAsyncWaiter : private CWaiter<MaxEvents>
     {
     public:
-        CAsyncWaiter( const char *pszThreadName )
-            : m_Thread{ [cWaiter = this, cName = pszThreadName](){ cWaiter->WaiterThreadFunc(cName); } }
+        CAsyncWaiter( const char *pszThreadName ) :
+            m_Thread{ [ cWaiter = this, cName = pszThreadName ]( )
+                      { cWaiter->WaiterThreadFunc( cName ); } }
         {
-            if constexpr ( UseTracking() )
+            if constexpr ( UseTracking( ) )
             {
                 m_AddedWaitables.reserve( 32 );
                 m_RemovedWaitables.reserve( 32 );
             }
         }
 
-        ~CAsyncWaiter()
+        ~CAsyncWaiter( ) { Shutdown( ); }
+
+        void Shutdown( )
         {
-            Shutdown();
-        }
+            CWaiter<MaxEvents>::Shutdown( );
 
-        void Shutdown()
-        {
-            CWaiter<MaxEvents>::Shutdown();
+            if ( m_Thread.joinable( ) ) m_Thread.join( );
 
-            if ( m_Thread.joinable() )
-                m_Thread.join();
-
-            if constexpr ( UseTracking() )
+            if constexpr ( UseTracking( ) )
             {
                 {
                     std::unique_lock lock( m_AddedWaitablesMutex );
-                    m_AddedWaitables.clear();
+                    m_AddedWaitables.clear( );
                 }
 
                 {
                     std::unique_lock lock( m_RemovedWaitablesMutex );
-                    m_RemovedWaitables.clear();
+                    m_RemovedWaitables.clear( );
                 }
             }
         }
 
-        bool AddWaitable( WaitableType pWaitable, uint32_t nEvents = EPOLLIN | EPOLLHUP )
+        bool AddWaitable(
+            WaitableType pWaitable, uint32_t nEvents = EPOLLIN | EPOLLHUP )
         {
-            if constexpr ( UseTracking() )
+            if constexpr ( UseTracking( ) )
             {
-                if ( !pWaitable->HasLiveReferences() )
-                    return false;
+                if ( !pWaitable->HasLiveReferences( ) ) return false;
 
                 std::unique_lock lock( m_AddedWaitablesMutex );
 
-                if ( !CWaiter<MaxEvents>::AddWaitable( pWaitable.get(), nEvents ) )
+                if ( !CWaiter<MaxEvents>::AddWaitable(
+                         pWaitable.get( ), nEvents ) )
                     return false;
 
                 m_AddedWaitables.emplace_back( pWaitable );
@@ -429,46 +382,46 @@ namespace gamescope
             }
             else
             {
-                return CWaiter<MaxEvents>::AddWaitable( pWaitable.get(), nEvents );
+                return CWaiter<MaxEvents>::AddWaitable(
+                    pWaitable.get( ), nEvents );
             }
         }
 
         void RemoveWaitable( WaitableType pWaitable )
         {
-            if constexpr ( UseTracking() )
+            if constexpr ( UseTracking( ) )
             {
-                if ( !pWaitable->HasLiveReferences() )
-                    return;
+                if ( !pWaitable->HasLiveReferences( ) ) return;
 
                 std::unique_lock lock( m_RemovedWaitablesMutex );
-                m_RemovedWaitables.emplace_back( pWaitable.get() );
+                m_RemovedWaitables.emplace_back( pWaitable.get( ) );
             }
 
-            CWaiter<MaxEvents>::RemoveWaitable( pWaitable.get() );
+            CWaiter<MaxEvents>::RemoveWaitable( pWaitable.get( ) );
         }
 
         void WaiterThreadFunc( const char *pszThreadName )
         {
-            pthread_setname_np( pthread_self(), pszThreadName );
+            pthread_setname_np( pthread_self( ), pszThreadName );
 
-            while ( this->IsRunning() )
+            while ( this->IsRunning( ) )
             {
-                CWaiter<MaxEvents>::PollEvents();
+                CWaiter<MaxEvents>::PollEvents( );
 
-                if constexpr ( UseTracking() )
+                if constexpr ( UseTracking( ) )
                 {
-                    std::scoped_lock lock( m_AddedWaitablesMutex, m_RemovedWaitablesMutex );
-                    for ( auto& pRemoved : m_RemovedWaitables )
+                    std::scoped_lock lock(
+                        m_AddedWaitablesMutex, m_RemovedWaitablesMutex );
+                    for ( auto &pRemoved : m_RemovedWaitables )
                         std::erase( m_AddedWaitables, pRemoved );
-                    m_RemovedWaitables.clear();
+                    m_RemovedWaitables.clear( );
                 }
             }
         }
+
     private:
-        static constexpr bool UseTracking()
-        {
-            return !std::is_same<WaitableType, CRawPointer<IWaitable>>::value;
-        }
+        static constexpr bool UseTracking( )
+        { return !std::is_same<WaitableType, CRawPointer<IWaitable>>::value; }
 
         std::thread m_Thread;
 
@@ -476,13 +429,11 @@ namespace gamescope
         // of objects (eg. shared_ptr) could be too short.
         // Eg. RemoveWaitable but still processing events, or about
         // to start processing events.
-        std::mutex m_AddedWaitablesMutex;
+        std::mutex                m_AddedWaitablesMutex;
         std::vector<WaitableType> m_AddedWaitables;
 
-        std::mutex m_RemovedWaitablesMutex;        
+        std::mutex                m_RemovedWaitablesMutex;
         std::vector<WaitableType> m_RemovedWaitables;
     };
 
-
-}
-
+} // namespace gamescope

@@ -7,8 +7,11 @@
 
 namespace gamescope
 {
-    void PrintVersion()
+    void PrintVersion( )
     {
-        console_log.infof( "%s version %s", Process::GetProcessName(), gamescope::k_szGamescopeVersion );
+        console_log.infof(
+            "%s version %s",
+            Process::GetProcessName( ),
+            gamescope::k_szGamescopeVersion );
     }
-}
+} // namespace gamescope
