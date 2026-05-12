@@ -499,7 +499,7 @@ namespace gamescope
 		void ParseEDID();
 
 
-		CDRMBackend *m_pBackend = nullptr;
+		[[maybe_unused]] CDRMBackend *m_pBackend = nullptr;
 		CAutoDeletePtr<drmModeConnector> m_pConnector;
 
 		struct MutableConnectorState
@@ -516,7 +516,7 @@ namespace gamescope
 			std::vector<uint32_t> ValidDynamicRefreshRates{};
 			std::vector<uint8_t> EdidData; // Raw, unmodified.
 			std::vector<BackendMode> BackendModes;
-			
+
 			displaycolorimetry_t DisplayColorimetry = displaycolorimetry_709;
 			BackendConnectorHDRInfo HDR;
 
@@ -535,7 +535,7 @@ namespace gamescope
 		~CDRMFb();
 
 		uint32_t GetFbId() const { return m_uFbId; }
-	
+
 	private:
 		uint32_t m_uFbId = 0;
 	};
@@ -597,12 +597,12 @@ static constexpr uint32_t s_kSteamDeckLCDRates[] =
 
 static constexpr uint32_t s_kSteamDeckOLEDRates[] =
 {
-	45, 47, 48, 49, 
-	50, 51, 53, 55, 56, 59, 
-	60, 62, 64, 65, 66, 68, 
-	72, 73, 76, 77, 78, 
-	80, 81, 82, 84, 85, 86, 87, 88, 
-	90, 
+	45, 47, 48, 49,
+	50, 51, 53, 55, 56, 59,
+	60, 62, 64, 65, 66, 68,
+	72, 73, 76, 77, 78,
+	80, 81, 82, 84, 85, 86, 87, 88,
+	90,
 };
 
 void update_connector_display_info_wl(struct drm_t *drm)
@@ -1014,7 +1014,7 @@ static bool get_saved_mode(const char *description, saved_mode &mode_info)
         int ret = sscanf(line, "%255[^:]:%dx%d@%d %u", saved_description, &mode_info.width, &mode_info.height, &mode_info.refresh, &broadcast_mode);
 
 		mode_info.broadcast_mode = (GamescopeBroadcastRGBMode_t) broadcast_mode;
-		
+
 		bool valid = ret == 4 || ret == 5;
 
 		if (valid && !strcmp(saved_description, description))
@@ -1194,7 +1194,7 @@ static void
 gamescope_liftoff_log_handler(enum liftoff_log_priority liftoff_priority, const char *fmt, va_list args)
 {
 	enum LogPriority priority = LOG_DEBUG;
-	
+
 	switch ( liftoff_priority )
 	{
 		case LIFTOFF_ERROR:
@@ -1306,7 +1306,7 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 		return false;
 	if ( liftoff_device_register_all_planes( drm->lo_device ) < 0 )
 		return false;
-	
+
 	drm_log.infof("Connectors:");
 	for ( auto &iter : drm->connectors )
 	{
@@ -2343,7 +2343,7 @@ namespace gamescope
 						sol::function_result ret = fnDynamicModegen(tInMode, nRefreshHz);
 						if ( !ret.valid() || !ret.get<sol::table>() )
 							return *pBaseMode;
-						
+
 						sol::table tOutMode = ret;
 
 						drmModeModeInfo outMode = *pBaseMode;
@@ -2416,7 +2416,7 @@ namespace gamescope
 							if ( pMode->hdisplay != pPreferredMode->hdisplay || pMode->vdisplay != pPreferredMode->vdisplay )
 								continue;
 
-							
+
 							if ( !Algorithm::Contains( m_Mutable.ValidDynamicRefreshRates, pMode->vrefresh ) )
 							{
 								m_Mutable.ValidDynamicRefreshRates.push_back( pMode->vrefresh );
@@ -3455,7 +3455,7 @@ namespace gamescope
 			return vulkan_has_drm_props();
 		}
 
-		virtual int Present( const FrameInfo_t *pFrameInfo, bool bAsync )
+		int Present( const FrameInfo_t *pFrameInfo, bool bAsync )
 		{
 			static uint64_t s_ulLastTime = get_time_in_nanos();
 			uint64_t ulNow = get_time_in_nanos();
@@ -3838,7 +3838,7 @@ namespace gamescope
 		{
 #if __linux__
 			auto [nMajor, nMinor, nPatch] = GetKernelVersion();
-			
+
 			// Only expose support on 6.8+ for eventfd fixes.
 			if ( nMajor < 6 )
 				return false;

@@ -1,7 +1,10 @@
 #pragma once
 
 #include <memory>
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wnan-infinity-disabled"
 #include <pipewire/pipewire.h>
+#pragma clang diagnostic pop
 #include <spa/param/video/format-utils.h>
 
 #include "rendervulkan.hpp"
@@ -46,7 +49,7 @@ struct pipewire_buffer {
 
 	// The PipeWire buffer, or nullptr if it's been destroyed.
 	std::atomic<struct pw_buffer *> buffer;
-	bool IsStale() const 
+	bool IsStale() const
 	{
 		return buffer == nullptr;
 	}

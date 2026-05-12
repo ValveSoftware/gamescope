@@ -111,7 +111,7 @@ namespace vr
         VREvent_OverlayInputFocus_t overlayInputFocus;
     } VREvent_Data_Gamescope_t;
 
-    static inline const VREvent_Data_Gamescope_t &CastToGamescopeEventData( const VREvent_Data_t &eventData )
+    [[maybe_unused]] static inline const VREvent_Data_Gamescope_t &CastToGamescopeEventData( const VREvent_Data_t &eventData )
     {
         return reinterpret_cast< const vr::VREvent_Data_Gamescope_t & >( eventData );
     }
@@ -350,7 +350,7 @@ namespace gamescope
 
         bool IsTouchForbidden() const { return m_bForbidTouchMode; }
 
-        virtual void SetProperty( ConnectorProperty eProperty, std::any value )
+        virtual void SetProperty( ConnectorProperty eProperty, std::any value ) override
         {
             if ( eProperty == ConnectorProperty::IsFileBrowser )
             {
@@ -925,7 +925,7 @@ namespace gamescope
             }
 
             std::scoped_lock lock{ m_mutActiveConnectors };
-            m_pActiveConnectors.push_back( pConnector.get() );         
+            m_pActiveConnectors.push_back( pConnector.get() );
             return pConnector;
         }
 
@@ -945,12 +945,12 @@ namespace gamescope
                 }
             }
         }
-        
+
         bool SupportsVROverlayForwarding() override
         {
             return true;
         }
-        
+
         void ForwardFramebuffer( std::shared_ptr<IBackendPlane> &pPlane, IBackendFb *pFramebuffer, const void *pData ) override
         {
             COpenVRFb *pVRFB = static_cast<COpenVRFb *>( pFramebuffer->EnsureImported() );
@@ -1832,7 +1832,7 @@ namespace gamescope
 
         if ( g_bForceRelativeMouse )
             this->SetRelativeMouseMode( true );
-        
+
         if ( m_pBackend->m_oulCurrentSceneVirtualConnectorKey &&
              GetVirtualConnectorKey() == *m_pBackend->m_oulCurrentSceneVirtualConnectorKey )
         {
@@ -2094,11 +2094,11 @@ namespace gamescope
 
     void COpenVRPlane::Present( std::optional<OpenVRPlaneState> oState )
     {
-        
+
         if ( oState )
         {
             vr::VROverlay()->SetOverlayAlpha( m_hOverlay, oState->flAlpha );
-            
+
             if ( m_pBackend->UsesModifiers() )
             {
                 vr::VROverlay()->SetOverlayFlag( m_hOverlay, vr::VROverlayFlags_IgnoreTextureAlpha,	oState->bOpaque || !DRMFormatHasAlpha( oState->pTexture->drmFormat() ) || cv_vr_debug_force_opaque );
@@ -2142,7 +2142,7 @@ namespace gamescope
             else
             {
                 assert( !m_bIsSubview );
-                
+
                 vr::VRVulkanTextureData_t data =
                 {
                     .m_nImage            = (uint64_t)(uintptr_t)oState->pTexture->vkImage(),

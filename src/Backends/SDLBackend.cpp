@@ -61,7 +61,7 @@ namespace gamescope
 	{
 	public:
 		CSDLConnector( CSDLBackend *pBackend );
-		virtual bool Init();
+		bool Init();
 
 		virtual ~CSDLConnector();
 
@@ -769,7 +769,7 @@ namespace gamescope
 									GamescopeUpscaleFilter::LINEAR : GamescopeUpscaleFilter::FSR;
 								break;
 							case KEY_Y:
-								g_wantedUpscaleFilter = (g_wantedUpscaleFilter == GamescopeUpscaleFilter::NIS) ? 
+								g_wantedUpscaleFilter = (g_wantedUpscaleFilter == GamescopeUpscaleFilter::NIS) ?
 									GamescopeUpscaleFilter::LINEAR : GamescopeUpscaleFilter::NIS;
 								break;
 							case KEY_I:

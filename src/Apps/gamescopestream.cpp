@@ -2,7 +2,7 @@
 // Gracefully butchered from https://docs.pipewire.org/spa_2examples_2adapter-control_8c-example.html
 // by Wim Taymans under MIT
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
- 
+
 #include <cstdio>
 #include <cstdint>
 #include <cassert>
@@ -11,19 +11,22 @@
 #include <unistd.h>
 #include <signal.h>
 #include <libdrm/drm_fourcc.h>
- 
+
 #include <spa/utils/result.h>
 #include <spa/param/video/format-utils.h>
 #include <spa/param/props.h>
 #include <spa/debug/format.h>
- 
+
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wnan-infinity-disabled"
 #include <pipewire/pipewire.h>
- 
+#pragma clang diagnostic pop
+
 #define DEFAULT_WIDTH  1280
 #define DEFAULT_HEIGHT 720
- 
+
 #define MAX_BUFFERS     64
- 
+
 #include <wayland-client.h>
 #include <linux-dmabuf-v1-client-protocol.h>
 #include <libdecor.h>
@@ -37,7 +40,7 @@
 #include "log.hpp"
 
 static LogScope s_StreamLog( "stream" );
- 
+
 void spa_gamescopestream_log( struct spa_debug_context *ctx, const char *fmt, ... )
 {
     va_list args;
@@ -66,10 +69,10 @@ static uint32_t spa_format_to_drm(uint32_t spa_format)
 		case SPA_VIDEO_FORMAT_BGR: return DRM_FORMAT_XRGB8888;
 	}
 }
- 
+
 struct data {
     const char *path;
- 
+
     wl_display *pDisplay = nullptr;
     wl_compositor *pCompositor = nullptr;
     zwp_linux_dmabuf_v1 *pLinuxDmabuf = nullptr;
@@ -80,10 +83,10 @@ struct data {
 
     struct pw_main_loop *loop;
     struct spa_source *reneg;
- 
+
     struct pw_stream *stream;
     struct spa_hook stream_listener;
- 
+
     struct spa_video_info format;
     int32_t stride;
     struct spa_rectangle size;
@@ -91,12 +94,12 @@ struct data {
     bool needs_decor_commit;
 
     uint32_t appid;
- 
+
     std::unordered_map<uint32_t, std::vector<uint64_t>> m_FormatModifiers;
- 
+
     int counter;
 };
- 
+
 static void handle_events( struct data *pData )
 {
     wl_display_flush( pData->pDisplay );
@@ -123,12 +126,12 @@ static void handle_events( struct data *pData )
 
     wl_display_dispatch_pending( pData->pDisplay );
 }
- 
+
 static struct spa_pod *build_format(struct data *data, struct spa_pod_builder *b, enum spa_video_format format, uint64_t *modifiers, int modifier_count)
 {
     struct spa_pod_frame f[3];
     int i, c;
- 
+
     spa_pod_builder_push_object(b, &f[0], SPA_TYPE_OBJECT_Format, SPA_PARAM_EnumFormat);
     spa_pod_builder_add(b, SPA_FORMAT_mediaType, SPA_POD_Id(SPA_MEDIA_TYPE_video), 0);
     spa_pod_builder_add(b, SPA_FORMAT_mediaSubtype, SPA_POD_Id(SPA_MEDIA_SUBTYPE_raw), 0);
@@ -169,7 +172,7 @@ static struct spa_pod *build_format(struct data *data, struct spa_pod_builder *b
             &frac2,
             &frac3),
         0);
-    
+
     if (data->appid)
         spa_pod_builder_add(b, SPA_FORMAT_VIDEO_gamescope_focus_appid, SPA_POD_Long(uint64_t(data->appid)), 0);
 
@@ -189,7 +192,7 @@ void commit_libdecor( struct data *data, libdecor_configuration *pConfiguration 
 
     data->needs_decor_commit = false;
 }
- 
+
 /* our data processing function is in general:
  *
  *  struct pw_buffer *b;
@@ -206,7 +209,7 @@ on_process(void *_data)
     struct pw_stream *stream = data->stream;
     struct pw_buffer *b;
     struct spa_buffer *buf;
- 
+
     b = nullptr;
     /* dequeue and queue old buffers, use the last available
      * buffer */
@@ -222,11 +225,11 @@ on_process(void *_data)
         pw_log_warn("out of buffers: %m");
         return;
     }
- 
+
     buf = b->buffer;
- 
+
     pw_log_info("new buffer %p", buf);
- 
+
     handle_events(data);
 
     zwp_linux_buffer_params_v1 *pBufferParams = zwp_linux_dmabuf_v1_create_params( data->pLinuxDmabuf );
@@ -249,7 +252,7 @@ on_process(void *_data)
     }
 
     uint32_t uDrmFormat = spa_format_to_drm(data->format.info.raw.format);
-    
+
     wl_buffer *pImportedBuffer = zwp_linux_buffer_params_v1_create_immed(
         pBufferParams,
         data->format.info.raw.size.width,
@@ -294,7 +297,7 @@ on_process(void *_data)
 
     wl_display_flush( data->pDisplay );
 }
- 
+
 static void on_stream_state_changed(void *_data, enum pw_stream_state old,
                     enum pw_stream_state state, const char *error)
 {
@@ -313,7 +316,7 @@ static void on_stream_state_changed(void *_data, enum pw_stream_state old,
         break;
     }
 }
- 
+
 /* Be notified when the stream param changes. We're only looking at the
  * format changes.
  *
@@ -333,25 +336,25 @@ on_stream_param_changed(void *_data, uint32_t id, const struct spa_pod *param)
     uint8_t params_buffer[1024];
     struct spa_pod_builder b = SPA_POD_BUILDER_INIT(params_buffer, sizeof(params_buffer));
     const struct spa_pod *params[1];
- 
+
     /* nullptr means to clear the format */
     if (param == nullptr || id != SPA_PARAM_Format)
         return;
- 
+
     s_StreamLog.debugf( "got format:" );
     spa_debugc_format(&s_SpaDebugContext, 2, nullptr, param);
- 
+
     if (spa_format_parse(param, &data->format.media_type, &data->format.media_subtype) < 0)
         return;
- 
+
     if (data->format.media_type != SPA_MEDIA_TYPE_video ||
         data->format.media_subtype != SPA_MEDIA_SUBTYPE_raw)
         return;
- 
+
     /* call a helper function to parse the format for us. */
     spa_format_video_raw_parse(param, &data->format.info.raw);
     data->size = data->format.info.raw.size;
- 
+
     uint32_t drm_format = spa_format_to_drm(data->format.info.raw.format);
     if (drm_format == DRM_FORMAT_INVALID) {
         pw_stream_set_error(stream, -EINVAL, "unknown pixel format");
@@ -363,7 +366,7 @@ on_stream_param_changed(void *_data, uint32_t id, const struct spa_pod *param)
     }
 
     data->stride = SPA_ROUND_UP_N( data->size.width * 4, 4 );
- 
+
     /* a SPA_TYPE_OBJECT_ParamBuffers object defines the acceptable size,
      * number, stride etc of the buffers */
     params[0] = (const struct spa_pod *) spa_pod_builder_add_object(&b,
@@ -373,11 +376,11 @@ on_stream_param_changed(void *_data, uint32_t id, const struct spa_pod *param)
         SPA_PARAM_BUFFERS_size,    SPA_POD_Int(data->stride * data->size.height),
         SPA_PARAM_BUFFERS_stride,  SPA_POD_Int(data->stride),
         SPA_PARAM_BUFFERS_dataType, SPA_POD_CHOICE_FLAGS_Int((1<<SPA_DATA_DmaBuf)));
- 
+
     /* we are done */
     pw_stream_update_params(stream, params, 1);
 }
- 
+
 /* these are the stream events we listen for */
 static const struct pw_stream_events stream_events = {
     .version = PW_VERSION_STREAM_EVENTS,
@@ -385,21 +388,21 @@ static const struct pw_stream_events stream_events = {
     .param_changed = on_stream_param_changed,
     .process = on_process,
 };
- 
+
 static int build_formats(struct data *data, struct spa_pod_builder *b, const struct spa_pod **params)
 {
     int n_params = 0;
- 
+
     if (data->m_FormatModifiers.contains(DRM_FORMAT_XRGB8888))
         params[n_params++] = build_format( data, b, SPA_VIDEO_FORMAT_BGRx, data->m_FormatModifiers[DRM_FORMAT_XRGB8888].data(), uint32_t( data->m_FormatModifiers[DRM_FORMAT_XRGB8888].size() ) );
     params[n_params++] = build_format( data, b, SPA_VIDEO_FORMAT_BGRx, nullptr, 0 );
- 
+
     for (int i=0; i < n_params; i++)
         spa_debugc_format(&s_SpaDebugContext, 2, NULL, params[i]);
 
     return n_params;
 }
- 
+
 static void reneg_format(void *_data, uint64_t expiration)
 {
     struct data *data = (struct data*) _data;
@@ -407,22 +410,22 @@ static void reneg_format(void *_data, uint64_t expiration)
     struct spa_pod_builder b = SPA_POD_BUILDER_INIT(buffer, sizeof(buffer));
     const struct spa_pod *params[2];
     uint32_t n_params;
- 
+
     if (data->format.info.raw.format == 0)
         return;
- 
+
     s_StreamLog.debugf( "renegotiate formats:" );
     n_params = build_formats(data, &b, params);
- 
+
     pw_stream_update_params(data->stream, params, n_params);
 }
- 
+
 static void do_quit(void *userdata, int signal_number)
 {
     struct data *data = (struct data *)userdata;
     pw_main_loop_quit(data->loop);
 }
- 
+
 int main(int argc, char *argv[])
 {
     struct data data = { 0, };
@@ -431,15 +434,15 @@ int main(int argc, char *argv[])
     struct spa_pod_builder b = SPA_POD_BUILDER_INIT(buffer, sizeof(buffer));
     struct pw_properties *props;
     int res, n_params;
- 
+
     pw_init(&argc, &argv);
- 
+
     /* create a main loop */
     data.loop = pw_main_loop_new(nullptr);
- 
+
     pw_loop_add_signal(pw_main_loop_get_loop(data.loop), SIGINT, do_quit, &data);
     pw_loop_add_signal(pw_main_loop_get_loop(data.loop), SIGTERM, do_quit, &data);
- 
+
     /* create a simple stream, the simple stream manages to core and remote
      * objects for you if you don't need to deal with them
      *
@@ -460,14 +463,14 @@ int main(int argc, char *argv[])
     if (data.path)
         /* Set stream target if given on command line */
         pw_properties_set(props, PW_KEY_TARGET_OBJECT, data.path);
- 
+
     data.stream = pw_stream_new_simple(
             pw_main_loop_get_loop(data.loop),
             "video-play-fixate",
             props,
             &stream_events,
             &data);
- 
+
     //
 
     if ( !( data.pDisplay = wl_display_connect( nullptr ) ) )
@@ -559,13 +562,13 @@ int main(int argc, char *argv[])
     wl_display_roundtrip( data.pDisplay );
 
     //
- 
+
     /* build the extra parameters to connect with. To connect, we can provide
      * a list of supported formats.  We use a builder that writes the param
      * object to the stack. */
     s_StreamLog.debugf( "supported formats:" );
     n_params = build_formats(&data, &b, params);
- 
+
     /* now connect the stream, we need a direction (input/output),
      * an optional target node to connect to, some flags and parameters
      */
@@ -579,18 +582,18 @@ int main(int argc, char *argv[])
         s_StreamLog.errorf( "can't connect: %s\n", spa_strerror(res) );
         return -1;
     }
- 
+
     data.reneg = pw_loop_add_event(pw_main_loop_get_loop(data.loop), reneg_format, &data);
- 
+
     /* do things until we quit the mainloop */
     pw_main_loop_run(data.loop);
- 
+
     pw_stream_destroy(data.stream);
     pw_main_loop_destroy(data.loop);
- 
+
     // TODO: cleanup wayland
 
     pw_deinit();
- 
+
     return 0;
 }
