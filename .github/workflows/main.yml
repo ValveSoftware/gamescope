@@ -14,7 +14,7 @@ jobs:
         run: |
           pacman-key --init
           pacman -Syu --noconfirm
-          pacman -S --noconfirm git meson clang glslang libcap wlroots0.18 \
+          pacman -S --noconfirm --needed git meson clang glslang libcap wlroots0.18 \
             sdl2 vulkan-headers libx11 libxmu libxcomposite libxrender libxres \
             libxtst libxkbcommon libdrm libinput wayland-protocols benchmark \
             xorg-xwayland pipewire cmake \
@@ -24,6 +24,20 @@ jobs:
       - uses: actions/checkout@v6
         with:
           submodules: recursive
+      - name: Generate file list for formatting
+        id: files
+        run: |
+          FILES=$(git ls-files src | grep -E '\.(c|cpp|h|hpp)$' | grep -v -E '(reshade|shaders)' | tr '\n' ' ')
+          echo "formatted_files=$FILES" >> $GITHUB_OUTPUT
+      - name: Format code with clang-format
+        run: |
+          echo "${{ steps.files.outputs.formatted_files }}" | xargs -P $(nproc) -- clang-format -i --
+      - name: Commit formatted code
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          echo "${{ steps.files.outputs.formatted_files }}" | xargs -r git add
+          git commit -m "chore: clang-format [skip ci]" || true
       - name: Build with gcc
         run: |
           export CC=gcc CXX=g++
@@ -34,19 +48,35 @@ jobs:
           export CC=gcc CXX=g++
           meson setup build-gcc-novr/ -Dinput_emulation=disabled -Denable_openvr_support=false --werror --auto-features=enabled
           ninja -C build-gcc-novr/
-#      - name: Build with clang
-#        run: |
-#          export CC=clang CXX=clang++
-#          meson setup build-clang/ -Dinput_emulation=disabled --werror --auto-features=enabled
-#          ninja -C build-clang/
-      - name: Run unit tests and collect coverage
+      - name: Build with clang
+        run: |
+          export CC=clang CXX=clang++
+          meson setup build-clang/ -Dinput_emulation=disabled --werror --auto-features=enabled
+          ninja -C build-clang/
+      - name: Build with clang (no vr)
+        run: |
+          export CC=clang CXX=clang++
+          meson setup build-clang-novr/ -Dinput_emulation=disabled -Denable_openvr_support=false --werror --auto-features=enabled
+          ninja -C build-clang-novr/
+      - name: Run unit tests and collect coverage (gcc)
         run: |
           export CC=gcc CXX=g++
           meson configure -Db_coverage=true build-gcc
           meson test -C build-gcc --suite gamescope -v
-          gcovr -f src --xml -o coverage.xml -s build-gcc
-      - name: Upload coverage report
+          gcovr -f src --xml -o coverage-gcc.xml -s build-gcc
+      - name: Run unit tests and collect coverage (clang)
+        run: |
+          export CC=clang CXX=clang++
+          meson configure -Db_coverage=true build-clang
+          meson test -C build-clang --suite gamescope -v
+          gcovr -f src --xml -o coverage-clang.xml -s build-clang/ --gcov-executable="llvm-cov gcov"
+      - name: Upload coverage report (gcc)
         uses: actions/upload-artifact@v7
         with:
-          name: code coverage
-          path: coverage.xml
+          name: code coverage (gcc)
+          path: coverage-gcc.xml
+      - name: Upload coverage report (clang)
+        uses: actions/upload-artifact@v7
+        with:
+          name: code coverage (clang)
+          path: coverage-clang.xml

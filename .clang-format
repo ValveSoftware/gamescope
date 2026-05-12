@@ -1,0 +1,67 @@
+---
+Language: Cpp
+BasedOnStyle: LLVM
+AccessModifierOffset: -4
+AlignAfterOpenBracket: true
+BreakAfterOpenBracketFunction: true
+BreakAfterOpenBracketIf: true
+BreakAfterOpenBracketBracedList: true
+AlignConsecutiveAssignments: true
+AlignConsecutiveDeclarations: true
+AlignOperands: Align
+AlignTrailingComments: true
+AllowShortBlocksOnASingleLine: Always
+AllowShortFunctionsOnASingleLine: All
+AllowShortIfStatementsOnASingleLine: Always
+BinPackArguments: false
+BinPackParameters: false
+BraceWrapping:
+  AfterCaseLabel: true
+  AfterClass: true
+  AfterControlStatement: true
+  AfterEnum: true
+  AfterFunction: true
+  AfterNamespace: true
+  AfterStruct: true
+  AfterUnion: true
+  AfterExternBlock: true
+  BeforeCatch: true
+  BeforeElse: true
+  BeforeLambdaBody: true
+  BeforeWhile: false
+  IndentBraces: false
+  SplitEmptyFunction: false
+  SplitEmptyRecord: false
+  SplitEmptyNamespace: false
+BreakBeforeBraces: Custom
+BreakConstructorInitializers: AfterColon
+BreakConstructorInitializersBeforeComma: false
+ConstructorInitializerAllOnOneLineOrOnePerLine: true
+ContinuationIndentWidth: 4
+Cpp11BracedListStyle: false
+IncludeCategories:
+  - Regex: '^<.*'
+    Priority: 1
+  - Regex: '^".*'
+    Priority: 2
+  - Regex: '.*'
+    Priority: 3
+IncludeIsMainRegex: '([-_](test|unittest))?$'
+IndentCaseLabels: true
+IndentPPDirectives: BeforeHash
+IndentWidth: 4
+InsertNewlineAtEOF: true
+NamespaceIndentation: All
+SpaceAfterTemplateKeyword: false
+SpacesBeforeTrailingComments: 1
+SpacesInAngles: false
+SpacesInParens: Custom
+SpacesInParensOptions:
+  ExceptDoubleParentheses: true
+  InConditionalStatements: true
+  InCStyleCasts: true
+  InEmptyParentheses: true
+  Other: true
+SpacesInSquareBrackets: true
+TabWidth: 4
+...
