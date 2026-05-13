@@ -6,4 +6,3 @@ patch_directory = openvr
 
 [provide]
 openvr = openvr_api
-

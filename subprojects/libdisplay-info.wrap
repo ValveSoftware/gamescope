@@ -4,4 +4,4 @@ revision = 47a5590e9c4eb35d67651b8c05a55f1a48259329
 depth = 1
 
 [provide]
-libdisplay-info = libdisplay_info_dep
+libdisplay-info = di_dep

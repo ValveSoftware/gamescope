@@ -24,7 +24,7 @@ avif_dep = dependency('libavif', version : '>=1.0.0', required : get_option('avi
 pixman_dep = dependency('pixman-1')
 udev_dep = dependency('libudev')
 
-libdisplay_info_dep = dependency(
+di_dep = dependency(
     'libdisplay-info',
     version : ['>= 0.0.0', '< 0.4.0'],
     fallback : 'libdisplay-info',
@@ -35,21 +35,44 @@ wlroots_dep = dependency(
     'wlroots-0.18',
     version : ['>= 0.18.0', '< 0.19.0'],
     fallback : 'wlroots',
-    default_options : ['default_library=static', 'examples=false', 'xwayland=enabled', 'backends=libinput', 'renderers=[]', 'allocators=[]', 'session=enabled'],
+    default_options : [
+        'default_library=static',
+        'examples=false',
+        'xwayland=enabled',
+        'backends=auto',
+        'renderers=auto',
+        'allocators=auto',
+        'session=enabled',
+        'libliftoff=enabled'
+    ],
 )
 
 libdecor_dep = dependency('libdecor-0')
 
 glsl_compiler = find_program('glslang', 'glslangValidator', native : true)
 
-#Use-- depfile to rebuild shaders when included files have                     \
-    changed.Sadly debian based
-#distros don't have up-to-date glslang so we need to check for support first.
-if run_command(glsl_compiler, ['--version', '--depfile', 'dummy.dep'], check : false).returncode() == 0
+# Use-- depfile to rebuild shaders when included files have changed. Sadly
+# Debian-based distros don't have up-to-date glslang so we need to check for
+# support first.
+if run_command(
+    glsl_compiler,
+    ['--version', '--depfile', 'dummy.dep'],
+    check : false
+).returncode() == 0
     glsl_generator = generator(
         glsl_compiler,
         output : ['@BASENAME@.h'],
-        arguments : ['-V', '@INPUT@', '--vn', '@BASENAME@', '-o', '@OUTPUT@', '--depfile', '@DEPFILE@', '--quiet'],
+        arguments : [
+            '-V',
+            '@INPUT@',
+            '--vn',
+            '@BASENAME@',
+            '-o',
+            '@OUTPUT@',
+            '--depfile',
+            '@DEPFILE@',
+            '--quiet'
+        ],
         depfile : '@BASENAME@.h.d',
     )
 else
@@ -85,11 +108,13 @@ reshade_src = [
     'reshade/source/effect_symbol_table.cpp',
 ]
 
-reshade_include = include_directories([
-                                          'reshade/source',
-                                          'reshade/include',
-                                          '../thirdparty/SPIRV-Headers/include/spirv/unified1'
-                                      ])
+reshade_include = include_directories(
+    [
+        'reshade/source',
+        'reshade/include',
+        '../thirdparty/SPIRV-Headers/include/spirv/unified1'
+    ]
+)
 
 sol2_include = include_directories(['../thirdparty'])
 
@@ -133,14 +158,14 @@ if drm_dep.found()
     src += 'Backends/DRMBackend.cpp'
     src += 'modegen.cpp'
     required_wlroots_features += 'libinput_backend'
-    libliftoff_dep = dependency(
+    liftoff = dependency(
         'libliftoff',
         version : ['>= 0.5.0', '< 0.6.0'],
         fallback : 'libliftoff',
         default_options : ['default_library=static'],
     )
 else
-    libliftoff_dep = dependency('', required : false)
+    liftoff = dependency('', required : false)
 endif
 
 if sdl2_dep.found()
@@ -197,8 +222,8 @@ executable(
         dep_wayland, dep_x11, dep_xdamage, dep_xcomposite, dep_xrender, dep_xext, dep_xfixes,
         dep_xxf86vm, dep_xres, glm_dep, drm_dep, wayland_server,
         xkbcommon, thread_dep, sdl2_dep, wlroots_dep,
-        vulkan_dep, libliftoff_dep, dep_xtst, dep_xmu, cap_dep, epoll_dep, pipewire_dep, librt_dep,
-        stb_dep, libdisplayinfo_dep, openvr_dep, dep_xcursor, avif_dep, dep_xi,
+        vulkan_dep, liftoff, dep_xtst, dep_xmu, cap_dep, epoll_dep, pipewire_dep, librt_dep,
+        stb_dep, di_dep, openvr_dep, dep_xcursor, avif_dep, dep_xi,
         libdecor_dep, eis_dep, luajit_dep, libinput_dep, pixman_dep, udev_dep,
     ],
     install : true,

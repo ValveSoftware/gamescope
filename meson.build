@@ -2,16 +2,17 @@ project(
     'gamescope',
     'c',
     'cpp',
+    license : 'BSD-2-Clause',
     meson_version : '>=0.58.0',
     default_options : [
         'cpp_std=c++20',
         'warning_level=2',
-        'force_fallback_for=glm,libdisplay-info,libliftoff,openvr,stb,vkroots,wlroots',
+        'force_fallback_for=wlroots,libliftoff,vkroots',
     ],
 )
 
 fallbacks = get_option('force_fallback_for')
-if not (fallbacks.contains('glm') and fallbacks.contains('libdisplay-info') and fallbacks.contains('libliftoff') and fallbacks.contains('openvr') and fallbacks.contains('vkroots') and fallbacks.contains('wlroots') and fallbacks.contains('stb'))
+if not (fallbacks.contains('wlroots') and fallbacks.contains('libliftoff') and fallbacks.contains('vkroots'))
     error('!!!"force_fallback_for" is missing entries!!!\n\tPlease do not remove entries from force_fallback_for if you are packaging the project.\n\tWe pull in these projects at specific commits/forks/builds for a reason.\n\tIf you are not packaging, remove this line to continue.')
 endif
 
@@ -65,11 +66,7 @@ stb_dep = dependency('stb', fallback : 'stb')
 vkroots_dep = dependency('vkroots', fallback : 'vkroots')
 
 if get_option('enable_openvr_support')
-    openvr_dep = dependency('openvr', version : '>= 2.7', required : false)
-    if not openvr_dep.found()
-        openvr_proj = subproject('openvr')
-        openvr_dep = openvr_proj.get_variable('openvr_api')
-    endif
+    openvr_dep = dependency('openvr', fallback : 'openvr')
 else
     # null dep
     openvr_dep = dependency('', required : false)

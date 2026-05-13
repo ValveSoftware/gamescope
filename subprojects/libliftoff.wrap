@@ -4,4 +4,4 @@ revision = 8b08dc1c14fd019cc90ddabe34ad16596b0691f4
 depth = 1
 
 [provide]
-libliftoff = libliftoff_dep
+libliftoff = liftoff
