@@ -5339,6 +5339,8 @@ destroy_win(xwayland_ctx_t *ctx, Window id, bool gone, bool fade)
 		ctx->focus.notificationWindow = nullptr;
 	if (x11_win(ctx->focus.overrideWindow) == id && gone)
 		ctx->focus.overrideWindow = nullptr;
+	if (x11_win(ctx->focus.overrideWindowMouse) == id && gone)
+		ctx->focus.overrideWindowMouse = nullptr;
 	if (ctx->currentKeyboardFocusWindow == id && gone)
 		ctx->currentKeyboardFocusWindow = None;
 
