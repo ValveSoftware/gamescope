@@ -1,7 +1,7 @@
-#include "color_helpers.h"
 #include <cstdio>
+#include "color_helpers.h"
 
-//#include <glm/ext.hpp>
+// #include <glm/ext.hpp>
 #include <glm/gtx/string_cast.hpp>
 
 /*
@@ -16,8 +16,8 @@ lut3d_t lut3d_float;
 
 static void BenchmarkCalcColorTransform(EOTF inputEOTF, benchmark::State &state)
 {
-    const primaries_t primaries = { { 0.602f, 0.355f }, { 0.340f, 0.574f }, { 0.164f, 0.121f } };
-    const glm::vec2 white = { 0.3070f, 0.3220f };
+    const primaries_t primaries = { { 0.602f, 0.355f }, { 0.340f, 0.574f }, {
+0.164f, 0.121f } }; const glm::vec2 white = { 0.3070f, 0.3220f };
 
     displaycolorimetry_t inputColorimetry{};
     inputColorimetry.primaries = primaries;
@@ -36,10 +36,10 @@ static void BenchmarkCalcColorTransform(EOTF inputEOTF, benchmark::State &state)
     float flGain = 1.0f;
 
     for (auto _ : state) {
-        calcColorTransform<nLutEdgeSize3d>( &lut1d_float, nLutSize1d, &lut3d_float, inputColorimetry, inputEOTF,
-            outputEncodingColorimetry, EOTF_Gamma22,
-            colorMapping, nightmode, tonemapping, nullptr, flGain );
-        for ( size_t i=0, end = lut1d_float.dataR.size(); i<end; ++i )
+        calcColorTransform<nLutEdgeSize3d>( &lut1d_float, nLutSize1d,
+&lut3d_float, inputColorimetry, inputEOTF, outputEncodingColorimetry,
+EOTF_Gamma22, colorMapping, nightmode, tonemapping, nullptr, flGain ); for (
+size_t i=0, end = lut1d_float.dataR.size(); i<end; ++i )
         {
             lut1d[4*i+0] = quantize_lut_value_16bit( lut1d_float.dataR[i] );
             lut1d[4*i+1] = quantize_lut_value_16bit( lut1d_float.dataG[i] );
@@ -57,7 +57,7 @@ static void BenchmarkCalcColorTransform(EOTF inputEOTF, benchmark::State &state)
 }
 */
 
-int color_tests()
+int color_tests( )
 {
 #if 0
     {
@@ -78,34 +78,47 @@ int color_tests()
     }
 #endif
 
-
 #if 1
     {
         // chromatic adapatation
-        glm::vec3 d50XYZ = glm::vec3(0.96422f, 1.00000f, 0.82521f );
-        glm::vec3 d65XYZ = glm::vec3(0.95047f, 1.00000f, 1.08883f );
-        printf("d50XYZ %s\n", glm::to_string(d50XYZ).c_str() );
-        printf("d65XYZ %s\n", glm::to_string(d65XYZ).c_str() );
+        glm::vec3 d50XYZ = glm::vec3( 0.96422f, 1.00000f, 0.82521f );
+        glm::vec3 d65XYZ = glm::vec3( 0.95047f, 1.00000f, 1.08883f );
+        printf( "d50XYZ %s\n", glm::to_string( d50XYZ ).c_str( ) );
+        printf( "d65XYZ %s\n", glm::to_string( d65XYZ ).c_str( ) );
 
-        glm::mat3x3 d65FromF50_reference_bradford( 0.9555766, -0.0282895, 0.0122982,
-            -0.0230393, 1.0099416, -0.0204830,
-            0.0631636, 0.0210077,  1.3299098 );
-        printf("d65FromF50_reference_bradford %s\n", glm::to_string(d65FromF50_reference_bradford).c_str() );
-        
+        glm::mat3x3 d65FromF50_reference_bradford(
+            0.9555766,
+            -0.0282895,
+            0.0122982,
+            -0.0230393,
+            1.0099416,
+            -0.0204830,
+            0.0631636,
+            0.0210077,
+            1.3299098 );
+        printf(
+            "d65FromF50_reference_bradford %s\n",
+            glm::to_string( d65FromF50_reference_bradford ).c_str( ) );
+
         {
-            
-            glm::mat3x3 d65From50 = chromatic_adaptation_matrix( d50XYZ, d65XYZ, k_EChromaticAdapatationMethod_Bradford );
-            printf("bradford d65From50 %s\n", glm::to_string(d65From50).c_str() );
+
+            glm::mat3x3 d65From50 = chromatic_adaptation_matrix(
+                d50XYZ, d65XYZ, k_EChromaticAdapatationMethod_Bradford );
+            printf(
+                "bradford d65From50 %s\n",
+                glm::to_string( d65From50 ).c_str( ) );
             glm::vec3 d65_2 = d65From50 * d50XYZ;
-            printf("bradford d65_2 %s\n", glm::to_string(d65_2).c_str() );
+            printf( "bradford d65_2 %s\n", glm::to_string( d65_2 ).c_str( ) );
         }
         {
-            glm::mat3x3 d65From50 = chromatic_adaptation_matrix( d50XYZ, d65XYZ, k_EChromaticAdapatationMethod_XYZ );
-            printf("xyzscaling d65From50 %s\n", glm::to_string(d65From50).c_str() );
+            glm::mat3x3 d65From50 = chromatic_adaptation_matrix(
+                d50XYZ, d65XYZ, k_EChromaticAdapatationMethod_XYZ );
+            printf(
+                "xyzscaling d65From50 %s\n",
+                glm::to_string( d65From50 ).c_str( ) );
             glm::vec3 d65_2 = d65From50 * d50XYZ;
-            printf("xyzscaling d65_2 %s\n", glm::to_string(d65_2).c_str() );
+            printf( "xyzscaling d65_2 %s\n", glm::to_string( d65_2 ).c_str( ) );
         }
-
     }
 #endif
 
@@ -194,46 +207,62 @@ int color_tests()
         */
     }
 #endif
-   return 0;
+    return 0;
 }
 
-void test_eetf2390_mono()
+void test_eetf2390_mono( )
 {
-    printf("%s\n", __func__  );
-    float vLumaLevels[] = { 0.0, 0.001, 0.01, 0.1, 1.0, 10.0, 100.0, 500.0, 1000.0, 5000.0, 10000.0, 15000.0 };
+    printf( "%s\n", __func__ );
+    float vLumaLevels[] = { 0.0,   0.001, 0.01,   0.1,    1.0,     10.0,
+                            100.0, 500.0, 1000.0, 5000.0, 10000.0, 15000.0 };
 
     //  map 0.01 -  10,000 -> 0.1 - 1000
     float sourceBlackNits = 0.01f;
     float sourceWhiteNits = 5000.0f;
-    float sourceBlackPQ = nits_to_pq( sourceBlackNits );
-    float sourceWhitePQ = nits_to_pq( sourceWhiteNits );
+    float sourceBlackPQ   = nits_to_pq( sourceBlackNits );
+    float sourceWhitePQ   = nits_to_pq( sourceWhiteNits );
 
-    printf("source\t%0.02f - %0.01f\t\tPQ10: %0.1f %0.1f \n", sourceBlackNits, sourceWhiteNits, sourceBlackPQ * 1023.f, sourceWhitePQ * 1023.f );
+    printf(
+        "source\t%0.02f - %0.01f\t\tPQ10: %0.1f %0.1f \n",
+        sourceBlackNits,
+        sourceWhiteNits,
+        sourceBlackPQ * 1023.f,
+        sourceWhitePQ * 1023.f );
 
     float destBlackNits = 0.1f;
     float destWhiteNits = 1000.0f;
-    float destBlackPQ = nits_to_pq( destBlackNits );
-    float destWhitePQ = nits_to_pq( destWhiteNits );
-    printf("dest\t%0.02f - %0.01f\t\tPQ10: %0.1f %0.1f\n", destBlackNits, destWhiteNits, destBlackPQ * 1023.f, destWhitePQ * 1023.f );
-    printf("\n");
+    float destBlackPQ   = nits_to_pq( destBlackNits );
+    float destWhitePQ   = nits_to_pq( destWhiteNits );
+    printf(
+        "dest\t%0.02f - %0.01f\t\tPQ10: %0.1f %0.1f\n",
+        destBlackNits,
+        destWhiteNits,
+        destBlackPQ * 1023.f,
+        destWhitePQ * 1023.f );
+    printf( "\n" );
 
     eetf_2390_t eetf;
     eetf.init_pq( sourceBlackPQ, sourceWhitePQ, destBlackPQ, destWhitePQ );
 
-    for ( size_t nLevel=0; nLevel < 12; ++nLevel )
+    for ( size_t nLevel = 0; nLevel < 12; ++nLevel )
     {
-        float flInputNits = vLumaLevels[nLevel];
-        float inputPQ = nits_to_pq( flInputNits );
-        float tonemappedOutputPQ = eetf.apply_pq( inputPQ );
+        float flInputNits          = vLumaLevels[ nLevel ];
+        float inputPQ              = nits_to_pq( flInputNits );
+        float tonemappedOutputPQ   = eetf.apply_pq( inputPQ );
         float tonemappedOutputNits = pq_to_nits( tonemappedOutputPQ );
-        printf("value\t%0.03f -> %0.03f\tPQ10: %0.1f -> %0.1f\n", flInputNits, tonemappedOutputNits, inputPQ * 1023.f, tonemappedOutputPQ * 1023.f );
+        printf(
+            "value\t%0.03f -> %0.03f\tPQ10: %0.1f -> %0.1f\n",
+            flInputNits,
+            tonemappedOutputNits,
+            inputPQ * 1023.f,
+            tonemappedOutputPQ * 1023.f );
     }
 }
 
-int main(int argc, char* argv[])
+int main( int argc, char *argv[] )
 {
-    printf("color_tests\n");
+    printf( "color_tests\n" );
     // test_eetf2390_mono();
-    color_tests();
+    color_tests( );
     return 0;
 }

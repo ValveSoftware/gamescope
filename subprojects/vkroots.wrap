@@ -1,0 +1,7 @@
+[wrap-git]
+url = https://github.com/misyltoad/vkroots.git
+revision = 5106d8a0df95de66cc58dc1ea37e69c99afc9540
+depth = 1
+
+[provide]
+vkroots = vkroots_dep

@@ -2,5 +2,5 @@
 
 namespace gamescope
 {
-    void PrintVersion();
+    void PrintVersion( );
 }

@@ -6,7 +6,7 @@
 
 #if HAVE_SCRIPTING
 
-#include <sol/sol.hpp>
+    #include <sol/sol.hpp>
 
 namespace gamescope
 {
@@ -30,17 +30,23 @@ namespace gamescope
 
             sol::table KnownDisplays;
 
-            std::optional<std::pair<std::string_view, sol::table>> LookupDisplay( CScriptScopedLock &script, std::string_view psvVendor, uint16_t uProduct, std::string_view psvModel, std::string_view psvDataString );
+            std::optional<std::pair<std::string_view, sol::table>>
+            LookupDisplay(
+                CScriptScopedLock &script,
+                std::string_view   psvVendor,
+                uint16_t           uProduct,
+                std::string_view   psvModel,
+                std::string_view   psvDataString );
         } Config;
     };
 
     class CScriptManager
     {
     public:
-        CScriptManager();
+        CScriptManager( );
 
-        template <typename... Args>
-        void CallHook( std::string_view svName, Args&&... args )
+        template<typename... Args>
+        void CallHook( std::string_view svName, Args &&...args )
         {
             auto range = m_Hooks.equal_range( svName );
             for ( auto iter = range.first; iter != range.second; iter++ )
@@ -50,41 +56,42 @@ namespace gamescope
                 Hook_t *pHook = &iter->second;
 
                 m_nCurrentScriptId = pHook->nScriptId;
-                iter->second.fnCallback( std::forward<Args>( args )... );    
+                iter->second.fnCallback( std::forward<Args>( args )... );
                 m_nCurrentScriptId = nPreviousScriptId;
             }
         }
 
-        void RunDefaultScripts();
+        void RunDefaultScripts( );
 
         void RunScriptText( std::string_view svContents );
 
         void RunFile( std::string_view svPath );
         bool RunFolder( std::string_view svPath, bool bRecursive = false );
 
-        void InvalidateAllHooks();
+        void InvalidateAllHooks( );
         void InvalidateHooksForScript( int32_t nScriptId );
 
-        sol::state *operator->() { return &m_State; }
+        sol::state *operator->( ) { return &m_State; }
 
-        sol::state &State() { return m_State; }
-        GamescopeScript_t &Gamescope() { return m_Gamescope; }
+        sol::state        &State( ) { return m_State; }
+        GamescopeScript_t &Gamescope( ) { return m_Gamescope; }
 
-        std::mutex &Mutex() { return m_mutMutex; }
+        std::mutex &Mutex( ) { return m_mutMutex; }
 
     protected:
-        static CScriptManager &GlobalScriptScope();
+        static CScriptManager &GlobalScriptScope( );
         friend CScriptScopedLock;
+
     private:
         mutable std::mutex m_mutMutex;
 
-        sol::state m_State;
+        sol::state        m_State;
         GamescopeScript_t m_Gamescope;
 
         struct Hook_t
         {
             sol::function fnCallback;
-            int32_t nScriptId = -1;
+            int32_t       nScriptId = -1;
         };
 
         MultiDict<Hook_t> m_Hooks;
@@ -97,52 +104,42 @@ namespace gamescope
     class CScriptScopedLock
     {
     public:
-        CScriptScopedLock()
-            : CScriptScopedLock{ CScriptManager::GlobalScriptScope() }
-        {
-        }
+        CScriptScopedLock( ) :
+            CScriptScopedLock{ CScriptManager::GlobalScriptScope( ) }
+        {}
 
-        CScriptScopedLock( CScriptManager &manager )
-            : m_Lock{ manager.Mutex() }
-            , m_ScriptManager{ manager }
-        {
-        }
+        CScriptScopedLock( CScriptManager &manager ) :
+            m_Lock{ manager.Mutex( ) }, m_ScriptManager{ manager }
+        {}
 
-        ~CScriptScopedLock()
-        {
-        }
+        ~CScriptScopedLock( ) {}
 
-        CScriptManager &Manager() { return m_ScriptManager; }
-        sol::state *State() { return &m_ScriptManager.State(); }
+        CScriptManager &Manager( ) { return m_ScriptManager; }
+        sol::state     *State( ) { return &m_ScriptManager.State( ); }
 
-        sol::state *operator ->() { return State(); }
+        sol::state *operator->( ) { return State( ); }
+
     private:
         std::scoped_lock<std::mutex> m_Lock;
-        CScriptManager &m_ScriptManager;
+        CScriptManager              &m_ScriptManager;
     };
 
-    template <typename T>
-    T TableToVec( const sol::table &table )
+    template<typename T> T TableToVec( const sol::table &table )
     {
-        if ( !table )
-            return T{};
+        if ( !table ) return T{};
 
         T out{};
-        for ( int i = 0; i < T::length(); i++ )
+        for ( int i = 0; i < T::length( ); i++ )
         {
-            std::array<std::string_view, 4> ppsvIndices
-            {
-                "x", "y", "z", "w"
-            };
+            std::array<std::string_view, 4> ppsvIndices{ "x", "y", "z", "w" };
 
-            sol::optional<float> ofValue = table[ppsvIndices[i]];
-            out[i] = ofValue ? *ofValue : 0;
+            sol::optional<float> ofValue = table[ ppsvIndices[ i ] ];
+            out[ i ]                     = ofValue ? *ofValue : 0;
         }
         return out;
     }
 
-    template <typename T>
-    std::vector<T> TableToVector( const sol::table &table )
+    template<typename T> std::vector<T> TableToVector( const sol::table &table )
     {
         std::vector<T> out;
 
@@ -150,15 +147,14 @@ namespace gamescope
         {
             for ( auto &iter : table )
             {
-                sol::optional<T> oValue = iter.second.as<sol::optional<T>>();
-                if ( oValue )
-                    out.emplace_back( *oValue );
+                sol::optional<T> oValue = iter.second.as<sol::optional<T>>( );
+                if ( oValue ) out.emplace_back( *oValue );
             }
         }
 
         return out;
     }
 
-}
+} // namespace gamescope
 
 #endif

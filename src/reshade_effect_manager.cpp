@@ -86,7 +86,7 @@ public:
     virtual ~RefreshRateUniform();
 
 private:
-    int32_t count = 0;
+    [[maybe_unused]] int32_t count = 0;
 };
 
 class DateUniform : public ReshadeUniform
@@ -1935,7 +1935,7 @@ ReshadeEffectPipeline* ReshadeEffectManager::pipeline(const ReshadeEffectKey &ke
 
 ReshadeEffectManager g_reshadeManager;
 
-void reshade_effect_manager_set_uniform_variable(const char *key, uint8_t* value) 
+void reshade_effect_manager_set_uniform_variable(const char *key, uint8_t* value)
 {
     std::lock_guard<std::mutex> lock(g_runtimeUniformsMutex);
 
@@ -1943,7 +1943,7 @@ void reshade_effect_manager_set_uniform_variable(const char *key, uint8_t* value
     if (it != g_runtimeUniforms.end()) {
         delete[] it->second;
     }
-    
+
     g_runtimeUniforms[std::string(key)] = value;
     force_repaint();
 }
@@ -1956,12 +1956,12 @@ void reshade_effect_manager_set_effect(const char *path, std::function<void(cons
     g_effectReadyCallback = callback;
 }
 
-void reshade_effect_manager_enable_effect() 
+void reshade_effect_manager_enable_effect()
 {
     if (g_reshadeEffectPath) gamescope_set_reshade_effect(g_reshadeEffectPath);
 }
 
-void reshade_effect_manager_disable_effect() 
+void reshade_effect_manager_disable_effect()
 {
     gamescope_clear_reshade_effect();
 }

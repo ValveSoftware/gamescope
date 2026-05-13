@@ -1,6 +1,7 @@
 #include <wayland-server-core.h>
 
-extern "C" {
+extern "C"
+{
 #define static
 #define class class_
 #define namespace _namespace

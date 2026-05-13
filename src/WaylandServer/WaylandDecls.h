@@ -4,8 +4,7 @@ namespace gamescope::WaylandServer
 {
     class CWaylandResource;
 
-    template <typename... Types>
-	class CWaylandProtocol;
+    template<typename... Types> class CWaylandProtocol;
 
     class CLinuxDrmSyncobjManager;
     class CLinuxDrmSyncobjSurface;
@@ -16,6 +15,7 @@ namespace gamescope::WaylandServer
     using CReshade = CWaylandProtocol<CReshadeManager>;
 
     class CGamescopeActionBindingManager;
-    using CGamescopeActionBindingProtocol = CWaylandProtocol<CGamescopeActionBindingManager>;
+    using CGamescopeActionBindingProtocol =
+        CWaylandProtocol<CGamescopeActionBindingManager>;
 
-}
+} // namespace gamescope::WaylandServer

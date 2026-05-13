@@ -1,14 +1,14 @@
 #pragma once
 
-#include <optional>
 #include <functional>
+#include <optional>
 #include <span>
 
 #include <sys/types.h>
 
 namespace gamescope::Process
 {
-    void BecomeSubreaper();
+    void BecomeSubreaper( );
     void SetDeathSignal( int nSignal );
 
     void KillAllChildren( pid_t nParentPid, int nSignal );
@@ -25,22 +25,28 @@ namespace gamescope::Process
 
     bool CloseFd( int nFd );
 
-    void RaiseFdLimit();
-    void RestoreFdLimit();
-    void ResetSignals();
+    void RaiseFdLimit( );
+    void RestoreFdLimit( );
+    void ResetSignals( );
 
     void CloseAllFds( std::span<int> nExcludedFds );
 
-    pid_t SpawnProcess( char **argv, std::function<void()> fnPreambleInChild = nullptr, bool bDoubleFork = false );
-    pid_t SpawnProcessInWatchdog( char **argv, bool bRespawn = false, std::function<void()> fnPreambleInChild = nullptr );
+    pid_t SpawnProcess(
+        char                 **argv,
+        std::function<void( )> fnPreambleInChild = nullptr,
+        bool                   bDoubleFork       = false );
+    pid_t SpawnProcessInWatchdog(
+        char                 **argv,
+        bool                   bRespawn          = false,
+        std::function<void( )> fnPreambleInChild = nullptr );
 
-    bool HasCapSysNice();
+    bool HasCapSysNice( );
     void SetNice( int nNice );
-    void RestoreNice();
+    void RestoreNice( );
 
-    bool SetRealtime();
-    void RestoreRealtime();
+    bool SetRealtime( );
+    void RestoreRealtime( );
 
-    const char *GetProcessName();
+    const char *GetProcessName( );
 
-}
+} // namespace gamescope::Process

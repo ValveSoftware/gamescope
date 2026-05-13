@@ -11,19 +11,20 @@ namespace gamescope
     class CLibInputHandler final : public IWaitable
     {
     public:
-        CLibInputHandler();
-        ~CLibInputHandler();
+        CLibInputHandler( );
+        ~CLibInputHandler( );
 
-        bool Init();
+        bool Init( );
 
-        virtual int GetFD() override;
-        virtual void OnPollIn() override;
+        virtual int  GetFD( ) override;
+        virtual void OnPollIn( ) override;
+
     private:
-        udev *m_pUdev = nullptr;
+        udev     *m_pUdev     = nullptr;
         libinput *m_pLibInput = nullptr;
 
-        double m_flScrollAccum[2]{};
+        double m_flScrollAccum[ 2 ]{};
 
         static const libinput_interface s_LibInputInterface;
     };
-}
+} // namespace gamescope

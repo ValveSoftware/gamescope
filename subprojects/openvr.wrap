@@ -1,0 +1,8 @@
+[wrap-git]
+url = https://github.com/ValveSoftware/openvr.git
+revision = ff87f683f41fe26cc9353dd9d9d7028357fd8e1a
+depth = 1
+patch_directory = openvr
+
+[provide]
+openvr = openvr_api
