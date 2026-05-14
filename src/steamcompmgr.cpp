@@ -1943,9 +1943,14 @@ void MouseCursor::paint(steamcompmgr_win_t *window, steamcompmgr_win_t *fit, str
 	cursorOffsetX = (currentOutputWidth - sourceWidth * currentScaleRatio_x) / 2.0f;
 	cursorOffsetY = (currentOutputHeight - sourceHeight * currentScaleRatio_y) / 2.0f;
 
-	// Actual point on scaled screen where the cursor hotspot should be
-	scaledX = (winX - window->GetGeometry().nX) * currentScaleRatio_x + cursorOffsetX;
-	scaledY = (winY - window->GetGeometry().nY) * currentScaleRatio_y + cursorOffsetY;
+	// Actual point on scaled screen where the cursor hotspot should be.
+	// Compositing ignores the focused window's X11 origin, so the cursor
+	// must also ignore it to stay consistent with the composited output.
+	bool isFocusWindow = (window == m_ctx->focus.focusWindow);
+	int32_t winOriginX = isFocusWindow ? 0 : window->GetGeometry().nX;
+	int32_t winOriginY = isFocusWindow ? 0 : window->GetGeometry().nY;
+	scaledX = (winX - winOriginX) * currentScaleRatio_x + cursorOffsetX;
+	scaledY = (winY - winOriginY) * currentScaleRatio_y + cursorOffsetY;
 
 	if ( zoomScaleRatio != 1.0 )
 	{
@@ -3956,9 +3961,6 @@ void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win
 		XMoveWindow(ctx->dpy, ctx->focus.focusWindow->xwayland().id, 1, 1);
 		ctx->focus.focusWindow->nudged = true;
 	}
-
-	if (w->GetGeometry().nX != 0 || w->GetGeometry().nY != 0)
-		XMoveWindow(ctx->dpy, ctx->focus.focusWindow->xwayland().id, 0, 0);
 
 	if ( win_has_game_id( w ) )
 	{
