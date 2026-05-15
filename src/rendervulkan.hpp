@@ -412,6 +412,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 void vulkan_wait( uint64_t ulSeqNo, bool bReset );
 gamescope::Rc<CVulkanTexture> vulkan_get_last_output_image( bool partial, bool defer );
 gamescope::Rc<CVulkanTexture> vulkan_acquire_screenshot_texture(uint32_t width, uint32_t height, bool exportable, uint32_t drmFormat, EStreamColorspace colorspace = k_EStreamColorspace_Unknown);
+gamescope::Rc<CVulkanTexture> vulkan_acquire_capture_texture(uint32_t width, uint32_t height, bool exportable, uint32_t drmFormat, EStreamColorspace colorspace = k_EStreamColorspace_Unknown);
 
 void vulkan_present_to_window( void );
 
@@ -537,7 +538,8 @@ struct VulkanOutput_t
 	uint32_t uOutputFormat = DRM_FORMAT_INVALID;
 	uint32_t uOutputFormatOverlay = DRM_FORMAT_INVALID;
 
-	std::array<gamescope::OwningRc<CVulkanTexture>, 2> pScreenshotImages;
+	std::array<gamescope::OwningRc<CVulkanTexture>, 2> pScreenshotTextures;
+	std::array<gamescope::OwningRc<CVulkanTexture>, 2> pCaptureTextures;
 
 	// NIS and FSR
 	gamescope::OwningRc<CVulkanTexture> tmpOutput;
