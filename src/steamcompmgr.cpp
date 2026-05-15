@@ -2988,6 +2988,8 @@ paint_all( global_focus_t *pFocus, bool async )
 				pthread_setname_np( pthread_self(), "gamescope-scrsh" );
 
 				const uint8_t *mappedData = pScreenshotTexture->mappedData();
+				const uint32_t width = pScreenshotTexture->width();
+				const uint32_t height = pScreenshotTexture->height();
 
 				bool bScreenshotSuccess = false;
 
@@ -2995,18 +2997,18 @@ paint_all( global_focus_t *pFocus, bool async )
 				{
 					// Make our own copy of the image to remove the alpha channel.
 					constexpr uint32_t kCompCnt = 3;
-					auto imageData = std::vector<uint16_t>( g_nOutputWidth * g_nOutputHeight * kCompCnt );
+					auto imageData = std::vector<uint16_t>( width * height * kCompCnt );
 
-					for (uint32_t y = 0; y < g_nOutputHeight; y++)
+					for (uint32_t y = 0; y < height; y++)
 					{
-						for (uint32_t x = 0; x < g_nOutputWidth; x++)
+						for (uint32_t x = 0; x < width; x++)
 						{
 							uint32_t *pInPixel = (uint32_t *)&mappedData[(y * pScreenshotTexture->rowPitch()) + x * (32 / 8)];
 							uint32_t uInPixel = *pInPixel;
 
-							imageData[y * g_nOutputWidth * kCompCnt + x * kCompCnt + 0] = (uInPixel & (0b1111111111 << 20)) >> 20;
-							imageData[y * g_nOutputWidth * kCompCnt + x * kCompCnt + 1] = (uInPixel & (0b1111111111 << 10)) >> 10;
-							imageData[y * g_nOutputWidth * kCompCnt + x * kCompCnt + 2] = (uInPixel & (0b1111111111 << 0))  >> 0;
+							imageData[y * width * kCompCnt + x * kCompCnt + 0] = (uInPixel & (0b1111111111 << 20)) >> 20;
+							imageData[y * width * kCompCnt + x * kCompCnt + 1] = (uInPixel & (0b1111111111 << 10)) >> 10;
+							imageData[y * width * kCompCnt + x * kCompCnt + 2] = (uInPixel & (0b1111111111 << 0))  >> 0;
 						}
 					}
 
@@ -3014,7 +3016,7 @@ paint_all( global_focus_t *pFocus, bool async )
 #if HAVE_AVIF
 					avifResult avifResult = AVIF_RESULT_OK;
 
-					avifImage *pAvifImage = avifImageCreate( g_nOutputWidth, g_nOutputHeight, 10, AVIF_PIXEL_FORMAT_YUV444 );
+					avifImage *pAvifImage = avifImageCreate( width, height, 10, AVIF_PIXEL_FORMAT_YUV444 );
 					defer( avifImageDestroy( pAvifImage ) );
 					pAvifImage->yuvRange = AVIF_RANGE_FULL;
 					pAvifImage->colorPrimaries = bHDRScreenshot ? AVIF_COLOR_PRIMARIES_BT2020 : AVIF_COLOR_PRIMARIES_BT709;
@@ -3044,7 +3046,7 @@ paint_all( global_focus_t *pFocus, bool async )
 					rgbAvifImage.ignoreAlpha = AVIF_TRUE;
 
 					rgbAvifImage.pixels = (uint8_t *)imageData.data();
-					rgbAvifImage.rowBytes = g_nOutputWidth * kCompCnt * sizeof( uint16_t );
+					rgbAvifImage.rowBytes = width * kCompCnt * sizeof( uint16_t );
 
 					if ( ( avifResult = avifImageRGBToYUV( pAvifImage, &rgbAvifImage ) ) != AVIF_RESULT_OK ) // Not really! See Matrix Coefficients IDENTITY above.
 					{
@@ -3089,12 +3091,12 @@ paint_all( global_focus_t *pFocus, bool async )
 				else if (pScreenshotTexture->format() == VK_FORMAT_B8G8R8A8_UNORM)
 				{
 					// Make our own copy of the image to remove the alpha channel.
-					auto imageData = std::vector<uint8_t>(currentOutputWidth * currentOutputHeight * 4);
+					auto imageData = std::vector<uint8_t>(width * height * 4);
 					const uint32_t comp = 4;
-					const uint32_t pitch = currentOutputWidth * comp;
-					for (uint32_t y = 0; y < currentOutputHeight; y++)
+					const uint32_t pitch = width * comp;
+					for (uint32_t y = 0; y < height; y++)
 					{
-						for (uint32_t x = 0; x < currentOutputWidth; x++)
+						for (uint32_t x = 0; x < width; x++)
 						{
 							// BGR...
 							imageData[y * pitch + x * comp + 0] = mappedData[y * pScreenshotTexture->rowPitch() + x * comp + 2];
@@ -3103,7 +3105,7 @@ paint_all( global_focus_t *pFocus, bool async )
 							imageData[y * pitch + x * comp + 3] = 255;
 						}
 					}
-					if ( stbi_write_png( oScreenshotInfo->szScreenshotPath.c_str(), currentOutputWidth, currentOutputHeight, 4, imageData.data(), pitch ) )
+					if ( stbi_write_png( oScreenshotInfo->szScreenshotPath.c_str(), width, height, 4, imageData.data(), pitch ) )
 					{
 						xwm_log.infof( "Screenshot saved to %s", oScreenshotInfo->szScreenshotPath.c_str() );
 						bScreenshotSuccess = true;
@@ -3126,7 +3128,7 @@ paint_all( global_focus_t *pFocus, bool async )
 
 #if 0
 						char cmd[4096];
-						sprintf(cmd, "ffmpeg -f rawvideo -pixel_format nv12 -video_size %dx%d -i %s %s_encoded.png", pScreenshotTexture->width(), pScreenshotTexture->height(), oScreenshotInfo->szScreenshotPath.c_str(), oScreenshotInfo->szScreenshotPath.c_str() );
+						sprintf(cmd, "ffmpeg -f rawvideo -pixel_format nv12 -video_size %dx%d -i %s %s_encoded.png", width, height, oScreenshotInfo->szScreenshotPath.c_str(), oScreenshotInfo->szScreenshotPath.c_str() );
 
 						int ret = system(cmd);
 
