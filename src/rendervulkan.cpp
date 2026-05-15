@@ -3247,9 +3247,11 @@ bool vulkan_remake_swapchain( void )
 
 	g_device.vk.DestroySwapchainKHR( g_device.device(), pOutput->swapChain, nullptr );
 
-	// Delete screenshot image to be remade if needed
-	for (auto& pScreenshotImage : pOutput->pScreenshotImages)
-		pScreenshotImage = nullptr;
+	// Delete screenshot/capture textures to be remade if needed
+	for (auto& pScreenshotTexture : pOutput->pScreenshotTextures)
+		pScreenshotTexture = nullptr;
+	for (auto& pCaptureTexture : pOutput->pCaptureTextures)
+		pCaptureTexture = nullptr;
 
 	bool bRet = vulkan_make_swapchain( pOutput );
 	assert( bRet ); // Something has gone horribly wrong!
@@ -3343,9 +3345,11 @@ bool vulkan_remake_output_images()
 
 	pOutput->nOutImage = 0;
 
-	// Delete screenshot image to be remade if needed
-	for (auto& pScreenshotImage : pOutput->pScreenshotImages)
-		pScreenshotImage = nullptr;
+	// Delete screenshot/capture textures to be remade if needed
+	for (auto& pScreenshotTexture : pOutput->pScreenshotTextures)
+		pScreenshotTexture = nullptr;
+	for (auto& pCaptureTexture : pOutput->pCaptureTextures)
+		pCaptureTexture = nullptr;
 
 	bool bRet = vulkan_make_output_images( pOutput );
 	assert( bRet );
@@ -3593,49 +3597,64 @@ void vulkan_garbage_collect( void )
 	g_device.garbageCollect();
 }
 
-gamescope::Rc<CVulkanTexture> vulkan_acquire_screenshot_texture(uint32_t width, uint32_t height, bool exportable, uint32_t drmFormat, EStreamColorspace colorspace)
+static gamescope::Rc<CVulkanTexture> acquire_pooled_texture( auto& pool, uint32_t width, uint32_t height, bool exportable, uint32_t drmFormat, EStreamColorspace colorspace )
 {
-	for (auto& pScreenshotImage : g_output.pScreenshotImages)
+	for (auto& pTexture : pool)
 	{
-		// Evict a stale screenshot image, and reuse it
-		if (pScreenshotImage && pScreenshotImage->GetRefCount() == 0 &&
-			(width != pScreenshotImage->width() ||
-			 height != pScreenshotImage->height() ||
-			 drmFormat != pScreenshotImage->drmFormat()))
+		// Evict a stale texture and reuse the slot
+		if (pTexture && pTexture->GetRefCount() == 0 &&
+			(width != pTexture->width() ||
+			 height != pTexture->height() ||
+			 drmFormat != pTexture->drmFormat()))
 		{
-			pScreenshotImage = nullptr;
+			pTexture = nullptr;
 		}
 
-		if (pScreenshotImage == nullptr)
+		if (pTexture == nullptr)
 		{
-			pScreenshotImage = new CVulkanTexture();
+			pTexture = new CVulkanTexture();
 
-			CVulkanTexture::createFlags screenshotImageFlags;
-			screenshotImageFlags.bMappable = true;
-			screenshotImageFlags.bTransferDst = true;
-			screenshotImageFlags.bStorage = true;
+			CVulkanTexture::createFlags textureFlags;
+			textureFlags.bMappable = true;
+			textureFlags.bTransferDst = true;
+			textureFlags.bStorage = true;
 			if (exportable || drmFormat == DRM_FORMAT_NV12) {
-				screenshotImageFlags.bExportable = true;
-				screenshotImageFlags.bLinear = true; // TODO: support multi-planar DMA-BUF export via PipeWire
+				textureFlags.bExportable = true;
+				textureFlags.bLinear = true; // TODO: support multi-planar DMA-BUF export via PipeWire
 			}
 
-			bool bSuccess = pScreenshotImage->BInit( width, height, 1u, drmFormat, screenshotImageFlags );
-			pScreenshotImage->setStreamColorspace(colorspace);
+			bool bSuccess = pTexture->BInit( width, height, 1u, drmFormat, textureFlags );
+			pTexture->setStreamColorspace(colorspace);
 
 			assert( bSuccess );
 		}
 
-		if (pScreenshotImage->GetRefCount() != 0 ||
-			width != pScreenshotImage->width() ||
-			height != pScreenshotImage->height() ||
-			drmFormat != pScreenshotImage->drmFormat())
+		if (pTexture->GetRefCount() != 0 ||
+			width != pTexture->width() ||
+			height != pTexture->height() ||
+			drmFormat != pTexture->drmFormat())
 			continue;
 
-		return pScreenshotImage.get();
+		return pTexture.get();
 	}
 
-	vk_log.errorf("Unable to acquire screenshot texture. Out of textures.");
 	return nullptr;
+}
+
+gamescope::Rc<CVulkanTexture> vulkan_acquire_screenshot_texture(uint32_t width, uint32_t height, bool exportable, uint32_t drmFormat, EStreamColorspace colorspace)
+{
+	auto texture = acquire_pooled_texture(g_output.pScreenshotTextures, width, height, exportable, drmFormat, colorspace);
+	if (!texture)
+		vk_log.errorf("Unable to acquire screenshot texture. Out of textures.");
+	return texture;
+}
+
+gamescope::Rc<CVulkanTexture> vulkan_acquire_capture_texture(uint32_t width, uint32_t height, bool exportable, uint32_t drmFormat, EStreamColorspace colorspace)
+{
+	auto texture = acquire_pooled_texture(g_output.pCaptureTextures, width, height, exportable, drmFormat, colorspace);
+	if (!texture)
+		vk_log.errorf("Unable to acquire capture texture. Out of textures.");
+	return texture;
 }
 
 // Internal display's native brightness.
