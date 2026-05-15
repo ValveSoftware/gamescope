@@ -2867,6 +2867,8 @@ paint_all( global_focus_t *pFocus, bool async )
 			drmCaptureFormat = DRM_FORMAT_XRGB8888;
 		else if ( path.extension() == ".nv12.bin" )
 			drmCaptureFormat = DRM_FORMAT_NV12;
+		else
+			xwm_log.errorf( "Unsupported extension for a screenshot: %s", path.extension().string().c_str() );
 
 		gamescope::Rc<CVulkanTexture> pScreenshotTexture;
 		if ( drmCaptureFormat != DRM_FORMAT_INVALID )
@@ -3164,7 +3166,8 @@ paint_all( global_focus_t *pFocus, bool async )
 		}
 		else
 		{
-			xwm_log.errorf( "Oh no, we ran out of screenshot images. Not actually writing a screenshot." );
+			if ( drmCaptureFormat != DRM_FORMAT_INVALID )
+				xwm_log.errorf( "Oh no, we ran out of screenshot images. Not actually writing a screenshot." );
 			if ( oScreenshotInfo->bX11PropertyRequested )
 			{
 				XDeleteProperty( root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeScreenShotAtom );
