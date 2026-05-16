@@ -3449,10 +3449,6 @@ static bool is_good_override_candidate( steamcompmgr_win_t *override, steamcompm
 	if ( !focus )
 		return false;
 
-	// The pids should probably match for a dropdown to be a good candidate for this window.
-	if (override->pid != focus->pid)
-		return false;
-
 	auto rect = override->GetGeometry();
 	return override != focus && (rect.nX + rect.nWidth) > 0 && (rect.nY + rect.nHeight) > 0;
 } 
