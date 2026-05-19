@@ -2681,6 +2681,17 @@ void wlserver_mousemotion( double dx, double dy, uint32_t time )
 
 	if ( !wlserver_apply_constraint( &dx, &dy ) )
 	{
+		// Even when the constraint rejects motion, keep the cursor position
+		// in sync so subsequent button events have correct coordinates and
+		// the camera doesn't snap when the constraint is released.
+		if ( g_bForceRelativeMouse )
+		{
+			wlserver.mouse_surface_cursorx += dx;
+			wlserver.mouse_surface_cursory += dy;
+			wlserver_clampcursor();
+			wlserver_oncursorevent();
+			wlr_seat_pointer_notify_motion( wlserver.wlr.seat, time, wlserver.mouse_surface_cursorx, wlserver.mouse_surface_cursory );
+		}
 		wlr_seat_pointer_notify_frame( wlserver.wlr.seat );
 		return;
 	}
