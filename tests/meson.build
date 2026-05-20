@@ -13,5 +13,8 @@ gamescope_tests = executable(
 	dependencies: [catch2_dep, luajit_dep, cap_dep, drm_dep, glm_dep, wlroots_dep],
 	cpp_args: gamescope_cpp_args,
 )
+
+reaper_test_helper = executable('reaper_test_helper', 'reaper_test_helper.cpp')
+
 test('convar', gamescope_tests, args: ['[convar]'])
-test('process', gamescope_tests, args: ['[process]'])
+test('process', gamescope_tests, args: ['[process]'], depends: [reaper_test_helper])
