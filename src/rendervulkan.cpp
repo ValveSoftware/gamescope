@@ -465,7 +465,6 @@ bool CVulkanDevice::createDevice()
 		// (without an actual physical device)
 		vk_log.warnf( "physical device doesn't support VK_EXT_physical_device_drm" );
 	} else {
-#if HAVE_DRM
 		VkPhysicalDeviceDrmPropertiesEXT drmProps = {
 			.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRM_PROPERTIES_EXT,
 		};
@@ -500,13 +499,10 @@ bool CVulkanDevice::createDevice()
 			return false;
 		}
 
-		if ( drmProps.hasPrimary ) {
+		if ( !GetBackend()->UsesVulkanSwapchain() && drmProps.hasPrimary ) {
 			m_bHasDrmPrimaryDevId = true;
 			m_drmPrimaryDevId = makedev( drmProps.primaryMajor, drmProps.primaryMinor );
 		}
-#else
-		vk_log.warnf( "built without DRM support" );
-#endif
 	}
 
 	if ( m_bSupportsModifiers && !supportsForeignQueue ) {
