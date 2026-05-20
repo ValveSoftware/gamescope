@@ -296,6 +296,31 @@ static void wlserver_handle_modifiers(struct wl_listener *listener, void *data)
 	bump_input_counter();
 }
 
+static bool wlserver_maybe_reroute_forbidden_key( wlr_keyboard *keyboard, uint32_t time_msec, uint32_t key, uint32_t state )
+{
+	xkb_keycode_t keycode = key + 8;
+	xkb_keysym_t keysym = xkb_state_key_get_one_sym( keyboard->xkb_state, keycode );
+
+	bool forbidden_key =
+		keysym == XKB_KEY_XF86AudioLowerVolume ||
+		keysym == XKB_KEY_XF86AudioRaiseVolume ||
+		keysym == XKB_KEY_XF86PowerOff;
+	if ( !forbidden_key )
+		return false;
+
+	// Always send volume keys and poweroff to the root server only, to avoid it reaching the game.
+	struct wlr_surface *old_kb_surf = wlserver.kb_focus_surface;
+	struct wlr_surface *new_kb_surf = steamcompmgr_get_server_input_surface( 0 );
+	if ( !new_kb_surf )
+		return false;
+
+	wlserver_keyboardfocus( new_kb_surf, false );
+	wlr_seat_set_keyboard( wlserver.wlr.seat, keyboard );
+	wlr_seat_keyboard_notify_key( wlserver.wlr.seat, time_msec, key, state );
+	wlserver_keyboardfocus( old_kb_surf, false );
+	return true;
+}
+
 static void wlserver_handle_key(struct wl_listener *listener, void *data)
 {
 	struct wlr_keyboard *keyboard = &wlserver.keyboard_group->keyboard;
@@ -315,23 +340,10 @@ static void wlserver_handle_key(struct wl_listener *listener, void *data)
 	// TODO: Remove the below hack when Steam is shipping
 	// `gamescope_action_binding_manager` in Steam Stable
 	// as it can just use a keybind to grab these always.
-	bool forbidden_key =
-		keysym == XKB_KEY_XF86AudioLowerVolume ||
-		keysym == XKB_KEY_XF86AudioRaiseVolume ||
-		keysym == XKB_KEY_XF86PowerOff;
-	if ( ( event->state == WL_KEYBOARD_KEY_STATE_PRESSED || event->state == WL_KEYBOARD_KEY_STATE_RELEASED ) && forbidden_key )
+	if ( ( event->state == WL_KEYBOARD_KEY_STATE_PRESSED || event->state == WL_KEYBOARD_KEY_STATE_RELEASED ) &&
+		 wlserver_maybe_reroute_forbidden_key( keyboard, event->time_msec, event->keycode, event->state ) )
 	{
-		// Always send volume+/- to root server only, to avoid it reaching the game.
-		struct wlr_surface *old_kb_surf = wlserver.kb_focus_surface;
-		struct wlr_surface *new_kb_surf = steamcompmgr_get_server_input_surface( 0 );
-		if ( new_kb_surf )
-		{
-			wlserver_keyboardfocus( new_kb_surf, false );
-			wlr_seat_set_keyboard( wlserver.wlr.seat, keyboard );
-			wlr_seat_keyboard_notify_key( wlserver.wlr.seat, event->time_msec, event->keycode, event->state );
-			wlserver_keyboardfocus( old_kb_surf, false );
-			return;
-		}
+		return;
 	}
 	
 	if ( !wlserver_process_hotkeys( keyboard, event->keycode, event->state == WL_KEYBOARD_KEY_STATE_PRESSED ) )
@@ -2347,12 +2359,16 @@ void wlserver_key( uint32_t key, bool press, uint32_t time )
 	assert( wlserver_is_lock_held() );
 
 	wlr_keyboard *keyboard = wlserver.wlr.virtual_keyboard_device;
+	assert( keyboard != nullptr );
+
+	uint32_t state = press ? WL_KEYBOARD_KEY_STATE_PRESSED : WL_KEYBOARD_KEY_STATE_RELEASED;
+	if ( wlserver_maybe_reroute_forbidden_key( keyboard, time, key, state ) )
+		return;
 
 	if ( !wlserver_process_hotkeys( keyboard, key, press ) )
 	{
-		assert( keyboard != nullptr );
 		wlr_seat_set_keyboard( wlserver.wlr.seat, keyboard );
-		wlr_seat_keyboard_notify_key( wlserver.wlr.seat, time, key, press );
+		wlr_seat_keyboard_notify_key( wlserver.wlr.seat, time, key, state );
 	}
 
 	bump_input_counter();
