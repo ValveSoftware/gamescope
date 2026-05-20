@@ -1,7 +1,9 @@
 #pragma once
 
-#include <optional>
+#include <cstdint>
 #include <functional>
+#include <iosfwd>
+#include <optional>
 #include <span>
 
 #include <sys/types.h>
@@ -43,4 +45,6 @@ namespace gamescope::Process
 
     const char *GetProcessName();
 
+    uint32_t GetAppIdFromCgroup( std::istream &stream );
+    uint32_t GetAppIdFromPid( pid_t pid );
 }

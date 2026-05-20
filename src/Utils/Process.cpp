@@ -1,11 +1,15 @@
 #include "Process.h"
-#include "../Utils/Algorithm.h"
+#include "Algorithm.h"
 #include "../convar.h"
 #include "../log.hpp"
 #include "../Utils/Defer.h"
 
-#include <algorithm>
 #include <array>
+#include <cstdio>
+#include <cstring>
+#include <fstream>
+#include <istream>
+#include <string>
 
 #include <errno.h>
 #include <pthread.h>
@@ -538,4 +542,43 @@ namespace gamescope::Process
         return __progname;
     }
 
+    uint32_t GetAppIdFromCgroup( std::istream &stream )
+    {
+        std::string line;
+        while ( std::getline( stream, line ) )
+        {
+            // cgroup line format: hierarchy-ID:controller-list:cgroup-path
+            size_t first_colon = line.find( ':' );
+            if ( first_colon == std::string::npos )
+                continue;
+            size_t second_colon = line.find( ':', first_colon + 1 );
+            if ( second_colon == std::string::npos )
+                continue;
+
+            const char *path = line.c_str() + second_colon + 1;
+            const char *last_slash = strrchr( path, '/' );
+            const char *scope = last_slash ? last_slash + 1 : path;
+
+            pid_t reaperpid = 0;
+            uint32_t appid = 0;
+            if ( sscanf( scope, "app-steam-app%u-%d.scope", &appid, &reaperpid ) == 2 && appid != 0 )
+                return appid;
+        }
+        return 0;
+    }
+
+    uint32_t GetAppIdFromPid( pid_t pid )
+    {
+        char filename[256];
+        snprintf( filename, sizeof( filename ), "/proc/%i/cgroup", pid );
+        std::ifstream cgroup_file( filename );
+
+        if ( !cgroup_file.is_open() || cgroup_file.bad() )
+            return 0;
+
+        uint32_t appid = GetAppIdFromCgroup( cgroup_file );
+        if ( appid != 0 )
+            s_ProcessLog.debugf( "AppID %u derived from cgroup for pid %d", appid, pid );
+        return appid;
+    }
 }
