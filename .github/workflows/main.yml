@@ -44,7 +44,7 @@ jobs:
           export CC=gcc CXX=g++
           meson configure -Db_coverage=true build-gcc
           meson test -C build-gcc --suite gamescope -v
-          gcovr -f src --xml -o coverage.xml -s build-gcc
+          gcovr -f src -e src/reshade --xml -o coverage.xml -s build-gcc
       - name: Upload coverage report
         uses: actions/upload-artifact@v7
         with:
