@@ -101,7 +101,6 @@ struct wlserver_content_override {
 std::mutex g_wlserver_xdg_shell_windows_lock;
 
 static struct wl_list pending_surfaces = {0};
-
 static std::atomic<bool> g_bShutdownWLServer{ false };
 
 static void wlserver_x11_surface_info_set_wlr( struct wlserver_x11_surface_info *surf, struct wlr_surface *wlr_surf, bool override );
@@ -484,7 +483,7 @@ static void wlserver_new_input(struct wl_listener *listener, void *data)
 		case WLR_INPUT_DEVICE_KEYBOARD:
 		{
 			struct wlr_keyboard *keyboard = wlr_keyboard_from_input_device(device);
-			wlr_keyboard_set_keymap(keyboard, wlserver.keyboard_group->keyboard.keymap);
+
 			if (!wlr_keyboard_group_add_keyboard(wlserver.keyboard_group, keyboard)) {
 				wl_log.errorf("failed to add physical keyboard %s", device->name);
 				break;
@@ -1936,7 +1935,7 @@ static gamescope::CAsyncWaiter g_LibEisWaiter( "gamescope-eis" );
 static std::unique_ptr<gamescope::GamescopeInputServer> g_InputServer;
 #endif
 
-bool wlserver_init( void ) {
+bool wlserver_init( ::xkb_keymap *p_keymap ) {
 	assert( wlserver.display != nullptr );
 
 	wl_list_init(&pending_surfaces);
@@ -1967,21 +1966,15 @@ bool wlserver_init( void ) {
 	wlserver.wlr.virtual_keyboard_device = kbd;
 
 	// Create a keyboard group to keep all externally connected keyboards
-	// in sync (one single layout and a shared state)
-	struct xkb_context *context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
-	struct xkb_rule_names rules = { 0 };
-	rules.rules = getenv("XKB_DEFAULT_RULES");
-	rules.model = getenv("XKB_DEFAULT_MODEL");
-	rules.layout = getenv("XKB_DEFAULT_LAYOUT");
-	rules.variant = getenv("XKB_DEFAULT_VARIANT");
-	rules.options = getenv("XKB_DEFAULT_OPTIONS");
-	struct xkb_keymap *keymap = xkb_keymap_new_from_names(context, &rules, XKB_KEYMAP_COMPILE_NO_FLAGS);
-	wlserver.keyboard_group = wlr_keyboard_group_create();
+	// in sync (one single layout and a shared state) - defer keymap to later
+	wlserver.keyboard_group       = wlr_keyboard_group_create();
 	struct wlr_keyboard *keyboard = &wlserver.keyboard_group->keyboard;
 	wlr_keyboard_set_repeat_info(keyboard, 25, 600);
-	wlr_keyboard_set_keymap(keyboard, keymap);
 	wlserver.keyboard_group_modifiers.notify = wlserver_handle_modifiers;
-	wl_signal_add(&keyboard->events.modifiers, &wlserver.keyboard_group_modifiers);
+	wl_signal_add(
+		&keyboard->events.modifiers,
+		&wlserver.keyboard_group_modifiers
+	);
 	wlserver.keyboard_group_key.notify = wlserver_handle_key;
 	wl_signal_add(&keyboard->events.key, &wlserver.keyboard_group_key);
 
@@ -2087,6 +2080,80 @@ bool wlserver_init( void ) {
 		wl_display_destroy(wlserver.display);
 		return false;
 	}
+
+	// Backend initialized, input_devices populated. Now we can extract keymap
+	// from parent, then override with any set env vars
+	::xkb_context *context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+	::xkb_rule_names rules = { 0 };
+	::xkb_keymap *keymap   = nullptr;
+
+	// Fetch xkb env vars from session
+	const char *env_rules   = getenv("XKB_DEFAULT_RULES");
+	const char *env_model   = getenv("XKB_DEFAULT_MODEL");
+	const char *env_layout  = getenv("XKB_DEFAULT_LAYOUT");
+	const char *env_variant = getenv("XKB_DEFAULT_VARIANT");
+	const char *env_options = getenv("XKB_DEFAULT_OPTIONS");
+
+	// priority: env overrides parent keymap overrides default
+	if (
+		env_rules
+		|| env_model
+		|| env_layout
+		|| env_options
+	)
+	{
+		// Build keymap from env
+		rules.rules   = env_rules ? : "evdev";
+		rules.model   = env_model ? : "pc105";
+		rules.layout  = env_layout ? : "us";
+		rules.variant = (env_layout && env_variant) ? env_variant : NULL;
+		rules.options = env_options;
+		keymap        = xkb_keymap_new_from_names(
+			context,
+			&rules,
+			XKB_KEYMAP_COMPILE_NO_FLAGS
+		);
+	}
+
+	// Note: xkb_keymap_new_from_names can fail and leave keymap UB. This is
+	// why we check.
+	if (keymap)
+	{
+		wl_log.infof("Using xkb_keymap from environment variables");
+	}
+	else if (p_keymap)
+	{
+		// Ref parent session's keymap
+		keymap = xkb_keymap_ref(p_keymap);
+		wl_log.infof("Using parent session xkb_keymap");
+	}
+
+	// Build default keymap as fallback
+	if (!keymap)
+	{
+		rules.rules   = "evdev";
+		rules.model   = "pc105";
+		rules.layout  = "us";
+		rules.variant = NULL;
+		rules.options = NULL;
+		keymap        = xkb_keymap_new_from_names(
+			context,
+			&rules,
+			XKB_KEYMAP_COMPILE_NO_FLAGS
+		);
+
+		if (keymap)
+		{
+			wl_log.infof("Using default xkb_keymap.");
+		}
+		else
+		{
+			wl_log.errorf("Failed to create any xkb_keymap.");
+			return false;
+		}
+	}
+
+	wlr_keyboard_set_keymap(kbd, keymap);
 
 	wl_signal_emit( &wlserver.wlr.multi_backend->events.new_input, kbd );
 

@@ -11,6 +11,7 @@
 #include "waitable.h"
 #include "Utils/TempFiles.h"
 
+#include <condition_variable>
 #include <cstring>
 #include <unordered_map>
 #include <unordered_set>
@@ -521,6 +522,8 @@ namespace gamescope
 
         void SetRelativePointer( bool bRelative );
 
+        ::xkb_keymap *Wayland_GetParentKeymap() const;
+
     private:
 
         void HandleKey( uint32_t uKey, bool bPressed );
@@ -548,7 +551,7 @@ namespace gamescope
         uint32_t m_uFakeTimestamp = 0;
 
         xkb_context *m_pXkbContext = nullptr;
-        xkb_keymap *m_pXkbKeymap = nullptr;
+        ::xkb_keymap *m_pXkbKeymap = nullptr;
 
         uint32_t m_uKeyModifiers = 0;
         uint32_t m_uModMask[ GAMESCOPE_WAYLAND_MOD_COUNT ];
@@ -626,6 +629,7 @@ namespace gamescope
         .modifiers     = WAYLAND_USERDATA_TO_THIS( CWaylandInputThread, Wayland_Keyboard_Modifiers ),
         .repeat_info   = WAYLAND_USERDATA_TO_THIS( CWaylandInputThread, Wayland_Keyboard_RepeatInfo ),
     };
+
     const zwp_relative_pointer_v1_listener CWaylandInputThread::s_RelativePointerListener =
     {
         .relative_motion = WAYLAND_USERDATA_TO_THIS( CWaylandInputThread, Wayland_RelativePointer_RelativeMotion ),
@@ -676,6 +680,8 @@ namespace gamescope
 
         virtual bool UsesVirtualConnectors() override;
         virtual std::shared_ptr<IBackendConnector> CreateVirtualConnector( uint64_t ulVirtualConnectorKey ) override;
+    	
+    	::xkb_keymap *GetParentKeymap() const override;
     protected:
         virtual void OnBackendBlobDestroyed( BackendBlob *pBlob ) override;
 
@@ -2349,6 +2355,11 @@ namespace gamescope
         return pConnector;
     }
 
+    ::xkb_keymap *CWaylandBackend::GetParentKeymap() const
+    {
+        return m_InputThread.Wayland_GetParentKeymap();
+    }
+
     ///////////////////
     // INestedHints
     ///////////////////
@@ -2891,6 +2902,10 @@ namespace gamescope
         }
     }
 
+    ::xkb_keymap *CWaylandInputThread::Wayland_GetParentKeymap() const{
+		return m_pXkbKeymap;
+	}
+
     void CWaylandInputThread::HandleKey( uint32_t uKey, bool bPressed )
     {
         if ( m_uKeyModifiers & m_uModMask[ GAMESCOPE_WAYLAND_MOD_META ] )
@@ -3148,9 +3163,6 @@ namespace gamescope
 
     void CWaylandInputThread::Wayland_Keyboard_Keymap( wl_keyboard *pKeyboard, uint32_t uFormat, int32_t nFd, uint32_t uSize )
     {
-        // We are not doing much with the keymap, we pass keycodes thru.
-        // Ideally we'd use this to influence our keymap to clients, eg. x server.
-
         defer( close( nFd ) );
         if ( uFormat != WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1 )
 		return;
@@ -3163,7 +3175,12 @@ namespace gamescope
         }
         defer( munmap( pMap, uSize ) );
 
-        xkb_keymap *pKeymap = xkb_keymap_new_from_string( m_pXkbContext, pMap, XKB_KEYMAP_FORMAT_TEXT_V1, XKB_KEYMAP_COMPILE_NO_FLAGS );
+        ::xkb_keymap *pKeymap = xkb_keymap_new_from_string(
+	        m_pXkbContext,
+	        pMap,
+	        XKB_KEYMAP_FORMAT_TEXT_V1,
+	        XKB_KEYMAP_COMPILE_NO_FLAGS
+        );
         if ( !pKeymap )
         {
             xdg_log.errorf( "Failed to create xkb_keymap" );

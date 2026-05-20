@@ -18,6 +18,8 @@
 #include <variant>
 #include <any>
 
+#include <xkbcommon/xkbcommon.h>
+
 struct wlr_buffer;
 struct wlr_dmabuf_attributes;
 
@@ -403,6 +405,8 @@ namespace gamescope
         virtual bool ShouldFitWindows() = 0;
 
         virtual void OnEndFrame() = 0;
+
+    	virtual ::xkb_keymap *GetParentKeymap() const { return nullptr; }
 
         static IBackend *Get();
         template <typename T>
