@@ -20,6 +20,7 @@
 #include "edid.h"
 #include "Ratio.h"
 #include "LibInputHandler.h"
+#include "Utils/Process.h"
 
 #include <signal.h>
 #include <string.h>
@@ -123,8 +124,6 @@ namespace vr
 //
 
 extern std::atomic<uint32_t> g_unCurrentVRSceneAppId;
-
-uint32_t get_appid_from_pid( pid_t pid );
 
 ///////////////////////////////////////////////
 // Josh:
@@ -1168,7 +1167,7 @@ namespace gamescope
                     if (m_uCurrentScenePid != vrEvent.data.process.pid)
                     {
                         m_uCurrentScenePid = vrEvent.data.process.pid;
-                        m_uCurrentSceneAppId = get_appid_from_pid(m_uCurrentScenePid);
+                        m_uCurrentSceneAppId = gamescope::Process::GetAppIdFromPid(m_uCurrentScenePid);
                         g_unCurrentVRSceneAppId = m_uCurrentSceneAppId;
 
                         openvr_log.debugf("SceneApplicationChanged -> pid: %u appid: %u", m_uCurrentScenePid, m_uCurrentSceneAppId);
