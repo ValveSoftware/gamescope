@@ -304,6 +304,7 @@ bool g_bFullscreen = false;
 bool g_bForceRelativeMouse = false;
 
 bool g_bGrabbed = false;
+bool g_bShortcutGrabbed = false;
 
 float g_mouseSensitivity = 1.0;
 

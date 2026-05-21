@@ -25,6 +25,7 @@ extern bool g_bForceInternal;
 extern bool g_bFullscreen;
 
 extern bool g_bGrabbed;
+extern bool g_bShortcutGrabbed;
 
 extern float g_mouseSensitivity;
 extern const char *g_sOutputName;
