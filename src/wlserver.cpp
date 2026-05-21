@@ -2703,6 +2703,9 @@ void wlserver_mousewarp( double x, double y, uint32_t time, bool bSynthetic )
 {
 	assert( wlserver_is_lock_held() );
 
+	double dx = x - wlserver.mouse_surface_cursorx;
+	double dy = y - wlserver.mouse_surface_cursory;
+
 	wlserver.mouse_surface_cursorx = x;
 	wlserver.mouse_surface_cursory = y;
 
@@ -2714,6 +2717,7 @@ void wlserver_mousewarp( double x, double y, uint32_t time, bool bSynthetic )
 
 	wlserver_oncursorevent();
 
+	wlserver_perform_rel_pointer_motion( dx, dy );
 	wlr_seat_pointer_notify_motion( wlserver.wlr.seat, time, wlserver.mouse_surface_cursorx, wlserver.mouse_surface_cursory );
 	wlr_seat_pointer_notify_frame( wlserver.wlr.seat );
 }
