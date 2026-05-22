@@ -1565,6 +1565,7 @@ void drm_set_preferred_connector( const char *pszName )
 		}
 	}
 
+	std::string snapshot;
 	{
 		std::lock_guard lock( g_DRM.preferred_display_mutex );
 		if ( !pszName || !*pszName )
@@ -1572,18 +1573,43 @@ void drm_set_preferred_connector( const char *pszName )
 		else if ( !identifier.empty() )
 			g_DRM.preferred_display = std::move(identifier);
 		// else: name given but didn't match any connector - no change.
+		snapshot = g_DRM.preferred_display;
+	}
+
+	// FIXME: Steam should own this write; revert once it does.
+	if ( const char *pszPath = getenv("GAMESCOPE_DISPLAY_SELECTION_FILE"); pszPath && *pszPath )
+	{
+		if ( FILE *file = fopen(pszPath, "w") )
+		{
+			if ( !snapshot.empty() )
+				fprintf(file, "%s\n", snapshot.c_str());
+			fclose(file);
+		}
 	}
 	GetBackend()->DirtyState();
 }
 
 void drm_set_preferred_display_identifier( const char *pszIdentifier )
 {
+	std::string snapshot;
 	{
 		std::lock_guard lock( g_DRM.preferred_display_mutex );
 		if ( !pszIdentifier || !*pszIdentifier )
 			g_DRM.preferred_display.clear();
 		else
 			g_DRM.preferred_display = pszIdentifier;
+		snapshot = g_DRM.preferred_display;
+	}
+
+	// FIXME: Steam should own this write; revert once it does.
+	if ( const char *pszPath = getenv("GAMESCOPE_DISPLAY_SELECTION_FILE"); pszPath && *pszPath )
+	{
+		if ( FILE *file = fopen(pszPath, "w") )
+		{
+			if ( !snapshot.empty() )
+				fprintf(file, "%s\n", snapshot.c_str());
+			fclose(file);
+		}
 	}
 	GetBackend()->DirtyState();
 }
