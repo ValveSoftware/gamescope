@@ -33,6 +33,15 @@ namespace gamescope
 
     extern ConVar<std::string> cv_backend;
 
+    struct GamescopeKnownDisplay
+    {
+        std::string szConnectorName;
+        std::string szMake;
+        std::string szModel;
+        std::string szIdentifier;
+        uint32_t uFlags = 0;
+    };
+
     namespace VirtualConnectorStrategies
     {
         enum VirtualConnectorStrategy : uint32_t
@@ -358,6 +367,9 @@ namespace gamescope
             return this->GetCurrentConnector();
         }
         virtual IBackendConnector *GetConnector( GamescopeScreenType eScreenType ) = 0;
+
+        virtual std::vector<GamescopeKnownDisplay> GetConnectedOutputs() { return {}; }
+        virtual void SetPreferredConnector( const char *pszConnectorName ) { }
 
         virtual bool SupportsPlaneHardwareCursor() const = 0;
         virtual bool SupportsTearing() const = 0;
