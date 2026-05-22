@@ -3,6 +3,7 @@
 #include "steamcompmgr.hpp"
 
 #include <cassert>
+#include <mutex>
 #include <shared_mutex>
 
 extern int g_nPreferredOutputWidth;
@@ -191,6 +192,23 @@ namespace gamescope
             }
 
             return nullptr;
+		}
+
+		virtual std::vector<gamescope::GamescopeKnownDisplay> GetConnectedOutputs() override
+		{
+            if ( m_bInittedChild )
+                return m_pChild->GetConnectedOutputs();
+
+            return {};
+		}
+
+		virtual void SetPreferredConnector( const char *pszConnectorName ) override
+		{
+            // Lockless once initted: Lua can re-enter under a lock the poll path holds.
+            if ( m_bInittedChild )
+                return m_pChild->SetPreferredConnector( pszConnectorName );
+
+            QueueDisplayPreference( pszConnectorName ? pszConnectorName : "" );
 		}
 
 		virtual IBackendConnector *GetConnector( GamescopeScreenType eScreenType ) override
@@ -397,7 +415,16 @@ namespace gamescope
                 {
                     if ( m_pChild->Init() )
                     {
-                        m_bInittedChild = true;
+                        {
+                            // Replay before publishing so a racing setter can't be overwritten.
+                            std::lock_guard lock2{ m_PendingPreferenceMutex };
+                            if ( m_oPendingDisplayPreference )
+                            {
+                                ApplyDisplayPreference( *m_oPendingDisplayPreference );
+                                m_oPendingDisplayPreference = std::nullopt;
+                            }
+                            m_bInittedChild = true;
+                        }
 
                         if ( m_bDonePostInit )
                         {
@@ -412,9 +439,26 @@ namespace gamescope
             }
         }
 
+        void ApplyDisplayPreference( const std::string &szConnectorName )
+        {
+            m_pChild->SetPreferredConnector( szConnectorName.c_str() );
+        }
+
+        void QueueDisplayPreference( std::string szConnectorName )
+        {
+            // No m_mutInit here - init's EDID parse can run Lua that lands here.
+            std::lock_guard lock{ m_PendingPreferenceMutex };
+            if ( m_bInittedChild )
+                return ApplyDisplayPreference( szConnectorName );
+
+            m_oPendingDisplayPreference = std::move( szConnectorName );
+        }
+
         IBackend *m_pChild = nullptr;
         mutable std::shared_mutex m_mutInit;
         bool m_bDonePostInit = false;
+        std::mutex m_PendingPreferenceMutex;
+        std::optional<std::string> m_oPendingDisplayPreference;
 
         std::atomic<bool> m_bInittedChild = { false };
         std::atomic<bool> m_bJustInittedClient = { false };

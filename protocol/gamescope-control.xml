@@ -29,7 +29,7 @@
     it.
   </description>
 
-  <interface name="gamescope_control" version="6">
+  <interface name="gamescope_control" version="7">
     <request name="destroy" type="destructor"></request>
 
     <enum name="feature">
@@ -44,6 +44,7 @@
       <entry name="mura_correction" value="5"/>
       <entry name="look" value="6"/>
       <entry name="perf_query" value="7"/>
+      <entry name="display_selection" value="8"/>
     </enum>
 
     <event name="feature_support">
@@ -59,6 +60,7 @@
       <entry name="internal_display" value="0x1"/>
       <entry name="supports_hdr" value="0x2"/>
       <entry name="supports_vrr" value="0x4"/>
+      <entry name="current" value="0x8"/>
     </enum>
 
     <event name="active_display_info" since="2">
@@ -142,6 +144,28 @@
       <arg name="frametime_ns_lo" type="uint" summary="Time delta between the two most recent frames"></arg>
       <arg name="frametime_ns_hi" type="uint" summary="frametime_ns high bits"></arg>
     </event>
+
+    <event name="available_display_info" since="7">
+      <description summary="report one display the compositor can switch to"></description>
+      <arg name="connector_name" type="string" summary="connector name (e.g. 'DP-1') to pass back via set_display"/>
+      <arg name="display_make" type="string"/>
+      <arg name="display_model" type="string"/>
+      <arg name="display_flags" type="uint" enum="display_flag" summary="combination of 'display_flag' values"/>
+      <arg name="display_identifier" type="string" summary="opaque EDID-derived key for persisting a display preference, saved and compared verbatim. Identical monitors get a trailing ' [...]' suffix to tell them apart"/>
+    </event>
+
+    <event name="available_display_info_done" since="7">
+      <description summary="terminator for an available_display_info batch, which fully replaces any previously reported list"></description>
+    </event>
+
+    <request name="set_display" since="7">
+      <description summary="select the display to drive; ignored if connector_name is not a currently-connected output"></description>
+      <arg name="connector_name" type="string" summary="connector to drive, as reported by available_display_info"/>
+    </request>
+
+    <request name="unset_display" since="7">
+      <description summary="clear any runtime display selection"></description>
+    </request>
 
   </interface>
 </protocol>
