@@ -1740,6 +1740,10 @@ int wlsession_open_kms( const char *device_name ) {
 
 void wlsession_close_kms()
 {
+	if ( wlserver.wlr.device )
+	{
+		wl_list_remove( &wlserver.wlr.device_change_listener.link );
+	}
 	wlr_session_close_file( wlserver.wlr.session, wlserver.wlr.device );
 }
 
