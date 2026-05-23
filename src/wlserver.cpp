@@ -1732,9 +1732,8 @@ int wlsession_open_kms( const char *device_name ) {
 		}
 	}
 
-	struct wl_listener *listener = new wl_listener();
-	listener->notify = kms_device_handle_change;
-	wl_signal_add( &wlserver.wlr.device->events.change, listener );
+	wlserver.wlr.device_change_listener.notify = kms_device_handle_change;
+	wl_signal_add( &wlserver.wlr.device->events.change, &wlserver.wlr.device_change_listener );
 
 	return wlserver.wlr.device->fd;
 }
