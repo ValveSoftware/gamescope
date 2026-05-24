@@ -70,7 +70,7 @@ static LogScope reshade_log("gamescope_reshade");
 class ReshadeUniform
 {
 public:
-    ReshadeUniform(const reshadefx::uniform_info& info);
+    ReshadeUniform(const reshadefx::uniform& info);
     virtual ~ReshadeUniform() {};
 
     virtual void update(void* mappedBuffer) = 0;
@@ -82,13 +82,13 @@ protected:
     template <typename T>
     void copy(void* mappedBuffer, const T* thing);
 
-    reshadefx::uniform_info m_info;
+    reshadefx::uniform m_info;
 };
 
 class FrameTimeUniform : public ReshadeUniform
 {
 public:
-    FrameTimeUniform(reshadefx::uniform_info uniformInfo);
+    FrameTimeUniform(reshadefx::uniform uniformInfo);
     virtual void update(void* mappedBuffer) override;
     virtual ~FrameTimeUniform();
 
@@ -99,7 +99,7 @@ private:
 class FrameCountUniform : public ReshadeUniform
 {
 public:
-    FrameCountUniform(reshadefx::uniform_info uniformInfo);
+    FrameCountUniform(reshadefx::uniform uniformInfo);
     virtual void update(void* mappedBuffer) override;
     virtual ~FrameCountUniform();
 
@@ -110,7 +110,7 @@ private:
 class RefreshRateUniform : public ReshadeUniform
 {
 public:
-    RefreshRateUniform(reshadefx::uniform_info uniformInfo);
+    RefreshRateUniform(reshadefx::uniform uniformInfo);
     virtual void update(void* mappedBuffer) override;
     virtual ~RefreshRateUniform();
 
@@ -121,7 +121,7 @@ private:
 class DateUniform : public ReshadeUniform
 {
 public:
-    DateUniform(reshadefx::uniform_info uniformInfo);
+    DateUniform(reshadefx::uniform uniformInfo);
     virtual void update(void* mappedBuffer) override;
     virtual ~DateUniform();
 };
@@ -129,7 +129,7 @@ public:
 class TimerUniform : public ReshadeUniform
 {
 public:
-    TimerUniform(reshadefx::uniform_info uniformInfo);
+    TimerUniform(reshadefx::uniform uniformInfo);
     virtual void update(void* mappedBuffer) override;
     virtual ~TimerUniform();
 
@@ -140,7 +140,7 @@ private:
 class PingPongUniform : public ReshadeUniform
 {
 public:
-    PingPongUniform(reshadefx::uniform_info uniformInfo);
+    PingPongUniform(reshadefx::uniform uniformInfo);
     virtual void update(void* mappedBuffer) override;
     virtual ~PingPongUniform();
 
@@ -158,7 +158,7 @@ private:
 class RandomUniform : public ReshadeUniform
 {
 public:
-    RandomUniform(reshadefx::uniform_info uniformInfo);
+    RandomUniform(reshadefx::uniform uniformInfo);
     virtual void update(void* mappedBuffer) override;
     virtual ~RandomUniform();
 
@@ -170,7 +170,7 @@ private:
 class KeyUniform : public ReshadeUniform
 {
 public:
-    KeyUniform(reshadefx::uniform_info uniformInfo);
+    KeyUniform(reshadefx::uniform uniformInfo);
     virtual void update(void* mappedBuffer) override;
     virtual ~KeyUniform();
 };
@@ -178,7 +178,7 @@ public:
 class MouseButtonUniform : public ReshadeUniform
 {
 public:
-    MouseButtonUniform(reshadefx::uniform_info uniformInfo);
+    MouseButtonUniform(reshadefx::uniform uniformInfo);
     virtual void update(void* mappedBuffer) override;
     virtual ~MouseButtonUniform();
 };
@@ -186,7 +186,7 @@ public:
 class MousePointUniform : public ReshadeUniform
 {
 public:
-    MousePointUniform(reshadefx::uniform_info uniformInfo);
+    MousePointUniform(reshadefx::uniform uniformInfo);
     virtual void update(void* mappedBuffer) override;
     virtual ~MousePointUniform();
 };
@@ -194,7 +194,7 @@ public:
 class MouseDeltaUniform : public ReshadeUniform
 {
 public:
-    MouseDeltaUniform(reshadefx::uniform_info uniformInfo);
+    MouseDeltaUniform(reshadefx::uniform uniformInfo);
     virtual void update(void* mappedBuffer) override;
     virtual ~MouseDeltaUniform();
 };
@@ -202,7 +202,7 @@ public:
 class DepthUniform : public ReshadeUniform
 {
 public:
-    DepthUniform(reshadefx::uniform_info uniformInfo);
+    DepthUniform(reshadefx::uniform uniformInfo);
     virtual void update(void* mappedBuffer) override;
     virtual ~DepthUniform();
 };
@@ -210,7 +210,7 @@ public:
 class RuntimeUniform : public ReshadeUniform
 {
 public:
-    RuntimeUniform(reshadefx::uniform_info uniformInfo);
+    RuntimeUniform(reshadefx::uniform uniformInfo);
     void virtual update(void* mappedBuffer) override;
     virtual ~RuntimeUniform();
 
@@ -225,13 +225,13 @@ private:
 class DataUniform : public ReshadeUniform
 {
 public:
-    DataUniform(reshadefx::uniform_info uniformInfo);
+    DataUniform(reshadefx::uniform uniformInfo);
     virtual void update(void* mappedBuffer) override;
     virtual ~DataUniform();
 };
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
-ReshadeUniform::ReshadeUniform(const reshadefx::uniform_info& info)
+ReshadeUniform::ReshadeUniform(const reshadefx::uniform& info)
     : m_info(info)
 {
 }
@@ -280,7 +280,7 @@ void ReshadeUniform::copy(void* mappedBuffer, const T* thing)
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
-FrameTimeUniform::FrameTimeUniform(reshadefx::uniform_info uniformInfo)
+FrameTimeUniform::FrameTimeUniform(reshadefx::uniform uniformInfo)
     : ReshadeUniform(uniformInfo)
 {
     lastFrame = std::chrono::high_resolution_clock::now();
@@ -299,7 +299,7 @@ FrameTimeUniform::~FrameTimeUniform()
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
-FrameCountUniform::FrameCountUniform(reshadefx::uniform_info uniformInfo)
+FrameCountUniform::FrameCountUniform(reshadefx::uniform uniformInfo)
     : ReshadeUniform(uniformInfo)
 {
 }
@@ -313,7 +313,7 @@ FrameCountUniform::~FrameCountUniform()
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
-RefreshRateUniform::RefreshRateUniform(reshadefx::uniform_info uniformInfo)
+RefreshRateUniform::RefreshRateUniform(reshadefx::uniform uniformInfo)
     : ReshadeUniform(uniformInfo)
 {
 }
@@ -327,7 +327,7 @@ RefreshRateUniform::~RefreshRateUniform()
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
-DateUniform::DateUniform(reshadefx::uniform_info uniformInfo)
+DateUniform::DateUniform(reshadefx::uniform uniformInfo)
     : ReshadeUniform(uniformInfo)
 {
 }
@@ -349,7 +349,7 @@ DateUniform::~DateUniform()
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
-TimerUniform::TimerUniform(reshadefx::uniform_info uniformInfo)
+TimerUniform::TimerUniform(reshadefx::uniform uniformInfo)
     : ReshadeUniform(uniformInfo)
 {
     start  = std::chrono::high_resolution_clock::now();
@@ -367,7 +367,7 @@ TimerUniform::~TimerUniform()
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
-PingPongUniform::PingPongUniform(reshadefx::uniform_info uniformInfo)
+PingPongUniform::PingPongUniform(reshadefx::uniform uniformInfo)
     : ReshadeUniform(uniformInfo)
 {
     const auto matchesAnnotationName = [&](const auto& name){ return std::ranges::find_if(uniformInfo.annotations, std::bind_front(std::equal_to{}, name), &reshadefx::annotation::name);};
@@ -432,7 +432,7 @@ PingPongUniform::~PingPongUniform()
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
-RandomUniform::RandomUniform(reshadefx::uniform_info uniformInfo)
+RandomUniform::RandomUniform(reshadefx::uniform uniformInfo)
     : ReshadeUniform(uniformInfo)
 {
     if (auto minAnnotation =
@@ -458,7 +458,7 @@ RandomUniform::~RandomUniform()
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
-KeyUniform::KeyUniform(reshadefx::uniform_info uniformInfo)
+KeyUniform::KeyUniform(reshadefx::uniform uniformInfo)
     : ReshadeUniform(uniformInfo)
 {
 }
@@ -472,7 +472,7 @@ KeyUniform::~KeyUniform()
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
-MouseButtonUniform::MouseButtonUniform(reshadefx::uniform_info uniformInfo)
+MouseButtonUniform::MouseButtonUniform(reshadefx::uniform uniformInfo)
     : ReshadeUniform(uniformInfo)
 {
 }
@@ -486,7 +486,7 @@ MouseButtonUniform::~MouseButtonUniform()
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
-MousePointUniform::MousePointUniform(reshadefx::uniform_info uniformInfo)
+MousePointUniform::MousePointUniform(reshadefx::uniform uniformInfo)
     : ReshadeUniform(uniformInfo)
 {
 }
@@ -506,7 +506,7 @@ MousePointUniform::~MousePointUniform()
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
-MouseDeltaUniform::MouseDeltaUniform(reshadefx::uniform_info uniformInfo)
+MouseDeltaUniform::MouseDeltaUniform(reshadefx::uniform uniformInfo)
     : ReshadeUniform(uniformInfo)
 {
 }
@@ -521,7 +521,7 @@ MouseDeltaUniform::~MouseDeltaUniform()
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
-DepthUniform::DepthUniform(reshadefx::uniform_info uniformInfo)
+DepthUniform::DepthUniform(reshadefx::uniform uniformInfo)
     : ReshadeUniform(uniformInfo)
 {
 }
@@ -535,7 +535,7 @@ DepthUniform::~DepthUniform()
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
-RuntimeUniform::RuntimeUniform(reshadefx::uniform_info uniformInfo)
+RuntimeUniform::RuntimeUniform(reshadefx::uniform uniformInfo)
     : ReshadeUniform(uniformInfo)
 {
     offset = uniformInfo.offset;
@@ -629,7 +629,7 @@ RuntimeUniform::~RuntimeUniform()
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
-DataUniform::DataUniform(reshadefx::uniform_info uniformInfo)
+DataUniform::DataUniform(reshadefx::uniform uniformInfo)
     : ReshadeUniform(uniformInfo)
 {
 }
@@ -641,7 +641,7 @@ DataUniform::~DataUniform()
 {
 }
 
-static std::vector<std::shared_ptr<ReshadeUniform>> createReshadeUniforms(const reshadefx::module& module, uint32_t *pFlags)
+static std::vector<std::shared_ptr<ReshadeUniform>> createReshadeUniforms(const reshadefx::effect_module& module, uint32_t *pFlags)
 {
     std::vector<std::shared_ptr<ReshadeUniform>> uniforms;
     for (auto& uniform : module.uniforms)
@@ -757,66 +757,66 @@ static VkFormat ConvertReshadeFormat(reshadefx::texture_format texFormat)
 }
 
 #if 0
-static VkCompareOp ConvertReshadeCompareOp(reshadefx::pass_stencil_func compareOp)
+static VkCompareOp ConvertReshadeCompareOp(reshadefx::stencil_func compareOp)
 {
     switch (compareOp)
     {
-        case reshadefx::pass_stencil_func::never: return VK_COMPARE_OP_NEVER;
-        case reshadefx::pass_stencil_func::less: return VK_COMPARE_OP_LESS;
-        case reshadefx::pass_stencil_func::equal: return VK_COMPARE_OP_EQUAL;
-        case reshadefx::pass_stencil_func::less_equal: return VK_COMPARE_OP_LESS_OR_EQUAL;
-        case reshadefx::pass_stencil_func::greater: return VK_COMPARE_OP_GREATER;
-        case reshadefx::pass_stencil_func::not_equal: return VK_COMPARE_OP_NOT_EQUAL;
-        case reshadefx::pass_stencil_func::greater_equal: return VK_COMPARE_OP_GREATER_OR_EQUAL;
-        case reshadefx::pass_stencil_func::always: return VK_COMPARE_OP_ALWAYS;
+        case reshadefx::stencil_func::never: return VK_COMPARE_OP_NEVER;
+        case reshadefx::stencil_func::less: return VK_COMPARE_OP_LESS;
+        case reshadefx::stencil_func::equal: return VK_COMPARE_OP_EQUAL;
+        case reshadefx::stencil_func::less_equal: return VK_COMPARE_OP_LESS_OR_EQUAL;
+        case reshadefx::stencil_func::greater: return VK_COMPARE_OP_GREATER;
+        case reshadefx::stencil_func::not_equal: return VK_COMPARE_OP_NOT_EQUAL;
+        case reshadefx::stencil_func::greater_equal: return VK_COMPARE_OP_GREATER_OR_EQUAL;
+        case reshadefx::stencil_func::always: return VK_COMPARE_OP_ALWAYS;
         default: return VK_COMPARE_OP_ALWAYS;
     }
 }
 
-static VkStencilOp ConvertReshadeStencilOp(reshadefx::pass_stencil_op stencilOp)
+static VkStencilOp ConvertReshadeStencilOp(reshadefx::stencil_op stencilOp)
 {
     switch (stencilOp)
     {
-        case reshadefx::pass_stencil_op::zero: return VK_STENCIL_OP_ZERO;
-        case reshadefx::pass_stencil_op::keep: return VK_STENCIL_OP_KEEP;
-        case reshadefx::pass_stencil_op::replace: return VK_STENCIL_OP_REPLACE;
-        case reshadefx::pass_stencil_op::increment_saturate: return VK_STENCIL_OP_INCREMENT_AND_CLAMP;
-        case reshadefx::pass_stencil_op::decrement_saturate: return VK_STENCIL_OP_DECREMENT_AND_CLAMP;
-        case reshadefx::pass_stencil_op::invert: return VK_STENCIL_OP_INVERT;
-        case reshadefx::pass_stencil_op::increment: return VK_STENCIL_OP_INCREMENT_AND_WRAP;
-        case reshadefx::pass_stencil_op::decrement: return VK_STENCIL_OP_DECREMENT_AND_WRAP;
+        case reshadefx::stencil_op::zero: return VK_STENCIL_OP_ZERO;
+        case reshadefx::stencil_op::keep: return VK_STENCIL_OP_KEEP;
+        case reshadefx::stencil_op::replace: return VK_STENCIL_OP_REPLACE;
+        case reshadefx::stencil_op::increment_saturate: return VK_STENCIL_OP_INCREMENT_AND_CLAMP;
+        case reshadefx::stencil_op::decrement_saturate: return VK_STENCIL_OP_DECREMENT_AND_CLAMP;
+        case reshadefx::stencil_op::invert: return VK_STENCIL_OP_INVERT;
+        case reshadefx::stencil_op::increment: return VK_STENCIL_OP_INCREMENT_AND_WRAP;
+        case reshadefx::stencil_op::decrement: return VK_STENCIL_OP_DECREMENT_AND_WRAP;
         default: return VK_STENCIL_OP_KEEP;
     }
 }
 #endif
 
-static VkBlendOp ConvertReshadeBlendOp(reshadefx::pass_blend_op blendOp)
+static VkBlendOp ConvertReshadeBlendOp(reshadefx::blend_op blendOp)
 {
     switch (blendOp)
     {
-        case reshadefx::pass_blend_op::add: return VK_BLEND_OP_ADD;
-        case reshadefx::pass_blend_op::subtract: return VK_BLEND_OP_SUBTRACT;
-        case reshadefx::pass_blend_op::reverse_subtract: return VK_BLEND_OP_REVERSE_SUBTRACT;
-        case reshadefx::pass_blend_op::min: return VK_BLEND_OP_MIN;
-        case reshadefx::pass_blend_op::max: return VK_BLEND_OP_MAX;
+        case reshadefx::blend_op::add: return VK_BLEND_OP_ADD;
+        case reshadefx::blend_op::subtract: return VK_BLEND_OP_SUBTRACT;
+        case reshadefx::blend_op::reverse_subtract: return VK_BLEND_OP_REVERSE_SUBTRACT;
+        case reshadefx::blend_op::min: return VK_BLEND_OP_MIN;
+        case reshadefx::blend_op::max: return VK_BLEND_OP_MAX;
         default: return VK_BLEND_OP_ADD;
     }
 }
 
-static VkBlendFactor ConvertReshadeBlendFactor(reshadefx::pass_blend_factor blendFactor)
+static VkBlendFactor ConvertReshadeBlendFactor(reshadefx::blend_factor blendFactor)
 {
     switch (blendFactor)
     {
-        case reshadefx::pass_blend_factor::zero: return VK_BLEND_FACTOR_ZERO;
-        case reshadefx::pass_blend_factor::one: return VK_BLEND_FACTOR_ONE;
-        case reshadefx::pass_blend_factor::source_color: return VK_BLEND_FACTOR_SRC_COLOR;
-        case reshadefx::pass_blend_factor::source_alpha: return VK_BLEND_FACTOR_SRC_ALPHA;
-        case reshadefx::pass_blend_factor::one_minus_source_color: return VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR;
-        case reshadefx::pass_blend_factor::one_minus_source_alpha: return VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-        case reshadefx::pass_blend_factor::dest_alpha: return VK_BLEND_FACTOR_DST_ALPHA;
-        case reshadefx::pass_blend_factor::one_minus_dest_alpha: return VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA;
-        case reshadefx::pass_blend_factor::dest_color: return VK_BLEND_FACTOR_DST_COLOR;
-        case reshadefx::pass_blend_factor::one_minus_dest_color: return VK_BLEND_FACTOR_ONE_MINUS_DST_COLOR;
+        case reshadefx::blend_factor::zero: return VK_BLEND_FACTOR_ZERO;
+        case reshadefx::blend_factor::one: return VK_BLEND_FACTOR_ONE;
+        case reshadefx::blend_factor::source_color: return VK_BLEND_FACTOR_SRC_COLOR;
+        case reshadefx::blend_factor::source_alpha: return VK_BLEND_FACTOR_SRC_ALPHA;
+        case reshadefx::blend_factor::one_minus_source_color: return VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR;
+        case reshadefx::blend_factor::one_minus_source_alpha: return VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+        case reshadefx::blend_factor::dest_alpha: return VK_BLEND_FACTOR_DST_ALPHA;
+        case reshadefx::blend_factor::one_minus_dest_alpha: return VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA;
+        case reshadefx::blend_factor::dest_color: return VK_BLEND_FACTOR_DST_COLOR;
+        case reshadefx::blend_factor::one_minus_dest_color: return VK_BLEND_FACTOR_ONE_MINUS_DST_COLOR;
         default: return VK_BLEND_FACTOR_ZERO;
     }
 }
@@ -993,7 +993,7 @@ bool ReshadeEffectPipeline::init(CVulkanDevice *device, const ReshadeEffectKey &
 	}
 
 	std::unique_ptr<reshadefx::codegen> codegen(reshadefx::create_codegen_spirv(
-		true /* vulkan semantics */, true /* debug info */, false /* uniforms to spec constants */, false /*flip vertex shader*/));
+		true /* vulkan semantics */, true /* debug info */, false /* uniforms to spec constants */, false /* enable_16bit_types */, false /*flip vertex shader*/));
 
 	reshadefx::parser parser;
 	parser.parse(pp.output(), codegen.get());
@@ -1005,8 +1005,17 @@ bool ReshadeEffectPipeline::init(CVulkanDevice *device, const ReshadeEffectKey &
 		return false;
 	}
 
-	m_module = std::make_unique<reshadefx::module>();
+	m_module = std::make_unique<reshadefx::effect_module>();
+
+    /** Before ReShade 6.4.1 */
+#if 0
 	codegen->write_result(*m_module);
+#endif
+
+    /** After ReShade 6.4.1 */
+    *m_module = codegen->module();
+
+    std::string code = codegen->finalize_code();
 
 #if 0
     FILE *f = fopen("test.spv", "wb");
@@ -1439,13 +1448,13 @@ bool ReshadeEffectPipeline::init(CVulkanDevice *device, const ReshadeEffectKey &
     // Create Pipelines
 	for (const auto& pass : technique.passes)
 	{
-		reshade_log.infof("Compiling pass: %s", pass.name.c_str());
+		reshade_log.infof("Compiling pass: %s", pass.name.empty() ? "<noname>" : pass.name.c_str());
 
         VkShaderModuleCreateInfo shaderModuleInfo =
         {
             .sType    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
-            .codeSize = m_module->code.size(),
-            .pCode    = reinterpret_cast<uint32_t*>(m_module->code.data()),
+            .codeSize = code.size(),
+            .pCode    = reinterpret_cast<uint32_t*>(code.data()),
         };
 
 		if (!pass.cs_entry_point.empty())
@@ -1502,13 +1511,13 @@ bool ReshadeEffectPipeline::init(CVulkanDevice *device, const ReshadeEffectKey &
 
                 VkPipelineColorBlendAttachmentState colorBlendAttachment;
                 colorBlendAttachment.blendEnable         = pass.blend_enable[i];
-                colorBlendAttachment.srcColorBlendFactor = ConvertReshadeBlendFactor(pass.src_blend[i]);
-                colorBlendAttachment.dstColorBlendFactor = ConvertReshadeBlendFactor(pass.dest_blend[i]);
-                colorBlendAttachment.colorBlendOp        = ConvertReshadeBlendOp(pass.blend_op[i]);
-                colorBlendAttachment.srcAlphaBlendFactor = ConvertReshadeBlendFactor(pass.src_blend_alpha[i]);
-                colorBlendAttachment.dstAlphaBlendFactor = ConvertReshadeBlendFactor(pass.dest_blend_alpha[i]);
-                colorBlendAttachment.alphaBlendOp        = ConvertReshadeBlendOp(pass.blend_op_alpha[i]);
-                colorBlendAttachment.colorWriteMask      = pass.color_write_mask[i];
+                colorBlendAttachment.srcColorBlendFactor = ConvertReshadeBlendFactor(pass.source_color_blend_factor[i]);
+                colorBlendAttachment.dstColorBlendFactor = ConvertReshadeBlendFactor(pass.dest_color_blend_factor[i]);
+                colorBlendAttachment.colorBlendOp        = ConvertReshadeBlendOp(pass.color_blend_op[i]);
+                colorBlendAttachment.srcAlphaBlendFactor = ConvertReshadeBlendFactor(pass.source_alpha_blend_factor[i]);
+                colorBlendAttachment.dstAlphaBlendFactor = ConvertReshadeBlendFactor(pass.dest_alpha_blend_factor[i]);
+                colorBlendAttachment.alphaBlendOp        = ConvertReshadeBlendOp(pass.alpha_blend_op[i]);
+                colorBlendAttachment.colorWriteMask      = pass.render_target_write_mask[i];
 
                 attachmentBlendStates.push_back(colorBlendAttachment);
             }
@@ -1649,9 +1658,9 @@ bool ReshadeEffectPipeline::init(CVulkanDevice *device, const ReshadeEffectKey &
             depthStencilStateCreateInfo.depthCompareOp        = VK_COMPARE_OP_ALWAYS;
             depthStencilStateCreateInfo.depthBoundsTestEnable = VK_FALSE;
             depthStencilStateCreateInfo.stencilTestEnable     = pass.stencil_enable;
-            depthStencilStateCreateInfo.front.failOp          = convertReshadeStencilOp(pass.stencil_op_fail);
-            depthStencilStateCreateInfo.front.passOp          = convertReshadeStencilOp(pass.stencil_op_pass);
-            depthStencilStateCreateInfo.front.depthFailOp     = convertReshadeStencilOp(pass.stencil_op_depth_fail);
+            depthStencilStateCreateInfo.front.failOp          = convertReshadeStencilOp(pass.stencil_fail_op);
+            depthStencilStateCreateInfo.front.passOp          = convertReshadeStencilOp(pass.stencil_pass_op);
+            depthStencilStateCreateInfo.front.depthFailOp     = convertReshadeStencilOp(pass.stencil_depth_fail_op);
             depthStencilStateCreateInfo.front.compareOp       = convertReshadeCompareOp(pass.stencil_comparison_func);
             depthStencilStateCreateInfo.front.compareMask     = pass.stencil_read_mask;
             depthStencilStateCreateInfo.front.writeMask       = pass.stencil_write_mask;

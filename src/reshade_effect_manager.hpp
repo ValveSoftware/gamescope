@@ -1,5 +1,6 @@
 #pragma once
 
+#include "effect_module.hpp"
 #include "rendervulkan.hpp"
 #include <optional>
 
@@ -57,7 +58,7 @@ public:
     uint64_t execute(gamescope::Rc<CVulkanTexture> inImage, gamescope::Rc<CVulkanTexture> *outImage);
 
     const ReshadeEffectKey& key() const { return m_key; }
-    reshadefx::module *module() { return m_module.get(); }
+    reshadefx::effect_module *module() { return m_module.get(); }
 
     ReshadeEffectFlags flags() const { return m_flags; }
 
@@ -67,7 +68,7 @@ private:
     ReshadeEffectKey m_key;
     CVulkanDevice *m_device;
 
-	std::unique_ptr<reshadefx::module> m_module;
+	std::unique_ptr<reshadefx::effect_module> m_module;
     std::vector<VkPipeline> m_pipelines;
     std::vector<gamescope::OwningRc<CVulkanTexture>> m_textures;
     gamescope::OwningRc<CVulkanTexture> m_rt;
