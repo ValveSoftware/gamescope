@@ -99,3 +99,28 @@ TEST_CASE("ResolveDisplaySelection handles a model that itself ends in brackets"
 	REQUIRE( ResolveDisplaySelection("Aperture Science Monitor [Pro]", bracketed) == 0u );
 	REQUIRE( ResolveDisplaySelection("Aperture Science Monitor [Pro] [DP-2]", bracketed) == 1u );
 }
+
+TEST_CASE("ResolveDisplaySelection follows the MST path across a dock replug-renumber", "[display_selection]") {
+	std::string key = BuildDisplaySelectionKey("Sceptre Z27", "mst:1-5", /*bShared=*/true);
+	REQUIRE( key == "Sceptre Z27 [mst:1-5]" );
+
+	std::vector<DisplaySelectionCandidate> before = {
+		{ "DP-9", "Sceptre Z27", "mst:1-5" },
+		{ "DP-10", "Sceptre Z27", "mst:1-6" },
+	};
+	REQUIRE( ResolveDisplaySelection(key, before) == 0u );
+
+	std::vector<DisplaySelectionCandidate> after = {
+		{ "DP-7", "Sceptre Z27", "mst:1-5" },
+		{ "DP-12", "Sceptre Z27", "mst:1-6" },
+	};
+	REQUIRE( ResolveDisplaySelection(key, after) == 0u );
+
+	REQUIRE( ResolveDisplaySelection("Sceptre Z27 [DP-10]", before) == 1u );
+
+	std::vector<DisplaySelectionCandidate> moved = {
+		{ "DP-7", "Sceptre Z27", "mst:1-9" },
+		{ "DP-12", "Sceptre Z27", "mst:1-6" },
+	};
+	REQUIRE( ResolveDisplaySelection(key, moved) == 0u );
+}
