@@ -1671,6 +1671,11 @@ static bool drm_set_preferred_connector( const char *pszName )
 	return set_preferred_display( std::move(identifier) );
 }
 
+static bool drm_set_preferred_display_identifier( const char *pszIdentifier )
+{
+	return set_preferred_display( ( pszIdentifier && *pszIdentifier ) ? pszIdentifier : "" );
+}
+
 static std::vector< gamescope::GamescopeKnownDisplay > drm_get_connected_outputs()
 {
 	std::lock_guard lock( g_DRM.connected_outputs_mutex );
@@ -4107,6 +4112,12 @@ namespace gamescope
 		{
 			// Our own DirtyState - GetBackend() may be a deferred wrapper holding its init lock.
 			if ( drm_set_preferred_connector( pszConnectorName ) )
+				DirtyState( false, false );
+		}
+
+		virtual void SetPreferredDisplayIdentifier( const char *pszIdentifier ) override
+		{
+			if ( drm_set_preferred_display_identifier( pszIdentifier ) )
 				DirtyState( false, false );
 		}
 

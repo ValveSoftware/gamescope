@@ -372,6 +372,7 @@ namespace gamescope
 
         virtual std::vector<GamescopeKnownDisplay> GetConnectedOutputs() { return {}; }
         virtual void SetPreferredConnector( const char *pszConnectorName ) { }
+        virtual void SetPreferredDisplayIdentifier( const char *pszIdentifier ) { }
 
         virtual bool SupportsPlaneHardwareCursor() const = 0;
         virtual bool SupportsTearing() const = 0;

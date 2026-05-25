@@ -208,7 +208,23 @@ namespace gamescope
             if ( m_bInittedChild )
                 return m_pChild->SetPreferredConnector( pszConnectorName );
 
-            QueueDisplayPreference( pszConnectorName ? pszConnectorName : "" );
+            QueueDisplayPreference( PendingDisplayPreference
+            {
+                .bByIdentifier = false,
+                .szValue = pszConnectorName ? pszConnectorName : "",
+            } );
+		}
+
+		virtual void SetPreferredDisplayIdentifier( const char *pszIdentifier ) override
+		{
+            if ( m_bInittedChild )
+                return m_pChild->SetPreferredDisplayIdentifier( pszIdentifier );
+
+            QueueDisplayPreference( PendingDisplayPreference
+            {
+                .bByIdentifier = true,
+                .szValue = pszIdentifier ? pszIdentifier : "",
+            } );
 		}
 
 		virtual IBackendConnector *GetConnector( GamescopeScreenType eScreenType ) override
@@ -439,26 +455,35 @@ namespace gamescope
             }
         }
 
-        void ApplyDisplayPreference( const std::string &szConnectorName )
+        struct PendingDisplayPreference
         {
-            m_pChild->SetPreferredConnector( szConnectorName.c_str() );
+            bool bByIdentifier = false;
+            std::string szValue;
+        };
+
+        void ApplyDisplayPreference( const PendingDisplayPreference &pref )
+        {
+            if ( pref.bByIdentifier )
+                m_pChild->SetPreferredDisplayIdentifier( pref.szValue.c_str() );
+            else
+                m_pChild->SetPreferredConnector( pref.szValue.c_str() );
         }
 
-        void QueueDisplayPreference( std::string szConnectorName )
+        void QueueDisplayPreference( PendingDisplayPreference pref )
         {
             // No m_mutInit here - init's EDID parse can run Lua that lands here.
             std::lock_guard lock{ m_PendingPreferenceMutex };
             if ( m_bInittedChild )
-                return ApplyDisplayPreference( szConnectorName );
+                return ApplyDisplayPreference( pref );
 
-            m_oPendingDisplayPreference = std::move( szConnectorName );
+            m_oPendingDisplayPreference = std::move( pref );
         }
 
         IBackend *m_pChild = nullptr;
         mutable std::shared_mutex m_mutInit;
         bool m_bDonePostInit = false;
         std::mutex m_PendingPreferenceMutex;
-        std::optional<std::string> m_oPendingDisplayPreference;
+        std::optional<PendingDisplayPreference> m_oPendingDisplayPreference;
 
         std::atomic<bool> m_bInittedChild = { false };
         std::atomic<bool> m_bJustInittedClient = { false };
