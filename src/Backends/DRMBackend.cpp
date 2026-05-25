@@ -383,6 +383,7 @@ namespace gamescope
 			std::optional<CDRMAtomicProperty> vrr_capable;
 			std::optional<CDRMAtomicProperty> EDID;
 			std::optional<CDRMAtomicProperty> Broadcast_RGB;
+			std::optional<CDRMAtomicProperty> PATH;
 			std::optional<CDRMAtomicProperty> DUMMY_END;
 		};
 		      ConnectorProperties &GetProperties()       { return m_Props; }
@@ -395,6 +396,7 @@ namespace gamescope
 		const char *GetDataString() const { return m_Mutable.szDataString; }
 		uint32_t GetEDIDSerial() const { return m_Mutable.uEDIDSerial; }
 		const char *GetEDIDSerialString() const { return m_Mutable.szEDIDSerial; }
+		const char *GetMstPath() const { return m_Mutable.szMstPath.c_str(); }
 		uint32_t GetPossibleCRTCMask() const { return m_Mutable.uPossibleCRTCMask; }
 		std::span<const uint32_t> GetValidDynamicRefreshRates() const override { return m_Mutable.ValidDynamicRefreshRates; }
 		const displaycolorimetry_t& GetDisplayColorimetry() const { return m_Mutable.DisplayColorimetry; }
@@ -520,6 +522,7 @@ namespace gamescope
 			char szDataString[16]{};
 			uint32_t uEDIDSerial = 0;
 			char szEDIDSerial[16]{};
+			std::string szMstPath;
 			const char *pszMake = ""; // Not owned, no free. This is a pointer to pnp db or szMakePNP.
 			DRMModeGenerator fnDynamicModeGenerator;
 			std::vector<uint32_t> ValidDynamicRefreshRates{};
@@ -1026,8 +1029,10 @@ static std::string get_display_key(struct drm_t *drm, const gamescope::CDRMConne
 			break;
 		}
 	}
+	const char *pszMstPath = pConnector->GetMstPath();
 	const char *pszName = pConnector->GetName();
-	return gamescope::BuildDisplaySelectionKey( base, pszName ? pszName : "", bShared );
+	const char *pszHint = ( pszMstPath && *pszMstPath ) ? pszMstPath : pszName;
+	return gamescope::BuildDisplaySelectionKey( base, pszHint ? pszHint : "", bShared );
 }
 
 static int get_connector_priority(struct drm_t *drm, const char *name)
@@ -1115,7 +1120,8 @@ static gamescope::CDRMConnector *resolve_preferred_connector(struct drm_t *drm)
 		if (pConnector->GetModeConnector()->connection != DRM_MODE_CONNECTED)
 			continue;
 		const char *pszName = pConnector->GetName();
-		candidates.push_back( { pszName ? pszName : "", get_display_identifier(pConnector) } );
+		const char *pszMstPath = pConnector->GetMstPath();
+		candidates.push_back( { pszName ? pszName : "", get_display_identifier(pConnector), pszMstPath ? pszMstPath : "" } );
 		pConnectors.push_back( pConnector );
 	}
 
@@ -2346,6 +2352,20 @@ namespace gamescope
 			m_Props.vrr_capable              = CDRMAtomicProperty::Instantiate( "vrr_capable",            this, *rawProperties );
 			m_Props.EDID                     = CDRMAtomicProperty::Instantiate( "EDID",                   this, *rawProperties );
 			m_Props.Broadcast_RGB            = CDRMAtomicProperty::Instantiate( "Broadcast RGB",          this, *rawProperties );
+			m_Props.PATH                     = CDRMAtomicProperty::Instantiate( "PATH",                   this, *rawProperties );
+		}
+
+		if ( m_Props.PATH )
+		{
+			if ( uint64_t ulBlobId = m_Props.PATH->GetCurrentValue() )
+			{
+				if ( drmModePropertyBlobRes *pBlob = drmModeGetPropertyBlob( g_DRM.fd, ulBlobId ) )
+				{
+					const char *pszMstPath = reinterpret_cast<const char *>( pBlob->data );
+					m_Mutable.szMstPath.assign( pszMstPath, strnlen( pszMstPath, pBlob->length ) );
+					drmModeFreePropertyBlob( pBlob );
+				}
+			}
 		}
 
 		ParseEDID();

@@ -33,9 +33,10 @@ namespace gamescope
     {
         std::string szConnectorName;
         std::string szIdentifier;
+        std::string szMstPath;
     };
 
-    // Appends the connector only when the identifier collides, to disambiguate identical monitors.
+    // Appends a tiebreak only when the identifier collides, to disambiguate identical monitors.
     inline std::string BuildDisplaySelectionKey( const std::string &szIdentifier, const std::string &szConnectorName, bool bSharedWithOtherOutput )
     {
         if ( bSharedWithOtherOutput )
@@ -77,7 +78,7 @@ namespace gamescope
         {
             if ( candidates[i].szIdentifier != szBase )
                 continue;
-            if ( !szConnectorHint.empty() && candidates[i].szConnectorName == szConnectorHint )
+            if ( !szConnectorHint.empty() && ( candidates[i].szConnectorName == szConnectorHint || candidates[i].szMstPath == szConnectorHint ) )
                 return i;
             if ( !oBaseMatch )
                 oBaseMatch = i;
