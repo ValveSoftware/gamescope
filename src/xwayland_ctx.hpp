@@ -181,9 +181,11 @@ struct xwayland_ctx_t final : public gamescope::IWaitable
 		Atom gamescopeAllowTearing;
 		Atom gamescopeDisplayForceInternal;
 		Atom gamescopeDisplayModeNudge;
+		Atom gamescopeDisplayPreferredIdentifier;
 
 		Atom gamescopeDisplayIsExternal;
 		Atom gamescopeDisplayModeListExternal;
+		Atom gamescopeDisplayAvailableList;
 
 		Atom gamescopeCursorVisibleFeedback;
 

@@ -1576,6 +1576,18 @@ void drm_set_preferred_connector( const char *pszName )
 	GetBackend()->DirtyState();
 }
 
+void drm_set_preferred_display_identifier( const char *pszIdentifier )
+{
+	{
+		std::lock_guard lock( g_DRM.preferred_display_mutex );
+		if ( !pszIdentifier || !*pszIdentifier )
+			g_DRM.preferred_display.clear();
+		else
+			g_DRM.preferred_display = pszIdentifier;
+	}
+	GetBackend()->DirtyState();
+}
+
 std::vector< gamescope::GamescopeKnownDisplay > drm_get_connected_outputs()
 {
 	std::vector< gamescope::GamescopeKnownDisplay > outputs;
@@ -4001,6 +4013,11 @@ namespace gamescope
 		virtual void SetPreferredConnector( const char *pszConnectorName ) override
 		{
 			drm_set_preferred_connector( pszConnectorName );
+		}
+
+		virtual void SetPreferredDisplayIdentifier( const char *pszIdentifier ) override
+		{
+			drm_set_preferred_display_identifier( pszIdentifier );
 		}
 
 		virtual IBackendConnector *GetConnector( GamescopeScreenType eScreenType ) override

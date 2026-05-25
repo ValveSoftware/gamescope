@@ -213,6 +213,15 @@ namespace gamescope
             }
 		}
 
+		virtual void SetPreferredDisplayIdentifier( const char *pszIdentifier ) override
+		{
+            {
+                std::shared_lock lock{ m_mutInit };
+                if ( m_bInittedChild )
+                    return m_pChild->SetPreferredDisplayIdentifier( pszIdentifier );
+            }
+		}
+
 		virtual IBackendConnector *GetConnector( GamescopeScreenType eScreenType ) override
 		{
             {
