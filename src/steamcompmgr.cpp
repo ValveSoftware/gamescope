@@ -4299,28 +4299,6 @@ determine_and_apply_focus( global_focus_t *pFocus )
 			}
 		}
 
-		if ( pFocus->inputFocusWindow )
-		{
-			// Cannot simply XWarpPointer here as we immediately go on to
-			// do wlserver_mousefocus and need to update m_x and m_y of the cursor.
-			if ( pFocus->inputFocusWindow->GetFocus()->bResetToCorner )
-			{
-				wlserver_lock();
-				wlserver_mousewarp( pFocus->inputFocusWindow->GetGeometry().nWidth / 2, pFocus->inputFocusWindow->GetGeometry().nHeight / 2, 0, true );
-				wlserver_fake_mouse_pos( pFocus->inputFocusWindow->GetGeometry().nWidth - 1, pFocus->inputFocusWindow->GetGeometry().nHeight - 1 );
-				wlserver_unlock();
-			}
-			else if ( pFocus->inputFocusWindow->GetFocus()->bResetToCenter )
-			{
-				wlserver_lock();
-				wlserver_mousewarp( pFocus->inputFocusWindow->GetGeometry().nWidth / 2, pFocus->inputFocusWindow->GetGeometry().nHeight / 2, 0, true );
-				wlserver_unlock();
-			}
-
-			pFocus->inputFocusWindow->GetFocus()->bResetToCorner = false;
-			pFocus->inputFocusWindow->GetFocus()->bResetToCenter = false;
-		}
-
 		s_ulPreviousGlobalFocusKey = pFocus->ulVirtualFocusKey;
 	}
 
