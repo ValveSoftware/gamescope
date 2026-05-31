@@ -88,6 +88,8 @@ struct saved_mode {
 	int height;
 	int refresh;
 	GamescopeBroadcastRGBMode_t broadcast_mode;
+	drm_colorspace sdr_colorspace;
+	drm_colorspace hdr_colorspace;
 };
 
 gamescope::ConVar<bool> cv_drm_ignore_internal_connectors( "drm_ignore_internal_connectors", false, "Disable internal displays for good, for debugging." );
@@ -1011,11 +1013,17 @@ static bool get_saved_mode(const char *description, saved_mode &mode_info)
 	{
 		char saved_description[256];
 		uint32_t broadcast_mode = 0;
-        int ret = sscanf(line, "%255[^:]:%dx%d@%d %u", saved_description, &mode_info.width, &mode_info.height, &mode_info.refresh, &broadcast_mode);
+		uint32_t sdr_colorspace = DRM_MODE_COLORIMETRY_DEFAULT;
+		uint32_t hdr_colorspace = DRM_MODE_COLORIMETRY_DEFAULT;
+		int ret = sscanf(line, "%255[^:]:%dx%d@%d %u %u %u", saved_description,
+			&mode_info.width, &mode_info.height, &mode_info.refresh, &broadcast_mode,
+			&sdr_colorspace, &hdr_colorspace);
 
 		mode_info.broadcast_mode = (GamescopeBroadcastRGBMode_t) broadcast_mode;
+		mode_info.sdr_colorspace = (drm_colorspace) sdr_colorspace;
+		mode_info.hdr_colorspace = (drm_colorspace) hdr_colorspace;
 		
-		bool valid = ret == 4 || ret == 5;
+		bool valid = ret == 4 || ret == 5 || ret == 6 || ret == 7;
 
 		if (valid && !strcmp(saved_description, description))
 		{
@@ -1028,6 +1036,8 @@ static bool get_saved_mode(const char *description, saved_mode &mode_info)
 }
 
 static GamescopeBroadcastRGBMode_t s_ExternalBroadcastRGBMode = GAMESCOPE_BROADCAST_RGB_MODE_AUTOMATIC;
+static drm_colorspace s_ExternalSDRColorspace = DRM_MODE_COLORIMETRY_DEFAULT;
+static drm_colorspace s_ExternalHDRColorspace = DRM_MODE_COLORIMETRY_DEFAULT;
 
 static bool setup_best_connector(struct drm_t *drm, bool force, bool initial)
 {
@@ -1102,6 +1112,8 @@ static bool setup_best_connector(struct drm_t *drm, bool force, bool initial)
 	}
 
 	s_ExternalBroadcastRGBMode = GAMESCOPE_BROADCAST_RGB_MODE_AUTOMATIC;
+	s_ExternalSDRColorspace = DRM_MODE_COLORIMETRY_DEFAULT;
+	s_ExternalHDRColorspace = DRM_MODE_COLORIMETRY_DEFAULT;
 
 	const drmModeModeInfo *mode = nullptr;
 	if ( drm->preferred_width != 0 || drm->preferred_height != 0 || drm->preferred_refresh != 0 )
@@ -1114,6 +1126,8 @@ static bool setup_best_connector(struct drm_t *drm, bool force, bool initial)
 		if (get_saved_mode(description, mode_info))
 		{
 			s_ExternalBroadcastRGBMode = mode_info.broadcast_mode;
+			s_ExternalSDRColorspace = mode_info.sdr_colorspace;
+			s_ExternalHDRColorspace = mode_info.hdr_colorspace;
 			mode = find_mode(best->GetModeConnector(), mode_info.width, mode_info.height, mode_info.refresh);
 		}
 	}
@@ -2865,6 +2879,9 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 	drm_colorspace uColorimetry = DRM_MODE_COLORIMETRY_DEFAULT;
 
 	const bool bWantsHDR10 = g_bOutputHDREnabled && frameInfo->outputEncodingEOTF == EOTF_PQ;
+	const drm_colorspace uExternalColorimetry = bWantsHDR10
+		? s_ExternalHDRColorspace
+		: s_ExternalSDRColorspace;
 	gamescope::BackendBlob *pHDRMetadata = nullptr;
 	if ( drm->pConnector && drm->pConnector->SupportsHDR10() )
 	{
@@ -2882,7 +2899,20 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 			pHDRMetadata = drm->sdr_static_metadata.get();
 			uColorimetry = DRM_MODE_COLORIMETRY_DEFAULT;
 		}
+	}
 
+	if ( drm->pConnector &&
+		 drm->pConnector->GetProperties().Colorspace &&
+		 drm->pConnector->GetScreenType() == gamescope::GAMESCOPE_SCREEN_TYPE_EXTERNAL &&
+		 uExternalColorimetry != DRM_MODE_COLORIMETRY_DEFAULT )
+	{
+		uColorimetry = uExternalColorimetry;
+	}
+
+	if ( drm->pConnector &&
+		 drm->pConnector->GetProperties().Colorspace &&
+		 ( drm->pConnector->SupportsHDR10() || uExternalColorimetry != DRM_MODE_COLORIMETRY_DEFAULT ) )
+	{
 		if ( uColorimetry != drm->pConnector->GetProperties().Colorspace->GetCurrentValue() )
 			drm->needs_modeset = true;
 	}
