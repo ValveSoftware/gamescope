@@ -23,7 +23,7 @@ jobs:
             catch2 gcovr
       - uses: actions/checkout@v6
         with:
-          submodules: recursive
+          submodules: true
       - name: Build with gcc
         run: |
           export CC=gcc CXX=g++
