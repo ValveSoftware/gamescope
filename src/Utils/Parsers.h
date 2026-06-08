@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <optional>
 #include <string_view>
+#include <strings.h>
 
 namespace gamescope
 {
@@ -25,7 +26,7 @@ namespace gamescope
         if ( oNumber )
             return !!*oNumber;
 
-        if ( chars == "true" )
+        if ( strcasecmp ( chars.data(), "true" ) == 0 )
             return true;
         else
             return false;
