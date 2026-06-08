@@ -12,7 +12,6 @@
 #include <array>
 #include <unordered_set>
 
-#include "convar.h"
 #include "Utils/Algorithm.h"
 
 #include "wlr_begin.hpp"

@@ -28,10 +28,11 @@
 #include "wlserver.hpp"
 #include "convar.h"
 #include "gpuvis_trace_utils.h"
+#include "Utils/Defer.h"
+#include "Utils/Parsers.h"
+#include "Utils/Process.h"
 #include "Utils/TempFiles.h"
 #include "Utils/Version.h"
-#include "Utils/Process.h"
-#include "Utils/Defer.h"
 
 #include "backends.h"
 #include "refresh_rate.h"

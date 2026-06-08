@@ -8,10 +8,11 @@ endforeach
 
 gamescope_tests = executable(
 	'gamescope_tests',
-	unittest_src + ['test_convar.cpp', 'test_process.cpp'],
+	unittest_src + ['test_convar.cpp', 'test_process.cpp', 'test_utils_parsers.cpp'],
 	include_directories: [srcdir, sol2_include],
 	dependencies: [catch2_dep, luajit_dep, cap_dep, drm_dep, glm_dep, wlroots_dep],
 	cpp_args: gamescope_cpp_args,
 )
 test('convar', gamescope_tests, args: ['[convar]'])
-test('process', gamescope_tests, args: ['[process]'])
+test('utils/parsers', gamescope_tests, args: ['[parsers]'])
+test('utils/process', gamescope_tests, args: ['[process]'])
