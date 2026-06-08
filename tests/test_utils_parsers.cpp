@@ -75,8 +75,8 @@ TEST_CASE("Utils/Parsers", "[parsers]") {
 
     SECTION("bool") {
         REQUIRE(Parse<bool>("true") == true);
-        //REQUIRE(Parse<bool>("TRUE") == true);
-        //REQUIRE(Parse<bool>("True") == true);
+        REQUIRE(Parse<bool>("TRUE") == true);
+        REQUIRE(Parse<bool>("True") == true);
 
         REQUIRE(Parse<bool>("false") == false);
         REQUIRE(Parse<bool>("FALSE") == false);
