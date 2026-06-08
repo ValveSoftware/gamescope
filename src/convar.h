@@ -2,14 +2,11 @@
 
 #include <span>
 #include <string>
-#include <string_view>
-#include <optional>
-#include <charconv>
 #include <type_traits>
-#include <cstdint>
 #include <functional>
 
 #include "Utils/Dict.h"
+#include "Utils/Parsers.h"
 
 #include "log.hpp"
 
@@ -35,30 +32,6 @@ namespace gamescope
     inline std::string ToString( const std::string_view &svThing )
     {
         return std::string( svThing );
-    }
-
-    template <typename T>
-    inline std::optional<T> Parse( std::string_view chars )
-    {
-        T obj;
-        auto result = std::from_chars( chars.begin(), chars.end(), obj );
-        if ( result.ec == std::errc{} )
-            return obj;
-        else
-            return std::nullopt;
-    }
-
-    template <>
-    inline std::optional<bool> Parse( std::string_view chars )
-    {
-        std::optional<uint32_t> oNumber = Parse<uint32_t>( chars );
-        if ( oNumber )
-            return !!*oNumber;
-
-        if ( chars == "true" )
-            return true;
-        else
-            return false;
     }
 
     inline void Split( std::vector<std::string_view> &tokens, std::string_view string, std::string_view delims = " " )
