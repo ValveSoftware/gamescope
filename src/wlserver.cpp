@@ -1757,7 +1757,7 @@ gamescope_xwayland_server_t::gamescope_xwayland_server_t(wl_display *display, in
 	struct wlr_xwayland_server_options xwayland_options = {
 		.lazy = false,
 		.enable_wm = false,
-		.no_touch_pointer_emulation = true,
+		.no_touch_pointer_emulation = g_bNoTouchPointerEmulation,
 		.force_xrandr_emulation = true,
 	};
 	xwayland_server = wlr_xwayland_server_create(display, &xwayland_options);

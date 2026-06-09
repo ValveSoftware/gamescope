@@ -117,6 +117,7 @@ const struct option *gamescope_options = (struct option[]){
 
 	// wlserver options
 	{ "xwayland-count", required_argument, nullptr, 0 },
+	{ "xwayland-force-touch-pointer-emulation", no_argument, nullptr, 0 },
 
 	// steamcompmgr options
 	{ "cursor", required_argument, nullptr, 0 },
@@ -319,6 +320,7 @@ gamescope::GamescopeModeGeneration g_eGamescopeModeGeneration = gamescope::GAMES
 bool g_bBorderlessOutputWindow = false;
 
 int g_nXWaylandCount = 1;
+bool g_bNoTouchPointerEmulation = true;
 
 float g_flMaxWindowScale = FLT_MAX;
 
@@ -785,6 +787,8 @@ int main(int argc, char **argv)
 					g_bForceDisableColorMgmt = true;
 				} else if (strcmp(opt_name, "xwayland-count") == 0) {
 					g_nXWaylandCount = parse_integer( optarg, opt_name );
+				} else if (strcmp(opt_name, "xwayland-force-touch-pointer-emulation") == 0) {
+					g_bNoTouchPointerEmulation = false;
 				} else if (strcmp(opt_name, "composite-debug") == 0) {
 					cv_composite_debug |= CompositeDebugFlag::Markers;
 					cv_composite_debug |= CompositeDebugFlag::PlaneBorders;
