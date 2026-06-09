@@ -54,8 +54,8 @@ namespace gamescope
 
     CScriptManager &CScriptManager::GlobalScriptScope()
     {
-        static CScriptManager s_State;
-        return s_State;
+        static CScriptManager *s_pState = new CScriptManager;
+        return *s_pState;
     }
 
     CScriptManager::CScriptManager()
