@@ -714,6 +714,19 @@ void gamescope_xwayland_server_t::destroy_content_override( struct wlserver_x11_
 		destroy_content_override(iter->second);
 }
 
+void gamescope_xwayland_server_t::clear_content_override_swapchain( struct wl_resource *gamescope_swapchain_resource )
+{
+	for ( auto &iter : content_overrides )
+	{
+		if ( iter.second->gamescope_swapchain == gamescope_swapchain_resource )
+		{
+#ifdef GAMESCOPE_SWAPCHAIN_DEBUG
+			wl_log.infof( "clear_content_override_swapchain swapchain: %p co: %p", gamescope_swapchain_resource, iter.second );
+#endif
+			iter.second->gamescope_swapchain = nullptr;
+		}
+	}
+}
 
 static void content_override_handle_surface_destroy( struct wl_listener *listener, void *data )
 {
@@ -888,6 +901,10 @@ static void gamescope_swapchain_handle_resource_destroy( struct wl_resource *res
 #ifdef GAMESCOPE_SWAPCHAIN_DEBUG
 	wl_log.infof( "gamescope_swapchain_handle_resource_destroy swapchain: %p", resource );
 #endif
+	gamescope_xwayland_server_t *server = NULL;
+	for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
+		server->clear_content_override_swapchain( resource );
+
 	wlserver_wl_surface_info *wl_surface_info = (wlserver_wl_surface_info *)wl_resource_get_user_data( resource );
 	if ( wl_surface_info )
 	{
