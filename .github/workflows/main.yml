@@ -42,9 +42,10 @@ jobs:
       - name: Run unit tests and collect coverage
         run: |
           export CC=gcc CXX=g++
-          meson configure -Db_coverage=true build-gcc
-          meson test -C build-gcc --suite gamescope -v
-          gcovr -f src --xml -o coverage.xml -s build-gcc
+          meson setup build-coverage -Dinput_emulation=disabled --werror --auto-features=enabled -Db_coverage=true
+          meson compile -C build-coverage
+          meson test -C build-coverage --suite gamescope -v
+          gcovr -r src -e src/reshade -e src/shaders --xml -o coverage.xml -s build-coverage
       - name: Upload coverage report
         uses: actions/upload-artifact@v7
         with:
