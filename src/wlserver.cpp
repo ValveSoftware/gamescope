@@ -2709,6 +2709,10 @@ static bool wlserver_apply_constraint( double *dx, double *dy )
 		if ( pConstraint->type == WLR_POINTER_CONSTRAINT_V1_LOCKED )
 			return false;
 
+		// wlroots >= 0.19 leaves constraint->region empty until the first commit after a regionless confine
+		if ( pixman_region32_empty( &wlserver.confine ) )
+			return true;
+
 		double sx = wlserver.mouse_surface_cursorx;
 		double sy = wlserver.mouse_surface_cursory;
 
