@@ -3059,6 +3059,17 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 			drm->pCRTC->GetProperties().ACTIVE->SetPendingValue( drm->req, 1u, true );
 			drm->pCRTC->GetProperties().MODE_ID->SetPendingValue( drm->req, drm->pending.mode_id ? drm->pending.mode_id->GetBlobValue() : 0lu, true );
 
+			// Clear color properties inherited from a previous DRM master (i.e. KDE's
+			// night light).
+			if ( drm->pCRTC->GetProperties().GAMMA_LUT )
+				drm->pCRTC->GetProperties().GAMMA_LUT->SetPendingValue( drm->req, 0, true );
+
+			if ( drm->pCRTC->GetProperties().DEGAMMA_LUT )
+				drm->pCRTC->GetProperties().DEGAMMA_LUT->SetPendingValue( drm->req, 0, true );
+
+			if ( drm->pCRTC->GetProperties().CTM )
+				drm->pCRTC->GetProperties().CTM->SetPendingValue( drm->req, 0, true );
+
 			if ( drm->pCRTC->GetProperties().VRR_ENABLED )
 				drm->pCRTC->GetProperties().VRR_ENABLED->SetPendingValue( drm->req, bVRREnabled, true );
 		}
