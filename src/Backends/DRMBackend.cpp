@@ -969,37 +969,33 @@ static std::optional<gamescope::CDRMColorPipeline> get_color_pipeline( struct dr
 		pipeline.emplace_back( std::move(pColorOp) );
 	}
 
-	// Check if the pipeline has what we need
-	if ( pipeline.size() != 8 )
-		return {};
-	if ( pipeline[0]->GetProperties().TYPE.value().GetInitialValue() != DRM_COLOROP_1D_CURVE )
-		return {};
-	if ( pipeline[1]->GetProperties().TYPE.value().GetInitialValue() != DRM_COLOROP_MULTIPLIER )
-		return {};
-	if ( pipeline[2]->GetProperties().TYPE.value().GetInitialValue() != DRM_COLOROP_CTM_3X4 )
-		return {};
-	if ( pipeline[3]->GetProperties().TYPE.value().GetInitialValue() != DRM_COLOROP_1D_CURVE )
-		return {};
-	if ( pipeline[4]->GetProperties().TYPE.value().GetInitialValue() != DRM_COLOROP_1D_LUT )
-		return {};
-	if ( pipeline[5]->GetProperties().TYPE.value().GetInitialValue() != DRM_COLOROP_3D_LUT )
-		return {};
-	if ( pipeline[6]->GetProperties().TYPE.value().GetInitialValue() != DRM_COLOROP_1D_CURVE )
-		return {};
-	if ( pipeline[7]->GetProperties().TYPE.value().GetInitialValue() != DRM_COLOROP_1D_LUT )
+	// Accept any non-empty pipeline regardless of shape.
+	// Named fields are assigned by matching the DRM colorop TYPE; any type not
+	// present in this pipeline leaves the field nullptr.  The programming code
+	// null-checks each field before use so that non-AMD pipelines with fewer or
+	// different ops are handled gracefully rather than refused outright.
+	if ( pipeline.empty() )
 		return {};
 
-	gamescope::CDRMColorPipeline p {
-		.id = uHeadId,
-		.degamma = std::move(pipeline[0]),
-		.HDRMult = std::move(pipeline[1]),
-		.CTM = std::move(pipeline[2]),
-		.shaper = std::move(pipeline[3]),
-		.shaperLut = std::move(pipeline[4]),
-		.lut3D = std::move(pipeline[5]),
-		.blend = std::move(pipeline[6]),
-		.blendLut = std::move(pipeline[7]),
-	};
+	gamescope::CDRMColorPipeline p { .id = uHeadId };
+	for ( auto &op : pipeline )
+	{
+		uint64_t uType = op->GetProperties().TYPE.value().GetInitialValue();
+		if ( uType == DRM_COLOROP_1D_CURVE )
+		{
+			if      ( !p.degamma ) { p.degamma = std::move(op); continue; }
+			else if ( !p.shaper  ) { p.shaper  = std::move(op); continue; }
+			else if ( !p.blend   ) { p.blend   = std::move(op); continue; }
+		}
+		else if ( uType == DRM_COLOROP_MULTIPLIER && !p.HDRMult  ) { p.HDRMult  = std::move(op); continue; }
+		else if ( uType == DRM_COLOROP_CTM_3X4   && !p.CTM      ) { p.CTM      = std::move(op); continue; }
+		else if ( uType == DRM_COLOROP_1D_LUT )
+		{
+			if      ( !p.shaperLut ) { p.shaperLut = std::move(op); continue; }
+			else if ( !p.blendLut  ) { p.blendLut  = std::move(op); continue; }
+		}
+		else if ( uType == DRM_COLOROP_3D_LUT && !p.lut3D ) { p.lut3D = std::move(op); continue; }
+	}
 	return p;
 }
 
@@ -3077,67 +3073,101 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 					shaper_tf = DRM_COLOROP_1D_CURVE_BT2020_OETF;
 				}
 
-				bool bUseDegamma = !cv_drm_debug_disable_degamma_tf;
-				if ( bUseDegamma && degamma_tf.has_value() )
+				// --- Degamma (1st 1D_CURVE) ---
+				if ( p->degamma )
 				{
-					p->degamma->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
-					p->degamma->GetProperties().CURVE_1D_TYPE->SetPendingValue( drm->req, *degamma_tf, true );
-				}
-				else
-				{
-					p->degamma->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
-				}
-
-				bool bUseShaperAnd3DLUT = !cv_drm_debug_disable_shaper_and_3dlut;
-				if ( bUseShaperAnd3DLUT && shaper_tf.has_value() )
-				{
-					p->shaper->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
-					p->shaper->GetProperties().CURVE_1D_TYPE->SetPendingValue( drm->req, *shaper_tf, true );
-				}
-				else
-				{
-					p->shaper->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
+					if ( !cv_drm_debug_disable_degamma_tf && degamma_tf.has_value() )
+					{
+						p->degamma->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
+						p->degamma->GetProperties().CURVE_1D_TYPE->SetPendingValue( drm->req, *degamma_tf, true );
+					}
+					else
+					{
+						p->degamma->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
+					}
 				}
 
-				if ( bUseShaperAnd3DLUT )
+				// --- HDR multiplier (MULTIPLIER) ---
+				if ( p->HDRMult )
 				{
-					p->shaperLut->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
-					p->shaperLut->GetProperties().DATA->SetPendingValue( drm->req, drm->pending.shaperlut_colorop_id[ ColorSpaceToEOTFIndex( colorspace ) ]->GetBlobValue(), true );
-
-					p->lut3D->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
-					p->lut3D->GetProperties().DATA->SetPendingValue( drm->req, drm->pending.lut3d_colorop_id[ ColorSpaceToEOTFIndex( colorspace ) ]->GetBlobValue(), true );
-				}
-				else
-				{
-					p->shaperLut->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
-					p->lut3D->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
+					p->HDRMult->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
+					p->HDRMult->GetProperties().MULTIPLIER->SetPendingValue( drm->req, 0x100000000ULL, true );
 				}
 
-				std::optional<drm_colorop_curve_1d_type> blend_tf =  amd_tf_to_drm_curve(drm->pending.output_tf);
-				if (!cv_drm_debug_disable_blend_tf && !bSinglePlane && blend_tf.has_value() )
+				// --- Color transform matrix (CTM_3X4) ---
+				if ( p->CTM )
 				{
-					p->blend->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
-					p->blend->GetProperties().CURVE_1D_TYPE->SetPendingValue( drm->req, *blend_tf, true );
-				}
-				else
-				{
-					p->blend->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
-				}
-
-				p->blendLut->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
-
-				if ( frameInfo->layers[i].ctm != nullptr )
-				{
-					p->CTM->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
-					p->CTM->GetProperties().DATA->SetPendingValue( drm->req, frameInfo->layers[i].ctm->GetBlobValue(), true );
-				}
-				else
-				{
-					p->CTM->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
+					if ( !cv_drm_debug_disable_ctm && frameInfo->layers[i].ctm != nullptr )
+					{
+						p->CTM->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
+						p->CTM->GetProperties().DATA->SetPendingValue( drm->req, frameInfo->layers[i].ctm->GetBlobValue(), true );
+					}
+					else
+					{
+						p->CTM->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
+					}
 				}
 
-				p->HDRMult->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
-				p->HDRMult->GetProperties().MULTIPLIER->SetPendingValue( drm->req, 0x100000000ULL, true );
+				// --- Shaper curve (2nd 1D_CURVE) ---
+				bool bUseShaperAnd3DLUT = !cv_drm_debug_disable_shaper_and_3dlut
+					&& shaper_tf.has_value()
+					&& p->shaperLut != nullptr
+					&& p->lut3D != nullptr;
+				if ( p->shaper )
+				{
+					if ( bUseShaperAnd3DLUT )
+					{
+						p->shaper->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
+						p->shaper->GetProperties().CURVE_1D_TYPE->SetPendingValue( drm->req, *shaper_tf, true );
+					}
+					else
+					{
+						p->shaper->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
+					}
+				}
+				if ( p->shaperLut )
+				{
+					if ( bUseShaperAnd3DLUT )
+					{
+						p->shaperLut->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
+						p->shaperLut->GetProperties().DATA->SetPendingValue( drm->req, drm->pending.shaperlut_colorop_id[ ColorSpaceToEOTFIndex( colorspace ) ]->GetBlobValue(), true );
+					}
+					else
+					{
+						p->shaperLut->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
+					}
+				}
+				if ( p->lut3D )
+				{
+					if ( bUseShaperAnd3DLUT )
+					{
+						p->lut3D->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
+						p->lut3D->GetProperties().DATA->SetPendingValue( drm->req, drm->pending.lut3d_colorop_id[ ColorSpaceToEOTFIndex( colorspace ) ]->GetBlobValue(), true );
+					}
+					else
+					{
+						p->lut3D->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
+					}
+				}
+
+				// --- Blend curve (3rd 1D_CURVE) ---
+				if ( p->blend )
+				{
+					std::optional<drm_colorop_curve_1d_type> blend_tf = amd_tf_to_drm_curve( drm->pending.output_tf );
+					if ( !cv_drm_debug_disable_blend_tf && !bSinglePlane && blend_tf.has_value() )
+					{
+						p->blend->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
+						p->blend->GetProperties().CURVE_1D_TYPE->SetPendingValue( drm->req, *blend_tf, true );
+					}
+					else
+					{
+						p->blend->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
+					}
+				}
+				if ( p->blendLut )
+				{
+					p->blendLut->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
+				}
 
 				break;
 			}
