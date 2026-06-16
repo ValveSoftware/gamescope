@@ -137,6 +137,16 @@ struct drm_t {
 		std::shared_ptr<gamescope::BackendBlob> shaperlut_id[ EOTF_Count ];
 		std::shared_ptr<gamescope::BackendBlob> lut3d_colorop_id[ EOTF_Count ];
 		std::shared_ptr<gamescope::BackendBlob> shaperlut_colorop_id[ EOTF_Count ];
+		// Degamma (EOTF) LUT blob for the Intel/simple fallback path:
+		// 1D_LUT(degamma) → CTM → CRTC GAMMA_LUT (pipe gamma).
+		// Pure-math curve, independent of the 3D LUT path.
+		std::shared_ptr<gamescope::BackendBlob> degamma_colorop_id[ EOTF_Count ];
+		// BT.709→BT.2020 gamut mapping CTM for Intel fallback path when HDR output
+		// is active.  Shared across planes/frames; invalidated on color_mgmt_serial change.
+		std::shared_ptr<gamescope::BackendBlob> gamut_ctm_colorop_id;
+		// CRTC pipe gamma LUT blob for the Intel fallback path (set instead of plane POST_CSC_LUT).
+		// Uses drm_color_lut (16-bit per channel) at GAMMA_LUT_SIZE entries.
+		std::shared_ptr<gamescope::BackendBlob> pipe_gamma_id;
 		amdgpu_transfer_function output_tf = AMDGPU_TRANSFER_FUNCTION_DEFAULT;
 	} current, pending;
 
@@ -356,6 +366,7 @@ namespace gamescope
 			std::optional<CDRMAtomicProperty> ACTIVE;
 			std::optional<CDRMAtomicProperty> MODE_ID;
 			std::optional<CDRMAtomicProperty> GAMMA_LUT;
+			std::optional<CDRMAtomicProperty> GAMMA_LUT_SIZE;
 			std::optional<CDRMAtomicProperty> DEGAMMA_LUT;
 			std::optional<CDRMAtomicProperty> CTM;
 			std::optional<CDRMAtomicProperty> VRR_ENABLED;
@@ -552,6 +563,7 @@ namespace gamescope
 		{
 			std::optional<CDRMAtomicProperty> TYPE; // Immutable
 			std::optional<CDRMAtomicProperty> NEXT; // Immutable
+			std::optional<CDRMAtomicProperty> SIZE; // Immutable: number of LUT entries
 			std::optional<CDRMAtomicProperty> BYPASS;
 			std::optional<CDRMAtomicProperty> CURVE_1D_TYPE;
 			std::optional<CDRMAtomicProperty> DATA;
@@ -563,15 +575,14 @@ namespace gamescope
 		ColorOpProperties m_Props;
 	};
 
+	// Generic color pipeline: owns the ordered colorop chain discovered from KMS.
+	// Callers locate specific ops by DRM type + occurrence index via FindByType(),
+	// then bypass every op that is not explicitly programmed.  This mirrors the
+	// search-by-type approach used in KWin and Weston and works for any vendor
+	// pipeline shape (AMD, Intel, …) without a vendor-specific enum.
 	struct CDRMColorPipeline
 	{
 		uint32_t id;
-
-		// Ordered colorop chain discovered from KMS.  Callers locate specific
-		// ops by DRM type + occurrence index via FindByType(), then bypass
-		// everything not explicitly programmed.  This mirrors the
-		// search-by-type approach used in KWin and Weston and works for any
-		// vendor pipeline shape without vendor-specific enums.
 		std::vector<std::unique_ptr<gamescope::CDRMColorOp>> ops;
 
 		// Return the nSkip-th (0-based) colorop whose DRM TYPE matches uType,
@@ -589,6 +600,8 @@ namespace gamescope
 			}
 			return nullptr;
 		}
+
+		bool HasType( uint64_t uType ) const { return FindByType( uType ) != nullptr; }
 	};
 
 	class CDRMFb final : public CBaseBackendFb
@@ -973,7 +986,12 @@ static bool refresh_state( drm_t *drm )
 
 static std::optional<gamescope::CDRMColorPipeline> get_color_pipeline( struct drm_t *drm, uint32_t uHeadId )
 {
-	std::vector<std::unique_ptr<gamescope::CDRMColorOp>> pipeline;
+	// Build the ordered colorop chain from the linked list starting at uHeadId.
+	// No shape validation here – the pipeline is accepted as long as it is
+	// non-empty.  The programming code uses FindByType() to locate the ops it
+	// cares about and bypasses everything else, making the logic generic for any
+	// hardware (AMD, Intel, …) without a vendor-specific enum.
+	std::vector<std::unique_ptr<gamescope::CDRMColorOp>> ops;
 
 	uint32_t uColorOpId = uHeadId;
 	while ( uColorOpId != 0 )
@@ -981,18 +999,13 @@ static std::optional<gamescope::CDRMColorPipeline> get_color_pipeline( struct dr
 		auto pColorOp = std::make_unique<gamescope::CDRMColorOp>( uColorOpId );
 		pColorOp->RefreshState();
 		uColorOpId = pColorOp->GetProperties().NEXT.value().GetInitialValue();
-		pipeline.emplace_back( std::move(pColorOp) );
+		ops.emplace_back( std::move(pColorOp) );
 	}
 
-	// Accept any non-empty pipeline regardless of shape.
-	// The programming code uses FindByType() to locate the ops it cares
-	// about and bypasses everything else, making the logic generic for
-	// any hardware without a vendor-specific enum.
-	if ( pipeline.empty() )
+	if ( ops.empty() )
 		return {};
 
-	gamescope::CDRMColorPipeline p { .id = uHeadId };
-	p.ops = std::move(pipeline);
+	gamescope::CDRMColorPipeline p{ .id = uHeadId, .ops = std::move(ops) };
 	return p;
 }
 
@@ -1011,6 +1024,9 @@ static std::optional<gamescope::CDRMColorPipeline> get_plane_color_pipelines( st
 	for ( int i = 0; i < pProperty->count_enums; i++ )
 	{
 		auto entry = pProperty->enums[ i ];
+		if ( entry.value == 0 )
+			continue;
+
 		std::optional<gamescope::CDRMColorPipeline> p = get_color_pipeline( drm, entry.value );
 		if ( p.has_value() )
 			return p;
@@ -1060,8 +1076,8 @@ static bool get_resources(struct drm_t *drm)
 		for ( std::unique_ptr< gamescope::CDRMPlane > &pPlane : drm->planes )
 		{
 			// AMD Cursor plane doesn't support color management
-			if ( pPlane->GetProperties().type->GetCurrentValue() != DRM_PLANE_TYPE_CURSOR && !get_plane_color_pipelines( drm, pPlane ) )
-				return false;
+			if ( pPlane->GetProperties().type->GetCurrentValue() != DRM_PLANE_TYPE_CURSOR )
+				get_plane_color_pipelines( drm, pPlane );
 		}
 	}
 
@@ -2310,6 +2326,7 @@ namespace gamescope
 			m_Props.ACTIVE              = CDRMAtomicProperty::Instantiate( "ACTIVE",              this, *rawProperties );
 			m_Props.MODE_ID             = CDRMAtomicProperty::Instantiate( "MODE_ID",             this, *rawProperties );
 			m_Props.GAMMA_LUT           = CDRMAtomicProperty::Instantiate( "GAMMA_LUT",           this, *rawProperties );
+			m_Props.GAMMA_LUT_SIZE      = CDRMAtomicProperty::Instantiate( "GAMMA_LUT_SIZE",      this, *rawProperties );
 			m_Props.DEGAMMA_LUT         = CDRMAtomicProperty::Instantiate( "DEGAMMA_LUT",         this, *rawProperties );
 			m_Props.CTM                 = CDRMAtomicProperty::Instantiate( "CTM",                 this, *rawProperties );
 			m_Props.VRR_ENABLED         = CDRMAtomicProperty::Instantiate( "VRR_ENABLED",         this, *rawProperties );
@@ -2784,6 +2801,7 @@ namespace gamescope
 		{
 			m_Props.TYPE = CDRMAtomicProperty::Instantiate( "TYPE", this, *rawProperties );
 			m_Props.NEXT = CDRMAtomicProperty::Instantiate( "NEXT", this, *rawProperties );
+			m_Props.SIZE = CDRMAtomicProperty::Instantiate( "SIZE", this, *rawProperties );
 			m_Props.BYPASS = CDRMAtomicProperty::Instantiate( "BYPASS", this, *rawProperties );
 			m_Props.DATA = CDRMAtomicProperty::Instantiate( "DATA", this, *rawProperties );
 			m_Props.CURVE_1D_TYPE = CDRMAtomicProperty::Instantiate( "CURVE_1D_TYPE", this, *rawProperties );
@@ -2806,6 +2824,68 @@ namespace gamescope
 			drm_log.errorf_errno( "drmModeRmFB failed" );
 		m_uFbId = 0;
 	}
+}
+
+// Build a nSize-entry 1D LUT blob (drm_color_lut32 layout: R,G,B,pad per
+// entry in U0.32) from an arbitrary per-channel transfer function.  The same
+// function is applied to R, G and B (monotone/gamma-style curves only).
+// nSize must match the colorop's SIZE property reported by the kernel driver.
+template <typename Fn>
+static std::vector<uint32_t> make_curve_lut_32bit( Fn fn, uint32_t nSize )
+{
+	std::vector<uint32_t> out( nSize * 4, 0 );
+	for ( uint32_t i = 0; i < nSize; i++ )
+	{
+		float x = ( nSize > 1 ) ? (float)i / (float)( nSize - 1 ) : 0.0f;
+		float y = std::clamp( fn( x ), 0.0f, 1.0f );
+		// U0.32: 0xFFFFFFFF == 1.0
+		uint32_t v = (uint32_t)( (double)y * 4294967295.0 + 0.5 );
+		out[ i*4 + 0 ] = v;  // R
+		out[ i*4 + 1 ] = v;  // G
+		out[ i*4 + 2 ] = v;  // B
+		out[ i*4 + 3 ] = 0;  // padding
+	}
+	return out;
+}
+
+// Helper to create a BackendBlob for a curve LUT sized to match the given colorop's SIZE property.
+// Returns nullptr if the SIZE property is not available.
+template <typename Fn>
+static std::shared_ptr<gamescope::BackendBlob> make_colorop_curve_blob( const gamescope::CDRMColorOp *pOp, Fn fn )
+{
+	if ( !pOp || !pOp->GetProperties().SIZE.has_value() )
+		return nullptr;
+	uint32_t nSize = (uint32_t)pOp->GetProperties().SIZE->GetInitialValue();
+	if ( nSize == 0 )
+		return nullptr;
+	auto lut = make_curve_lut_32bit( fn, nSize );
+	const uint8_t *pBegin = reinterpret_cast<const uint8_t *>( lut.data() );
+	const uint8_t *pEnd   = pBegin + lut.size() * sizeof( uint32_t );
+	return GetBackend()->CreateBackendBlob( typeid( lut ), std::span<const uint8_t>( pBegin, pEnd ) );
+}
+
+// Helper to create a drm_color_lut (16-bit/channel) blob for the CRTC GAMMA_LUT property.
+// nSize is read from the GAMMA_LUT_SIZE immutable property.
+template <typename Fn>
+static std::shared_ptr<gamescope::BackendBlob> make_pipe_gamma_blob( uint32_t nSize, Fn fn )
+{
+	if ( nSize == 0 )
+		return nullptr;
+	std::vector<drm_color_lut> lut( nSize );
+	for ( uint32_t i = 0; i < nSize; i++ )
+	{
+		float x = ( nSize > 1 ) ? (float)i / (float)( nSize - 1 ) : 0.0f;
+		float y = std::clamp( fn( x ), 0.0f, 1.0f );
+		// U0.16: 0xFFFF == 1.0
+		uint16_t v = (uint16_t)( y * 65535.0f + 0.5f );
+		lut[i].red   = v;
+		lut[i].green = v;
+		lut[i].blue  = v;
+		lut[i].reserved = 0;
+	}
+	const uint8_t *pBegin = reinterpret_cast<const uint8_t *>( lut.data() );
+	const uint8_t *pEnd   = pBegin + lut.size() * sizeof( drm_color_lut );
+	return GetBackend()->CreateBackendBlob( typeid( lut ), std::span<const uint8_t>( pBegin, pEnd ) );
 }
 
 static int
@@ -3045,20 +3125,44 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 				if ( pPlane->GetObjectId() != plane_id )
 					continue;
 
+				auto pColorPipelineProp = pPlane->GetProperties().COLOR_PIPELINE;
+				if ( !pColorPipelineProp )
+					break;
+
 				if ( !frameInfo->layers[i].applyColorMgmt )
 				{
-					pPlane->GetProperties().COLOR_PIPELINE->SetPendingValue( drm->req, 0, true );
+					pColorPipelineProp->SetPendingValue( drm->req, 0, true );
 					break;
 				}
 
 				bool bYCbCr = entry.layerState[i].ycbcr;
 				std::optional<gamescope::CDRMColorPipeline> p = get_plane_color_pipelines( drm, pPlane );
-				if ( !p ) {
-					drm_log.debugf( "drm_prepare_liftoff: No color pipeline fits color mgmt needs of plane_id %d", plane_id );
+				if ( !p )
 					break;
-				}
 
 				pPlane->GetProperties().COLOR_PIPELINE->SetPendingValue( drm->req, p->id, true );
+
+				// Generic color pipeline programming.
+				//
+				// Locate roles by DRM colorop type + occurrence index (same pattern as
+				// KWin / Weston).  This works for any hw pipeline shape:
+				//   AMD  : 1D_CURVE→MULT→CTM→1D_CURVE→1D_LUT→3D_LUT→1D_CURVE→1D_LUT
+				//   Intel: supports 1D_CURVE, 1D_LUT, CTM_3X4, MULTIPLIER, 3D_LUT
+				//           (the actual chain depends on what the kernel exposes)
+				//
+				// After programming all known roles, every op not explicitly handled
+				// is bypassed so the hw state is always consistent.
+
+				// Resolve role→op mappings.  Roles that map to ops not present in this
+				// pipeline are simply nullptr and skipped below.
+				gamescope::CDRMColorOp *pDegammaOp  = p->FindByType( DRM_COLOROP_1D_CURVE );      // 1st 1D_CURVE
+				gamescope::CDRMColorOp *pHDRMultOp  = p->FindByType( DRM_COLOROP_MULTIPLIER );    // MULTIPLIER
+				gamescope::CDRMColorOp *pCTMOp      = p->FindByType( DRM_COLOROP_CTM_3X4 );       // CTM
+				gamescope::CDRMColorOp *pShaperOp   = p->FindByType( DRM_COLOROP_1D_CURVE, 1 );   // 2nd 1D_CURVE
+				gamescope::CDRMColorOp *pShaperLutOp= p->FindByType( DRM_COLOROP_1D_LUT );        // 1st 1D_LUT
+				gamescope::CDRMColorOp *pLut3DOp    = p->FindByType( DRM_COLOROP_3D_LUT );        // 3D_LUT
+				gamescope::CDRMColorOp *pBlendOp    = p->FindByType( DRM_COLOROP_1D_CURVE, 2 );   // 3rd 1D_CURVE
+				gamescope::CDRMColorOp *pBlendLutOp = p->FindByType( DRM_COLOROP_1D_LUT, 1 );     // 2nd 1D_LUT
 
 				GamescopeAppTextureColorspace colorspace = entry.layerState[i].colorspace;
 				std::optional<drm_colorop_curve_1d_type> degamma_tf = colorspace_to_drm_plane_degamma_curve( colorspace );
@@ -3070,28 +3174,17 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 					shaper_tf = DRM_COLOROP_1D_CURVE_BT2020_OETF;
 				}
 
-				// Generic color pipeline programming.
-				//
-				// Locate roles by DRM colorop type + occurrence index.
-				// Works for any hw pipeline shape (AMD, Intel, …) without
-				// a vendor-specific enum.  After programming all known roles,
-				// every op not explicitly handled is bypassed.
-				gamescope::CDRMColorOp *pDegammaOp  = p->FindByType( DRM_COLOROP_1D_CURVE );      // 1st 1D_CURVE
-				gamescope::CDRMColorOp *pHDRMultOp  = p->FindByType( DRM_COLOROP_MULTIPLIER );    // MULTIPLIER
-				gamescope::CDRMColorOp *pCTMOp      = p->FindByType( DRM_COLOROP_CTM_3X4 );       // CTM
-				gamescope::CDRMColorOp *pShaperOp   = p->FindByType( DRM_COLOROP_1D_CURVE, 1 );   // 2nd 1D_CURVE
-				gamescope::CDRMColorOp *pShaperLutOp= p->FindByType( DRM_COLOROP_1D_LUT );        // 1st 1D_LUT
-				gamescope::CDRMColorOp *pLut3DOp    = p->FindByType( DRM_COLOROP_3D_LUT );        // 3D_LUT
-				gamescope::CDRMColorOp *pBlendOp    = p->FindByType( DRM_COLOROP_1D_CURVE, 2 );   // 3rd 1D_CURVE
-				gamescope::CDRMColorOp *pBlendLutOp = p->FindByType( DRM_COLOROP_1D_LUT, 1 );     // 2nd 1D_LUT
-
 				// Track which ops we explicitly handle so we can bypass the rest.
 				std::unordered_set<gamescope::CDRMColorOp *> handledOps;
+
+				// True when the output requires HDR encoding (PQ / BT.2020).
+				const bool bHDROutput = g_bOutputHDREnabled;
 
 				// --- Degamma (1st 1D_CURVE) ---
 				if ( pDegammaOp )
 				{
-					if ( !cv_drm_debug_disable_degamma_tf && degamma_tf.has_value() )
+					bool bUseDegamma = !cv_drm_debug_disable_degamma_tf && degamma_tf.has_value();
+					if ( bUseDegamma )
 					{
 						pDegammaOp->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
 						pDegammaOp->GetProperties().CURVE_1D_TYPE->SetPendingValue( drm->req, *degamma_tf, true );
@@ -3114,24 +3207,96 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 				// --- Color transform matrix (CTM_3X4) ---
 				if ( pCTMOp )
 				{
+					bool bSetCTM = false;
 					if ( !cv_drm_debug_disable_ctm && frameInfo->layers[i].ctm != nullptr )
 					{
+						// Explicit layer CTM (e.g. scRGB BT.709→BT.2020 set by steamcompmgr).
 						pCTMOp->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
 						pCTMOp->GetProperties().DATA->SetPendingValue( drm->req, frameInfo->layers[i].ctm->GetBlobValue(), true );
+						bSetCTM = true;
 					}
-					else
+
+					if ( !bSetCTM && !cv_drm_debug_disable_ctm && bHDROutput
+						&& pLut3DOp == nullptr
+						&& ( colorspace == GAMESCOPE_APP_TEXTURE_COLORSPACE_LINEAR ||
+						     colorspace == GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB ||
+						     colorspace == GAMESCOPE_APP_TEXTURE_COLORSPACE_SCRGB ) )
 					{
-						pCTMOp->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
+						// For HDR output with BT.709 content on pipelines without a 3D LUT
+						// (e.g. Intel), apply a gamut-mapping matrix (BT.709 → BT.2020) so
+						// the blended result is in the display's native BT.2020 colour space
+						// before the OETF.  On AMD the 3D LUT already encodes this transform.
+						if ( !drm->pending.gamut_ctm_colorop_id )
+							drm->pending.gamut_ctm_colorop_id = GetBackend()->CreateBackendBlob(
+								glm::mat3x4( glm::transpose( k_2020_from_709 ) ) );
+						if ( drm->pending.gamut_ctm_colorop_id )
+						{
+							pCTMOp->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
+							pCTMOp->GetProperties().DATA->SetPendingValue( drm->req, drm->pending.gamut_ctm_colorop_id->GetBlobValue(), true );
+							bSetCTM = true;
+						}
 					}
+
+					if ( !bSetCTM )
+						pCTMOp->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
 					handledOps.insert( pCTMOp );
 				}
 
 				// --- Shaper curve (2nd 1D_CURVE) + Shaper LUT (1st 1D_LUT) + 3D LUT ---
+				// Shaper+3DLUT only makes sense when ALL three ops are present in the pipeline
+				// and the LUT blobs have been computed.  On pipelines without a 3D LUT (e.g.
+				// Intel's 1D_LUT → CTM → 1D_LUT) enabling this path would send an AMD-format
+				// blob to the wrong colorop type and cause EINVAL from drmModeAtomicCommit.
+				const uint32_t uEOTFIdx = ColorSpaceToEOTFIndex( colorspace );
 				bool bUseShaperAnd3DLUT = !cv_drm_debug_disable_shaper_and_3dlut
 					&& shaper_tf.has_value()
 					&& pLut3DOp != nullptr
-					&& drm->pending.shaperlut_colorop_id[ ColorSpaceToEOTFIndex( colorspace ) ] != nullptr
-					&& drm->pending.lut3d_colorop_id[ ColorSpaceToEOTFIndex( colorspace ) ] != nullptr;
+					&& drm->pending.shaperlut_colorop_id[ uEOTFIdx ] != nullptr
+					&& drm->pending.lut3d_colorop_id[ uEOTFIdx ] != nullptr;
+
+				// Fallback for pipelines without a 3D LUT (e.g. Intel 1D_LUT → CTM → 1D_LUT):
+				// use the first 1D_LUT as a degamma (EOTF), the CTM for gamut mapping, and the
+				// CRTC GAMMA_LUT (pipe gamma) for the OETF.  The plane POST_CSC_LUT is bypassed.
+				// This is the preferred path: pipe gamma fires after all planes are blended,
+				// which is correct for multi-plane HDR composition.
+				//
+				// Degamma blob is sized to the colorop's SIZE property.
+				// Pipe gamma blob uses drm_color_lut (16-bit) at GAMMA_LUT_SIZE entries.
+				// Both are regenerated whenever bHDROutput may have changed.
+				if ( pLut3DOp == nullptr && !bUseShaperAnd3DLUT
+					&& !cv_drm_debug_disable_degamma_tf && degamma_tf.has_value() )
+				{
+					if ( !drm->pending.degamma_colorop_id[ uEOTFIdx ] && pShaperLutOp )
+					{
+						if ( uEOTFIdx == EOTF_Gamma22 )
+							drm->pending.degamma_colorop_id[ uEOTFIdx ] = make_colorop_curve_blob( pShaperLutOp, srgb_to_linear );
+						else if ( uEOTFIdx == EOTF_PQ )
+							drm->pending.degamma_colorop_id[ uEOTFIdx ] = make_colorop_curve_blob( pShaperLutOp, []( float x ) {
+								return pq_to_nits( x ) / 10000.0f;
+							} );
+					}
+					// Pipe gamma blob for the CRTC GAMMA_LUT.  Always regenerate so that HDR
+					// mode toggles (which don't bump g_ColorMgmt.serial) are reflected.
+					if ( drm->pCRTC && drm->pCRTC->GetProperties().GAMMA_LUT_SIZE )
+					{
+						uint32_t nGammaSize = (uint32_t)drm->pCRTC->GetProperties().GAMMA_LUT_SIZE->GetInitialValue();
+						if ( uEOTFIdx == EOTF_Gamma22 )
+							drm->pending.pipe_gamma_id = make_pipe_gamma_blob( nGammaSize,
+								bHDROutput ? []( float x ) { return nits_to_pq( x * 10000.0f ); }
+								           : static_cast<float(*)(float)>(linear_to_srgb) );
+						else if ( uEOTFIdx == EOTF_PQ )
+							drm->pending.pipe_gamma_id = make_pipe_gamma_blob( nGammaSize, []( float x ) {
+								return nits_to_pq( x * 10000.0f );
+							} );
+					}
+				}
+				const bool bUseDegammaPipeGamma = !bUseShaperAnd3DLUT
+					&& pLut3DOp == nullptr
+					&& !cv_drm_debug_disable_degamma_tf
+					&& degamma_tf.has_value()
+					&& drm->pending.degamma_colorop_id[ uEOTFIdx ] != nullptr
+					&& drm->pending.pipe_gamma_id != nullptr;
+
 				if ( pShaperOp )
 				{
 					if ( bUseShaperAnd3DLUT )
@@ -3150,7 +3315,13 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 					if ( bUseShaperAnd3DLUT )
 					{
 						pShaperLutOp->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
-						pShaperLutOp->GetProperties().DATA->SetPendingValue( drm->req, drm->pending.shaperlut_colorop_id[ ColorSpaceToEOTFIndex( colorspace ) ]->GetBlobValue(), true );
+						pShaperLutOp->GetProperties().DATA->SetPendingValue( drm->req, drm->pending.shaperlut_colorop_id[ uEOTFIdx ]->GetBlobValue(), true );
+					}
+					else if ( bUseDegammaPipeGamma )
+					{
+						// Intel fallback: 1st 1D_LUT acts as degamma (EOTF).
+						pShaperLutOp->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
+						pShaperLutOp->GetProperties().DATA->SetPendingValue( drm->req, drm->pending.degamma_colorop_id[ uEOTFIdx ]->GetBlobValue(), true );
 					}
 					else
 					{
@@ -3163,7 +3334,7 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 					if ( bUseShaperAnd3DLUT )
 					{
 						pLut3DOp->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
-						pLut3DOp->GetProperties().DATA->SetPendingValue( drm->req, drm->pending.lut3d_colorop_id[ ColorSpaceToEOTFIndex( colorspace ) ]->GetBlobValue(), true );
+						pLut3DOp->GetProperties().DATA->SetPendingValue( drm->req, drm->pending.lut3d_colorop_id[ uEOTFIdx ]->GetBlobValue(), true );
 					}
 					else
 					{
@@ -3172,11 +3343,13 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 					handledOps.insert( pLut3DOp );
 				}
 
-				// --- Blend curve (3rd 1D_CURVE) ---
+				// --- Blend curve (3rd 1D_CURVE) + blend LUT (2nd 1D_LUT) ---
+				// When using the CRTC pipe gamma path (bUseDegammaPipeGamma) the OETF is applied
+				// by the CRTC GAMMA_LUT after blending, so the plane's POST_CSC_LUT is bypassed.
 				if ( pBlendOp )
 				{
 					std::optional<drm_colorop_curve_1d_type> blend_tf = amd_tf_to_drm_curve( drm->pending.output_tf );
-					if ( !cv_drm_debug_disable_blend_tf && !bSinglePlane && blend_tf.has_value() )
+					if ( !cv_drm_debug_disable_blend_tf && !bSinglePlane && blend_tf.has_value() && !bUseDegammaPipeGamma )
 					{
 						pBlendOp->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
 						pBlendOp->GetProperties().CURVE_1D_TYPE->SetPendingValue( drm->req, *blend_tf, true );
@@ -3189,11 +3362,14 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 				}
 				if ( pBlendLutOp )
 				{
+					// Always bypass POST_CSC_LUT on the plane; the OETF is applied by
+					// the CRTC GAMMA_LUT (pipe gamma) after blending.
 					pBlendLutOp->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
 					handledOps.insert( pBlendLutOp );
 				}
 
-				// Bypass any op not covered by the roles above.
+				// Bypass any op in the pipeline not covered by the roles above
+				// (e.g. extra hw stages the current gamescope logic does not use).
 				for ( const auto &pOp : p->ops )
 				{
 					if ( handledOps.count( pOp.get() ) == 0 && pOp->GetProperties().BYPASS.has_value() )
@@ -3475,6 +3651,19 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 		ret = 0;
 	}
 
+	// Set CRTC GAMMA_LUT for the Intel fallback path (pipe gamma after blending).
+	// pipe_gamma_id is populated by drm_prepare_liftoff, so this must come after.
+	// For AMD the regamma TF is used instead; only set when color pipeline is supported
+	// but not the AMD-specific color management.
+	if ( ret == 0 && drm->pCRTC && !bSleep
+		&& drm->pCRTC->GetProperties().GAMMA_LUT
+		&& drm_supports_color_pipeline( drm )
+		&& !drm_supports_color_mgmt( drm ) )
+	{
+		uint64_t uGammaBlob = drm->pending.pipe_gamma_id ? drm->pending.pipe_gamma_id->GetBlobValue() : 0;
+		drm->pCRTC->GetProperties().GAMMA_LUT->SetPendingValue( drm->req, uGammaBlob, bForceInRequest );
+	}
+
 	if ( ret != 0 ) {
 		drm_rollback( drm );
 
@@ -3617,7 +3806,10 @@ bool drm_update_color_mgmt(struct drm_t *drm)
 		drm->pending.lut3d_id[ i ] = 0;
 		drm->pending.shaperlut_colorop_id[ i ] = 0;
 		drm->pending.lut3d_colorop_id[ i ] = 0;
+		drm->pending.degamma_colorop_id[ i ] = 0;
 	}
+	drm->pending.gamut_ctm_colorop_id = nullptr;
+	drm->pending.pipe_gamma_id = nullptr;
 
 	for ( uint32_t i = 0; i < EOTF_Count; i++ )
 	{
@@ -3630,6 +3822,11 @@ bool drm_update_color_mgmt(struct drm_t *drm)
 		drm->pending.shaperlut_colorop_id[ i ] = GetBackend()->CreateBackendBlob( lut_convert_16bit_to_32bit( g_ColorMgmtLuts[i].lut1d ) );
 		drm->pending.lut3d_colorop_id[ i ] = GetBackend()->CreateBackendBlob( lut_convert_16bit_to_32bit( g_ColorMgmtLuts[i].lut3d ) );
 	}
+
+	// degamma_colorop_id for the Intel fallback path is generated on-demand
+	// in drm_prepare_liftoff using make_colorop_curve_blob() (size matches
+	// each colorop's SIZE property).  pipe_gamma_id is also generated on-demand
+	// using make_pipe_gamma_blob() at GAMMA_LUT_SIZE entries.
 
 	return true;
 }
