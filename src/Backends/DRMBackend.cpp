@@ -4,6 +4,7 @@
 
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/sysmacros.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
@@ -1239,6 +1240,82 @@ gamescope_liftoff_log_handler(enum liftoff_log_priority liftoff_priority, const 
 	liftoff_log_scope.vlogf(priority, fmt, args);
 }
 
+// Resolve the value of --prefer-drm to an absolute DRM primary node path.
+//
+// Accepts:
+//   * "/dev/dri/cardX"                          (absolute path, used as-is)
+//   * "cardX"                                   (short form, prefixed with /dev/dri/)
+//   * "/dev/dri/by-path/pci-...-card"           (symlink, resolved to its target)
+//
+// Returns the canonical path on success, or an empty string if the path does
+// not exist (realpath() also doubles as the existence check here).
+static std::string resolve_prefer_drm_device( const char *pszInput )
+{
+	if ( pszInput == nullptr || pszInput[0] == '\0' )
+		return std::string();
+
+	std::string sPath;
+	if ( pszInput[0] != '/' )
+		sPath = std::string( "/dev/dri/" ) + pszInput;
+	else
+		sPath = pszInput;
+
+	char szResolved[PATH_MAX];
+	if ( realpath( sPath.c_str(), szResolved ) == nullptr )
+		return std::string();
+
+	return std::string( szResolved );
+}
+
+// Resolve and validate --prefer-drm (g_sPreferredDrmDevice). On success returns
+// the canonical DRM primary-node path; on failure logs a clear error and
+// returns an empty string. Only call this when --prefer-drm was actually given.
+//
+// We deliberately do NOT open() the device to validate it: under seatd/logind
+// the compositor process usually cannot open the primary node directly (that is
+// the session manager's job), so a plain open() would spuriously fail with
+// EACCES on perfectly valid setups. Inspect the device number instead -- DRM
+// primary node minors are 0-63, render nodes are 128+. The authoritative KMS
+// check (drmIsKMS) still runs later once the session opens the fd.
+static std::string resolve_and_validate_prefer_drm_device()
+{
+	std::string sDrmPath = resolve_prefer_drm_device( g_sPreferredDrmDevice );
+	if ( sDrmPath.empty() )
+	{
+		drm_log.errorf( "--prefer-drm: could not resolve DRM device '%s' (does not exist?)", g_sPreferredDrmDevice );
+		return std::string();
+	}
+
+	struct stat drmStat = {};
+	if ( stat( sDrmPath.c_str(), &drmStat ) != 0 || !S_ISCHR( drmStat.st_mode ) )
+	{
+		drm_log.errorf( "--prefer-drm: '%s' is not a character device", sDrmPath.c_str() );
+		return std::string();
+	}
+	if ( minor( drmStat.st_rdev ) >= 64 )
+	{
+		drm_log.errorf( "--prefer-drm: '%s' is not a DRM primary node; pass a KMS device such as /dev/dri/cardX (not a render node)", sDrmPath.c_str() );
+		return std::string();
+	}
+
+	return sDrmPath;
+}
+
+namespace gamescope
+{
+	// Pre-flight check run from main() before the DRM backend (and the heavy
+	// Vulkan/session init) is created, so an invalid --prefer-drm fails fast with
+	// a clear message instead of tearing down a half-initialized backend later.
+	// Returns true when --prefer-drm is unset or resolves to a valid primary node.
+	bool DRMBackendCheckPreferredDevice()
+	{
+		if ( g_sPreferredDrmDevice == nullptr )
+			return true;
+
+		return !resolve_and_validate_prefer_drm_device().empty();
+	}
+}
+
 bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 {
 	load_pnps();
@@ -1250,20 +1327,39 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 	drm->preferred_refresh = refresh;
 
 	drm->device_name = nullptr;
-	dev_t dev_id = 0;
-	if (vulkan_primary_dev_id(&dev_id)) {
-		drmDevice *drm_dev = nullptr;
-		if (drmGetDeviceFromDevId(dev_id, 0, &drm_dev) != 0) {
-			drm_log.errorf("Failed to find DRM device with device ID %" PRIu64, (uint64_t)dev_id);
+	if ( g_sPreferredDrmDevice != nullptr )
+	{
+		// User explicitly selected a DRM/KMS device for scanout via --prefer-drm.
+		// This decouples the scanout device from the Vulkan render device
+		// (--prefer-vk-device), which is needed for hybrid/eGPU/muxless setups
+		// where a headless render GPU composites onto a display attached to a
+		// different GPU. The value was already resolved and validated up-front by
+		// gamescope::DRMBackendCheckPreferredDevice() in main(), so this should
+		// not normally fail here.
+		std::string sDrmPath = resolve_and_validate_prefer_drm_device();
+		if ( sDrmPath.empty() )
 			return false;
-		}
-		assert(drm_dev->available_nodes & (1 << DRM_NODE_PRIMARY));
-		drm->device_name = strdup(drm_dev->nodes[DRM_NODE_PRIMARY]);
-		drm_log.infof("opening DRM node '%s'", drm->device_name);
+
+		drm->device_name = strdup( sDrmPath.c_str() );
+		drm_log.infof( "--prefer-drm: using DRM scanout device '%s'", drm->device_name );
 	}
 	else
 	{
-		drm_log.infof("warning: picking an arbitrary DRM device");
+		dev_t dev_id = 0;
+		if (vulkan_primary_dev_id(&dev_id)) {
+			drmDevice *drm_dev = nullptr;
+			if (drmGetDeviceFromDevId(dev_id, 0, &drm_dev) != 0) {
+				drm_log.errorf("Failed to find DRM device with device ID %" PRIu64, (uint64_t)dev_id);
+				return false;
+			}
+			assert(drm_dev->available_nodes & (1 << DRM_NODE_PRIMARY));
+			drm->device_name = strdup(drm_dev->nodes[DRM_NODE_PRIMARY]);
+			drm_log.infof("opening DRM node '%s'", drm->device_name);
+		}
+		else
+		{
+			drm_log.infof("warning: picking an arbitrary DRM device");
+		}
 	}
 
 	drm->fd = wlsession_open_kms( drm->device_name );
@@ -1346,6 +1442,9 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 
 		drm_log.infof("  %s (%s)", pConnector->GetName(), status_str);
 	}
+
+	if ( g_sOutputName != nullptr )
+		drm_log.infof( "preferred output (--prefer-output): %s", g_sOutputName );
 
 	drm->connector_priorities = parse_connector_priorities( g_sOutputName );
 
