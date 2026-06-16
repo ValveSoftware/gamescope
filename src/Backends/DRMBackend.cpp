@@ -566,14 +566,29 @@ namespace gamescope
 	struct CDRMColorPipeline
 	{
 		uint32_t id;
-		std::unique_ptr<gamescope::CDRMColorOp> degamma;
-		std::unique_ptr<gamescope::CDRMColorOp> HDRMult;
-		std::unique_ptr<gamescope::CDRMColorOp> CTM;
-		std::unique_ptr<gamescope::CDRMColorOp> shaper;
-		std::unique_ptr<gamescope::CDRMColorOp> shaperLut;
-		std::unique_ptr<gamescope::CDRMColorOp> lut3D;
-		std::unique_ptr<gamescope::CDRMColorOp> blend;
-		std::unique_ptr<gamescope::CDRMColorOp> blendLut;
+
+		// Ordered colorop chain discovered from KMS.  Callers locate specific
+		// ops by DRM type + occurrence index via FindByType(), then bypass
+		// everything not explicitly programmed.  This mirrors the
+		// search-by-type approach used in KWin and Weston and works for any
+		// vendor pipeline shape without vendor-specific enums.
+		std::vector<std::unique_ptr<gamescope::CDRMColorOp>> ops;
+
+		// Return the nSkip-th (0-based) colorop whose DRM TYPE matches uType,
+		// or nullptr if no such op exists in the chain.
+		gamescope::CDRMColorOp *FindByType( uint64_t uType, size_t nSkip = 0 ) const
+		{
+			for ( const auto &pOp : ops )
+			{
+				if ( pOp->GetProperties().TYPE.value().GetInitialValue() == uType )
+				{
+					if ( nSkip == 0 )
+						return pOp.get();
+					--nSkip;
+				}
+			}
+			return nullptr;
+		}
 	};
 
 	class CDRMFb final : public CBaseBackendFb
@@ -970,32 +985,14 @@ static std::optional<gamescope::CDRMColorPipeline> get_color_pipeline( struct dr
 	}
 
 	// Accept any non-empty pipeline regardless of shape.
-	// Named fields are assigned by matching the DRM colorop TYPE; any type not
-	// present in this pipeline leaves the field nullptr.  The programming code
-	// null-checks each field before use so that non-AMD pipelines with fewer or
-	// different ops are handled gracefully rather than refused outright.
+	// The programming code uses FindByType() to locate the ops it cares
+	// about and bypasses everything else, making the logic generic for
+	// any hardware without a vendor-specific enum.
 	if ( pipeline.empty() )
 		return {};
 
 	gamescope::CDRMColorPipeline p { .id = uHeadId };
-	for ( auto &op : pipeline )
-	{
-		uint64_t uType = op->GetProperties().TYPE.value().GetInitialValue();
-		if ( uType == DRM_COLOROP_1D_CURVE )
-		{
-			if      ( !p.degamma ) { p.degamma = std::move(op); continue; }
-			else if ( !p.shaper  ) { p.shaper  = std::move(op); continue; }
-			else if ( !p.blend   ) { p.blend   = std::move(op); continue; }
-		}
-		else if ( uType == DRM_COLOROP_MULTIPLIER && !p.HDRMult  ) { p.HDRMult  = std::move(op); continue; }
-		else if ( uType == DRM_COLOROP_CTM_3X4   && !p.CTM      ) { p.CTM      = std::move(op); continue; }
-		else if ( uType == DRM_COLOROP_1D_LUT )
-		{
-			if      ( !p.shaperLut ) { p.shaperLut = std::move(op); continue; }
-			else if ( !p.blendLut  ) { p.blendLut  = std::move(op); continue; }
-		}
-		else if ( uType == DRM_COLOROP_3D_LUT && !p.lut3D ) { p.lut3D = std::move(op); continue; }
-	}
+	p.ops = std::move(pipeline);
 	return p;
 }
 
@@ -3073,100 +3070,134 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 					shaper_tf = DRM_COLOROP_1D_CURVE_BT2020_OETF;
 				}
 
+				// Generic color pipeline programming.
+				//
+				// Locate roles by DRM colorop type + occurrence index.
+				// Works for any hw pipeline shape (AMD, Intel, …) without
+				// a vendor-specific enum.  After programming all known roles,
+				// every op not explicitly handled is bypassed.
+				gamescope::CDRMColorOp *pDegammaOp  = p->FindByType( DRM_COLOROP_1D_CURVE );      // 1st 1D_CURVE
+				gamescope::CDRMColorOp *pHDRMultOp  = p->FindByType( DRM_COLOROP_MULTIPLIER );    // MULTIPLIER
+				gamescope::CDRMColorOp *pCTMOp      = p->FindByType( DRM_COLOROP_CTM_3X4 );       // CTM
+				gamescope::CDRMColorOp *pShaperOp   = p->FindByType( DRM_COLOROP_1D_CURVE, 1 );   // 2nd 1D_CURVE
+				gamescope::CDRMColorOp *pShaperLutOp= p->FindByType( DRM_COLOROP_1D_LUT );        // 1st 1D_LUT
+				gamescope::CDRMColorOp *pLut3DOp    = p->FindByType( DRM_COLOROP_3D_LUT );        // 3D_LUT
+				gamescope::CDRMColorOp *pBlendOp    = p->FindByType( DRM_COLOROP_1D_CURVE, 2 );   // 3rd 1D_CURVE
+				gamescope::CDRMColorOp *pBlendLutOp = p->FindByType( DRM_COLOROP_1D_LUT, 1 );     // 2nd 1D_LUT
+
+				// Track which ops we explicitly handle so we can bypass the rest.
+				std::unordered_set<gamescope::CDRMColorOp *> handledOps;
+
 				// --- Degamma (1st 1D_CURVE) ---
-				if ( p->degamma )
+				if ( pDegammaOp )
 				{
 					if ( !cv_drm_debug_disable_degamma_tf && degamma_tf.has_value() )
 					{
-						p->degamma->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
-						p->degamma->GetProperties().CURVE_1D_TYPE->SetPendingValue( drm->req, *degamma_tf, true );
+						pDegammaOp->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
+						pDegammaOp->GetProperties().CURVE_1D_TYPE->SetPendingValue( drm->req, *degamma_tf, true );
 					}
 					else
 					{
-						p->degamma->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
+						pDegammaOp->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
 					}
+					handledOps.insert( pDegammaOp );
 				}
 
 				// --- HDR multiplier (MULTIPLIER) ---
-				if ( p->HDRMult )
+				if ( pHDRMultOp )
 				{
-					p->HDRMult->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
-					p->HDRMult->GetProperties().MULTIPLIER->SetPendingValue( drm->req, 0x100000000ULL, true );
+					pHDRMultOp->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
+					pHDRMultOp->GetProperties().MULTIPLIER->SetPendingValue( drm->req, 0x100000000ULL, true );
+					handledOps.insert( pHDRMultOp );
 				}
 
 				// --- Color transform matrix (CTM_3X4) ---
-				if ( p->CTM )
+				if ( pCTMOp )
 				{
 					if ( !cv_drm_debug_disable_ctm && frameInfo->layers[i].ctm != nullptr )
 					{
-						p->CTM->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
-						p->CTM->GetProperties().DATA->SetPendingValue( drm->req, frameInfo->layers[i].ctm->GetBlobValue(), true );
+						pCTMOp->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
+						pCTMOp->GetProperties().DATA->SetPendingValue( drm->req, frameInfo->layers[i].ctm->GetBlobValue(), true );
 					}
 					else
 					{
-						p->CTM->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
+						pCTMOp->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
 					}
+					handledOps.insert( pCTMOp );
 				}
 
-				// --- Shaper curve (2nd 1D_CURVE) ---
+				// --- Shaper curve (2nd 1D_CURVE) + Shaper LUT (1st 1D_LUT) + 3D LUT ---
 				bool bUseShaperAnd3DLUT = !cv_drm_debug_disable_shaper_and_3dlut
 					&& shaper_tf.has_value()
-					&& p->shaperLut != nullptr
-					&& p->lut3D != nullptr;
-				if ( p->shaper )
+					&& pLut3DOp != nullptr
+					&& drm->pending.shaperlut_colorop_id[ ColorSpaceToEOTFIndex( colorspace ) ] != nullptr
+					&& drm->pending.lut3d_colorop_id[ ColorSpaceToEOTFIndex( colorspace ) ] != nullptr;
+				if ( pShaperOp )
 				{
 					if ( bUseShaperAnd3DLUT )
 					{
-						p->shaper->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
-						p->shaper->GetProperties().CURVE_1D_TYPE->SetPendingValue( drm->req, *shaper_tf, true );
+						pShaperOp->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
+						pShaperOp->GetProperties().CURVE_1D_TYPE->SetPendingValue( drm->req, *shaper_tf, true );
 					}
 					else
 					{
-						p->shaper->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
+						pShaperOp->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
 					}
+					handledOps.insert( pShaperOp );
 				}
-				if ( p->shaperLut )
+				if ( pShaperLutOp )
 				{
 					if ( bUseShaperAnd3DLUT )
 					{
-						p->shaperLut->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
-						p->shaperLut->GetProperties().DATA->SetPendingValue( drm->req, drm->pending.shaperlut_colorop_id[ ColorSpaceToEOTFIndex( colorspace ) ]->GetBlobValue(), true );
+						pShaperLutOp->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
+						pShaperLutOp->GetProperties().DATA->SetPendingValue( drm->req, drm->pending.shaperlut_colorop_id[ ColorSpaceToEOTFIndex( colorspace ) ]->GetBlobValue(), true );
 					}
 					else
 					{
-						p->shaperLut->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
+						pShaperLutOp->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
 					}
+					handledOps.insert( pShaperLutOp );
 				}
-				if ( p->lut3D )
+				if ( pLut3DOp )
 				{
 					if ( bUseShaperAnd3DLUT )
 					{
-						p->lut3D->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
-						p->lut3D->GetProperties().DATA->SetPendingValue( drm->req, drm->pending.lut3d_colorop_id[ ColorSpaceToEOTFIndex( colorspace ) ]->GetBlobValue(), true );
+						pLut3DOp->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
+						pLut3DOp->GetProperties().DATA->SetPendingValue( drm->req, drm->pending.lut3d_colorop_id[ ColorSpaceToEOTFIndex( colorspace ) ]->GetBlobValue(), true );
 					}
 					else
 					{
-						p->lut3D->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
+						pLut3DOp->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
 					}
+					handledOps.insert( pLut3DOp );
 				}
 
 				// --- Blend curve (3rd 1D_CURVE) ---
-				if ( p->blend )
+				if ( pBlendOp )
 				{
 					std::optional<drm_colorop_curve_1d_type> blend_tf = amd_tf_to_drm_curve( drm->pending.output_tf );
 					if ( !cv_drm_debug_disable_blend_tf && !bSinglePlane && blend_tf.has_value() )
 					{
-						p->blend->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
-						p->blend->GetProperties().CURVE_1D_TYPE->SetPendingValue( drm->req, *blend_tf, true );
+						pBlendOp->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
+						pBlendOp->GetProperties().CURVE_1D_TYPE->SetPendingValue( drm->req, *blend_tf, true );
 					}
 					else
 					{
-						p->blend->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
+						pBlendOp->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
 					}
+					handledOps.insert( pBlendOp );
 				}
-				if ( p->blendLut )
+				if ( pBlendLutOp )
 				{
-					p->blendLut->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
+					pBlendLutOp->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
+					handledOps.insert( pBlendLutOp );
+				}
+
+				// Bypass any op not covered by the roles above.
+				for ( const auto &pOp : p->ops )
+				{
+					if ( handledOps.count( pOp.get() ) == 0 && pOp->GetProperties().BYPASS.has_value() )
+						pOp->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
 				}
 
 				break;
