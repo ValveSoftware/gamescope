@@ -466,14 +466,20 @@ bool CVulkanDevice::createDevice()
 		vk_log.warnf( "physical device doesn't support VK_EXT_physical_device_drm" );
 	} else {
 #if HAVE_DRM
+		VkPhysicalDeviceDriverProperties driverProps = {
+			.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES,
+		};
 		VkPhysicalDeviceDrmPropertiesEXT drmProps = {
 			.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRM_PROPERTIES_EXT,
+			.pNext = &driverProps,
 		};
 		VkPhysicalDeviceProperties2 props2 = {
 			.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
 			.pNext = &drmProps,
 		};
 		vk.GetPhysicalDeviceProperties2( physDev(), &props2 );
+
+		m_bIsNvidiaProprietaryDriver = driverProps.driverID == VK_DRIVER_ID_NVIDIA_PROPRIETARY;
 
 		if ( !GetBackend()->UsesVulkanSwapchain() && !drmProps.hasPrimary ) {
 			vk_log.errorf( "physical device has no primary node" );
@@ -3639,6 +3645,7 @@ static gamescope::Rc<CVulkanTexture> acquire_pooled_texture( auto& pool, uint32_
 			textureFlags.bMappable = true;
 			textureFlags.bTransferDst = true;
 			textureFlags.bStorage = true;
+			textureFlags.bSampled = true; // required for RGB-to-NV12 shader to sample this texture
 			if (exportable || drmFormat == DRM_FORMAT_NV12) {
 				textureFlags.bExportable = true;
 				textureFlags.bLinear = true; // TODO: support multi-planar DMA-BUF export via PipeWire
