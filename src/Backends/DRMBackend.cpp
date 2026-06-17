@@ -55,6 +55,8 @@
 
 #include "gamescope-control-protocol.h"
 
+#include "display_selection.h"
+
 static constexpr bool k_bUseCursorPlane = false;
 
 extern int g_nPreferredOutputWidth;
@@ -158,6 +160,9 @@ struct drm_t {
 	std::atomic < bool > needs_modeset = { false };
 
 	std::unordered_map< std::string, int > connector_priorities;
+	std::mutex connectors_mutex;
+	std::mutex preferred_display_mutex;
+	std::string preferred_display;
 
 	char *device_name = nullptr;
 };
@@ -387,6 +392,7 @@ namespace gamescope
 			std::optional<CDRMAtomicProperty> vrr_capable;
 			std::optional<CDRMAtomicProperty> EDID;
 			std::optional<CDRMAtomicProperty> Broadcast_RGB;
+			std::optional<CDRMAtomicProperty> PATH;
 			std::optional<CDRMAtomicProperty> DUMMY_END;
 		};
 		      ConnectorProperties &GetProperties()       { return m_Props; }
@@ -397,6 +403,9 @@ namespace gamescope
 		const char *GetMake() const override { return m_Mutable.pszMake; }
 		const char *GetModel() const override { return m_Mutable.szModel; }
 		const char *GetDataString() const { return m_Mutable.szDataString; }
+		uint32_t GetEDIDSerial() const { return m_Mutable.uEDIDSerial; }
+		const char *GetEDIDSerialString() const { return m_Mutable.szEDIDSerial; }
+		const char *GetMstPath() const { return m_Mutable.szMstPath.c_str(); }
 		uint32_t GetPossibleCRTCMask() const { return m_Mutable.uPossibleCRTCMask; }
 		std::span<const uint32_t> GetValidDynamicRefreshRates() const override { return m_Mutable.ValidDynamicRefreshRates; }
 		const displaycolorimetry_t& GetDisplayColorimetry() const { return m_Mutable.DisplayColorimetry; }
@@ -520,6 +529,9 @@ namespace gamescope
 			char szMakePNP[4]{};
 			char szModel[16]{};
 			char szDataString[16]{};
+			uint32_t uEDIDSerial = 0;
+			char szEDIDSerial[16]{};
+			std::string szMstPath;
 			const char *pszMake = ""; // Not owned, no free. This is a pointer to pnp db or szMakePNP.
 			DRMModeGenerator fnDynamicModeGenerator;
 			std::vector<uint32_t> ValidDynamicRefreshRates{};
@@ -844,6 +856,8 @@ static bool refresh_state( drm_t *drm )
 	}
 	defer( drmModeFreeResources( pResources ) );
 
+	std::lock_guard lock( drm->connectors_mutex );
+
 	// Add connectors which appeared
 	for ( int i = 0; i < pResources->count_connectors; i++ )
 	{
@@ -1013,6 +1027,42 @@ static std::unordered_map<std::string, int> parse_connector_priorities(const cha
 	return priorities;
 }
 
+static std::string get_display_identifier(const gamescope::CDRMConnector *pConnector)
+{
+	const char *pszMake = pConnector->GetMake();
+	const char *pszModel = pConnector->GetModel();
+	const char *pszName = pConnector->GetName();
+	const char *pszSerialStr = pConnector->GetEDIDSerialString();
+	return gamescope::BuildDisplayIdentifier(
+		pConnector->GetScreenType() == gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL,
+		pszMake ? pszMake : "",
+		pszModel ? pszModel : "",
+		pszName ? pszName : "",
+		pConnector->GetEDIDSerial(),
+		pszSerialStr ? pszSerialStr : "" );
+}
+
+static std::string get_display_key(struct drm_t *drm, const gamescope::CDRMConnector *pConnector)
+{
+	std::string base = get_display_identifier(pConnector);
+	bool bShared = false;
+	for (auto &iter : drm->connectors)
+	{
+		gamescope::CDRMConnector *pOther = &iter.second;
+		if (pOther != pConnector
+			&& pOther->GetModeConnector()->connection == DRM_MODE_CONNECTED
+			&& get_display_identifier(pOther) == base)
+		{
+			bShared = true;
+			break;
+		}
+	}
+	const char *pszMstPath = pConnector->GetMstPath();
+	const char *pszName = pConnector->GetName();
+	const char *pszHint = ( pszMstPath && *pszMstPath ) ? pszMstPath : pszName;
+	return gamescope::BuildDisplaySelectionKey( base, pszHint ? pszHint : "", bShared );
+}
+
 static int get_connector_priority(struct drm_t *drm, const char *name)
 {
 	if (drm->connector_priorities.count(name) > 0) {
@@ -1022,6 +1072,29 @@ static int get_connector_priority(struct drm_t *drm, const char *name)
 		return drm->connector_priorities["*"];
 	}
 	return drm->connector_priorities.size();
+}
+
+static std::string get_saved_preferred_display()
+{
+	const char *path = getenv("GAMESCOPE_DISPLAY_SELECTION_FILE");
+	if (!path || !*path)
+		return {};
+
+	FILE *file = fopen(path, "r");
+	if (!file)
+		return {};
+
+	char line[256] = {};
+	std::string result;
+	if (fgets(line, sizeof(line), file))
+	{
+		size_t len = strlen(line);
+		while (len > 0 && (line[len-1] == '\n' || line[len-1] == '\r' || line[len-1] == ' ' || line[len-1] == '\t'))
+			line[--len] = '\0';
+		result = line;
+	}
+	fclose(file);
+	return result;
 }
 
 static bool get_saved_mode(const char *description, saved_mode &mode_info)
@@ -1057,12 +1130,48 @@ static bool get_saved_mode(const char *description, saved_mode &mode_info)
 
 static GamescopeBroadcastRGBMode_t s_ExternalBroadcastRGBMode = GAMESCOPE_BROADCAST_RGB_MODE_AUTOMATIC;
 
+static gamescope::CDRMConnector *resolve_preferred_connector(struct drm_t *drm)
+{
+	std::string pref;
+	{
+		std::lock_guard lock( drm->preferred_display_mutex );
+		pref = drm->preferred_display;
+	}
+	if (pref.empty())
+		return nullptr;
+
+	std::vector<gamescope::DisplaySelectionCandidate> candidates;
+	std::vector<gamescope::CDRMConnector *> pConnectors;
+	for (auto &iter : drm->connectors)
+	{
+		gamescope::CDRMConnector *pConnector = &iter.second;
+		if (pConnector->GetModeConnector()->connection != DRM_MODE_CONNECTED)
+			continue;
+		const char *pszName = pConnector->GetName();
+		const char *pszMstPath = pConnector->GetMstPath();
+		candidates.push_back( { pszName ? pszName : "", get_display_identifier(pConnector), pszMstPath ? pszMstPath : "" } );
+		pConnectors.push_back( pConnector );
+	}
+
+	std::optional<size_t> oIndex = gamescope::ResolveDisplaySelection( pref, candidates );
+	if (!oIndex) {
+		drm_log.infof("preferred display '%s' not connected, using output priority", pref.c_str());
+		return nullptr;
+	}
+
+	gamescope::CDRMConnector *pConnector = pConnectors[*oIndex];
+	drm_log.infof("preferred display '%s' -> connector %s", pref.c_str(), pConnector->GetName());
+	return pConnector;
+}
+
 static bool setup_best_connector(struct drm_t *drm, bool force, bool initial)
 {
 	if (drm->pConnector && drm->pConnector->GetModeConnector()->connection != DRM_MODE_CONNECTED) {
 		drm_log.infof("current connector '%s' disconnected", drm->pConnector->GetName());
 		drm->pConnector = nullptr;
 	}
+
+	gamescope::CDRMConnector *pPreferred = resolve_preferred_connector( drm );
 
 	gamescope::CDRMConnector *best = nullptr;
 	int nBestPriority = INT_MAX;
@@ -1076,7 +1185,7 @@ static bool setup_best_connector(struct drm_t *drm, bool force, bool initial)
 		if ( g_bForceInternal && pConnector->GetScreenType() == gamescope::GAMESCOPE_SCREEN_TYPE_EXTERNAL )
 			continue;
 
-		int nPriority = get_connector_priority( drm, pConnector->GetName() );
+		int nPriority = ( pConnector == pPreferred ) ? INT_MIN : get_connector_priority( drm, pConnector->GetName() );
 		if ( nPriority < nBestPriority )
 		{
 			best = pConnector;
@@ -1173,8 +1282,6 @@ static bool setup_best_connector(struct drm_t *drm, bool force, bool initial)
 
 	if (!initial)
 		WritePatchedEdid( best->GetRawEDID(), best->GetHDRInfo(), g_bRotated );
-
-	update_connector_display_info_wl( drm );
 
 	return true;
 }
@@ -1349,6 +1456,15 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 
 	drm->connector_priorities = parse_connector_priorities( g_sOutputName );
 
+	{
+		std::string saved = get_saved_preferred_display();
+		if (!saved.empty()) {
+			drm_log.infof("using saved preferred display: %s", saved.c_str());
+			std::lock_guard lock( drm->preferred_display_mutex );
+			drm->preferred_display = std::move(saved);
+		}
+	}
+
 	if (!setup_best_connector(drm, true, true)) {
 		return false;
 	}
@@ -1466,6 +1582,102 @@ void drm_sleep_screen( gamescope::GamescopeScreenType eType, bool bSleep )
 	cv_drm_sleep_screens[ eType ] = bSleep;
 }
 
+void drm_set_preferred_connector( const char *pszName )
+{
+	std::string identifier;
+	if ( pszName && *pszName )
+	{
+		std::lock_guard lock( g_DRM.connectors_mutex );
+		for ( auto &iter : g_DRM.connectors )
+		{
+			const char *pszConnName = iter.second.GetName();
+			if ( pszConnName && strcmp( pszConnName, pszName ) == 0 )
+			{
+				identifier = get_display_key( &g_DRM, &iter.second );
+				break;
+			}
+		}
+	}
+
+	std::string snapshot;
+	{
+		std::lock_guard lock( g_DRM.preferred_display_mutex );
+		if ( !pszName || !*pszName )
+			g_DRM.preferred_display.clear();
+		else if ( !identifier.empty() )
+			g_DRM.preferred_display = std::move(identifier);
+		// else: name given but didn't match any connector - no change.
+		snapshot = g_DRM.preferred_display;
+	}
+
+	// FIXME: Steam should own this write; revert once it does.
+	if ( const char *pszPath = getenv("GAMESCOPE_DISPLAY_SELECTION_FILE"); pszPath && *pszPath )
+	{
+		if ( FILE *file = fopen(pszPath, "w") )
+		{
+			if ( !snapshot.empty() )
+				fprintf(file, "%s\n", snapshot.c_str());
+			fclose(file);
+		}
+	}
+	GetBackend()->DirtyState();
+}
+
+void drm_set_preferred_display_identifier( const char *pszIdentifier )
+{
+	std::string snapshot;
+	{
+		std::lock_guard lock( g_DRM.preferred_display_mutex );
+		if ( !pszIdentifier || !*pszIdentifier )
+			g_DRM.preferred_display.clear();
+		else
+			g_DRM.preferred_display = pszIdentifier;
+		snapshot = g_DRM.preferred_display;
+	}
+
+	// FIXME: Steam should own this write; revert once it does.
+	if ( const char *pszPath = getenv("GAMESCOPE_DISPLAY_SELECTION_FILE"); pszPath && *pszPath )
+	{
+		if ( FILE *file = fopen(pszPath, "w") )
+		{
+			if ( !snapshot.empty() )
+				fprintf(file, "%s\n", snapshot.c_str());
+			fclose(file);
+		}
+	}
+	GetBackend()->DirtyState();
+}
+
+std::vector< gamescope::GamescopeKnownDisplay > drm_get_connected_outputs()
+{
+	std::vector< gamescope::GamescopeKnownDisplay > outputs;
+	std::lock_guard lock( g_DRM.connectors_mutex );
+	for ( auto &iter : g_DRM.connectors )
+	{
+		gamescope::CDRMConnector *pConn = &iter.second;
+		if ( pConn->GetModeConnector()->connection != DRM_MODE_CONNECTED )
+			continue;
+
+		uint32_t flags = 0;
+		if ( pConn->GetScreenType() == gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL )
+			flags |= GAMESCOPE_CONTROL_DISPLAY_FLAG_INTERNAL_DISPLAY;
+		if ( pConn->GetHDRInfo().bExposeHDRSupport )
+			flags |= GAMESCOPE_CONTROL_DISPLAY_FLAG_SUPPORTS_HDR;
+		if ( pConn->SupportsVRR() )
+			flags |= GAMESCOPE_CONTROL_DISPLAY_FLAG_SUPPORTS_VRR;
+		if ( pConn == g_DRM.pConnector )
+			flags |= GAMESCOPE_CONTROL_DISPLAY_FLAG_CURRENT;
+
+		outputs.emplace_back( gamescope::GamescopeKnownDisplay{
+			.szConnectorName = pConn->GetName()  ? pConn->GetName()  : "",
+			.szMake          = pConn->GetMake()  ? pConn->GetMake()  : "",
+			.szModel         = pConn->GetModel() ? pConn->GetModel() : "",
+			.szIdentifier    = get_display_key( &g_DRM, pConn ),
+			.uFlags          = flags,
+		} );
+	}
+	return outputs;
+}
 
 
 void finish_drm(struct drm_t *drm)
@@ -2226,6 +2438,20 @@ namespace gamescope
 			m_Props.vrr_capable              = CDRMAtomicProperty::Instantiate( "vrr_capable",            this, *rawProperties );
 			m_Props.EDID                     = CDRMAtomicProperty::Instantiate( "EDID",                   this, *rawProperties );
 			m_Props.Broadcast_RGB            = CDRMAtomicProperty::Instantiate( "Broadcast RGB",          this, *rawProperties );
+			m_Props.PATH                     = CDRMAtomicProperty::Instantiate( "PATH",                   this, *rawProperties );
+		}
+
+		if ( m_Props.PATH )
+		{
+			if ( uint64_t ulBlobId = m_Props.PATH->GetCurrentValue() )
+			{
+				if ( drmModePropertyBlobRes *pBlob = drmModeGetPropertyBlob( g_DRM.fd, ulBlobId ) )
+				{
+					const char *pszMstPath = reinterpret_cast<const char *>( pBlob->data );
+					m_Mutable.szMstPath.assign( pszMstPath, strnlen( pszMstPath, pBlob->length ) );
+					drmModeFreePropertyBlob( pBlob );
+				}
+			}
 		}
 
 		ParseEDID();
@@ -2316,6 +2542,7 @@ namespace gamescope
 		m_Mutable.szMakePNP[1] = pProduct->manufacturer[1];
 		m_Mutable.szMakePNP[2] = pProduct->manufacturer[2];
 		m_Mutable.szMakePNP[3] = '\0';
+		m_Mutable.uEDIDSerial = pProduct->serial;
 
 		m_Mutable.pszMake = m_Mutable.szMakePNP;
 		auto pnpIter = pnps.find( m_Mutable.szMakePNP );
@@ -2338,6 +2565,12 @@ namespace gamescope
 			{
 				const char *pszDataString = di_edid_display_descriptor_get_string( pDesc );
 				strncpy( m_Mutable.szDataString, pszDataString, sizeof( m_Mutable.szDataString ) );
+			}
+			else if ( eTag == DI_EDID_DISPLAY_DESCRIPTOR_PRODUCT_SERIAL )
+			{
+				// Descriptor strings are <= 14 chars, so szEDIDSerial[16] is never truncated.
+				const char *pszSerial = di_edid_display_descriptor_get_string( pDesc );
+				strncpy( m_Mutable.szEDIDSerial, pszSerial, sizeof( m_Mutable.szEDIDSerial ) );
 			}
 		}
 
@@ -3138,6 +3371,8 @@ bool drm_poll_state( struct drm_t *drm )
 
 	setup_best_connector(drm, out_of_date >= 2, false);
 
+	update_connector_display_info_wl( drm );
+
 	return true;
 }
 
@@ -3858,6 +4093,21 @@ namespace gamescope
 		virtual IBackendConnector *GetCurrentConnector() override
 		{
 			return g_DRM.pConnector;
+		}
+
+		virtual std::vector< gamescope::GamescopeKnownDisplay > GetConnectedOutputs() override
+		{
+			return drm_get_connected_outputs();
+		}
+
+		virtual void SetPreferredConnector( const char *pszConnectorName ) override
+		{
+			drm_set_preferred_connector( pszConnectorName );
+		}
+
+		virtual void SetPreferredDisplayIdentifier( const char *pszIdentifier ) override
+		{
+			drm_set_preferred_display_identifier( pszIdentifier );
 		}
 
 		virtual IBackendConnector *GetConnector( GamescopeScreenType eScreenType ) override

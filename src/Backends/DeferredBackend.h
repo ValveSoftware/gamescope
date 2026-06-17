@@ -193,6 +193,35 @@ namespace gamescope
             return nullptr;
 		}
 
+		virtual std::vector<gamescope::GamescopeKnownDisplay> GetConnectedOutputs() override
+		{
+            {
+                std::shared_lock lock{ m_mutInit };
+                if ( m_bInittedChild )
+                    return m_pChild->GetConnectedOutputs();
+            }
+
+            return {};
+		}
+
+		virtual void SetPreferredConnector( const char *pszConnectorName ) override
+		{
+            {
+                std::shared_lock lock{ m_mutInit };
+                if ( m_bInittedChild )
+                    return m_pChild->SetPreferredConnector( pszConnectorName );
+            }
+		}
+
+		virtual void SetPreferredDisplayIdentifier( const char *pszIdentifier ) override
+		{
+            {
+                std::shared_lock lock{ m_mutInit };
+                if ( m_bInittedChild )
+                    return m_pChild->SetPreferredDisplayIdentifier( pszIdentifier );
+            }
+		}
+
 		virtual IBackendConnector *GetConnector( GamescopeScreenType eScreenType ) override
 		{
             {

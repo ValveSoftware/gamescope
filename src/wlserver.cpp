@@ -1276,6 +1276,54 @@ static void gamescope_control_request_app_performance_stats( struct wl_client *c
 	wlserver.app_perf_requests[ app_id ].push_back( resource );
 }
 
+static gamescope::ConCommand cc_set_display("set_display", "Switch to a connected output by connector name (DP-1) or a substring of its make/model/serial (e.g. ULTRAGEAR). No argument clears the override and falls back to --prefer-output.",
+[]( std::span<std::string_view> args )
+{
+	if ( args.size() < 2 || args[1].empty() )
+	{
+		GetBackend()->SetPreferredConnector( nullptr );
+		return;
+	}
+
+	std::string query{ args[1] };
+
+	std::string exact;
+	std::vector<gamescope::GamescopeKnownDisplay> matches;
+	for ( const auto &display : GetBackend()->GetConnectedOutputs() )
+	{
+		if ( query == display.szConnectorName )
+		{
+			exact = display.szConnectorName;
+			break;
+		}
+		if ( strcasestr( display.szIdentifier.c_str(), query.c_str() ) )
+			matches.push_back( display );
+	}
+
+	if ( !exact.empty() )
+		GetBackend()->SetPreferredConnector( exact.c_str() );
+	else if ( matches.size() == 1 )
+		GetBackend()->SetPreferredConnector( matches[0].szConnectorName.c_str() );
+	else if ( matches.empty() )
+		console_log.errorf( "set_display: no connected display matches '%s'", query.c_str() );
+	else
+	{
+		console_log.errorf( "set_display: '%s' is ambiguous:", query.c_str() );
+		for ( const auto &match : matches )
+			console_log.errorf( "  %s (%s)", match.szConnectorName.c_str(), match.szIdentifier.c_str() );
+	}
+});
+
+static void gamescope_control_set_display( struct wl_client *client, struct wl_resource *resource, const char *connector_name )
+{
+	GetBackend()->SetPreferredConnector( connector_name );
+}
+
+static void gamescope_control_unset_display( struct wl_client *client, struct wl_resource *resource )
+{
+	GetBackend()->SetPreferredConnector( nullptr );
+}
+
 void wlserver_app_presented( uint32_t app_id, uint64_t frametime_ns )
 {
 	assert( wlserver_is_lock_held() );
@@ -1305,6 +1353,8 @@ static const struct gamescope_control_interface gamescope_control_impl = {
 	.set_look = gamescope_control_set_look,
 	.unset_look = gamescope_control_unset_look,
 	.request_app_performance_stats = gamescope_control_request_app_performance_stats,
+	.set_display = gamescope_control_set_display,
+	.unset_display = gamescope_control_unset_display,
 };
 
 static uint32_t get_conn_display_info_flags()
@@ -1328,6 +1378,22 @@ static uint32_t get_conn_display_info_flags()
 void wlserver_send_gamescope_control( wl_resource *control )
 {
 	assert( wlserver_is_lock_held() );
+
+	// Sent before the early-return so the done event fires when no connector is active.
+	if ( wl_resource_get_version( control ) >= GAMESCOPE_CONTROL_AVAILABLE_DISPLAY_INFO_SINCE_VERSION )
+	{
+		for ( const auto &display : GetBackend()->GetConnectedOutputs() )
+		{
+			gamescope_control_send_available_display_info(
+				control,
+				display.szConnectorName.c_str(),
+				display.szMake.c_str(),
+				display.szModel.c_str(),
+				display.uFlags,
+				display.szIdentifier.c_str() );
+		}
+		gamescope_control_send_available_display_info_done( control );
+	}
 
 	gamescope::IBackendConnector *pConn = GetBackend()->GetCurrentConnector();
 	if ( !pConn )
@@ -1375,6 +1441,7 @@ static void gamescope_control_bind( struct wl_client *client, void *data, uint32
 	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_MURA_CORRECTION, 1, 0 );
 	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_LOOK, 1, 0 );
 	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_PERF_QUERY, 1, 0 );
+	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_DISPLAY_SELECTION, 1, 0 );
 	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_DONE, 0, 0 );
 
 	wlserver_send_gamescope_control( resource );
@@ -1384,7 +1451,7 @@ static void gamescope_control_bind( struct wl_client *client, void *data, uint32
 
 static void create_gamescope_control( void )
 {
-	uint32_t version = 6;
+	uint32_t version = 7;
 	wl_global_create( wlserver.display, &gamescope_control_interface, version, NULL, gamescope_control_bind );
 }
 
