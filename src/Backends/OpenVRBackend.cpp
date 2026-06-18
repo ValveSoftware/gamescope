@@ -521,7 +521,8 @@ namespace gamescope
 				if ( g_nOutputWidth != 0 )
 				{
 					fprintf( stderr, "Cannot specify -W without -H\n" );
-					return false;
+                    // We're usually a deferred backend, so abort out here if something is horribly wrong.
+                    abort();
 				}
 				g_nOutputHeight = 720;
 			}
@@ -594,13 +595,15 @@ namespace gamescope
 
 			if ( !vulkan_init( vulkan_get_instance(), VK_NULL_HANDLE ) )
 			{
-				return false;
+                // We're usually a deferred backend, so abort out here if something is horribly wrong.
+                abort();
 			}
 
 			if ( !wlsession_init() )
 			{
 				fprintf( stderr, "Failed to initialize Wayland session\n" );
-				return false;
+                // We're usually a deferred backend, so abort out here if something is horribly wrong.
+                abort();
 			}
 
             if ( !m_pchOverlayName )
@@ -652,7 +655,8 @@ namespace gamescope
             if ( !vr::VROverlay() )
             {
                 openvr_log.errorf( "SteamVR runtime version mismatch!\n" );
-                return false;
+                // We're usually a deferred backend, so abort out here if something is horribly wrong.
+                abort();
             }
 
             // Setup misc. stuff
@@ -673,7 +677,10 @@ namespace gamescope
 
 			m_pIME = create_local_ime();
             if ( !m_pIME )
-                return false;
+            {
+                // We're usually a deferred backend, so abort out here if something is horribly wrong.
+                abort();
+            }
 
             // This breaks cursor intersection right now.
             // Come back to me later.
@@ -683,7 +690,8 @@ namespace gamescope
             if ( !m_pBlackTexture )
             {
                 openvr_log.errorf( "Failed to create dummy black texture." );
-                return false;
+                // We're usually a deferred backend, so abort out here if something is horribly wrong.
+                abort();
             }
 
             return true;
