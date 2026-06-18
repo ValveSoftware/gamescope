@@ -43,15 +43,11 @@
 #include <condition_variable>
 #include <mutex>
 #include <atomic>
-#include <vector>
 #include <algorithm>
 #include <array>
-#include <iostream>
 #include <fstream>
 #include <string>
-#include <queue>
 #include <filesystem>
-#include <variant>
 #include <unordered_set>
 
 #include <assert.h>
@@ -97,7 +93,6 @@
 #include "reshade_effect_manager.hpp"
 #include "BufferMemo.h"
 #include "Utils/Process.h"
-#include "Utils/Algorithm.h"
 
 #include "wlr_begin.hpp"
 #include "wlr/types/wlr_pointer_constraints_v1.h"
@@ -4935,98 +4930,6 @@ get_name_from_pid( pid_t pid )
 	return procNameStr;
 }
 
-uint32_t
-get_appid_from_pid( pid_t pid )
-{
-	uint32_t unFoundAppId = 0;
-
-	char filename[256];
-	pid_t next_pid = pid;
-
-	while ( 1 )
-	{
-		snprintf( filename, sizeof( filename ), "/proc/%i/stat", next_pid );
-		std::ifstream proc_stat_file( filename );
-
-		if (!proc_stat_file.is_open() || proc_stat_file.bad())
-			break;
-
-		std::string proc_stat;
-
-		std::getline( proc_stat_file, proc_stat );
-
-		char *procName = nullptr;
-		char *lastParens = nullptr;
-
-		for ( uint32_t i = 0; i < proc_stat.length(); i++ )
-		{
-			if ( procName == nullptr && proc_stat[ i ] == '(' )
-			{
-				procName = &proc_stat[ i + 1 ];
-			}
-
-			if ( proc_stat[ i ] == ')' )
-			{
-				lastParens = &proc_stat[ i ];
-			}
-		}
-
-		if (!lastParens)
-			break;
-
-		*lastParens = '\0';
-		char state;
-		int parent_pid = -1;
-
-		sscanf( lastParens + 1, " %c %d", &state, &parent_pid );
-
-		if ( strcmp( "reaper", procName ) == 0 )
-		{
-			snprintf( filename, sizeof( filename ), "/proc/%i/cmdline", next_pid );
-			std::ifstream proc_cmdline_file( filename );
-			std::string proc_cmdline;
-
-			bool bSteamLaunch = false;
-			uint32_t unAppId = 0;
-
-			std::getline( proc_cmdline_file, proc_cmdline );
-
-			for ( uint32_t j = 0; j < proc_cmdline.length(); j++ )
-			{
-				if ( proc_cmdline[ j ] == '\0' && j + 1 < proc_cmdline.length() )
-				{
-					if ( strcmp( "SteamLaunch", &proc_cmdline[ j + 1 ] ) == 0 )
-					{
-						bSteamLaunch = true;
-					}
-					else if ( sscanf( &proc_cmdline[ j + 1 ], "AppId=%u", &unAppId ) == 1 && unAppId != 0 )
-					{
-						if ( bSteamLaunch == true )
-						{
-							unFoundAppId = unAppId;
-						}
-					}
-					else if ( strcmp( "--", &proc_cmdline[ j + 1 ] ) == 0 )
-					{
-						break;
-					}
-				}
-			}
-		}
-
-		if ( parent_pid == -1 || parent_pid == 0 )
-		{
-			break;
-		}
-		else
-		{
-			next_pid = parent_pid;
-		}
-	}
-
-	return unFoundAppId;
-}
-
 static pid_t
 get_win_pid(xwayland_ctx_t *ctx, Window id)
 {
@@ -5116,7 +5019,7 @@ add_win(xwayland_ctx_t *ctx, Window id, Window prev, unsigned long sequence)
 	{
 		if ( new_win->pid != -1 )
 		{
-			new_win->appID = get_appid_from_pid( new_win->pid );
+			new_win->appID = gamescope::Process::GetAppIdFromPid( new_win->pid );
 		}
 		else
 		{
