@@ -14,3 +14,11 @@ test_convar = executable(
 	cpp_args: gamescope_cpp_args,
 )
 test('convar', test_convar)
+
+test_utils_parsers = executable(
+	'test_utils_parsers',
+	['test_utils_parsers.cpp'],
+	include_directories: [srcdir],
+	dependencies: [catch2_dep],
+)
+test('utils/parsers', test_utils_parsers)

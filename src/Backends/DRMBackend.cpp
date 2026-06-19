@@ -31,6 +31,7 @@
 #include "backend.h"
 #include "color_helpers.h"
 #include "Utils/Defer.h"
+#include "Utils/Parsers.h"
 #include "drm_include.h"
 #include "edid.h"
 #include "gamescope_shared.h"
@@ -4102,4 +4103,3 @@ int HackyDRMPresent( const FrameInfo_t *pFrameInfo, bool bAsync )
 {
 	return static_cast<gamescope::CDRMBackend *>( GetBackend() )->Present( pFrameInfo, bAsync );
 }
-

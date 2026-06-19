@@ -4,7 +4,6 @@
 #include <vector>
 #include <span>
 #include <optional>
-#include "convar.h"
 #include "Utils/Version.h"
 
 #include <span>
