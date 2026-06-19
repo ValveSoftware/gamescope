@@ -2028,8 +2028,6 @@ namespace gamescope
                     return false;
 
                 // Transfer Functions
-                if ( !Algorithm::Contains( m_WPColorManagerFeatures.eTransferFunctions, WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_SRGB ) )
-                    return false;
                 if ( !Algorithm::Contains( m_WPColorManagerFeatures.eTransferFunctions, WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_ST2084_PQ ) )
                     return false;
 
