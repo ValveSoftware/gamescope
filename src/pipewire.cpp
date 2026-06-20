@@ -52,7 +52,7 @@ static void destroy_buffer(struct pipewire_buffer *buffer) {
 		break; // nothing to do
 	default:
 		assert(false); // unreachable
-	}	
+	}
 
 	// If out_buffer == buffer, then set it to nullptr.
 	// We don't care about the result.
@@ -71,6 +71,12 @@ void pipewire_destroy_buffer(struct pipewire_buffer *buffer)
 
 static void calculate_capture_size()
 {
+	if (g_nPipewireWidth > 0 && g_nPipewireHeight > 0) {
+		s_nCaptureWidth = g_nPipewireWidth;
+		s_nCaptureHeight = g_nPipewireHeight;
+		return;
+	}
+
 	s_nCaptureWidth = s_nOutputWidth;
 	s_nCaptureHeight = s_nOutputHeight;
 
@@ -278,6 +284,10 @@ static void dispatch_nudge(struct pipewire_state *state, int fd)
 	if (g_nOutputWidth != s_nOutputWidth || g_nOutputHeight != s_nOutputHeight) {
 		s_nOutputWidth = g_nOutputWidth;
 		s_nOutputHeight = g_nOutputHeight;
+		calculate_capture_size();
+	}
+
+	if (g_nPipewireWidth > 0 && g_nPipewireHeight > 0) {
 		calculate_capture_size();
 	}
 	if (s_nCaptureWidth != state->video_info.size.width || s_nCaptureHeight != state->video_info.size.height) {

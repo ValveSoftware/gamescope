@@ -74,3 +74,12 @@ extern bool g_bNoTouchPointerEmulation;
 extern uint32_t g_preferVendorID;
 extern uint32_t g_preferDeviceID;
 
+enum class PipeWireSourceMode {
+	Output,
+	Source
+};
+
+extern PipeWireSourceMode g_ePipewireSourceMode;
+extern int g_nPipewireWidth;
+extern int g_nPipewireHeight;
+
