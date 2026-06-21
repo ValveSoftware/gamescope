@@ -494,10 +494,8 @@ void setAutoResolution() {
 		uint32_t conn_id = res->connectors[i];
 		drmModeConnector* conn = drmModeGetConnector(drm_fd, conn_id);
 
-		/* Check connection state */
-		if (conn->connection == DRM_MODE_CONNECTED) {
-			/* Check modes */
-			if (conn->count_modes > 0) {
+		/* Check connection state and modes */
+		if (conn->connection == DRM_MODE_CONNECTED && conn->count_modes > 0) {
 				/* Save height/width to output resolution (window res) variables */
 				g_nOutputWidth = conn->modes[0].hdisplay;
 				g_nOutputHeight = conn->modes[0].vdisplay;
@@ -510,7 +508,6 @@ void setAutoResolution() {
 			}
 		}
 	}
-}
 
 static bool g_bSupportsWaylandPresentationTime = false;
 static constexpr wl_registry_listener s_registryListener = {
