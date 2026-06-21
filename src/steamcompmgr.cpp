@@ -2181,16 +2181,8 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
 	layer->scale.x = 1.0 / currentScaleRatio_x;
 	layer->scale.y = 1.0 / currentScaleRatio_y;
 
-	if ( w != scaleW )
-	{
-		layer->offset.x = -drawXOffset;
-		layer->offset.y = -drawYOffset;
-	}
-	else
-	{
-		layer->offset.x = -drawXOffset;
-		layer->offset.y = -drawYOffset;
-	}
+	layer->offset.x = -drawXOffset;
+	layer->offset.y = -drawYOffset;
 
 	layer->blackBorder = flags & PaintWindowFlag::DrawBorders;
 
