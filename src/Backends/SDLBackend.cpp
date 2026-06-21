@@ -171,6 +171,8 @@ namespace gamescope
 
 		virtual glm::uvec2 CursorSurfaceSize( glm::uvec2 uvecSize ) const override;
 
+		virtual void ToggleFullscreen() override;
+
 		////////////////////////
 		// INestedHints Compat
 		///////////////////////
@@ -517,6 +519,12 @@ namespace gamescope
 		return uvecSize;
 	}
 
+	void CSDLBackend::ToggleFullscreen()
+	{
+		g_bFullscreen = !g_bFullscreen;
+		SDL_SetWindowFullscreen( m_Connector.GetSDLWindow(), g_bFullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0 );
+	}
+
 	///////////////////
 	// INestedHints
 	///////////////////
@@ -730,77 +738,13 @@ namespace gamescope
 				break;
 
 				case SDL_KEYDOWN:
-				{
-					// If this keydown event is super + one of the shortcut keys, consume the keydown event, since the corresponding keyup
-					// event will be consumed by the next case statement when the user releases the key
-					if ( event.key.keysym.mod & KMOD_LGUI )
-					{
-						uint32_t key = SDLScancodeToLinuxKey( event.key.keysym.scancode );
-						const uint32_t shortcutKeys[] = {KEY_F, KEY_N, KEY_B, KEY_U, KEY_Y, KEY_I, KEY_O, KEY_S, KEY_G};
-						const bool isShortcutKey = std::find(std::begin(shortcutKeys), std::end(shortcutKeys), key) != std::end(shortcutKeys);
-						if ( isShortcutKey )
-						{
-							break;
-						}
-					}
-				}
-				[[fallthrough]];
 				case SDL_KEYUP:
 				{
-					uint32_t key = SDLScancodeToLinuxKey( event.key.keysym.scancode );
-
-					if ( event.type == SDL_KEYUP && ( event.key.keysym.mod & KMOD_LGUI ) )
-					{
-						bool handled = true;
-						switch ( key )
-						{
-							case KEY_F:
-								g_bFullscreen = !g_bFullscreen;
-								SDL_SetWindowFullscreen( m_Connector.GetSDLWindow(), g_bFullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0 );
-								break;
-							case KEY_N:
-								g_wantedUpscaleFilter = GamescopeUpscaleFilter::PIXEL;
-								break;
-							case KEY_B:
-								g_wantedUpscaleFilter = GamescopeUpscaleFilter::LINEAR;
-								break;
-							case KEY_U:
-								g_wantedUpscaleFilter = (g_wantedUpscaleFilter == GamescopeUpscaleFilter::FSR) ?
-									GamescopeUpscaleFilter::LINEAR : GamescopeUpscaleFilter::FSR;
-								break;
-							case KEY_Y:
-								g_wantedUpscaleFilter = (g_wantedUpscaleFilter == GamescopeUpscaleFilter::NIS) ? 
-									GamescopeUpscaleFilter::LINEAR : GamescopeUpscaleFilter::NIS;
-								break;
-							case KEY_I:
-								g_upscaleFilterSharpness = std::min(20, g_upscaleFilterSharpness + 1);
-								break;
-							case KEY_O:
-								g_upscaleFilterSharpness = std::max(0, g_upscaleFilterSharpness - 1);
-								break;
-							case KEY_S:
-								gamescope::CScreenshotManager::Get().TakeScreenshot( true );
-								break;
-							case KEY_G:
-								g_bGrabbed = !g_bGrabbed;
-								SDL_SetWindowKeyboardGrab( m_Connector.GetSDLWindow(), g_bGrabbed ? SDL_TRUE : SDL_FALSE );
-
-								SDL_Event event;
-								event.type = GetUserEventIndex( GAMESCOPE_SDL_EVENT_TITLE );
-								SDL_PushEvent( &event );
-								break;
-							default:
-								handled = false;
-						}
-						if ( handled )
-						{
-							break;
-						}
-					}
-
 					// On Wayland, clients handle key repetition
 					if ( event.key.repeat )
 						break;
+
+					const uint32_t key = SDLScancodeToLinuxKey( event.key.keysym.scancode );
 
 					wlserver_lock();
 					wlserver_key( key, event.type == SDL_KEYDOWN, fake_timestamp );
