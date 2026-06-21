@@ -267,6 +267,7 @@ namespace gamescope
 
 		static std::optional<CDRMAtomicProperty> Instantiate( const char *pszName, CDRMAtomicObject *pObject, const DRMObjectRawProperties& rawProperties );
 
+		uint32_t GetPropertyId() const { return m_uPropertyId; }
 		uint64_t GetPendingValue() const { return m_ulPendingValue; }
 		uint64_t GetCurrentValue() const { return m_ulCurrentValue; }
 		uint64_t GetInitialValue() const { return m_ulInitialValue; }
@@ -1934,7 +1935,7 @@ LiftoffStateCacheEntry FrameInfoToLiftoffStateCacheEntry( struct drm_t *drm, con
 		uint64_t crtcW = srcWidth / frameInfo->layers[ i ].scale.x;
 		uint64_t crtcH = srcHeight / frameInfo->layers[ i ].scale.y;
 
-		if (g_bRotated)
+		if (g_bRotated && g_uOutputRotation == 0)
 		{
 			int64_t imageH = frameInfo->layers[ i ].tex->contentHeight() / frameInfo->layers[ i ].scale.y;
 
@@ -2668,7 +2669,7 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 			liftoff_layer_set_property( drm->lo_layers[ i ], "SRC_H", entry.layerState[i].srcH );
 
 			uint64_t ulOrientation = DRM_MODE_ROTATE_0;
-			switch ( drm->pConnector->GetCurrentOrientation() )
+			switch ( g_uOutputRotation != 0 ? GAMESCOPE_PANEL_ORIENTATION_0 : drm->pConnector->GetCurrentOrientation() )
 			{
 			default:
 			case GAMESCOPE_PANEL_ORIENTATION_0:
@@ -3278,6 +3279,29 @@ static void drm_unset_mode( struct drm_t *drm )
 	g_nDynamicRefreshHz = 0;
 
 	g_bRotated = false;
+	g_uOutputRotation = 0;
+}
+
+// Bitmask of DRM_MODE_ROTATE_* the plane can do at scanout (just ROTATE_0 if it can't rotate).
+static uint64_t drm_plane_supported_rotations( struct drm_t *drm, gamescope::CDRMPlane *pPlane )
+{
+	if ( !pPlane->GetProperties().rotation )
+		return DRM_MODE_ROTATE_0;
+
+	drmModePropertyRes *pProp = drmModeGetProperty( drm->fd, pPlane->GetProperties().rotation->GetPropertyId() );
+	if ( !pProp )
+		return DRM_MODE_ROTATE_0;
+	defer( drmModeFreeProperty( pProp ) );
+
+	if ( !( pProp->flags & DRM_MODE_PROP_BITMASK ) )
+		return DRM_MODE_ROTATE_0;
+
+	uint64_t ulSupported = 0;
+	for ( int i = 0; i < pProp->count_enums; i++ )
+		if ( pProp->enums[i].value < 64 )
+			ulSupported |= 1ull << pProp->enums[i].value;
+
+	return ulSupported;
 }
 
 bool drm_set_mode( struct drm_t *drm, const drmModeModeInfo *mode )
@@ -3310,6 +3334,25 @@ bool drm_set_mode( struct drm_t *drm, const drmModeModeInfo *mode )
 		g_nOutputWidth = mode->vdisplay;
 		g_nOutputHeight = mode->hdisplay;
 		break;
+	}
+
+	// Rotate in the compositor when the scanout plane can't do the panel's
+	// orientation. 90/270 transpose the output (g_bRotated); 180 flips in place.
+	g_uOutputRotation = 0;
+	uint32_t uStep = 0;
+	uint64_t uNeeded = 0;
+	switch ( drm->pConnector->GetCurrentOrientation() )
+	{
+	case GAMESCOPE_PANEL_ORIENTATION_90:  uStep = 1u; uNeeded = DRM_MODE_ROTATE_90;  break;
+	case GAMESCOPE_PANEL_ORIENTATION_180: uStep = 2u; uNeeded = DRM_MODE_ROTATE_180; break;
+	case GAMESCOPE_PANEL_ORIENTATION_270: uStep = 3u; uNeeded = DRM_MODE_ROTATE_270; break;
+	default: break;
+	}
+	if ( uStep )
+	{
+		const bool bScanoutCanRotate = drm->pPrimaryPlane && ( drm_plane_supported_rotations( drm, drm->pPrimaryPlane ) & uNeeded );
+		if ( g_bForceCompositionRotation || !bScanoutCanRotate )
+			g_uOutputRotation = uStep;
 	}
 
 	return true;
@@ -3566,6 +3609,7 @@ namespace gamescope
 			}
 
 			bNeedsFullComposite |= !!(g_uCompositeDebug & CompositeDebugFlag::Heatmap);
+			bNeedsFullComposite |= g_uOutputRotation != 0; // can't rotate planes at scanout
 
 			bool bDoComposite = true;
 			if ( !bNeedsFullComposite && !bWantsPartialComposite )
