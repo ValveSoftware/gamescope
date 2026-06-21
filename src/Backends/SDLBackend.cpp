@@ -34,6 +34,9 @@ extern bool steamMode;
 extern bool g_bFirstFrame;
 extern int g_nPreferredOutputWidth;
 extern int g_nPreferredOutputHeight;
+extern ForceRelativeMouseMode g_forceRelativeMouse;
+static ForceRelativeMouseMode g_preForceRelativeMouse;
+static int isSaved = 0;
 
 namespace gamescope
 {
@@ -625,7 +628,10 @@ namespace gamescope
 			g_nOutputHeight = height;
 		}
 
-		if ( g_bForceRelativeMouse )
+		/**
+		 * If --force-grab-cursor is given, g_forceRelativeMouse will be ForceRelativeMouseMode::FORCE_ON
+		 */
+		if ( g_forceRelativeMouse == ForceRelativeMouseMode::FORCE_ON )
 		{
 			SDL_SetRelativeMouseMode( SDL_TRUE );
 			m_bApplicationGrabbed = true;
@@ -758,6 +764,19 @@ namespace gamescope
 								g_bFullscreen = !g_bFullscreen;
 								SDL_SetWindowFullscreen( m_Connector.GetSDLWindow(), g_bFullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0 );
 								break;
+							case KEY_M:
+								if (!isSaved) {
+									g_preForceRelativeMouse = g_forceRelativeMouse;
+									isSaved = 1;
+								}
+								g_forceRelativeMouse = g_forceRelativeMouse == g_preForceRelativeMouse ? ForceRelativeMouseMode::FORCE_OFF : g_preForceRelativeMouse;
+								SDL_SetRelativeMouseMode( SDL_GetRelativeMouseMode() ? SDL_FALSE : SDL_TRUE );
+								if (g_forceRelativeMouse != ForceRelativeMouseMode::FORCE_OFF)
+									isSaved = 0;
+								SDL_Event event_m;
+								event_m.type = GetUserEventIndex( GAMESCOPE_SDL_EVENT_TITLE );
+								SDL_PushEvent( &event_m );
+								break;
 							case KEY_N:
 								g_wantedUpscaleFilter = GamescopeUpscaleFilter::PIXEL;
 								break;
@@ -782,6 +801,15 @@ namespace gamescope
 								gamescope::CScreenshotManager::Get().TakeScreenshot( true );
 								break;
 							case KEY_G:
+								if (g_forceRelativeMouse != ForceRelativeMouseMode::FORCE_ON)
+									g_forceRelativeMouse = ForceRelativeMouseMode::FORCE_ON;
+								else if (isSaved)
+									g_forceRelativeMouse = g_preForceRelativeMouse;
+								else
+									g_forceRelativeMouse = ForceRelativeMouseMode::OFF;
+								if (!g_bGrabbed)
+									SDL_SetRelativeMouseMode( SDL_TRUE );
+									
 								g_bGrabbed = !g_bGrabbed;
 								SDL_SetWindowKeyboardGrab( m_Connector.GetSDLWindow(), g_bGrabbed ? SDL_TRUE : SDL_FALSE );
 
@@ -892,6 +920,8 @@ namespace gamescope
 						std::string szTitle = pAppTitle ? *pAppTitle : "gamescope";
 						if ( g_bGrabbed )
 							szTitle += " (grabbed)";
+						if ( g_forceRelativeMouse == ForceRelativeMouseMode::FORCE_OFF)
+							szTitle += " (mouse-off)";
 						SDL_SetWindowTitle( m_Connector.GetSDLWindow(), szTitle.c_str() );
 
 						szTitle = "Title: " + szTitle;
