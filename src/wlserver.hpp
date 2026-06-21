@@ -232,7 +232,7 @@ bool wlsession_init( void );
 int wlsession_open_kms( const char *device_name );
 void wlsession_close_kms();
 
-bool wlserver_init( void );
+bool wlserver_init(::xkb_keymap *p_keymap = nullptr);
 
 void wlserver_run(void);
 
