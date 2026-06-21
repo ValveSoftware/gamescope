@@ -2853,7 +2853,7 @@ paint_all( global_focus_t *pFocus, bool async )
 			drmCaptureFormat = DRM_FORMAT_XRGB2101010;
 		else if ( path.extension() == ".png" )
 			drmCaptureFormat = DRM_FORMAT_XRGB8888;
-		else if ( path.extension() == ".nv12.bin" )
+		else if ( path.extension() == ".bin" && path.stem().extension() == ".nv12" )
 			drmCaptureFormat = DRM_FORMAT_NV12;
 
 		gamescope::Rc<CVulkanTexture> pScreenshotTexture;
