@@ -3942,19 +3942,10 @@ void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win
 	w = ctx->focus.focusWindow;
 
 	if ( inputFocus == ctx->focus.focusWindow && ctx->focus.overrideWindowMouse )
-	{
-		if ( ctx->list[0].xwayland().id != ctx->focus.overrideWindowMouse->xwayland().id )
-		{
-			XRaiseWindow(ctx->dpy, ctx->focus.overrideWindowMouse->xwayland().id);
-		}
-	}
-	else
-	{
-		if ( ctx->list[0].xwayland().id != inputFocus->xwayland().id )
-		{
-			XRaiseWindow(ctx->dpy, inputFocus->xwayland().id);
-		}
-	}
+		inputFocus = ctx->focus.overrideWindow;
+
+	if ( ctx->list[0].xwayland().id != inputFocus->xwayland().id )
+		inputFocus->Raise();
 
 	if (!ctx->focus.focusWindow->nudged)
 	{
@@ -4832,9 +4823,7 @@ map_win(xwayland_ctx_t* ctx, Window id, unsigned long sequence)
 	if ( wmHints != nullptr )
 	{
 		if ( wmHints->flags & (InputHint | StateHint ) && wmHints->input == true && wmHints->initial_state == NormalState )
-		{
-			XRaiseWindow( ctx->dpy, w->xwayland().id );
-		}
+			w->Raise();
 
 		XFree( wmHints );
 	}
@@ -5562,7 +5551,7 @@ handle_client_message(xwayland_ctx_t *ctx, XClientMessageEvent *ev)
 		}
 		else if ( ev->message_type == ctx->atoms.activeWindowAtom )
 		{
-			XRaiseWindow( ctx->dpy, w->xwayland().id );
+			w->Raise();
 		}
 		else if ( ev->message_type == ctx->atoms.netWMStateAtom )
 		{
@@ -7802,6 +7791,7 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 	ctx->atoms.netWMStateFocusedAtom = XInternAtom(ctx->dpy, "_NET_WM_STATE_FOCUSED", false);
 	ctx->atoms.netWMStateSkipTaskbarAtom = XInternAtom(ctx->dpy, "_NET_WM_STATE_SKIP_TASKBAR", false);
 	ctx->atoms.netWMStateSkipPagerAtom = XInternAtom(ctx->dpy, "_NET_WM_STATE_SKIP_PAGER", false);
+	ctx->atoms.netActiveWindowAtom = XInternAtom(ctx->dpy, "_NET_ACTIVE_WINDOW", false);
 	ctx->atoms.WLSurfaceIDAtom = XInternAtom(ctx->dpy, "WL_SURFACE_ID", false);
 	ctx->atoms.WMStateAtom = XInternAtom(ctx->dpy, "WM_STATE", false);
 	ctx->atoms.utf8StringAtom = XInternAtom(ctx->dpy, "UTF8_STRING", false);
