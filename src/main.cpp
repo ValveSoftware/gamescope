@@ -481,7 +481,7 @@ static EStreamColorspace parse_colorspace_string( const char *pszStr )
 	 	return k_EStreamColorspace_Unknown;
 }
 
-/* Automatically set --output-width and --output--height based on the display's preferred (first) mode */
+/* Automatically set --output-width and --output--height based on the display's active mode */
 void setAutoResolution() {
 	// TODO: remove hardcoded DRM path
 	int const drm_fd = open("/dev/dri/card0", O_RDWR);
@@ -493,6 +493,8 @@ void setAutoResolution() {
 	for (int i = 0; i < res->count_connectors; i++) {
 		uint32_t conn_id = res->connectors[i];
 		drmModeConnector* conn = drmModeGetConnector(drm_fd, conn_id);
+
+		if (!conn) continue;
 
 		/* Check connection state and modes */
 		if (conn->connection == DRM_MODE_CONNECTED && conn->count_modes > 0) {
@@ -506,8 +508,12 @@ void setAutoResolution() {
 				close(drm_fd);
 				return;
 			}
-		}
+		drmModeFreeConnector(conn); /* Connector is not connected and/or has no modes */
 	}
+	/* No suitable connectors found */
+	drmModeFreeResources(res);
+	close(drm_fd);
+}
 
 static bool g_bSupportsWaylandPresentationTime = false;
 static constexpr wl_registry_listener s_registryListener = {
@@ -712,7 +718,7 @@ int main(int argc, char **argv)
 		const char *opt_name;
 		switch (o) {
 			case 'w':
-				g_nNestedWidth = atoi( optarg );
+				g_nNestedWidth = (strcmp(optarg, "output") == 0) ? 0 : atoi( optarg );
 				break;
 			case 'h':
 				g_nNestedHeight = atoi( optarg );
