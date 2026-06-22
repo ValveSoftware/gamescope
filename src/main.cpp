@@ -490,7 +490,9 @@ void setAutoResolution() {
 	/* Embedded mode with raw DRM card */
 	/* TODO: Iterate over possible DRM devices instead of hardcoding */
 	int const drm_fd = open("/dev/dri/card1", O_RDWR);
-	if (drm_fd < 0) return; /* Exit if device is empty/does not exist */
+	if (drm_fd < 0) {
+		console_log.errorf("setAutoResolution: Failed to open DRM device: %s", strerror(errno));
+	} /* Print error if device is empty/does not exist */
 
 	drmModeRes* res = drmModeGetResources(drm_fd);
 
