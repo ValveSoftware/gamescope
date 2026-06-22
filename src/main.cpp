@@ -35,6 +35,7 @@
 
 #include "backends.h"
 #include "refresh_rate.h"
+#include "Backends/DeferredBackend.h"
 
 #if HAVE_PIPEWIRE
 #include "pipewire.hpp"
@@ -292,6 +293,9 @@ bool g_bGrabbed = false;
 
 float g_mouseSensitivity = 1.0;
 
+bool g_bNoTouchPointerEmulation = false;
+bool g_bAllowDeferredBackend = false;
+
 GamescopeUpscaleFilter g_upscaleFilter = GamescopeUpscaleFilter::LINEAR;
 GamescopeUpscaleScaler g_upscaleScaler = GamescopeUpscaleScaler::AUTO;
 
@@ -483,8 +487,9 @@ static EStreamColorspace parse_colorspace_string( const char *pszStr )
 
 /* Automatically set --output-width and --output--height based on the display's active mode */
 void setAutoResolution() {
-	// TODO: remove hardcoded DRM path
-	int const drm_fd = open("/dev/dri/card0", O_RDWR);
+	/* Embedded mode with raw DRM card */
+	/* TODO: Iterate over possible DRM devices instead of hardcoding */
+	int const drm_fd = open("/dev/dri/card1", O_RDWR);
 	if (drm_fd < 0) return; /* Exit if device is empty/does not exist */
 
 	drmModeRes* res = drmModeGetResources(drm_fd);
@@ -498,16 +503,18 @@ void setAutoResolution() {
 
 		/* Check connection state and modes */
 		if (conn->connection == DRM_MODE_CONNECTED && conn->count_modes > 0) {
-				/* Save height/width to output resolution (window res) variables */
-				g_nOutputWidth = conn->modes[0].hdisplay;
-				g_nOutputHeight = conn->modes[0].vdisplay;
+			/* Override resolution variables with found info from DRM device */
+			g_nNestedWidth = conn->modes[0].hdisplay;
+			g_nNestedHeight = conn->modes[0].vdisplay;
+			g_nPreferredOutputWidth = conn->modes[0].hdisplay;
+			g_nPreferredOutputHeight = conn->modes[0].vdisplay;
 
-				/* Cleanup */
-				drmModeFreeConnector(conn);
-				drmModeFreeResources(res);
-				close(drm_fd);
-				return;
-			}
+			/* Cleanup */
+			drmModeFreeConnector(conn);
+			drmModeFreeResources(res);
+			close(drm_fd);
+			return; /* Resolution successfully obtained! */
+		}
 		drmModeFreeConnector(conn); /* Connector is not connected and/or has no modes */
 	}
 	/* No suitable connectors found */
@@ -718,19 +725,35 @@ int main(int argc, char **argv)
 		const char *opt_name;
 		switch (o) {
 			case 'w':
-				g_nNestedWidth = (strcmp(optarg, "output") == 0) ? 0 : atoi( optarg );
+				if (strcmp(optarg, "output") == 0) {
+					g_nNestedWidth = 0; /* Should be set to native res using setAutoRes() */
+				} else {
+					g_nNestedWidth = atoi(optarg); /* Convert to integer if value is not -w output */
+				}
 				break;
 			case 'h':
-				g_nNestedHeight = atoi( optarg );
+				if (strcmp(optarg, "output") == 0) {
+					g_nNestedHeight = 0;
+				} else {
+					g_nNestedHeight = atoi( optarg );
+				}
 				break;
 			case 'r':
 				g_nNestedRefresh = gamescope::ConvertHztomHz( atoi( optarg ) );
 				break;
 			case 'W':
-				g_nPreferredOutputWidth = atoi( optarg );
+				if (strcmp(optarg, "output") == 0) {
+					g_nPreferredOutputWidth = 0;
+				} else {
+					g_nPreferredOutputWidth = atoi( optarg );
+				}
 				break;
 			case 'H':
-				g_nPreferredOutputHeight = atoi( optarg );
+				if (strcmp(optarg, "output") == 0) {
+					g_nPreferredOutputHeight = 0;
+				} else {
+					g_nPreferredOutputHeight = atoi( optarg );
+				}
 				break;
 			case 'o':
 				g_nNestedUnfocusedRefresh = gamescope::ConvertHztomHz( atoi( optarg ) );
@@ -799,7 +822,7 @@ int main(int argc, char **argv)
 					g_preferVendorID = vendorID;
 					g_preferDeviceID = deviceID;
 				} else if (strcmp(opt_name, "immediate-flips") == 0) {
-					g_nAsyncFlipsEnabled = 1;
+					// g_nAsyncFlipsEnabled = 1;
 				} else if (strcmp(opt_name, "force-grab-cursor") == 0) {
 					g_bForceRelativeMouse = true;
 				} else if (strcmp(opt_name, "display-index") == 0) {
@@ -820,6 +843,11 @@ int main(int argc, char **argv)
 				fprintf( stderr, "See --help for a list of options.\n" );
 				return 1;
 		}
+	}
+
+	/* If any resolution has a value of 0, assume user wants output resolution */
+	if (g_nNestedWidth == 0 || g_nNestedHeight == 0 || g_nPreferredOutputWidth == 0 || g_nPreferredOutputHeight == 0) {
+		setAutoResolution();
 	}
 
 	if ( gamescope::Process::HasCapSysNice() )
