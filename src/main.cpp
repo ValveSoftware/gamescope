@@ -513,6 +513,7 @@ void setAutoResolution() {
 			drmModeFreeConnector(conn);
 			drmModeFreeResources(res);
 			close(drm_fd);
+			console_log.infof("setAutoResolution: Auto-detected hardware resolution %dx%d", g_nNestedWidth, g_nNestedHeight);
 			return; /* Resolution successfully obtained! */
 		}
 		drmModeFreeConnector(conn); /* Connector is not connected and/or has no modes */
@@ -703,6 +704,7 @@ int main(int argc, char **argv)
 {
 	if (g_nOutputWidth == 0 || g_nOutputHeight == 0) {
 		setAutoResolution();
+		console_log.infof("setAutoResolution: Set resolution to %dx%d", g_nNestedWidth, g_nNestedHeight);
 	}
 
 	g_argc = argc;
