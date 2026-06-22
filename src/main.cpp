@@ -52,8 +52,6 @@ const char *gamescope_optstring = nullptr;
 const char *g_pOriginalDisplay = nullptr;
 const char *g_pOriginalWaylandDisplay = nullptr;
 
-void setAutoResolution();
-
 int g_nCursorScaleHeight = -1;
 
 const struct option *gamescope_options = (struct option[]){
@@ -486,43 +484,65 @@ static EStreamColorspace parse_colorspace_string( const char *pszStr )
 }
 
 /* Automatically set --output-width and --output--height based on the display's active mode */
-void setAutoResolution() {
-	/* Embedded mode with raw DRM card */
-	/* TODO: Iterate over possible DRM devices instead of hardcoding */
-	int const drm_fd = open("/dev/dri/card1", O_RDWR);
-	if (drm_fd < 0) {
-		console_log.errorf("setAutoResolution: Failed to open DRM device: %s", strerror(errno));
-	} /* Print error if device is empty/does not exist */
+void setAutoResolution(gamescope::GamescopeBackend const eCurrentBackend) {
+	/* Check current gamescope backend to determine whether running in embedded or nested mode */
+	// TODO: Fix resolution defaulting to 1280x720 on nested mode
+	switch (eCurrentBackend) {
+		case gamescope::GamescopeBackend::Wayland:
+		case gamescope::GamescopeBackend::SDL:
+		case gamescope::GamescopeBackend::Headless: {
+			// TODO: Implement automatic resolution logic for nested mode
+			console_log.infof("setAutoResolution: Detected nested mode, using resolution %dx%d", g_nNestedHeight, g_nNestedWidth);
+			break;
+		}
+		case gamescope::GamescopeBackend::DRM: {
+			/* Embedded mode with raw DRM card */
+			/* TODO: Iterate over possible DRM devices instead of hardcoding */
+			int const drm_fd = open("/dev/dri/card1", O_RDWR);
+			if (drm_fd < 0) {
+				console_log.errorf("setAutoResolution: Failed to open DRM device: %s", strerror(errno));
+			} /* Print error if device is empty/does not exist */
 
-	drmModeRes* res = drmModeGetResources(drm_fd);
+			drmModeRes* res = drmModeGetResources(drm_fd);
+			if (!res) {
+				console_log.errorf("setAutoResolution: Failed to get DRM resources");
+				close(drm_fd); // Don't forget this!
+				break;
+			} /* Print error if DRM resources cannot be accessed */
 
-	/* Loop through available connectors */
-	for (int i = 0; i < res->count_connectors; i++) {
-		uint32_t conn_id = res->connectors[i];
-		drmModeConnector* conn = drmModeGetConnector(drm_fd, conn_id);
+			/* Loop through available connectors */
+			for (int i = 0; i < res->count_connectors; i++) {
+				uint32_t conn_id = res->connectors[i];
+				drmModeConnector* conn = drmModeGetConnector(drm_fd, conn_id);
 
-		if (!conn) continue;
+				if (!conn) continue;
 
-		/* Check connection state and modes */
-		if (conn->connection == DRM_MODE_CONNECTED && conn->count_modes > 0) {
-			/* Override resolution variables with found info from DRM device */
-			g_nNestedWidth = conn->modes[0].hdisplay;
-			g_nNestedHeight = conn->modes[0].vdisplay;
-			g_nPreferredOutputWidth = conn->modes[0].hdisplay;
-			g_nPreferredOutputHeight = conn->modes[0].vdisplay;
+				/* Check connection state and modes */
+				if (conn->connection == DRM_MODE_CONNECTED && conn->count_modes > 0) {
+					/* Override resolution variables with found info from DRM device */
+					g_nNestedWidth = conn->modes[0].hdisplay;
+					g_nNestedHeight = conn->modes[0].vdisplay;
+					g_nPreferredOutputWidth = conn->modes[0].hdisplay;
+					g_nPreferredOutputHeight = conn->modes[0].vdisplay;
 
-			/* Cleanup */
-			drmModeFreeConnector(conn);
+					/* Cleanup */
+					drmModeFreeConnector(conn);
+					drmModeFreeResources(res);
+					close(drm_fd);
+					console_log.infof("setAutoResolution: Auto-detected hardware resolution %dx%d", g_nNestedWidth, g_nNestedHeight);
+					return; /* Resolution successfully obtained! */
+				}
+				drmModeFreeConnector(conn); /* Connector is not connected and/or has no modes */
+			}
+			/* No suitable connectors found */
 			drmModeFreeResources(res);
 			close(drm_fd);
-			console_log.infof("setAutoResolution: Auto-detected hardware resolution %dx%d", g_nNestedWidth, g_nNestedHeight);
-			return; /* Resolution successfully obtained! */
+			break;
 		}
-		drmModeFreeConnector(conn); /* Connector is not connected and/or has no modes */
+		default:
+			console_log.warnf("setAutoResolution: Unsupported backend (%d). Defaulting to 1280x720.", (int)eCurrentBackend);
+			break;
 	}
-	/* No suitable connectors found */
-	drmModeFreeResources(res);
-	close(drm_fd);
 }
 
 static bool g_bSupportsWaylandPresentationTime = false;
@@ -704,11 +724,6 @@ char **g_argv;
 
 int main(int argc, char **argv)
 {
-	if (g_nOutputWidth == 0 || g_nOutputHeight == 0) {
-		setAutoResolution();
-		console_log.infof("setAutoResolution: Set resolution to %dx%d", g_nNestedWidth, g_nNestedHeight);
-	}
-
 	g_argc = argc;
 	g_argv = argv;
 
@@ -730,7 +745,7 @@ int main(int argc, char **argv)
 		switch (o) {
 			case 'w':
 				if (strcmp(optarg, "output") == 0) {
-					g_nNestedWidth = 0; /* Should be set to native res using setAutoRes() */
+					g_nNestedWidth = 0; /* Should be set to native res using setAutoResolution() */
 				} else {
 					g_nNestedWidth = atoi(optarg); /* Convert to integer if value is not -w output */
 				}
@@ -849,11 +864,6 @@ int main(int argc, char **argv)
 		}
 	}
 
-	/* If any resolution has a value of 0, assume user wants output resolution */
-	if (g_nNestedWidth == 0 || g_nNestedHeight == 0 || g_nPreferredOutputWidth == 0 || g_nPreferredOutputHeight == 0) {
-		setAutoResolution();
-	}
-
 	if ( gamescope::Process::HasCapSysNice() )
 	{
 		gamescope::Process::SetNice( -20 );
@@ -953,6 +963,13 @@ int main(int argc, char **argv)
 	{
 		fprintf( stderr, "Failed to create backend.\n" );
 		return 1;
+	}
+
+	/* Automatically set output resolution using setAutoResolution() */
+	if (g_nOutputWidth == 0 || g_nOutputHeight == 0) {
+		setAutoResolution(eCurrentBackend);
+		console_log.infof("setAutoResolution: Set resolution to %dx%d", g_nNestedWidth, g_nNestedHeight);
+
 	}
 
 	UpdateCompatEnvVars();

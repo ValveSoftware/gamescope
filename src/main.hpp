@@ -1,7 +1,7 @@
 #pragma once
 
 #include <getopt.h>
-
+#include <backends.h>
 #include <atomic>
 
 extern const char *gamescope_optstring;
@@ -74,3 +74,4 @@ extern bool g_bNoTouchPointerEmulation;
 extern uint32_t g_preferVendorID;
 extern uint32_t g_preferDeviceID;
 
+void setAutoResolution(gamescope::GamescopeBackend eCurrentBackend);
