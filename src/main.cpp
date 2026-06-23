@@ -136,6 +136,7 @@ const struct option *gamescope_options = (struct option[]){
 	{ "composite-debug", no_argument, nullptr, 0 },
 	{ "disable-xres", no_argument, nullptr, 'x' },
 	{ "fade-out-duration", required_argument, nullptr, 0 },
+	{ "force-composition-rotation", no_argument, nullptr, 0 },
 	{ "force-orientation", required_argument, nullptr, 0 },
 	{ "force-windows-fullscreen", no_argument, nullptr, 0 },
 
@@ -201,6 +202,7 @@ const char usage[] =
 	"  -e, --steam                    enable Steam integration\n"
 	"  --xwayland-count               create N xwayland servers\n"
 	"  --prefer-vk-device             prefer Vulkan device for compositing (ex: 1002:7300)\n"
+	"  --force-composition-rotation   always rotate the output in the compositor instead of at scanout (autodetected otherwise)\n"
 	"  --force-orientation            rotate the internal display (left, right, normal, upsidedown)\n"
 	"  --force-windows-fullscreen     force windows inside of gamescope to be the size of the nested display (fullscreen)\n"
 	"  --cursor-scale-height          if specified, sets a base output height to linearly scale the cursor against.\n"
@@ -365,6 +367,9 @@ static gamescope::GamescopeModeGeneration parse_gamescope_mode_generation( const
 		exit(1);
 	}
 }
+
+bool g_bForceCompositionRotation = false;
+uint32_t g_uOutputRotation = 0;
 
 GamescopePanelOrientation g_DesiredInternalOrientation = GAMESCOPE_PANEL_ORIENTATION_AUTO;
 static GamescopePanelOrientation force_orientation(const char *str)
@@ -798,6 +803,8 @@ int main(int argc, char **argv)
 					gamescope::cv_touch_click_mode = (gamescope::TouchClickMode) parse_integer( optarg, opt_name );
 				} else if (strcmp(opt_name, "generate-drm-mode") == 0) {
 					g_eGamescopeModeGeneration = parse_gamescope_mode_generation( optarg );
+				} else if (strcmp(opt_name, "force-composition-rotation") == 0) {
+					g_bForceCompositionRotation = true;
 				} else if (strcmp(opt_name, "force-orientation") == 0) {
 					g_DesiredInternalOrientation = force_orientation( optarg );
 				} else if (strcmp(opt_name, "sharpness") == 0 ||
