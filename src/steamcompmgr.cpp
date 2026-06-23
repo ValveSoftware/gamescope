@@ -3817,7 +3817,8 @@ void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win
 	{
 		if (w->isOverlay)
 		{
-			if (w->GetGeometry().nWidth > 1200 && w->opacity >= maxOpacity)
+			// The interactive overlay (Steam/QAM) spans the full root window width or asks for input.
+			if ((w->GetGeometry().nWidth >= ctx->root_width || w->inputFocusMode) && w->opacity >= maxOpacity)
 			{
 				ctx->focus.overlayWindow = w;
 				maxOpacity = w->opacity;
@@ -5952,7 +5953,7 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 			{
 				if (w->isOverlay)
 				{
-					if (w->GetGeometry().nWidth > 1200 && w->opacity >= maxOpacity)
+					if ((w->GetGeometry().nWidth >= ctx->root_width || w->inputFocusMode) && w->opacity >= maxOpacity)
 					{
 						ctx->focus.overlayWindow = w;
 						maxOpacity = w->opacity;
