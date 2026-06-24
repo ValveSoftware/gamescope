@@ -317,8 +317,8 @@ bool CVulkanDevice::BInit(VkInstance instance, VkSurfaceKHR surface)
 
 	m_bInitialized = true;
 
-	std::thread piplelineThread([this](){compileAllPipelines();});
-	piplelineThread.detach();
+	std::thread pipelineThread([this](){compileAllPipelines();});
+	pipelineThread.detach();
 
 	g_reshadeManager.init(this);
 
