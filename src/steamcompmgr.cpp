@@ -3809,17 +3809,20 @@ void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win
 	{
 		if ( prevFocusWindow != ctx->focus.focusWindow )
 		{
+			Window id = ctx->focus.focusWindow->xwayland().id;
+
 			/* Some games (e.g. DOOM Eternal) don't react well to being put back as
 			* iconic, so never do that. Only take them out of iconic. */
-			set_wm_state( ctx, ctx->focus.focusWindow->xwayland().id, ICCCM_NORMAL_STATE );
+			set_wm_state( ctx, id, ICCCM_NORMAL_STATE );
 
-			gpuvis_trace_printf( "determine_and_apply_focus focus %lu", ctx->focus.focusWindow->xwayland().id );
+			gpuvis_trace_printf( "determine_and_apply_focus focus %lu", id );
 
 			if ( debugFocus == true )
 			{
-				xwm_log.debugf( "determine_and_apply_focus focus %lu", ctx->focus.focusWindow->xwayland().id );
+				xwm_log.debugf( "determine_and_apply_focus focus %lu", id );
 				char buf[512];
-				sprintf( buf,  "xwininfo -id 0x%lx; xprop -id 0x%lx; xwininfo -root -tree", ctx->focus.focusWindow->xwayland().id, ctx->focus.focusWindow->xwayland().id );
+				char *display = XDisplayString( ctx->dpy );
+				sprintf( buf,  "xwininfo -d %s -id 0x%lx; xprop -d %s -id 0x%lx; xwininfo -root -tree", display, id, display, id );
 				system( buf );
 			}
 		}
