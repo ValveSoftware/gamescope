@@ -290,6 +290,14 @@ uint32_t DRMFormatGetBPP( uint32_t nDRMFormat )
 	return false;
 }
 
+CVulkanDevice::~CVulkanDevice()
+{
+    for ( auto& s : m_samplerCache )
+        vk.DestroySampler( device(), s.second, nullptr );
+    for ( auto& p : m_pipelineMap )
+        vk.DestroyPipeline( device(), p.second, nullptr );
+}
+
 bool CVulkanDevice::BInit(VkInstance instance, VkSurfaceKHR surface)
 {
 	assert(instance);
