@@ -6,7 +6,7 @@
 	url = https://gitlab.freedesktop.org/emersion/libliftoff.git
 [submodule "subprojects/vkroots"]
 	path = subprojects/vkroots
-	url = https://github.com/Joshua-Ashton/vkroots
+	url = https://github.com/misyltoad/vkroots
 [submodule "subprojects/libdisplay-info"]
 	path = subprojects/libdisplay-info
 	url = https://gitlab.freedesktop.org/emersion/libdisplay-info
@@ -15,7 +15,7 @@
 	url = https://github.com/ValveSoftware/openvr.git
 [submodule "src/reshade"]
 	path = src/reshade
-	url = https://github.com/Joshua-Ashton/reshade
+	url = https://github.com/misyltoad/reshade
 [submodule "thirdparty/SPIRV-Headers"]
 	path = thirdparty/SPIRV-Headers
 	url = https://github.com/KhronosGroup/SPIRV-Headers/
