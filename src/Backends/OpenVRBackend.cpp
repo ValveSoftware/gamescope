@@ -442,8 +442,7 @@ namespace gamescope
 	{
 	public:
 		COpenVRBackend()
-            : m_LibInputWaiter{ "gamescope-libinput" }
-            , m_FlipHandlerThread{ [this](){ this->FlipHandlerThread(); } }
+            : m_FlipHandlerThread{ [this](){ this->FlipHandlerThread(); } }
 		{
 		}
 
@@ -577,17 +576,7 @@ namespace gamescope
                             m_flScrollSpeed = atof( optarg );
                         } else if (strcmp(opt_name, "vr-session-manager") == 0) {
                             openvr_log.infof( "Becoming the VR session manager." );
-
-                            std::unique_ptr<CLibInputHandler> pLibInput = std::make_unique<CLibInputHandler>();
-                            if ( pLibInput->Init() )
-                            {
-                                m_pLibInput = std::move( pLibInput );
-                                m_LibInputWaiter.AddWaitable( m_pLibInput.get() );
-                            }
-                            else
-                            {
-                                openvr_log.errorf( "Could not start libinput for being the vr session manager" );
-                            }
+                            m_bIsSession = true;
                         }
                         break;
                     case '?':
@@ -810,7 +799,7 @@ namespace gamescope
 
         virtual bool IsSessionBased() const override
 		{
-			return false;
+			return m_bIsSession;
 		}
 
         virtual bool SupportsExplicitSync() const override
@@ -1468,6 +1457,8 @@ namespace gamescope
         float m_flPhysicalPreCurvePitch = 0.0f;
         float m_flScrollSpeed = 1.0f;
 
+        bool m_bIsSession = false;
+
         // TODO: Restructure and remove the need for this.
 
         wlserver_input_method *m_pIME = nullptr;
@@ -1499,9 +1490,6 @@ namespace gamescope
 
         std::atomic<bool> m_bInitted = { false };
         std::atomic<bool> m_bRunning = { false };
-
-        std::shared_ptr<CLibInputHandler> m_pLibInput;
-        CAsyncWaiter<CRawPointer<IWaitable>, 16> m_LibInputWaiter;
 
         std::mutex m_mutForwarderPlanes;
         std::vector<std::shared_ptr<COpenVRPlane>> m_pForwarderPlanesInFlight;
