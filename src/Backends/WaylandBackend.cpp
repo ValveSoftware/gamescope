@@ -2785,19 +2785,18 @@ namespace gamescope
 
 	// Data Source
 
-	void CWaylandBackend::Wayland_DataSource_Send( struct wl_data_source *pSource, const char *pMime, int nFd )
+void CWaylandBackend::Wayland_DataSource_Send( struct wl_data_source *pSource, const char *pMime, int nFd )
 	{
+		defer(close(nFd));
+    
 		std::lock_guard<std::mutex> lock(m_ClipboardMutex);
 
 		if ( !m_pClipboard )
-		{
-			close( nFd );
 			return;
-		}
+    
 		ssize_t len = m_pClipboard->length();
 		if ( write( nFd, m_pClipboard->c_str(), len ) != len )
 			xdg_log.infof( "Failed to write all %zd bytes to clipboard", len );
-		close( nFd );
 	}
 	void CWaylandBackend::Wayland_DataSource_Cancelled( struct wl_data_source *pSource )
 	{
@@ -2806,17 +2805,16 @@ namespace gamescope
 
 	// Primary Selection Source
 
-	void CWaylandBackend::Wayland_PrimarySelectionSource_Send( struct zwp_primary_selection_source_v1 *pSource, const char *pMime, int nFd )
+void CWaylandBackend::Wayland_PrimarySelectionSource_Send( struct zwp_primary_selection_source_v1 *pSource, const char *pMime, int nFd )
 	{
+		defer(close(nFd));
+    
 		if ( !m_pPrimarySelection )
-		{
-			close( nFd );
 			return;
-		}
+    
 		ssize_t len = m_pPrimarySelection->length();
 		if ( write( nFd, m_pPrimarySelection->c_str(), len ) != len )
 			xdg_log.infof( "Failed to write all %zd bytes to clipboard", len );
-		close( nFd );
 	}
 	void CWaylandBackend::Wayland_PrimarySelectionSource_Cancelled( struct zwp_primary_selection_source_v1 *pSource)
 	{
@@ -2854,11 +2852,9 @@ namespace gamescope
 				m_CurrentOfferMimeTypes.clear();
 			}
 
-			m_pClipboard = std::make_shared<std::string>(clipboardData);
 			gamescope_set_selection( clipboardData, GAMESCOPE_SELECTION_CLIPBOARD);
 
 			wl_data_offer_destroy(pending.m_pOffer);
-			m_CurrentOfferMimeTypes.clear();
 		}
 	}
 
