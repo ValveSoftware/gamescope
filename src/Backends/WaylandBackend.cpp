@@ -120,395 +120,375 @@ extern gamescope::ConVar<bool> cv_hdr_enabled;
 
 namespace gamescope
 {
-	extern std::shared_ptr<INestedHints::CursorInfo> GetX11HostCursor();
+    extern std::shared_ptr<INestedHints::CursorInfo> GetX11HostCursor();
 
-	gamescope::ConVar<bool> cv_wayland_mouse_warp_without_keyboard_focus( "wayland_mouse_warp_without_keyboard_focus", true, "Should we only forward mouse warps to the app when we have keyboard focus?" );
-	gamescope::ConVar<bool> cv_wayland_mouse_relmotion_without_keyboard_focus( "wayland_mouse_relmotion_without_keyboard_focus", false, "Should we only forward mouse relative motion to the app when we have keyboard focus?" );
-	gamescope::ConVar<bool> cv_wayland_use_modifiers( "wayland_use_modifiers", true, "Use DMA-BUF modifiers?" );
+    gamescope::ConVar<bool> cv_wayland_mouse_warp_without_keyboard_focus( "wayland_mouse_warp_without_keyboard_focus", true, "Should we only forward mouse warps to the app when we have keyboard focus?" );
+    gamescope::ConVar<bool> cv_wayland_mouse_relmotion_without_keyboard_focus( "wayland_mouse_relmotion_without_keyboard_focus", false, "Should we only forward mouse relative motion to the app when we have keyboard focus?" );
+    gamescope::ConVar<bool> cv_wayland_use_modifiers( "wayland_use_modifiers", true, "Use DMA-BUF modifiers?" );
 
-	gamescope::ConVar<float> cv_wayland_hdr10_saturation_scale( "wayland_hdr10_saturation_scale", 1.0, "Saturation scale for HDR10 content by gamut expansion. 1.0 - 1.2 is a good range to play with." );
+    gamescope::ConVar<float> cv_wayland_hdr10_saturation_scale( "wayland_hdr10_saturation_scale", 1.0, "Saturation scale for HDR10 content by gamut expansion. 1.0 - 1.2 is a good range to play with." );
 
-	class CWaylandConnector;
-	class CWaylandPlane;
-	class CWaylandBackend;
-	class CWaylandFb;
+    class CWaylandConnector;
+    class CWaylandPlane;
+    class CWaylandBackend;
+    class CWaylandFb;
 
-	struct WaylandPlaneState
-	{
-		wl_buffer *pBuffer;
-		int32_t nDestX;
-		int32_t nDestY;
-		double flSrcX;
-		double flSrcY;
-		double flSrcWidth;
-		double flSrcHeight;
-		int32_t nDstWidth;
-		int32_t nDstHeight;
-		GamescopeAppTextureColorspace eColorspace;
-		std::shared_ptr<gamescope::BackendBlob> pHDRMetadata;
-		bool bOpaque;
-		uint32_t uFractionalScale;
-	};
+    struct WaylandPlaneState
+    {
+        wl_buffer *pBuffer;
+        int32_t nDestX;
+        int32_t nDestY;
+        double flSrcX;
+        double flSrcY;
+        double flSrcWidth;
+        double flSrcHeight;
+        int32_t nDstWidth;
+        int32_t nDstHeight;
+        GamescopeAppTextureColorspace eColorspace;
+        std::shared_ptr<gamescope::BackendBlob> pHDRMetadata;
+        bool bOpaque;
+        uint32_t uFractionalScale;
+    };
 
-	inline WaylandPlaneState ClipPlane( const WaylandPlaneState &state )
-	{
-		int32_t nClippedDstWidth  = std::min<int32_t>( g_nOutputWidth,  state.nDstWidth  + state.nDestX ) - state.nDestX;
-		int32_t nClippedDstHeight = std::min<int32_t>( g_nOutputHeight, state.nDstHeight + state.nDestY ) - state.nDestY;
-		double flClippedSrcWidth  = state.flSrcWidth  * ( nClippedDstWidth  / double( state.nDstWidth ) );
-		double flClippedSrcHeight = state.flSrcHeight * ( nClippedDstHeight / double( state.nDstHeight ) );
+    inline WaylandPlaneState ClipPlane( const WaylandPlaneState &state )
+    {
+        int32_t nClippedDstWidth  = std::min<int32_t>( g_nOutputWidth,  state.nDstWidth  + state.nDestX ) - state.nDestX;
+        int32_t nClippedDstHeight = std::min<int32_t>( g_nOutputHeight, state.nDstHeight + state.nDestY ) - state.nDestY;
+        double flClippedSrcWidth  = state.flSrcWidth  * ( nClippedDstWidth  / double( state.nDstWidth ) );
+        double flClippedSrcHeight = state.flSrcHeight * ( nClippedDstHeight / double( state.nDstHeight ) );
 
-		WaylandPlaneState outState = state;
-		outState.nDstWidth   = nClippedDstWidth;
-		outState.nDstHeight  = nClippedDstHeight;
-		outState.flSrcWidth  = flClippedSrcWidth;
-		outState.flSrcHeight = flClippedSrcHeight;
-		return outState;
-	}
+        WaylandPlaneState outState = state;
+        outState.nDstWidth   = nClippedDstWidth;
+        outState.nDstHeight  = nClippedDstHeight;
+        outState.flSrcWidth  = flClippedSrcWidth;
+        outState.flSrcHeight = flClippedSrcHeight;
+        return outState;
+    }
 
-	static int CreateShmBuffer( uint32_t uSize, void *pData )
-	{
-		char szShmBufferPath[ PATH_MAX ];
-		int nFd = MakeTempFile( szShmBufferPath, k_szGamescopeTempShmTemplate );
-		if ( nFd < 0 )
-			return -1;
+    static int CreateShmBuffer( uint32_t uSize, void *pData )
+    {
+        char szShmBufferPath[ PATH_MAX ];
+        int nFd = MakeTempFile( szShmBufferPath, k_szGamescopeTempShmTemplate );
+        if ( nFd < 0 )
+            return -1;
 
-		if ( ftruncate( nFd, uSize ) < 0 )
-		{
-			close( nFd );
-			return -1;
-		}
+        if ( ftruncate( nFd, uSize ) < 0 )
+        {
+            close( nFd );
+            return -1;
+        }
 
-		if ( pData )
-		{
-			void *pMappedData = mmap( nullptr, uSize, PROT_READ | PROT_WRITE, MAP_SHARED, nFd, 0 );
-			if ( pMappedData == MAP_FAILED )
-				return -1;
-			defer( munmap( pMappedData, uSize ) );
+        if ( pData )
+        {
+            void *pMappedData = mmap( nullptr, uSize, PROT_READ | PROT_WRITE, MAP_SHARED, nFd, 0 );
+            if ( pMappedData == MAP_FAILED )
+            {
+                close( nFd );
+                return -1;
+            }
+            defer( munmap( pMappedData, uSize ) );
 
-			memcpy( pMappedData, pData, uSize );
-		}
+            memcpy( pMappedData, pData, uSize );
+        }
 
-		return nFd;
-	}
+        return nFd;
+    }
 
-	struct WaylandPlaneColorState
-	{
-		GamescopeAppTextureColorspace eColorspace;
-		std::shared_ptr<gamescope::BackendBlob> pHDRMetadata;
+    struct WaylandPlaneColorState
+    {
+        GamescopeAppTextureColorspace eColorspace;
+        std::shared_ptr<gamescope::BackendBlob> pHDRMetadata;
 
-		bool operator ==( const WaylandPlaneColorState &other ) const = default;
-		bool operator !=( const WaylandPlaneColorState &other ) const = default;
-	};
+        bool operator ==( const WaylandPlaneColorState &other ) const = default;
+        bool operator !=( const WaylandPlaneColorState &other ) const = default;
+    };
 
-	class CWaylandPlane
-	{
-	public:
-		CWaylandPlane( CWaylandConnector *pBackend );
-		~CWaylandPlane();
+    class CWaylandPlane
+    {
+    public:
+        CWaylandPlane( CWaylandConnector *pBackend );
+        ~CWaylandPlane();
 
-		bool Init( CWaylandPlane *pParent, CWaylandPlane *pSiblingBelow );
+        bool Init( CWaylandPlane *pParent, CWaylandPlane *pSiblingBelow );
 
-		uint32_t GetScale() const;
+        uint32_t GetScale() const;
 
-		void Present( std::optional<WaylandPlaneState> oState );
-		void Present( const FrameInfo_t::Layer_t *pLayer );
+        void Present( std::optional<WaylandPlaneState> oState );
+        void Present( const FrameInfo_t::Layer_t *pLayer );
 
-		void CommitLibDecor( libdecor_configuration *pConfiguration );
-		void Commit();
+        void CommitLibDecor( libdecor_configuration *pConfiguration );
+        void Commit();
 
-		wl_surface *GetSurface() const { return m_pSurface; }
-		libdecor_frame *GetFrame() const { return m_pFrame; }
-		xdg_toplevel *GetXdgToplevel() const;
+        wl_surface *GetSurface() const { return m_pSurface; }
+        libdecor_frame *GetFrame() const { return m_pFrame; }
+        xdg_toplevel *GetXdgToplevel() const;
 
-		std::optional<WaylandPlaneState> GetCurrentState() { std::unique_lock lock( m_PlaneStateLock ); return m_oCurrentPlaneState; }
+        std::optional<WaylandPlaneState> GetCurrentState() { std::unique_lock lock( m_PlaneStateLock ); return m_oCurrentPlaneState; }
 
-		void UpdateVRRRefreshRate();
+        void UpdateVRRRefreshRate();
 
-	private:
+    private:
 
-		void Wayland_Surface_Enter( wl_surface *pSurface, wl_output *pOutput );
-		void Wayland_Surface_Leave( wl_surface *pSurface, wl_output *pOutput );
-		static const wl_surface_listener s_SurfaceListener;
+        void Wayland_Surface_Enter( wl_surface *pSurface, wl_output *pOutput );
+        void Wayland_Surface_Leave( wl_surface *pSurface, wl_output *pOutput );
+        static const wl_surface_listener s_SurfaceListener;
 
-		void LibDecor_Frame_Configure( libdecor_frame *pFrame, libdecor_configuration *pConfiguration );
-		void LibDecor_Frame_Close( libdecor_frame *pFrame );
-		void LibDecor_Frame_Commit( libdecor_frame *pFrame );
-		void LibDecor_Frame_DismissPopup( libdecor_frame *pFrame, const char *pSeatName );
-		static libdecor_frame_interface s_LibDecorFrameInterface;
+        void LibDecor_Frame_Configure( libdecor_frame *pFrame, libdecor_configuration *pConfiguration );
+        void LibDecor_Frame_Close( libdecor_frame *pFrame );
+        void LibDecor_Frame_Commit( libdecor_frame *pFrame );
+        void LibDecor_Frame_DismissPopup( libdecor_frame *pFrame, const char *pSeatName );
+        static libdecor_frame_interface s_LibDecorFrameInterface;
 
-		void Wayland_PresentationFeedback_SyncOutput( struct wp_presentation_feedback *pFeedback, wl_output *pOutput );
-		void Wayland_PresentationFeedback_Presented( struct wp_presentation_feedback *pFeedback, uint32_t uTVSecHi, uint32_t uTVSecLo, uint32_t uTVNSec, uint32_t uRefresh, uint32_t uSeqHi, uint32_t uSeqLo, uint32_t uFlags );
-		void Wayland_PresentationFeedback_Discarded( struct wp_presentation_feedback *pFeedback );
-		static const wp_presentation_feedback_listener s_PresentationFeedbackListener;
+        void Wayland_PresentationFeedback_SyncOutput( struct wp_presentation_feedback *pFeedback, wl_output *pOutput );
+        void Wayland_PresentationFeedback_Presented( struct wp_presentation_feedback *pFeedback, uint32_t uTVSecHi, uint32_t uTVSecLo, uint32_t uTVNSec, uint32_t uRefresh, uint32_t uSeqHi, uint32_t uSeqLo, uint32_t uFlags );
+        void Wayland_PresentationFeedback_Discarded( struct wp_presentation_feedback *pFeedback );
+        static const wp_presentation_feedback_listener s_PresentationFeedbackListener;
 
-		void Wayland_FrogColorManagedSurface_PreferredMetadata(
-			frog_color_managed_surface *pFrogSurface,
-			uint32_t uTransferFunction,
-			uint32_t uOutputDisplayPrimaryRedX,
-			uint32_t uOutputDisplayPrimaryRedY,
-			uint32_t uOutputDisplayPrimaryGreenX,
-			uint32_t uOutputDisplayPrimaryGreenY,
-			uint32_t uOutputDisplayPrimaryBlueX,
-			uint32_t uOutputDisplayPrimaryBlueY,
-			uint32_t uOutputWhitePointX,
-			uint32_t uOutputWhitePointY,
-			uint32_t uMaxLuminance,
-			uint32_t uMinLuminance,
-			uint32_t uMaxFullFrameLuminance );
-		static const frog_color_managed_surface_listener s_FrogColorManagedSurfaceListener;
+        void Wayland_FrogColorManagedSurface_PreferredMetadata(
+            frog_color_managed_surface *pFrogSurface,
+            uint32_t uTransferFunction,
+            uint32_t uOutputDisplayPrimaryRedX,
+            uint32_t uOutputDisplayPrimaryRedY,
+            uint32_t uOutputDisplayPrimaryGreenX,
+            uint32_t uOutputDisplayPrimaryGreenY,
+            uint32_t uOutputDisplayPrimaryBlueX,
+            uint32_t uOutputDisplayPrimaryBlueY,
+            uint32_t uOutputWhitePointX,
+            uint32_t uOutputWhitePointY,
+            uint32_t uMaxLuminance,
+            uint32_t uMinLuminance,
+            uint32_t uMaxFullFrameLuminance );
+        static const frog_color_managed_surface_listener s_FrogColorManagedSurfaceListener;
 
-		void Wayland_WPColorManagementSurfaceFeedback_PreferredChanged( wp_color_management_surface_feedback_v1 *pColorManagementSurface, unsigned int data );
-		static const wp_color_management_surface_feedback_v1_listener s_WPColorManagementSurfaceListener;
-		void UpdateWPPreferredColorManagement();
+        void Wayland_WPColorManagementSurfaceFeedback_PreferredChanged( wp_color_management_surface_feedback_v1 *pColorManagementSurface, unsigned int data );
+        static const wp_color_management_surface_feedback_v1_listener s_WPColorManagementSurfaceListener;
+        void UpdateWPPreferredColorManagement();
 
-		void Wayland_WPImageDescriptionInfo_Done( wp_image_description_info_v1 *pImageDescInfo );
-		void Wayland_WPImageDescriptionInfo_ICCFile( wp_image_description_info_v1 *pImageDescInfo, int32_t nICCFd, uint32_t uICCSize );
-		void Wayland_WPImageDescriptionInfo_Primaries( wp_image_description_info_v1 *pImageDescInfo, int32_t nRedX, int32_t nRedY, int32_t nGreenX, int32_t nGreenY, int32_t nBlueX, int32_t nBlueY, int32_t nWhiteX, int32_t nWhiteY );
-		void Wayland_WPImageDescriptionInfo_PrimariesNamed( wp_image_description_info_v1 *pImageDescInfo, uint32_t uPrimaries );
-		void Wayland_WPImageDescriptionInfo_TFPower( wp_image_description_info_v1 *pImageDescInfo, uint32_t uExp);
-		void Wayland_WPImageDescriptionInfo_TFNamed( wp_image_description_info_v1 *pImageDescInfo, uint32_t uTF);
-		void Wayland_WPImageDescriptionInfo_Luminances( wp_image_description_info_v1 *pImageDescInfo, uint32_t uMinLum, uint32_t uMaxLum, uint32_t uRefLum );
-		void Wayland_WPImageDescriptionInfo_TargetPrimaries( wp_image_description_info_v1 *pImageDescInfo, int32_t nRedX, int32_t nRedY, int32_t nGreenX, int32_t nGreenY, int32_t nBlueX, int32_t nBlueY, int32_t nWhiteX, int32_t nWhiteY );
-		void Wayland_WPImageDescriptionInfo_TargetLuminance( wp_image_description_info_v1 *pImageDescInfo, uint32_t uMinLum, uint32_t uMaxLum );
-		void Wayland_WPImageDescriptionInfo_Target_MaxCLL( wp_image_description_info_v1 *pImageDescInfo, uint32_t uMaxCLL );
-		void Wayland_WPImageDescriptionInfo_Target_MaxFALL( wp_image_description_info_v1 *pImageDescInfo, uint32_t uMaxFALL );
-		static const wp_image_description_info_v1_listener s_ImageDescriptionInfoListener;
+        void Wayland_WPImageDescriptionInfo_Done( wp_image_description_info_v1 *pImageDescInfo );
+        void Wayland_WPImageDescriptionInfo_ICCFile( wp_image_description_info_v1 *pImageDescInfo, int32_t nICCFd, uint32_t uICCSize );
+        void Wayland_WPImageDescriptionInfo_Primaries( wp_image_description_info_v1 *pImageDescInfo, int32_t nRedX, int32_t nRedY, int32_t nGreenX, int32_t nGreenY, int32_t nBlueX, int32_t nBlueY, int32_t nWhiteX, int32_t nWhiteY );
+        void Wayland_WPImageDescriptionInfo_PrimariesNamed( wp_image_description_info_v1 *pImageDescInfo, uint32_t uPrimaries );
+        void Wayland_WPImageDescriptionInfo_TFPower( wp_image_description_info_v1 *pImageDescInfo, uint32_t uExp);
+        void Wayland_WPImageDescriptionInfo_TFNamed( wp_image_description_info_v1 *pImageDescInfo, uint32_t uTF);
+        void Wayland_WPImageDescriptionInfo_Luminances( wp_image_description_info_v1 *pImageDescInfo, uint32_t uMinLum, uint32_t uMaxLum, uint32_t uRefLum );
+        void Wayland_WPImageDescriptionInfo_TargetPrimaries( wp_image_description_info_v1 *pImageDescInfo, int32_t nRedX, int32_t nRedY, int32_t nGreenX, int32_t nGreenY, int32_t nBlueX, int32_t nBlueY, int32_t nWhiteX, int32_t nWhiteY );
+        void Wayland_WPImageDescriptionInfo_TargetLuminance( wp_image_description_info_v1 *pImageDescInfo, uint32_t uMinLum, uint32_t uMaxLum );
+        void Wayland_WPImageDescriptionInfo_Target_MaxCLL( wp_image_description_info_v1 *pImageDescInfo, uint32_t uMaxCLL );
+        void Wayland_WPImageDescriptionInfo_Target_MaxFALL( wp_image_description_info_v1 *pImageDescInfo, uint32_t uMaxFALL );
+        static const wp_image_description_info_v1_listener s_ImageDescriptionInfoListener;
 
-		void Wayland_FractionalScale_PreferredScale( wp_fractional_scale_v1 *pFractionalScale, uint32_t uScale );
-		static const wp_fractional_scale_v1_listener s_FractionalScaleListener;
+        void Wayland_FractionalScale_PreferredScale( wp_fractional_scale_v1 *pFractionalScale, uint32_t uScale );
+        static const wp_fractional_scale_v1_listener s_FractionalScaleListener;
 
-		CWaylandConnector *m_pConnector = nullptr;
-		CWaylandBackend *m_pBackend = nullptr;
+        CWaylandConnector *m_pConnector = nullptr;
+        CWaylandBackend *m_pBackend = nullptr;
 
-		CWaylandPlane *m_pParent = nullptr;
-		wl_surface *m_pSurface = nullptr;
-		wp_viewport *m_pViewport = nullptr;
-		frog_color_managed_surface *m_pFrogColorManagedSurface = nullptr;
-		wp_color_management_surface_v1 *m_pWPColorManagedSurface = nullptr;
-		wp_color_management_surface_feedback_v1 *m_pWPColorManagedSurfaceFeedback = nullptr;
-		wp_fractional_scale_v1 *m_pFractionalScale = nullptr;
-		wl_subsurface *m_pSubsurface = nullptr;
-		libdecor_frame *m_pFrame = nullptr;
-		libdecor_window_state m_eWindowState = LIBDECOR_WINDOW_STATE_NONE;
-		std::vector<wl_output *> m_pOutputs;
-		bool m_bNeedsDecorCommit = false;
-		uint32_t m_uFractionalScale = 120;
-		bool m_bHasRecievedScale = false;
+        CWaylandPlane *m_pParent = nullptr;
+        wl_surface *m_pSurface = nullptr;
+        wp_viewport *m_pViewport = nullptr;
+        frog_color_managed_surface *m_pFrogColorManagedSurface = nullptr;
+        wp_color_management_surface_v1 *m_pWPColorManagedSurface = nullptr;
+        wp_color_management_surface_feedback_v1 *m_pWPColorManagedSurfaceFeedback = nullptr;
+        wp_fractional_scale_v1 *m_pFractionalScale = nullptr;
+        wl_subsurface *m_pSubsurface = nullptr;
+        libdecor_frame *m_pFrame = nullptr;
+        libdecor_window_state m_eWindowState = LIBDECOR_WINDOW_STATE_NONE;
+        std::vector<wl_output *> m_pOutputs;
+        bool m_bNeedsDecorCommit = false;
+        uint32_t m_uFractionalScale = 120;
+        bool m_bHasRecievedScale = false;
 
-		std::optional<WaylandPlaneColorState> m_ColorState{};
-		float m_flPreviousSaturationScale = 1.0f;
-		wp_image_description_v1 *m_pCurrentImageDescription = nullptr;
+        std::optional<WaylandPlaneColorState> m_ColorState{};
+        float m_flPreviousSaturationScale = 1.0f;
+        wp_image_description_v1 *m_pCurrentImageDescription = nullptr;
 
-		std::mutex m_PlaneStateLock;
-		std::optional<WaylandPlaneState> m_oCurrentPlaneState;
-	};
-	const wl_surface_listener CWaylandPlane::s_SurfaceListener =
-	{
-		.enter = WAYLAND_USERDATA_TO_THIS( CWaylandPlane, Wayland_Surface_Enter ),
-		.leave = WAYLAND_USERDATA_TO_THIS( CWaylandPlane, Wayland_Surface_Leave ),
-		.preferred_buffer_scale = WAYLAND_NULL(),
-		.preferred_buffer_transform = WAYLAND_NULL(),
-	};
-	// Can't be const, libdecor api bad...
-	libdecor_frame_interface CWaylandPlane::s_LibDecorFrameInterface =
-	{
-		.configure	 = LIBDECOR_USERDATA_TO_THIS( CWaylandPlane, LibDecor_Frame_Configure ),
-		.close		 = LIBDECOR_USERDATA_TO_THIS( CWaylandPlane, LibDecor_Frame_Close ),
-		.commit		= LIBDECOR_USERDATA_TO_THIS( CWaylandPlane, LibDecor_Frame_Commit ),
-		.dismiss_popup = LIBDECOR_USERDATA_TO_THIS( CWaylandPlane, LibDecor_Frame_DismissPopup ),
-	};
-	const wp_presentation_feedback_listener CWaylandPlane::s_PresentationFeedbackListener =
-	{
-		.sync_output = WAYLAND_USERDATA_TO_THIS( CWaylandPlane, Wayland_PresentationFeedback_SyncOutput ),
-		.presented   = WAYLAND_USERDATA_TO_THIS( CWaylandPlane, Wayland_PresentationFeedback_Presented ),
-		.discarded   = WAYLAND_USERDATA_TO_THIS( CWaylandPlane, Wayland_PresentationFeedback_Discarded ),
-	};
-	const frog_color_managed_surface_listener CWaylandPlane::s_FrogColorManagedSurfaceListener =
-	{
-		.preferred_metadata = WAYLAND_USERDATA_TO_THIS( CWaylandPlane, Wayland_FrogColorManagedSurface_PreferredMetadata ),
-	};
-	const wp_color_management_surface_feedback_v1_listener CWaylandPlane::s_WPColorManagementSurfaceListener =
-	{
-		.preferred_changed = WAYLAND_USERDATA_TO_THIS( CWaylandPlane, Wayland_WPColorManagementSurfaceFeedback_PreferredChanged ),
-	};
-	const wp_image_description_info_v1_listener CWaylandPlane::s_ImageDescriptionInfoListener =
-	{
-		.done = WAYLAND_USERDATA_TO_THIS( CWaylandPlane, Wayland_WPImageDescriptionInfo_Done ),
-		.icc_file = WAYLAND_USERDATA_TO_THIS( CWaylandPlane, Wayland_WPImageDescriptionInfo_ICCFile ),
-		.primaries = WAYLAND_USERDATA_TO_THIS( CWaylandPlane, Wayland_WPImageDescriptionInfo_Primaries ),
-		.primaries_named = WAYLAND_USERDATA_TO_THIS( CWaylandPlane, Wayland_WPImageDescriptionInfo_PrimariesNamed ),
-		.tf_power = WAYLAND_USERDATA_TO_THIS( CWaylandPlane, Wayland_WPImageDescriptionInfo_TFPower ),
-		.tf_named = WAYLAND_USERDATA_TO_THIS( CWaylandPlane, Wayland_WPImageDescriptionInfo_TFNamed ),
-		.luminances = WAYLAND_USERDATA_TO_THIS( CWaylandPlane, Wayland_WPImageDescriptionInfo_Luminances ),
-		.target_primaries = WAYLAND_USERDATA_TO_THIS( CWaylandPlane, Wayland_WPImageDescriptionInfo_TargetPrimaries ),
-		.target_luminance = WAYLAND_USERDATA_TO_THIS( CWaylandPlane, Wayland_WPImageDescriptionInfo_TargetLuminance ),
-		.target_max_cll = WAYLAND_USERDATA_TO_THIS( CWaylandPlane, Wayland_WPImageDescriptionInfo_Target_MaxCLL ),
-		.target_max_fall = WAYLAND_USERDATA_TO_THIS( CWaylandPlane, Wayland_WPImageDescriptionInfo_Target_MaxFALL ),
-	};
-	const wp_fractional_scale_v1_listener CWaylandPlane::s_FractionalScaleListener =
-	{
-		.preferred_scale = WAYLAND_USERDATA_TO_THIS( CWaylandPlane, Wayland_FractionalScale_PreferredScale ),
-	};
+        std::mutex m_PlaneStateLock;
+        std::optional<WaylandPlaneState> m_oCurrentPlaneState;
+    };
+    const wl_surface_listener CWaylandPlane::s_SurfaceListener =
+    {
+        .enter = WAYLAND_USERDATA_TO_THIS( CWaylandPlane, Wayland_Surface_Enter ),
+        .leave = WAYLAND_USERDATA_TO_THIS( CWaylandPlane, Wayland_Surface_Leave ),
+        .preferred_buffer_scale = WAYLAND_NULL(),
+        .preferred_buffer_transform = WAYLAND_NULL(),
+    };
+    // Can't be const, libdecor api bad...
+    libdecor_frame_interface CWaylandPlane::s_LibDecorFrameInterface =
+    {
+	    .configure     = LIBDECOR_USERDATA_TO_THIS( CWaylandPlane, LibDecor_Frame_Configure ),
+        .close         = LIBDECOR_USERDATA_TO_THIS( CWaylandPlane, LibDecor_Frame_Close ),
+        .commit        = LIBDECOR_USERDATA_TO_THIS( CWaylandPlane, LibDecor_Frame_Commit ),
+        .dismiss_popup = LIBDECOR_USERDATA_TO_THIS( CWaylandPlane, LibDecor_Frame_DismissPopup ),
+    };
+    const wp_presentation_feedback_listener CWaylandPlane::s_PresentationFeedbackListener =
+    {
+        .sync_output = WAYLAND_USERDATA_TO_THIS( CWaylandPlane, Wayland_PresentationFeedback_SyncOutput ),
+        .presented   = WAYLAND_USERDATA_TO_THIS( CWaylandPlane, Wayland_PresentationFeedback_Presented ),
+        .discarded   = WAYLAND_USERDATA_TO_THIS( CWaylandPlane, Wayland_PresentationFeedback_Discarded ),
+    };
+    const frog_color_managed_surface_listener CWaylandPlane::s_FrogColorManagedSurfaceListener =
+    {
+        .preferred_metadata = WAYLAND_USERDATA_TO_THIS( CWaylandPlane, Wayland_FrogColorManagedSurface_PreferredMetadata ),
+    };
+    const wp_color_management_surface_feedback_v1_listener CWaylandPlane::s_WPColorManagementSurfaceListener =
+    {
+        .preferred_changed = WAYLAND_USERDATA_TO_THIS( CWaylandPlane, Wayland_WPColorManagementSurfaceFeedback_PreferredChanged ),
+    };
+    const wp_image_description_info_v1_listener CWaylandPlane::s_ImageDescriptionInfoListener =
+    {
+        .done = WAYLAND_USERDATA_TO_THIS( CWaylandPlane, Wayland_WPImageDescriptionInfo_Done ),
+        .icc_file = WAYLAND_USERDATA_TO_THIS( CWaylandPlane, Wayland_WPImageDescriptionInfo_ICCFile ),
+        .primaries = WAYLAND_USERDATA_TO_THIS( CWaylandPlane, Wayland_WPImageDescriptionInfo_Primaries ),
+        .primaries_named = WAYLAND_USERDATA_TO_THIS( CWaylandPlane, Wayland_WPImageDescriptionInfo_PrimariesNamed ),
+        .tf_power = WAYLAND_USERDATA_TO_THIS( CWaylandPlane, Wayland_WPImageDescriptionInfo_TFPower ),
+        .tf_named = WAYLAND_USERDATA_TO_THIS( CWaylandPlane, Wayland_WPImageDescriptionInfo_TFNamed ),
+        .luminances = WAYLAND_USERDATA_TO_THIS( CWaylandPlane, Wayland_WPImageDescriptionInfo_Luminances ),
+        .target_primaries = WAYLAND_USERDATA_TO_THIS( CWaylandPlane, Wayland_WPImageDescriptionInfo_TargetPrimaries ),
+        .target_luminance = WAYLAND_USERDATA_TO_THIS( CWaylandPlane, Wayland_WPImageDescriptionInfo_TargetLuminance ),
+        .target_max_cll = WAYLAND_USERDATA_TO_THIS( CWaylandPlane, Wayland_WPImageDescriptionInfo_Target_MaxCLL ),
+        .target_max_fall = WAYLAND_USERDATA_TO_THIS( CWaylandPlane, Wayland_WPImageDescriptionInfo_Target_MaxFALL ),
+    };
+    const wp_fractional_scale_v1_listener CWaylandPlane::s_FractionalScaleListener =
+    {
+        .preferred_scale = WAYLAND_USERDATA_TO_THIS( CWaylandPlane, Wayland_FractionalScale_PreferredScale ),
+    };
 
-	enum WaylandModifierIndex
-	{
-		GAMESCOPE_WAYLAND_MOD_CTRL,
-		GAMESCOPE_WAYLAND_MOD_SHIFT,
-		GAMESCOPE_WAYLAND_MOD_ALT,
-		GAMESCOPE_WAYLAND_MOD_META, // Super
-		GAMESCOPE_WAYLAND_MOD_NUM,
-		GAMESCOPE_WAYLAND_MOD_CAPS,
+    enum WaylandModifierIndex
+    {
+        GAMESCOPE_WAYLAND_MOD_CTRL,
+        GAMESCOPE_WAYLAND_MOD_SHIFT,
+        GAMESCOPE_WAYLAND_MOD_ALT,
+        GAMESCOPE_WAYLAND_MOD_META, // Super
+        GAMESCOPE_WAYLAND_MOD_NUM,
+        GAMESCOPE_WAYLAND_MOD_CAPS,
 
-		GAMESCOPE_WAYLAND_MOD_COUNT,
-	};
+        GAMESCOPE_WAYLAND_MOD_COUNT,
+    };
 
-	constexpr const char *WaylandModifierToXkbModifierName( WaylandModifierIndex eIndex )
-	{
-		switch ( eIndex )
-		{
-			case GAMESCOPE_WAYLAND_MOD_CTRL:
-				return XKB_MOD_NAME_CTRL;
-			case GAMESCOPE_WAYLAND_MOD_SHIFT:
-				return XKB_MOD_NAME_SHIFT;
-			case GAMESCOPE_WAYLAND_MOD_ALT:
-				return XKB_MOD_NAME_ALT;
-			case GAMESCOPE_WAYLAND_MOD_META:
-				return XKB_MOD_NAME_LOGO;
-			case GAMESCOPE_WAYLAND_MOD_NUM:
-				return XKB_MOD_NAME_NUM;
-			case GAMESCOPE_WAYLAND_MOD_CAPS:
-				return XKB_MOD_NAME_CAPS;
-			default:
-				return "Unknown";
-		}
-	}
+    constexpr const char *WaylandModifierToXkbModifierName( WaylandModifierIndex eIndex )
+    {
+        switch ( eIndex )
+        {
+            case GAMESCOPE_WAYLAND_MOD_CTRL:
+                return XKB_MOD_NAME_CTRL;
+            case GAMESCOPE_WAYLAND_MOD_SHIFT:
+                return XKB_MOD_NAME_SHIFT;
+            case GAMESCOPE_WAYLAND_MOD_ALT:
+                return XKB_MOD_NAME_ALT;
+            case GAMESCOPE_WAYLAND_MOD_META:
+                return XKB_MOD_NAME_LOGO;
+            case GAMESCOPE_WAYLAND_MOD_NUM:
+                return XKB_MOD_NAME_NUM;
+            case GAMESCOPE_WAYLAND_MOD_CAPS:
+                return XKB_MOD_NAME_CAPS;
+            default:
+                return "Unknown";
+        }
+    }
 
-	struct WaylandOutputInfo
-	{
-		int32_t nRefresh = 60;
-		int32_t nScale = 1;
-	};
-
-
-	class CWaylandConnector final : public CBaseBackendConnector, public INestedHints
-	{
-	public:
-		CWaylandConnector( CWaylandBackend *pBackend, uint64_t ulVirtualConnectorKey );
-		virtual ~CWaylandConnector();
-
-		bool UpdateEdid();
-		bool Init();
-		void SetFullscreen( bool bFullscreen ); // Thread safe, can be called from the input thread.
-		void UpdateFullscreenState();
+    struct WaylandOutputInfo
+    {
+        int32_t nRefresh = 60;
+        int32_t nScale = 1;
+    };
 
 
-		bool HostCompositorIsCurrentlyVRR() const { return m_bHostCompositorIsCurrentlyVRR; }
-		void SetHostCompositorIsCurrentlyVRR( bool bActive ) { m_bHostCompositorIsCurrentlyVRR = bActive; }
-		bool CurrentDisplaySupportsVRR() const { return HostCompositorIsCurrentlyVRR(); }
-		CWaylandBackend *GetBackend() const { return m_pBackend; }
+    class CWaylandConnector final : public CBaseBackendConnector, public INestedHints
+    {
+    public:
+        CWaylandConnector( CWaylandBackend *pBackend, uint64_t ulVirtualConnectorKey );
+        virtual ~CWaylandConnector();
 
-		/////////////////////
-		// IBackendConnector
-		/////////////////////
+        bool UpdateEdid();
+        bool Init();
+        void SetFullscreen( bool bFullscreen ); // Thread safe, can be called from the input thread.
+        void UpdateFullscreenState();
 
-		virtual int Present( const FrameInfo_t *pFrameInfo, bool bAsync ) override;
 
-		virtual gamescope::GamescopeScreenType GetScreenType() const override;
-		virtual GamescopePanelOrientation GetCurrentOrientation() const override;
-		virtual bool SupportsHDR() const override;
-		virtual bool IsHDRActive() const override;
-		virtual const BackendConnectorHDRInfo &GetHDRInfo() const override;
-		virtual bool IsVRRActive() const override;
-		virtual std::span<const BackendMode> GetModes() const override;
+        bool HostCompositorIsCurrentlyVRR() const { return m_bHostCompositorIsCurrentlyVRR; }
+        void SetHostCompositorIsCurrentlyVRR( bool bActive ) { m_bHostCompositorIsCurrentlyVRR = bActive; }
+        bool CurrentDisplaySupportsVRR() const { return HostCompositorIsCurrentlyVRR(); }
+        CWaylandBackend *GetBackend() const { return m_pBackend; }
 
-		virtual bool SupportsVRR() const override;
+        /////////////////////
+        // IBackendConnector
+        /////////////////////
 
-		virtual std::span<const uint8_t> GetRawEDID() const override;
-		virtual std::span<const uint32_t> GetValidDynamicRefreshRates() const override;
+        virtual int Present( const FrameInfo_t *pFrameInfo, bool bAsync ) override;
 
-		virtual void GetNativeColorimetry(
-			bool bHDR10,
-			displaycolorimetry_t *displayColorimetry, EOTF *displayEOTF,
-			displaycolorimetry_t *outputEncodingColorimetry, EOTF *outputEncodingEOTF ) const override;
+        virtual gamescope::GamescopeScreenType GetScreenType() const override;
+        virtual GamescopePanelOrientation GetCurrentOrientation() const override;
+        virtual bool SupportsHDR() const override;
+        virtual bool IsHDRActive() const override;
+        virtual const BackendConnectorHDRInfo &GetHDRInfo() const override;
+        virtual bool IsVRRActive() const override;
+        virtual std::span<const BackendMode> GetModes() const override;
 
-		virtual const char *GetName() const override
-		{
-			return "Wayland";
-		}
-		virtual const char *GetMake() const override
-		{
-			return "Gamescope";
-		}
-		virtual const char *GetModel() const override
-		{
-			return "Virtual Display";
-		}
+        virtual bool SupportsVRR() const override;
 
-		virtual INestedHints *GetNestedHints() override
-		{
-			return this;
-		}
+        virtual std::span<const uint8_t> GetRawEDID() const override;
+        virtual std::span<const uint32_t> GetValidDynamicRefreshRates() const override;
 
-		///////////////////
-		// INestedHints
-		///////////////////
+        virtual void GetNativeColorimetry(
+            bool bHDR10,
+            displaycolorimetry_t *displayColorimetry, EOTF *displayEOTF,
+            displaycolorimetry_t *outputEncodingColorimetry, EOTF *outputEncodingEOTF ) const override;
 
-		virtual void SetCursorImage( std::shared_ptr<INestedHints::CursorInfo> info ) override;
-		virtual void SetRelativeMouseMode( bool bRelative ) override;
-		virtual void SetVisible( bool bVisible ) override;
-		virtual void SetTitle( std::shared_ptr<std::string> szTitle ) override;
-		virtual void SetIcon( std::shared_ptr<std::vector<uint32_t>> uIconPixels ) override;
-		virtual void SetSelection( std::shared_ptr<std::string> szContents, GamescopeSelection eSelection ) override;
-	private:
+        virtual const char *GetName() const override
+        {
+            return "Wayland";
+        }
+        virtual const char *GetMake() const override
+        {
+            return "Gamescope";
+        }
+        virtual const char *GetModel() const override
+        {
+            return "Virtual Display";
+        }
 
-		friend CWaylandPlane;
+        virtual INestedHints *GetNestedHints() override
+        {
+            return this;
+        }
 
-		BackendConnectorHDRInfo m_HDRInfo{};
-		uint32_t m_uReferenceLuminance = 203;
-		uint32_t m_uMaxTargetLuminance = 203;
-		displaycolorimetry_t m_DisplayColorimetry = displaycolorimetry_709;
-		std::vector<uint8_t> m_FakeEdid;
+        ///////////////////
+        // INestedHints
+        ///////////////////
 
-		CWaylandBackend *m_pBackend = nullptr;
+        virtual void SetCursorImage( std::shared_ptr<INestedHints::CursorInfo> info ) override;
+        virtual void SetRelativeMouseMode( bool bRelative ) override;
+        virtual void SetVisible( bool bVisible ) override;
+        virtual void SetTitle( std::shared_ptr<std::string> szTitle ) override;
+        virtual void SetIcon( std::shared_ptr<std::vector<uint32_t>> uIconPixels ) override;
+        virtual void SetSelection( std::shared_ptr<std::string> szContents, GamescopeSelection eSelection ) override;
+    private:
 
-		CWaylandPlane m_Planes[8];
-		bool m_bVisible = true;
-		std::atomic<bool> m_bDesiredFullscreenState = { false };
+        friend CWaylandPlane;
 
-		bool m_bHostCompositorIsCurrentlyVRR = false;
-	};
+        BackendConnectorHDRInfo m_HDRInfo{};
+        uint32_t m_uReferenceLuminance = 203;
+        uint32_t m_uMaxTargetLuminance = 203;
+        displaycolorimetry_t m_DisplayColorimetry = displaycolorimetry_709;
+        std::vector<uint8_t> m_FakeEdid;
 
-	class CWaylandFb final : public CBaseBackendFb
-	{
-	public:
-		CWaylandFb( CWaylandBackend *pBackend, wl_buffer *pHostBuffer );
-		~CWaylandFb();
+        CWaylandBackend *m_pBackend = nullptr;
 
-		void OnCompositorAcquire();
-		void OnCompositorRelease();
+        CWaylandPlane m_Planes[8];
+        bool m_bVisible = true;
+        std::atomic<bool> m_bDesiredFullscreenState = { false };
 
-		wl_buffer *GetHostBuffer() const { return m_pHostBuffer; }
-		wlr_buffer *GetClientBuffer() const { return m_pClientBuffer; }
+        bool m_bHostCompositorIsCurrentlyVRR = false;
+    };
 
-		void Wayland_Buffer_Release( wl_buffer *pBuffer );
-		static const wl_buffer_listener s_BufferListener;
+    class CWaylandFb final : public CBaseBackendFb
+    {
+    public:
+        CWaylandFb( CWaylandBackend *pBackend, wl_buffer *pHostBuffer );
+        ~CWaylandFb();
 
-	private:
-		CWaylandBackend *m_pBackend = nullptr;
-		wl_buffer *m_pHostBuffer = nullptr;
-		wlr_buffer *m_pClientBuffer = nullptr;
-		bool m_bCompositorAcquired = false;
-	};
-	const wl_buffer_listener CWaylandFb::s_BufferListener =
-	{
-		.release = WAYLAND_USERDATA_TO_THIS( CWaylandFb, Wayland_Buffer_Release ),
-	};
-
-	class CWaylandInputThread
-	{
-	public:
-		CWaylandInputThread();
-		~CWaylandInputThread();
+        void OnCompositorAcquire();
+        void OnCompositorRelease();
 
 		bool Init( CWaylandBackend *pBackend );
 

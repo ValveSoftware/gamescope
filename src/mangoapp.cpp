@@ -77,11 +77,6 @@ extern gamescope::ConVar<bool> cv_mangoapp_use_output_timing;
 
 void mangoapp_output_update( uint64_t vblanktime )
 {
-    if ( !g_bCurrentBasePlaneIsFifo )
-    {
-        return;
-    }
-
 	static uint64_t s_uLastBasePlaneCommitID = 0;
 	if ( s_uLastBasePlaneCommitID != g_uCurrentBasePlaneCommitID )
 	{

@@ -189,9 +189,10 @@ namespace gamescope
 
     const gamescope_control_listener GamescopeCtl::s_GamescopeControlListener =
     {
-        .feature_support     = WAYLAND_USERDATA_TO_THIS( GamescopeCtl, Wayland_GamescopeControl_FeatureSupport ),
-        .active_display_info = WAYLAND_USERDATA_TO_THIS( GamescopeCtl, Wayland_GamescopeControl_ActiveDisplayInfo ),
-        .screenshot_taken    = WAYLAND_USERDATA_TO_THIS( GamescopeCtl, Wayland_GamescopeControl_ScreenshotTaken ),
+        .feature_support       = WAYLAND_USERDATA_TO_THIS( GamescopeCtl, Wayland_GamescopeControl_FeatureSupport ),
+        .active_display_info   = WAYLAND_USERDATA_TO_THIS( GamescopeCtl, Wayland_GamescopeControl_ActiveDisplayInfo ),
+        .screenshot_taken      = WAYLAND_USERDATA_TO_THIS( GamescopeCtl, Wayland_GamescopeControl_ScreenshotTaken ),
+        .app_performance_stats = WAYLAND_NULL(),
     };
 
     void GamescopeCtl::Wayland_GamescopePrivate_Log( gamescope_private *pGamescopePrivate, const char *pText )
@@ -226,6 +227,10 @@ namespace gamescope
                 return "Refresh Cycle Only Change Refresh Rate";
             case GAMESCOPE_CONTROL_FEATURE_MURA_CORRECTION:
                 return "Mura Correction";
+            case GAMESCOPE_CONTROL_FEATURE_LOOK:
+                return "Look";
+            case GAMESCOPE_CONTROL_FEATURE_PERF_QUERY:
+                return "Performance Query";
             default:
                 return "Unknown";
         }

@@ -1943,9 +1943,14 @@ void MouseCursor::paint(steamcompmgr_win_t *window, steamcompmgr_win_t *fit, str
 	cursorOffsetX = (currentOutputWidth - sourceWidth * currentScaleRatio_x) / 2.0f;
 	cursorOffsetY = (currentOutputHeight - sourceHeight * currentScaleRatio_y) / 2.0f;
 
-	// Actual point on scaled screen where the cursor hotspot should be
-	scaledX = (winX - window->GetGeometry().nX) * currentScaleRatio_x + cursorOffsetX;
-	scaledY = (winY - window->GetGeometry().nY) * currentScaleRatio_y + cursorOffsetY;
+	// Actual point on scaled screen where the cursor hotspot should be.
+	// Compositing ignores the focused window's X11 origin, so the cursor
+	// must also ignore it to stay consistent with the composited output.
+	bool isFocusWindow = (window == m_ctx->focus.focusWindow);
+	int32_t winOriginX = isFocusWindow ? 0 : window->GetGeometry().nX;
+	int32_t winOriginY = isFocusWindow ? 0 : window->GetGeometry().nY;
+	scaledX = (winX - winOriginX) * currentScaleRatio_x + cursorOffsetX;
+	scaledY = (winY - winOriginY) * currentScaleRatio_y + cursorOffsetY;
 
 	if ( zoomScaleRatio != 1.0 )
 	{
@@ -2405,7 +2410,7 @@ static void paint_pipewire()
 	}
 
 	gamescope::Rc<CVulkanTexture> pRGBTexture = s_pPipewireBuffer->texture->isYcbcr()
-		? vulkan_acquire_screenshot_texture( uWidth, uHeight, false, DRM_FORMAT_XRGB2101010 )
+		? vulkan_acquire_capture_texture( uWidth, uHeight, false, DRM_FORMAT_XRGB2101010 )
 		: gamescope::Rc<CVulkanTexture>{ s_pPipewireBuffer->texture };
 
 	gamescope::Rc<CVulkanTexture> pYUVTexture = s_pPipewireBuffer->texture->isYcbcr() ? s_pPipewireBuffer->texture : nullptr;
@@ -3449,8 +3454,9 @@ static bool is_good_override_candidate( steamcompmgr_win_t *override, steamcompm
 	if ( !focus )
 		return false;
 
-	// The pids should probably match for a dropdown to be a good candidate for this window.
-	if (override->pid != focus->pid)
+	// The pids should probably match for a dropdown to be a good candidate for this window,
+	// unless a non-zero appID says they are the same app (eg. Xalia's highlight overlay).
+	if (override->pid != focus->pid && (focus->appID == 0 || override->appID != focus->appID))
 		return false;
 
 	auto rect = override->GetGeometry();
@@ -3955,9 +3961,6 @@ void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win
 		XMoveWindow(ctx->dpy, ctx->focus.focusWindow->xwayland().id, 1, 1);
 		ctx->focus.focusWindow->nudged = true;
 	}
-
-	if (w->GetGeometry().nX != 0 || w->GetGeometry().nY != 0)
-		XMoveWindow(ctx->dpy, ctx->focus.focusWindow->xwayland().id, 0, 0);
 
 	if ( win_has_game_id( w ) )
 	{
@@ -5339,6 +5342,8 @@ destroy_win(xwayland_ctx_t *ctx, Window id, bool gone, bool fade)
 		ctx->focus.notificationWindow = nullptr;
 	if (x11_win(ctx->focus.overrideWindow) == id && gone)
 		ctx->focus.overrideWindow = nullptr;
+	if (x11_win(ctx->focus.overrideWindowMouse) == id && gone)
+		ctx->focus.overrideWindowMouse = nullptr;
 	if (ctx->currentKeyboardFocusWindow == id && gone)
 		ctx->currentKeyboardFocusWindow = None;
 
