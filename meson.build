@@ -27,6 +27,7 @@ lib_dir = get_option('libdir')
 
 add_project_arguments(cppc.get_supported_arguments([
   '-Wno-unused-parameter',
+  '-Wno-unused-result',
   '-Wno-missing-field-initializers',
   '-Wno-c99-designator',
   '-Wno-invalid-offsetof',

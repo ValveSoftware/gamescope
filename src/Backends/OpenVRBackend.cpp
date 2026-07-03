@@ -111,7 +111,7 @@ namespace vr
         VREvent_OverlayInputFocus_t overlayInputFocus;
     } VREvent_Data_Gamescope_t;
 
-    static inline const VREvent_Data_Gamescope_t &CastToGamescopeEventData( const VREvent_Data_t &eventData )
+    [[maybe_unused]] static inline const VREvent_Data_Gamescope_t &CastToGamescopeEventData( const VREvent_Data_t &eventData )
     {
         return reinterpret_cast< const vr::VREvent_Data_Gamescope_t & >( eventData );
     }
@@ -350,7 +350,7 @@ namespace gamescope
 
         bool IsTouchForbidden() const { return m_bForbidTouchMode; }
 
-        virtual void SetProperty( ConnectorProperty eProperty, std::any value )
+        virtual void SetProperty( ConnectorProperty eProperty, std::any value ) override
         {
             if ( eProperty == ConnectorProperty::IsFileBrowser )
             {

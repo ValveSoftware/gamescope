@@ -61,7 +61,7 @@ namespace gamescope
 	{
 	public:
 		CSDLConnector( CSDLBackend *pBackend );
-		virtual bool Init();
+		bool Init();
 
 		virtual ~CSDLConnector();
 

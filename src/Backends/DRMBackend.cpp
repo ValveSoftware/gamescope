@@ -508,7 +508,7 @@ namespace gamescope
 		void ParseEDID();
 
 
-		CDRMBackend *m_pBackend = nullptr;
+		[[maybe_unused]] CDRMBackend *m_pBackend = nullptr;
 		CAutoDeletePtr<drmModeConnector> m_pConnector;
 
 		struct MutableConnectorState
@@ -3514,7 +3514,7 @@ namespace gamescope
 			return vulkan_has_drm_props();
 		}
 
-		virtual int Present( const FrameInfo_t *pFrameInfo, bool bAsync )
+		int Present( const FrameInfo_t *pFrameInfo, bool bAsync )
 		{
 			static uint64_t s_ulLastTime = get_time_in_nanos();
 			uint64_t ulNow = get_time_in_nanos();

@@ -86,7 +86,7 @@ public:
     virtual ~RefreshRateUniform();
 
 private:
-    int32_t count = 0;
+    [[maybe_unused]] int32_t count = 0;
 };
 
 class DateUniform : public ReshadeUniform
