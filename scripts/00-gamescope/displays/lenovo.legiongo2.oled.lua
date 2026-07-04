@@ -16,7 +16,7 @@ gamescope.config.known_displays.lenovo_legiongo2_oled = {
     hdr = {
         supported = true,
         force_enabled = false,
-        eotf = gamescope.eotf.pq,
+        eotf = gamescope.eotf.gamma22,
         content_driven = true,
     },
     dynamic_refresh_rates = legiongo2_oled_refresh_rates,
