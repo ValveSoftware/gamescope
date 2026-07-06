@@ -44,6 +44,7 @@
 #include <wlr/types/wlr_relative_pointer_v1.h>
 #include <wlr/types/wlr_pointer_constraints_v1.h>
 #include <wlr/types/wlr_layer_shell_v1.h>
+#include <wlr/types/wlr_data_device.h>
 #include <wlr/util/region.h>
 #include "wlr_end.hpp"
 
@@ -2090,6 +2091,8 @@ bool wlserver_init( void ) {
 	}
 	wlserver.new_pointer_constraint.notify = handle_pointer_constraint;
 	wl_signal_add(&wlserver.constraints->events.new_constraint, &wlserver.new_pointer_constraint);
+
+	wlr_data_device_manager_create(wlserver.display);
 
 	wlserver.xdg_shell = wlr_xdg_shell_create(wlserver.display, 3);
 	if (!wlserver.xdg_shell)
