@@ -14,7 +14,6 @@
 #include <linux/input-event-codes.h>
 
 #include <X11/extensions/XTest.h>
-#include <xkbcommon/xkbcommon.h>
 
 #include "WaylandServer/WaylandResource.h"
 #include "WaylandServer/WaylandProtocol.h"
@@ -68,6 +67,7 @@
 #include "commit.h"
 #include "Timeline.h"
 #include "Utils/NonCopyable.h"
+#include "Utils/Xkb.h"
 
 #if HAVE_PIPEWIRE
 #include "pipewire.hpp"
@@ -2416,6 +2416,32 @@ bool wlserver_process_hotkeys( wlr_keyboard *keyboard, uint32_t key, bool press 
 	}
 
 	return false;
+}
+
+void wlserver_set_virtual_keyboard_modifiers( bool bNumLocked, bool bCapsLocked )
+{
+	assert( wlserver_is_lock_held() );
+
+	struct wlr_keyboard *keyboard = wlserver.wlr.virtual_keyboard_device;
+	if ( keyboard == nullptr || keyboard->xkb_state == nullptr )
+		return;
+
+    uint32_t numLockMask = gamescope::XkbKeymapModMask(keyboard->keymap, XKB_MOD_NAME_NUM);
+    uint32_t capsLockMask = gamescope::XkbKeymapModMask(keyboard->keymap, XKB_MOD_NAME_CAPS);
+    uint32_t locked = keyboard->modifiers.locked;
+
+    locked = bNumLocked ? locked | numLockMask : locked & ~numLockMask;
+    locked = bCapsLocked ? locked | capsLockMask : locked & ~capsLockMask;
+
+	wlr_keyboard_notify_modifiers( keyboard,
+                                   keyboard->modifiers.depressed,
+                                   keyboard->modifiers.latched,
+                                   locked,
+                                   keyboard->modifiers.group );
+	wlr_seat_set_keyboard( wlserver.wlr.seat, keyboard );
+	wlr_seat_keyboard_notify_modifiers( wlserver.wlr.seat, &keyboard->modifiers );
+
+	bump_input_counter();
 }
 
 void wlserver_key( uint32_t key, bool press, uint32_t time )
