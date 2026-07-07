@@ -3152,10 +3152,18 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 				// True when the output requires HDR encoding (PQ / BT.2020).
 				const bool bHDROutput = g_bOutputHDREnabled;
 
+				// On a pipeline without a 3D LUT (Intel fallback) only engage the colour ops
+				// when a real linear-space transform runs: HDR output (re-encode) or an explicit
+				// CTM.  Plain SDR with no CTM is a passthrough; decoding then re-encoding via two
+				// coarse 1D LUTs would only add quantisation error (visible over-saturation).
+				const bool bExplicitLayerCTM = !cv_drm_debug_disable_ctm && frameInfo->layers[i].ctm != nullptr;
+				const bool bFallbackXform = bHDROutput || bExplicitLayerCTM;
+
 				// --- Degamma (1st 1D_CURVE) ---
 				if ( pDegammaOp )
 				{
-					bool bUseDegamma = !cv_drm_debug_disable_degamma_tf && degamma_tf.has_value();
+					bool bUseDegamma = !cv_drm_debug_disable_degamma_tf && degamma_tf.has_value()
+						&& ( pLut3DOp != nullptr || bFallbackXform );
 					if ( bUseDegamma )
 					{
 						pDegammaOp->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
@@ -3180,7 +3188,7 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 				if ( pCTMOp )
 				{
 					bool bSetCTM = false;
-					if ( !cv_drm_debug_disable_ctm && frameInfo->layers[i].ctm != nullptr )
+					if ( bExplicitLayerCTM )
 					{
 						// Explicit layer CTM (e.g. scRGB BT.709→BT.2020 set by steamcompmgr).
 						pCTMOp->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
@@ -3231,10 +3239,14 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 				// the second (POST_CSC) 1D_LUT applies the OETF.  The encode is done per-plane
 				// so already-encoded planes (composite output, overlay, cursor) pass through.
 				//
+				// Only decode/encode when a linear-space transform actually runs (HDR re-encode
+				// or a CTM).  In plain SDR with no CTM this is a pure round-trip that only adds
+				// 1D-LUT quantisation error (visible over-saturation), so leave the plane bypassed.
+				//
 				// Both blobs are sized to their colorop's SIZE property.  The OETF is
 				// regenerated each frame so HDR toggles (which don't bump g_ColorMgmt.serial)
 				// are reflected.
-				if ( pLut3DOp == nullptr && !bUseShaperAnd3DLUT
+				if ( pLut3DOp == nullptr && !bUseShaperAnd3DLUT && bFallbackXform
 					&& !cv_drm_debug_disable_degamma_tf && degamma_tf.has_value() )
 				{
 					if ( !drm->pending.degamma_colorop_id[ uEOTFIdx ] && pShaperLutOp )
@@ -3258,6 +3270,7 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 				}
 				const bool bUsePlaneEotfOetf = !bUseShaperAnd3DLUT
 					&& pLut3DOp == nullptr
+					&& bFallbackXform
 					&& !cv_drm_debug_disable_degamma_tf
 					&& degamma_tf.has_value()
 					&& drm->pending.degamma_colorop_id[ uEOTFIdx ] != nullptr
