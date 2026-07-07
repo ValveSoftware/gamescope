@@ -1005,4 +1005,6 @@ void vulkan_wait_idle();
 // Whether the driver implements VK_EXT_physical_device_drm
 bool vulkan_has_drm_props();
 
+bool vulkan_has_drm_modifiers_for_features(VkFormat format, VkFormatFeatureFlags features);
+
 extern CVulkanDevice g_device;

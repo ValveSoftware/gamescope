@@ -4237,6 +4237,36 @@ bool vulkan_has_drm_props()
 	return false;
 }
 
+bool vulkan_has_drm_modifiers_for_features(VkFormat format, VkFormatFeatureFlags features)
+{
+	if ( !g_device.supportsModifiers() )
+		return false;
+
+	VkDrmFormatModifierPropertiesListEXT modifierPropList = {
+		.sType = VK_STRUCTURE_TYPE_DRM_FORMAT_MODIFIER_PROPERTIES_LIST_EXT,
+	};
+	VkFormatProperties2 formatProps = {
+		.sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2,
+		.pNext = &modifierPropList,
+	};
+
+	g_device.vk.GetPhysicalDeviceFormatProperties2( g_device.physDev(), format, &formatProps );
+
+	if ( modifierPropList.drmFormatModifierCount == 0 )
+		return false;
+
+	std::vector<VkDrmFormatModifierPropertiesEXT> modifierProps(modifierPropList.drmFormatModifierCount);
+	modifierPropList.pDrmFormatModifierProperties = modifierProps.data();
+	g_device.vk.GetPhysicalDeviceFormatProperties2( g_device.physDev(), format, &formatProps );
+
+	for ( size_t j = 0; j < modifierProps.size(); j++ ) {
+		if ( ( modifierProps[j].drmFormatModifierTilingFeatures & features ) == features )
+			return true;
+	}
+
+	return false;
+}
+
 gamescope::Rc<CVulkanTexture> vulkan_get_last_output_image( bool partial, bool defer )
 {
 	// Get previous image ( +2 )
