@@ -1,7 +1,14 @@
 #pragma once
 
 #include <memory>
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wnan-infinity-disabled"
+#endif
 #include <pipewire/pipewire.h>
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 #include <spa/param/video/format-utils.h>
 
 #include "rendervulkan.hpp"
