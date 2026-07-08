@@ -3918,7 +3918,14 @@ void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win
 		}
 
 		if ( !ctx->focus.overrideWindow || ctx->focus.overrideWindow != keyboardFocusWin )
+		{
 			XSetInputFocus(ctx->dpy, keyboardFocusWin->xwayland().id, RevertToNone, CurrentTime);
+
+			// wine >= 10.0 treats _NET_ACTIVE_WINDOW as foreground, so it must track real keyboard focus.
+			Window activeWindow = keyboardFocusWin->xwayland().id;
+			XChangeProperty(ctx->dpy, ctx->root, ctx->atoms.netActiveWindowAtom,
+							XA_WINDOW, 32, PropModeReplace, (unsigned char *)&activeWindow, 1);
+		}
 
 		if ( ctx->focus.inputFocusWindow != inputFocus ||
 			 ctx->focus.inputFocusMode != inputFocus->inputFocusMode )
