@@ -2,10 +2,37 @@
 #include "WaylandServerLegacy.h"
 #include "../Timeline.h"
 
+#include <cstring>
+
 #include "linux-drm-syncobj-v1-protocol.h"
 
 namespace gamescope::WaylandServer
 {
+
+
+	static int GetProcessName( pid_t pid, char *buf, size_t size )
+	{
+		char path[128];
+		snprintf(path, sizeof(path), "/proc/%d/comm", pid);
+
+		FILE *f = fopen(path, "r");
+		if (!f)
+			return -1;
+
+		if (!fgets(buf, size, f)) {
+			fclose(f);
+			return -1;
+		}
+
+		fclose(f);
+
+		// Remove trailing newline.
+		char *nl = strchr(buf, '\n');
+		if (nl)
+			*nl = '\0';
+
+		return 0;
+	}
 
 	class CLinuxDrmSyncobjTimeline : public CWaylandResource
 	{
@@ -16,6 +43,12 @@ namespace gamescope::WaylandServer
 			: CWaylandResource( desc )
 			, m_pTimeline{ std::move( pTimeline ) }
 		{
+			pid_t pid; uid_t uid; gid_t gid;
+			wl_client_get_credentials( m_pResource->client, &pid, &uid, &gid );
+
+			char szProcessName[ 256 ];
+			GetProcessName( pid, szProcessName, sizeof( szProcessName ) );
+			m_pTimeline->SetName( szProcessName );
 		}
 
 		std::shared_ptr<CTimeline> GetTimeline() const

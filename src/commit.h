@@ -1,3 +1,4 @@
+#include "Timeline.h"
 #include "steamcompmgr_shared.hpp"
 #include "Utils/NonCopyable.h"
 
@@ -41,6 +42,8 @@ struct commit_t final : public gamescope::RcObject, public gamescope::IWaitable,
 	struct wlr_buffer *buf = nullptr;
 	gamescope::Rc<CVulkanTexture> vulkanTex;
 	std::optional<UpscaledTexture_t> upscaledTexture;
+
+	std::shared_ptr<gamescope::CAcquireTimelinePoint> pAcquirePoint;
 
 	gamescope::Rc<CVulkanTexture> GetTexture( GamescopeUpscaleFilter eFilter, GamescopeUpscaleScaler eScaler, GamescopeAppTextureColorspace &colorspace )
 	{

@@ -12,7 +12,7 @@
 
 namespace gamescope
 {
-    static LogScope s_TimelineLog( "timeline" );
+    LogScope log_timeline( "timeline" );
 
     static uint32_t SyncobjFdToHandle( int32_t nFd )
     {
@@ -83,6 +83,7 @@ namespace gamescope
         if ( ShouldSignalOnDestruction() )
         {
             const uint32_t uHandle = m_pTimeline->GetSyncobjHandle();
+            log_timeline.infof( "SIGNAL | %s", m_sName.c_str() );
 
             drmSyncobjTimelineSignal( m_pTimeline->GetDrmRenderFD(), &uHandle, &m_ulPoint, 1 );
         }
@@ -101,6 +102,8 @@ namespace gamescope
             lTimeout,
             DRM_SYNCOBJ_WAIT_FLAGS_WAIT_ALL,
             nullptr );
+
+        log_timeline.infof( "WAIT1  | %s", m_sName.c_str() );
 
         return nRet == 0;
     }
@@ -121,7 +124,7 @@ namespace gamescope
         int nRet = drmSyncobjQuery( m_pTimeline->GetDrmRenderFD(), &uHandle, &ulSignalledPoint, 1u );
         if ( nRet != 0 )
         {
-            s_TimelineLog.errorf_errno( "drmSyncobjQuery failed (%d)", nRet );
+            log_timeline.errorf_errno( "drmSyncobjQuery failed (%d)", nRet );
             return k_InvalidEvent;
         }
 
@@ -134,7 +137,7 @@ namespace gamescope
             const int32_t nExplicitSyncEventFd = eventfd( 0, EFD_CLOEXEC );
             if ( nExplicitSyncEventFd < 0 )
             {
-                s_TimelineLog.errorf_errno( "Failed to create eventfd (%d)", nExplicitSyncEventFd );
+                log_timeline.errorf_errno( "Failed to create eventfd (%d)", nExplicitSyncEventFd );
                 return k_InvalidEvent;
             }
 
@@ -150,7 +153,7 @@ namespace gamescope
 
             if ( drmIoctl( m_pTimeline->GetDrmRenderFD(), DRM_IOCTL_SYNCOBJ_EVENTFD, &syncobjEventFd ) != 0 )
             {
-                s_TimelineLog.errorf_errno( "DRM_IOCTL_SYNCOBJ_EVENTFD failed" );
+                log_timeline.errorf_errno( "DRM_IOCTL_SYNCOBJ_EVENTFD failed" );
                 close( nExplicitSyncEventFd );
                 return k_InvalidEvent;
             }

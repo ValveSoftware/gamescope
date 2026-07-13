@@ -7211,6 +7211,11 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 {
 	struct wlr_buffer *buf = reslistentry.buf;
 
+	if ( reslistentry.pAcquirePoint )
+	{
+		gamescope::log_timeline.infof( "PENDING| %s", reslistentry.pAcquirePoint->GetName().c_str() );
+	}
+
 	if ( w == nullptr )
 	{
 		wlserver_lock();
@@ -7294,6 +7299,11 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 		reslistentry.present_id,
 		reslistentry.desired_present_time,
 		reslistentry.fifo );
+
+	if ( reslistentry.pAcquirePoint )
+	{
+		newCommit->pAcquirePoint = reslistentry.pAcquirePoint;
+	}
 
 	int fence = -1;
 	if ( newCommit != nullptr )

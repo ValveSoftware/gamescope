@@ -69,6 +69,11 @@ void commit_t::Signal()
     uint64_t now = get_time_in_nanos();
     present_time = now;
 
+    if ( pAcquirePoint )
+    {
+        gamescope::log_timeline.infof( "WAIT2  | %s", pAcquirePoint->GetName().c_str() );
+    }
+
     uint64_t frametime;
     if ( m_bMangoNudge )
     {

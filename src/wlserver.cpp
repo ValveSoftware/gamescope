@@ -1,3 +1,5 @@
+#include <string>
+#include <wayland-server-core.h>
 #include <xkbcommon/xkbcommon-keysyms.h>
 #define _GNU_SOURCE 1
 
@@ -144,6 +146,11 @@ std::optional<ResListEntry_t> PrepareCommit( struct wlr_surface *surf, struct wl
 	{
 		pAcquirePoint = wl_surf->pSyncobjSurface->ExtractAcquireTimelinePoint();
 		pReleasePoint = wl_surf->pSyncobjSurface->ExtractReleaseTimelinePoint();
+
+		std::string sAcquireName = "A " + pAcquirePoint->GetTimeline()->GetName() + ": " + std::to_string( pAcquirePoint->GetPoint() );
+		std::string sReleaseName = "R " + pReleasePoint->GetTimeline()->GetName() + ": " + std::to_string( pReleasePoint->GetPoint() );
+		pAcquirePoint->SetName( sAcquireName );
+		pReleasePoint->SetName( sReleaseName );
 
 		if ( cv_drm_debug_syncobj_force_wait_on_commit )
 		{
