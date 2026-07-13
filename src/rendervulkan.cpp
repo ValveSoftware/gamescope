@@ -2861,7 +2861,8 @@ bool vulkan_init_format(VkFormat format, uint32_t drmFormat)
 			if ( !is_image_format_modifier_supported( format, drmFormat, modifier ) )
 				continue;
 
-			if ( ( modifierProps[j].drmFormatModifierTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT ) == 0 )
+			const VkFormatFeatureFlags neededFeatures = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT | VK_FORMAT_FEATURE_TRANSFER_SRC_BIT;
+			if ( ( modifierProps[j].drmFormatModifierTilingFeatures & neededFeatures ) != neededFeatures )
 			{
 				continue;
 			}
@@ -2892,6 +2893,10 @@ bool vulkan_init_format(VkFormat format, uint32_t drmFormat)
 
 bool vulkan_init_formats()
 {
+	// Do not collect formats again if we already have them
+	if ( sampledDRMFormats.len > 0 )
+		return true;
+
 	for ( size_t i = 0; s_DRMVKFormatTable[i].DRMFormat != DRM_FORMAT_INVALID; i++ )
 	{
 		if (s_DRMVKFormatTable[i].internal)
@@ -4237,30 +4242,13 @@ bool vulkan_has_drm_props()
 	return false;
 }
 
-bool vulkan_has_drm_modifiers_for_features(VkFormat format, VkFormatFeatureFlags features)
+bool vulkan_supports_drm_format( uint32_t drmFormat )
 {
-	if ( !g_device.supportsModifiers() )
-		return false;
+	for ( size_t i = 0; i < sampledDRMFormats.len; i++ )
+	{
+		uint32_t fmt = sampledDRMFormats.formats[ i ].format;
 
-	VkDrmFormatModifierPropertiesListEXT modifierPropList = {
-		.sType = VK_STRUCTURE_TYPE_DRM_FORMAT_MODIFIER_PROPERTIES_LIST_EXT,
-	};
-	VkFormatProperties2 formatProps = {
-		.sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2,
-		.pNext = &modifierPropList,
-	};
-
-	g_device.vk.GetPhysicalDeviceFormatProperties2( g_device.physDev(), format, &formatProps );
-
-	if ( modifierPropList.drmFormatModifierCount == 0 )
-		return false;
-
-	std::vector<VkDrmFormatModifierPropertiesEXT> modifierProps(modifierPropList.drmFormatModifierCount);
-	modifierPropList.pDrmFormatModifierProperties = modifierProps.data();
-	g_device.vk.GetPhysicalDeviceFormatProperties2( g_device.physDev(), format, &formatProps );
-
-	for ( size_t j = 0; j < modifierProps.size(); j++ ) {
-		if ( ( modifierProps[j].drmFormatModifierTilingFeatures & features ) == features )
+		if ( fmt == drmFormat )
 			return true;
 	}
 
