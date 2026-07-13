@@ -11,7 +11,7 @@
             "id" : "device_password",
             "description" : "'steamos' user's password",
             "type" : "promptString",
-            "password": true,
+            "password": false,
         },
     ],
     "tasks": [
