@@ -39,7 +39,6 @@ add_project_arguments(cppc.get_supported_arguments([
 
 add_project_arguments(cppc.get_supported_arguments([
   '-fno-exceptions',
-  '-ffast-math',
 ]), language: 'cpp')
 
 pipewire_dep = dependency('libpipewire-0.3', required: get_option('pipewire'))
