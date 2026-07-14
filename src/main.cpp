@@ -1037,9 +1037,11 @@ int main(int argc, char **argv)
 	if ( g_nNestedWidth == 0 )
 		g_nNestedWidth = g_nNestedHeight * 16 / 9;
 
-	if ( !wlserver_init() )
+	::xkb_keymap *parent_keymap = GetBackend()->GetParentKeymap();
+
+	if (!wlserver_init(parent_keymap))
 	{
-		fprintf( stderr, "Failed to initialize wlserver\n" );
+		fprintf(stderr, "Failed to initialize wlserver\n");
 		return 1;
 	}
 
