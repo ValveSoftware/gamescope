@@ -1300,6 +1300,53 @@ namespace GamescopeWSILayer {
       return pDispatch->AcquireNextImage2KHR(device, pAcquireInfo, pImageIndex);
     }
 
+    // A present that fails with VK_ERROR_OUT_OF_DATE_KHR must still perform
+    // its queue operations. We never forward a retired swapchain's present to
+    // the driver, so wait the semaphores and signal any
+    // VkSwapchainPresentFenceInfoEXT fences ourselves with an empty submit.
+    static VkResult PresentRetiredSwapchain(
+      const vkroots::VkDeviceDispatch* pDispatch,
+            VkQueue                    queue,
+      const VkPresentInfoKHR*          pPresentInfo) {
+      std::vector<VkPipelineStageFlags> waitStages(pPresentInfo->waitSemaphoreCount, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
+
+      std::vector<VkFence> presentFences;
+      if (auto pFenceInfo = vkroots::FindInChain<const VkSwapchainPresentFenceInfoEXT>(pPresentInfo)) {
+        for (uint32_t i = 0; i < pFenceInfo->swapchainCount; i++) {
+          if (pFenceInfo->pFences[i] != VK_NULL_HANDLE)
+            presentFences.push_back(pFenceInfo->pFences[i]);
+        }
+      }
+
+      if (pPresentInfo->waitSemaphoreCount || !presentFences.empty()) {
+        VkSubmitInfo submitInfo = {
+          .sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+          .waitSemaphoreCount = pPresentInfo->waitSemaphoreCount,
+          .pWaitSemaphores    = pPresentInfo->pWaitSemaphores,
+          .pWaitDstStageMask  = waitStages.data(),
+        };
+
+        VkResult result = pDispatch->QueueSubmit(queue, 1, &submitInfo, presentFences.empty() ? VK_NULL_HANDLE : presentFences[0]);
+
+        // Fence signals are ordered after everything earlier in submission
+        // order, so any extra fences can ride empty submits.
+        for (size_t i = 1; i < presentFences.size() && result == VK_SUCCESS; i++) {
+          VkSubmitInfo emptySubmitInfo = { .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO };
+          result = pDispatch->QueueSubmit(queue, 1, &emptySubmitInfo, presentFences[i]);
+        }
+
+        if (result < VK_SUCCESS)
+          return result;
+      }
+
+      if (pPresentInfo->pResults) {
+        for (uint32_t i = 0; i < pPresentInfo->swapchainCount; i++)
+          pPresentInfo->pResults[i] = VK_ERROR_OUT_OF_DATE_KHR;
+      }
+
+      return VK_ERROR_OUT_OF_DATE_KHR;
+    }
+
     static VkResult QueuePresentKHR(
       const vkroots::VkDeviceDispatch* pDispatch,
             VkQueue                    queue,
@@ -1314,7 +1361,7 @@ namespace GamescopeWSILayer {
       for (uint32_t i = 0; i < presentInfo.swapchainCount; i++) {
         if (auto gamescopeSwapchain = GamescopeSwapchain::get(presentInfo.pSwapchains[i])) {
           if (gamescopeSwapchain->retired) {
-            return VK_ERROR_OUT_OF_DATE_KHR;
+            return PresentRetiredSwapchain(pDispatch, queue, pPresentInfo);
           }
 
           if (pPresentTimes && pPresentTimes->pTimes) {
