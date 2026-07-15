@@ -361,6 +361,7 @@ namespace gamescope
 			std::optional<CDRMAtomicProperty> VRR_ENABLED;
 			std::optional<CDRMAtomicProperty> OUT_FENCE_PTR;
 			std::optional<CDRMAtomicProperty> AMD_CRTC_REGAMMA_TF;
+			std::optional<CDRMAtomicProperty> COLOR_PIPELINE;
 			std::optional<CDRMAtomicProperty> DUMMY_END;
 		};
 		      CRTCProperties &GetProperties()       { return m_Props; }
@@ -576,6 +577,8 @@ namespace gamescope
 		std::unique_ptr<gamescope::CDRMColorOp> lut3D;
 		std::unique_ptr<gamescope::CDRMColorOp> blend;
 		std::unique_ptr<gamescope::CDRMColorOp> blendLut;
+		std::unique_ptr<gamescope::CDRMColorOp> regamma;
+		std::unique_ptr<gamescope::CDRMColorOp> regammaLut;
 	};
 
 	class CDRMFb final : public CBaseBackendFb
@@ -1024,6 +1027,62 @@ static std::optional<gamescope::CDRMColorPipeline> get_plane_color_pipelines( st
 	{
 		auto entry = pProperty->enums[ i ];
 		std::optional<gamescope::CDRMColorPipeline> p = get_color_pipeline( drm, entry.value );
+		if ( p.has_value() )
+			return p;
+	}
+
+	return {};
+}
+
+static std::optional<gamescope::CDRMColorPipeline> get_crtc_colorop_pipeline( struct drm_t *drm, uint32_t uHeadId )
+{
+	std::vector<std::unique_ptr<gamescope::CDRMColorOp>> pipeline;
+
+	uint32_t uColorOpId = uHeadId;
+	while ( uColorOpId != 0 )
+	{
+		auto pColorOp = std::make_unique<gamescope::CDRMColorOp>( uColorOpId );
+		pColorOp->RefreshState();
+		uColorOpId = pColorOp->GetProperties().NEXT.value().GetInitialValue();
+		pipeline.emplace_back( std::move(pColorOp) );
+	}
+
+	// Check if the pipeline has what we need
+	if ( pipeline.size() != 3 )
+		return {};
+	if ( pipeline[0]->GetProperties().TYPE.value().GetInitialValue() != DRM_COLOROP_CTM_3X4 )
+		return {};
+	if ( pipeline[1]->GetProperties().TYPE.value().GetInitialValue() != DRM_COLOROP_1D_CURVE )
+		return {};
+	if ( pipeline[2]->GetProperties().TYPE.value().GetInitialValue() != DRM_COLOROP_1D_LUT )
+		return {};
+
+	gamescope::CDRMColorPipeline p {
+		.id = uHeadId,
+		.CTM = std::move(pipeline[0]),
+		.regamma = std::move(pipeline[1]),
+		.regammaLut = std::move(pipeline[2]),
+	};
+	return p;
+}
+
+
+static std::optional<gamescope::CDRMColorPipeline> get_crtc_color_pipelines( struct drm_t *drm, gamescope::CDRMCRTC *pCRTC )
+{
+	auto pColorPipelineProp = pCRTC->GetProperties().COLOR_PIPELINE;
+	if ( !pColorPipelineProp )
+		return {};
+
+	drmModePropertyRes *pProperty = drmModeGetProperty( g_DRM.fd, pColorPipelineProp->GetPropertyId() );
+	if ( !pProperty )
+		return {};
+
+	defer( drmModeFreeProperty( pProperty ) );
+
+	for ( int i = 0; i < pProperty->count_enums; i++ )
+	{
+		auto entry = pProperty->enums[ i ];
+		std::optional<gamescope::CDRMColorPipeline> p = get_crtc_colorop_pipeline( drm, entry.value );
 		if ( p.has_value() )
 			return p;
 	}
@@ -2351,6 +2410,7 @@ namespace gamescope
 			m_Props.VRR_ENABLED         = CDRMAtomicProperty::Instantiate( "VRR_ENABLED",         this, *rawProperties );
 			m_Props.OUT_FENCE_PTR       = CDRMAtomicProperty::Instantiate( "OUT_FENCE_PTR",       this, *rawProperties );
 			m_Props.AMD_CRTC_REGAMMA_TF = CDRMAtomicProperty::Instantiate( "AMD_CRTC_REGAMMA_TF", this, *rawProperties );
+			m_Props.COLOR_PIPELINE      = CDRMAtomicProperty::Instantiate( "COLOR_PIPELINE",      this, *rawProperties );
 		}
 	}
 
