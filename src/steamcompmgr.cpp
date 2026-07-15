@@ -295,6 +295,7 @@ update_runtime_info();
 gamescope::ConVar<bool> cv_adaptive_sync( "adaptive_sync", false, "Whether or not adaptive sync is enabled if available." );
 gamescope::ConVar<bool> cv_adaptive_sync_ignore_overlay( "adaptive_sync_ignore_overlay", false, "Whether or not to ignore overlay planes for pushing commits with adaptive sync." );
 gamescope::ConVar<int> cv_adaptive_sync_overlay_cycles( "adaptive_sync_overlay_cycles", 1, "Number of vblank cycles to ignore overlay repaints before forcing a commit with adaptive sync." );
+gamescope::ConVar<bool> cv_adaptive_sync_uncapped( "adaptive_sync_uncapped", true, "Whether or not to allow mailbox/immediate clients to run uncapped with adaptive sync by deferring paints until the display can take a new flip." );
 
 gamescope::ConVar<bool> cv_upscale_preemptive( "upscale_preemptive", true, "Allow pre-emptive upscaling" );
 gamescope::ConVar<bool> cv_upscale_preemptive_debug_force_sync( "upscale_preemptive_debug_force_sync", false, "Force synchronize pre-emptive upscaling" );
@@ -8509,8 +8510,15 @@ steamcompmgr_main(int argc, char **argv)
 
 		// We can always vblank if VRR.
 		const bool bVRR = GetBackend()->GetCurrentConnector() && GetBackend()->GetCurrentConnector()->IsVRRActive();
+
+		// Timer vblanks are scheduled with the same lead as the ready check,
+		// so they always count as flip-ready.
+		bool bVRRCanFlip = bVRR;
+		if ( bVRRCanFlip && cv_adaptive_sync_uncapped && !bIsVBlankFromTimer )
+			bVRRCanFlip = GetVBlankTimer().IsVRRFlipReady();
+
 		if ( bVRR )
-			vblank = true;
+			vblank = vblank || bVRRCanFlip;
 
 		bool flush_root = false;
 
@@ -9053,7 +9061,7 @@ steamcompmgr_main(int argc, char **argv)
 
 					case FlipType::VRR:
 					{
-						bShouldPaint = hasRepaint;
+						bShouldPaint = hasRepaint && bVRRCanFlip;
 
 						if ( bIsVBlankFromTimer )
 						{
