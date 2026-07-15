@@ -21,6 +21,8 @@
 
 LogScope g_VBlankLog("vblank");
 
+extern gamescope::ConVar<bool> cv_adaptive_sync_uncapped;
+
 namespace gamescope
 {
 	ConVar<bool> vblank_debug( "vblank_debug", false, "Enable vblank debug spew to stderr." );
@@ -93,6 +95,29 @@ namespace gamescope
 		return ulTargetPoint;
 	}
 
+	uint64_t CVBlankTimer::VRRWakeupOffset( uint64_t *pulDrawTime, uint64_t *pulRedZone ) const
+	{
+		uint64_t ulDrawTime = cv_adaptive_sync_uncapped ? m_ulVRRRollingMaxSubmitTime.load() : 0;
+		/// See comment of m_ulVBlankDrawTimeMinCompositing.
+		if ( m_bCurrentlyCompositing )
+			ulDrawTime = std::max<uint64_t>( ulDrawTime, m_ulVBlankDrawTimeMinCompositing );
+
+		// Queueing a flip early is free, the kernel holds it to the panel cycle.
+		uint64_t ulRedZone = cv_adaptive_sync_uncapped ? m_ulVBlankDrawBufferRedZone : kVRRFlushingTime;
+
+		if ( pulDrawTime )
+			*pulDrawTime = ulDrawTime;
+		if ( pulRedZone )
+			*pulRedZone = ulRedZone;
+		return ulDrawTime + ulRedZone;
+	}
+
+	bool CVBlankTimer::IsVRRFlipReady() const
+	{
+		const uint64_t ulIntervalNSecs = mHzToRefreshCycle( GetRefresh() );
+		return get_time_in_nanos() + VRRWakeupOffset() >= GetLastVBlank() + ulIntervalNSecs;
+	}
+
 	VBlankScheduleTime CVBlankTimer::CalcNextWakeupTime( bool bPreemptive )
 	{
 		const GamescopeScreenType eScreenType = GetBackend()->GetScreenType();
@@ -163,14 +188,8 @@ namespace gamescope
 				m_ulRollingMaxDrawTime = kStartingVBlankDrawTime;
 			}
 
-			uint64_t ulRedZone = kVRRFlushingTime;
-
-			uint64_t ulDrawTime = 0;
-			/// See comment of m_ulVBlankDrawTimeMinCompositing.
-			if ( m_bCurrentlyCompositing )
-				ulDrawTime = std::max( ulDrawTime, m_ulVBlankDrawTimeMinCompositing );
-
-			ulOffset = ulDrawTime + ulRedZone;
+			uint64_t ulDrawTime, ulRedZone;
+			ulOffset = VRRWakeupOffset( &ulDrawTime, &ulRedZone );
 
 			if ( vblank_debug && !bPreemptive )
 				VBlankDebugSpew( ulOffset, ulDrawTime, ulRedZone );
@@ -189,7 +208,13 @@ namespace gamescope
 
 	std::optional<VBlankTime> CVBlankTimer::ProcessVBlank()
 	{
-		return std::exchange( m_PendingVBlank, std::nullopt );
+		// Anchor vblank iterations at their scheduled wakeup point, so
+		// scheduler + dispatch latency counts against the VRR submit time.
+		std::optional<VBlankTime> oVBlank = std::exchange( m_PendingVBlank, std::nullopt );
+		m_ulLastWakeupTime = oVBlank
+			? oVBlank->schedule.ulScheduledWakeupPoint
+			: get_time_in_nanos();
+		return oVBlank;
 	}
 
 	void CVBlankTimer::MarkVBlank( uint64_t ulNanos, bool bReArmTimer )
@@ -215,6 +240,16 @@ namespace gamescope
 	void CVBlankTimer::UpdateLastDrawTime( uint64_t ulNanos )
 	{
 		m_ulLastDrawTime = ulNanos;
+
+		uint64_t ulSubmitTime = get_time_in_nanos() - m_ulLastWakeupTime;
+		ulSubmitTime = std::min<uint64_t>( ulSubmitTime, mHzToRefreshCycle( GetRefresh() ) / 2 );
+
+		uint64_t ulRollingMax = m_ulVRRRollingMaxSubmitTime;
+		if ( ulSubmitTime > ulRollingMax )
+			ulRollingMax = ulSubmitTime;
+		else
+			ulRollingMax = ( ( m_ulVBlankRateOfDecayPercentage * ulRollingMax ) + ( kVBlankRateOfDecayMax - m_ulVBlankRateOfDecayPercentage ) * ulSubmitTime ) / kVBlankRateOfDecayMax;
+		m_ulVRRRollingMaxSubmitTime = ulRollingMax;
 	}
 
 	void CVBlankTimer::WaitToBeArmed()
