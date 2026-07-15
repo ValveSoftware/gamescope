@@ -87,6 +87,8 @@ enum drm_colorspace {
 #define DRM_MODE_CONTENT_TYPE_CINEMA		3
 #define DRM_MODE_CONTENT_TYPE_GAME		4
 
+#define DRM_CLIENT_CAP_CRTC_COLOR_PIPELINE	8
+
 #define	DRM_COLOROP_FIXED_MATRIX	5
 
 enum drm_colorop_curve_1d_type {
