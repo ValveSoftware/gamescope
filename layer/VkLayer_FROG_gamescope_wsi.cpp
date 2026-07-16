@@ -428,19 +428,52 @@ namespace GamescopeWSILayer {
       return hdrOutput && hdrAllowed;
     }
 
-    bool canBypassXWayland() {
+    bool canBypassXWayland(bool hdrColorspace = false) {
       if (isWayland())
         return true;
 
       auto rect = xcb::getWindowRect(connection, window);
-      auto largestObscuringWindowSize = xcb::getLargestObscuringChildWindowSize(connection, window);
-      auto toplevelWindow = xcb::getToplevelWindow(connection, window);
-      if (!rect || !largestObscuringWindowSize || !toplevelWindow) {
+      if (!rect) {
         fprintf(stderr, "[Gamescope WSI] canBypassXWayland: failed to get window info for window 0x%x.\n", window);
         return false;
       }
 
       cachedWindowRect = *rect;
+
+      // Never bypass windows Wine presents offscreen to GDI-blit onto the
+      // real toplevel: marked with _WINE_ALLOW_FLIP=0 or parented under
+      // Wine's unnamed 1x1 dummy window. The blit can only carry SDR, so
+      // an HDR colorspace always bypasses. Wine also detaches while a
+      // toplevel is transiently unmapped and refusing there wedges games
+      // polling for HDR formats.
+      if (!hdrColorspace) {
+        auto allowFlip = xcb::getPropertyValue<uint32_t>(connection, window, "_WINE_ALLOW_FLIP");
+        if (allowFlip) {
+          if (*allowFlip == 0) {
+#if GAMESCOPE_WSI_BYPASS_DEBUG
+            fprintf(stderr, "[Gamescope WSI] Not bypassing: _WINE_ALLOW_FLIP is 0 for window 0x%x.\n", window);
+#endif
+            return false;
+          }
+        } else if (auto parent = xcb::getParentWindow(connection, window)) {
+          auto parentRect = xcb::getWindowRect(connection, *parent);
+          if (parentRect && parentRect->extent.width == 1 && parentRect->extent.height == 1 &&
+              xcb::isOverrideRedirect(connection, *parent) &&
+              !xcb::hasProperty(connection, *parent, XCB_ATOM_WM_CLASS)) {
+#if GAMESCOPE_WSI_BYPASS_DEBUG
+            fprintf(stderr, "[Gamescope WSI] Not bypassing: window 0x%x is parked under Wine dummy parent 0x%x.\n", window, *parent);
+#endif
+            return false;
+          }
+        }
+      }
+
+      auto largestObscuringWindowSize = xcb::getLargestObscuringChildWindowSize(connection, window);
+      auto toplevelWindow = xcb::getToplevelWindow(connection, window);
+      if (!largestObscuringWindowSize || !toplevelWindow) {
+        fprintf(stderr, "[Gamescope WSI] canBypassXWayland: failed to get window info for window 0x%x.\n", window);
+        return false;
+      }
 
       auto toplevelRect = xcb::getWindowRect(connection, *toplevelWindow);
       if (!toplevelRect) {
@@ -508,6 +541,7 @@ namespace GamescopeWSILayer {
     VkPresentModeKHR presentMode;
     VkExtent2D extent;
     uint32_t serverId = 0;
+    bool isHdrColorspace = false;
     bool retired = false;
 
     std::unique_ptr<std::mutex> presentTimingMutex = std::make_unique<std::mutex>();
@@ -793,7 +827,10 @@ namespace GamescopeWSILayer {
       const bool canBypass = gamescopeSurface->canBypassXWayland();
       VkSurfaceKHR selectedSurface = canBypass ? surface : gamescopeSurface->fallbackSurface;
 
-      if (!canBypass || !gamescopeSurface->shouldExposeHDR())
+      // HDR skips the Wine offscreen gate, so expose HDR formats whenever
+      // an HDR colorspace could bypass, even if SDR currently can't.
+      if (!gamescopeSurface->shouldExposeHDR() ||
+          !(canBypass || gamescopeSurface->canBypassXWayland(true)))
         return pDispatch->GetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, selectedSurface, pSurfaceFormatCount, pSurfaceFormats);
 
       return vkroots::helpers::append(
@@ -819,7 +856,10 @@ namespace GamescopeWSILayer {
       const bool canBypass = gamescopeSurface->canBypassXWayland();
       surfaceInfo.surface = canBypass ? surfaceInfo.surface : gamescopeSurface->fallbackSurface;
 
-      if (!canBypass || !gamescopeSurface->shouldExposeHDR())
+      // HDR skips the Wine offscreen gate, so expose HDR formats whenever
+      // an HDR colorspace could bypass, even if SDR currently can't.
+      if (!gamescopeSurface->shouldExposeHDR() ||
+          !(canBypass || gamescopeSurface->canBypassXWayland(true)))
         return pDispatch->GetPhysicalDeviceSurfaceFormats2KHR(physicalDevice, &surfaceInfo, pSurfaceFormatCount, pSurfaceFormats);
 
       return vkroots::helpers::append(
@@ -1115,7 +1155,11 @@ namespace GamescopeWSILayer {
         return pDispatch->CreateSwapchainKHR(device, pCreateInfo, pAllocator, pSwapchain);
       }
 
-      const bool canBypass = gamescopeSurface->canBypassXWayland();
+      // Only the colorspaces we expose in s_ExtraHDRSurfaceFormat2s count as
+      // HDR. Other non-sRGB colorspaces are still SDR content Wine can blit.
+      const bool hdrColorspace = pCreateInfo->imageColorSpace == VK_COLOR_SPACE_HDR10_ST2084_EXT ||
+                                  pCreateInfo->imageColorSpace == VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT;
+      const bool canBypass = gamescopeSurface->canBypassXWayland(hdrColorspace);
 
       VkSwapchainCreateInfoKHR swapchainInfo = *pCreateInfo;
 
@@ -1240,6 +1284,7 @@ namespace GamescopeWSILayer {
           .presentMode         = pCreateInfo->presentMode, // The new present mode.
           .extent              = pCreateInfo->imageExtent,
           .serverId            = serverId,
+          .isHdrColorspace     = hdrColorspace,
         });
         gamescopeSwapchain->pastPresentTimings.reserve(MaxPastPresentationTimes);
 
@@ -1430,7 +1475,7 @@ namespace GamescopeWSILayer {
             continue;
           }
 
-          const bool canBypass = gamescopeSurface->canBypassXWayland();
+          const bool canBypass = gamescopeSurface->canBypassXWayland(gamescopeSwapchain->isHdrColorspace);
           if (canBypass != gamescopeSwapchain->isBypassingXWayland) {
             if (canBypass) {
               if (!(gamescopeSurface->flags & GamescopeLayerClient::Flag::NoSuboptimal))
