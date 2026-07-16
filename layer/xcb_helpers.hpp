@@ -59,6 +59,61 @@ namespace xcb {
     return getPropertyValue<T>(connection, *atom);
   }
 
+  template <typename T>
+  static std::optional<T> getPropertyValue(xcb_connection_t* connection, xcb_window_t window, std::string_view name) {
+    static_assert(sizeof(T) % 4 == 0);
+
+    std::optional<xcb_atom_t> atom = getAtom(connection, name);
+    if (!atom)
+      return std::nullopt;
+
+    xcb_get_property_cookie_t cookie = xcb_get_property(connection, false, window, *atom, XCB_ATOM_CARDINAL, 0, sizeof(T) / sizeof(uint32_t));
+    auto reply = Reply<xcb_get_property_reply_t>{ xcb_get_property_reply(connection, cookie, nullptr) };
+    if (!reply) {
+      fprintf(stderr, "[Gamescope WSI] getPropertyValue: xcb_get_property failed for window 0x%x.\n", window);
+      return std::nullopt;
+    }
+
+    // An absent property is expected, eg. on non-Wine windows.
+    if (reply->type != XCB_ATOM_CARDINAL || xcb_get_property_value_length(reply.get()) < int(sizeof(T)))
+      return std::nullopt;
+
+    T value = *reinterpret_cast<const T *>(xcb_get_property_value(reply.get()));
+    return value;
+  }
+
+  static std::optional<xcb_window_t> getParentWindow(xcb_connection_t* connection, xcb_window_t window) {
+    xcb_query_tree_cookie_t cookie = xcb_query_tree(connection, window);
+    auto reply = Reply<xcb_query_tree_reply_t>{ xcb_query_tree_reply(connection, cookie, nullptr) };
+    if (!reply) {
+      fprintf(stderr, "[Gamescope WSI] getParentWindow: xcb_query_tree failed for window 0x%x.\n", window);
+      return std::nullopt;
+    }
+    if (reply->root == window || reply->parent == reply->root)
+      return std::nullopt;
+    return reply->parent;
+  }
+
+  static bool isOverrideRedirect(xcb_connection_t* connection, xcb_window_t window) {
+    xcb_get_window_attributes_cookie_t cookie = xcb_get_window_attributes(connection, window);
+    auto reply = Reply<xcb_get_window_attributes_reply_t>{ xcb_get_window_attributes_reply(connection, cookie, nullptr) };
+    if (!reply) {
+      fprintf(stderr, "[Gamescope WSI] isOverrideRedirect: xcb_get_window_attributes failed for window 0x%x.\n", window);
+      return false;
+    }
+    return reply->override_redirect;
+  }
+
+  static bool hasProperty(xcb_connection_t* connection, xcb_window_t window, xcb_atom_t atom) {
+    xcb_get_property_cookie_t cookie = xcb_get_property(connection, false, window, atom, XCB_GET_PROPERTY_TYPE_ANY, 0, 0);
+    auto reply = Reply<xcb_get_property_reply_t>{ xcb_get_property_reply(connection, cookie, nullptr) };
+    if (!reply) {
+      fprintf(stderr, "[Gamescope WSI] hasProperty: xcb_get_property failed for window 0x%x.\n", window);
+      return false;
+    }
+    return reply->type != XCB_NONE;
+  }
+
   static std::optional<xcb_window_t> getToplevelWindow(xcb_connection_t* connection, xcb_window_t window) {
     for (;;) {
       xcb_query_tree_cookie_t cookie = xcb_query_tree(connection, window);
