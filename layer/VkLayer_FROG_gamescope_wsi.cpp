@@ -504,6 +504,7 @@ namespace GamescopeWSILayer {
     VkSurfaceKHR surface; // Always the Gamescope Surface surface -- so the Wayland one.
     bool isWayland;
     bool isBypassingXWayland;
+    bool forcedBypass;
     bool forceFifo;
     VkPresentModeKHR presentMode;
     VkExtent2D extent;
@@ -1115,19 +1116,9 @@ namespace GamescopeWSILayer {
         return pDispatch->CreateSwapchainKHR(device, pCreateInfo, pAllocator, pSwapchain);
       }
 
-      const bool canBypass = gamescopeSurface->canBypassXWayland();
+      bool canBypass = gamescopeSurface->canBypassXWayland();
 
       VkSwapchainCreateInfoKHR swapchainInfo = *pCreateInfo;
-
-      if (pCreateInfo->oldSwapchain) {
-        if (auto gamescopeSwapchain = GamescopeSwapchain::get(pCreateInfo->oldSwapchain)) {
-          gamescopeSwapchain->retired = true;
-          // If we are going to/from being able to bypass XWayland, make sure
-          // we NULL out oldSwapchain, as they'll be for different surfaces and swapchain types.
-          if (gamescopeSwapchain->isBypassingXWayland != canBypass)
-            swapchainInfo.oldSwapchain = VK_NULL_HANDLE;
-        }
-      }
 
       if (gamescopeSurface->flags & GamescopeLayerClient::Flag::ForceSwapchainExtent) {
         if (!gamescopeSurface->isWayland()) {
@@ -1136,6 +1127,42 @@ namespace GamescopeWSILayer {
             return VK_ERROR_SURFACE_LOST_KHR;
 
           swapchainInfo.imageExtent = rect->extent;
+        }
+      }
+
+      auto isFormatSupportedOnSurface = [&](VkSurfaceKHR vkSurface, VkFormat format) {
+        std::vector<VkSurfaceFormatKHR> formats;
+        vkroots::helpers::enumerate(
+          pDispatch->pPhysicalDeviceDispatch->pInstanceDispatch->GetPhysicalDeviceSurfaceFormatsKHR,
+          formats,
+          pDispatch->PhysicalDevice,
+          vkSurface);
+        return std::ranges::any_of(
+          formats,
+          std::bind_front(std::equal_to{}, format),
+          &VkSurfaceFormatKHR::format);
+      };
+
+      // If bypass supports the format but the XCB fallback doesn't, force bypass.
+      // Refusing here would leave the app with no recovery path.
+      bool forcedBypass = false;
+      if (!canBypass
+          && !isFormatSupportedOnSurface(gamescopeSurface->fallbackSurface, pCreateInfo->imageFormat)
+          && isFormatSupportedOnSurface(pCreateInfo->surface, pCreateInfo->imageFormat)) {
+        fprintf(stderr, "[Gamescope WSI] Forcing bypass (format unsupported on fallback) for xid: 0x%0x - format: %s\n",
+          gamescopeSurface->window,
+          vkroots::helpers::enumString(pCreateInfo->imageFormat));
+        canBypass = true;
+        forcedBypass = true;
+      }
+
+      if (pCreateInfo->oldSwapchain) {
+        if (auto gamescopeSwapchain = GamescopeSwapchain::get(pCreateInfo->oldSwapchain)) {
+          gamescopeSwapchain->retired = true;
+          // If we are going to/from being able to bypass XWayland, make sure
+          // we NULL out oldSwapchain, as they'll be for different surfaces and swapchain types.
+          if (gamescopeSwapchain->isBypassingXWayland != canBypass)
+            swapchainInfo.oldSwapchain = VK_NULL_HANDLE;
         }
       }
 
@@ -1179,28 +1206,14 @@ namespace GamescopeWSILayer {
 
       // Check for VkFormat support and return VK_ERROR_INITIALIZATION_FAILED
       // if that VkFormat is unsupported for the underlying surface.
-      {
-        std::vector<VkSurfaceFormatKHR> supportedSurfaceFormats;
-        vkroots::helpers::enumerate(
-          pDispatch->pPhysicalDeviceDispatch->pInstanceDispatch->GetPhysicalDeviceSurfaceFormatsKHR,
-          supportedSurfaceFormats,
-          pDispatch->PhysicalDevice,
-          swapchainInfo.surface);
+      if (!isFormatSupportedOnSurface(swapchainInfo.surface, swapchainInfo.imageFormat)) {
+        fprintf(stderr, "[Gamescope WSI] Refusing to make swapchain (unsupported VkFormat) for xid: 0x%0x - format: %s - colorspace: %s - flip: %s\n",
+          gamescopeSurface->window,
+          vkroots::helpers::enumString(pCreateInfo->imageFormat),
+          vkroots::helpers::enumString(pCreateInfo->imageColorSpace),
+          canBypass ? "true" : "false");
 
-        bool supportedSwapchainFormat = std::ranges::any_of(
-          supportedSurfaceFormats,
-          std::bind_front(std::equal_to{}, swapchainInfo.imageFormat),
-          &VkSurfaceFormatKHR::format)  ;
-
-        if (!supportedSwapchainFormat) {
-          fprintf(stderr, "[Gamescope WSI] Refusing to make swapchain (unsupported VkFormat) for xid: 0x%0x - format: %s - colorspace: %s - flip: %s\n",
-            gamescopeSurface->window,
-            vkroots::helpers::enumString(pCreateInfo->imageFormat),
-            vkroots::helpers::enumString(pCreateInfo->imageColorSpace),
-            canBypass ? "true" : "false");
-
-          return VK_ERROR_INITIALIZATION_FAILED;
-        }
+        return VK_ERROR_INITIALIZATION_FAILED;
       }
 
       uint32_t serverId = ~0u;
@@ -1236,6 +1249,7 @@ namespace GamescopeWSILayer {
           .surface             = pCreateInfo->surface, // Always the Wayland side surface.
           .isWayland           = gamescopeSurface->isWayland(),
           .isBypassingXWayland = canBypass,
+          .forcedBypass        = forcedBypass,
           .forceFifo           = gamescopeIsForcingFifo(), // Were we forcing fifo when this swapchain was made?
           .presentMode         = pCreateInfo->presentMode, // The new present mode.
           .extent              = pCreateInfo->imageExtent,
@@ -1435,8 +1449,10 @@ namespace GamescopeWSILayer {
             if (canBypass) {
               if (!(gamescopeSurface->flags & GamescopeLayerClient::Flag::NoSuboptimal))
                 UpdateSwapchainResult(VK_SUBOPTIMAL_KHR);
-            } else {
-              UpdateSwapchainResult(VK_ERROR_OUT_OF_DATE_KHR);  
+            } else if (!gamescopeSwapchain->forcedBypass) {
+              // A forced-bypass swapchain has no fallback path; recreating
+              // would re-force bypass and loop.
+              UpdateSwapchainResult(VK_ERROR_OUT_OF_DATE_KHR);
             }
           }
 
