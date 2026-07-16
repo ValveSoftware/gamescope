@@ -470,11 +470,7 @@ namespace GamescopeWSILayer {
       //
       // Some games like Halo Infinite, make a child window that is 1280x802px
       // I have no idea how that happens, or whether its an app or Wine bug or not.
-      //
-      // Ignore a 1x1 toplevel: winex11 represents an empty window rect as
-      // a 1x1 X window, so it's not a real size to validate against.
-      if (*toplevelWindow != window &&
-          (toplevelRect->extent.width > 1 || toplevelRect->extent.height > 1)) {
+      if (*toplevelWindow != window) {
         if (iabs(rect->offset.x) > 1 ||
             iabs(rect->offset.y) > 1 ||
             iabs(int32_t(toplevelRect->extent.width)  - int32_t(rect->extent.width)) > 2 ||
