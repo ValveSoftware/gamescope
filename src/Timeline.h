@@ -7,7 +7,7 @@
 
 #include "Utils/NonCopyable.h"
 
-struct VulkanTimelineSemaphore_t;
+struct VulkanSemaphore_t;
 
 namespace gamescope
 {
@@ -28,8 +28,8 @@ namespace gamescope
         static std::shared_ptr<CTimeline> Create( const TimelineCreateDesc_t &desc = {} );
 
         // Inherits nSyncobjFd's ref.
-        CTimeline( int32_t nSyncobjFd, std::shared_ptr<VulkanTimelineSemaphore_t> pSemaphore = nullptr );
-        CTimeline( int32_t nSyncobjFd, uint32_t uSyncobjHandle, std::shared_ptr<VulkanTimelineSemaphore_t> pSemaphore = nullptr );
+        CTimeline( int32_t nSyncobjFd );
+        CTimeline( int32_t nSyncobjFd, uint32_t uSyncobjHandle );
 
         CTimeline( CTimeline &&other )
             : m_nSyncobjFd{ std::exchange( other.m_nSyncobjFd, -1 ) }
@@ -44,14 +44,11 @@ namespace gamescope
 
         int32_t GetSyncobjFd() const { return m_nSyncobjFd; }
         uint32_t GetSyncobjHandle() const { return m_uSyncobjHandle; }
+        bool ImportSyncFd( int nSyncFd, uint64_t ulPoint );
 
-        std::shared_ptr<VulkanTimelineSemaphore_t> ToVkSemaphore();
-        
     private:
         int32_t m_nSyncobjFd = -1;
         uint32_t m_uSyncobjHandle = 0;
-
-        std::shared_ptr<VulkanTimelineSemaphore_t> m_pVkSemaphore;
     };
 
     template <TimelinePointType Type>
@@ -75,6 +72,9 @@ namespace gamescope
         bool Wait( int64_t lTimeout = std::numeric_limits<int64_t>::max() );
 
         std::pair<int32_t, bool> CreateEventFd();
+
+        std::shared_ptr<VulkanSemaphore_t> ToVkSemaphore();
+
     private:
 
         std::shared_ptr<CTimeline> m_pTimeline;
