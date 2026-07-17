@@ -3,6 +3,7 @@
 #include <X11/Xlib.h>
 
 #include <cstdio>
+#include <format>
 #include <thread>
 #include <mutex>
 #include <vector>
@@ -116,6 +117,7 @@ const struct option *gamescope_options = (struct option[]){
 
 	// wlserver options
 	{ "xwayland-count", required_argument, nullptr, 0 },
+	{ "xwayland-force-touch-pointer-emulation", no_argument, nullptr, 0 },
 
 	// steamcompmgr options
 	{ "cursor", required_argument, nullptr, 0 },
@@ -318,6 +320,7 @@ gamescope::GamescopeModeGeneration g_eGamescopeModeGeneration = gamescope::GAMES
 bool g_bBorderlessOutputWindow = false;
 
 int g_nXWaylandCount = 1;
+bool g_bNoTouchPointerEmulation = true;
 
 float g_flMaxWindowScale = FLT_MAX;
 
@@ -700,6 +703,8 @@ bool g_bRt = false;
 int g_argc;
 char **g_argv;
 
+extern char **environ;
+
 int main(int argc, char **argv)
 {
 	g_argc = argc;
@@ -782,6 +787,8 @@ int main(int argc, char **argv)
 					g_bForceDisableColorMgmt = true;
 				} else if (strcmp(opt_name, "xwayland-count") == 0) {
 					g_nXWaylandCount = parse_integer( optarg, opt_name );
+				} else if (strcmp(opt_name, "xwayland-force-touch-pointer-emulation") == 0) {
+					g_bNoTouchPointerEmulation = false;
 				} else if (strcmp(opt_name, "composite-debug") == 0) {
 					cv_composite_debug |= CompositeDebugFlag::Markers;
 					cv_composite_debug |= CompositeDebugFlag::PlaneBorders;
@@ -872,6 +879,31 @@ int main(int argc, char **argv)
 	{
 		gamescope::CScriptScopedLock script;
 		script.Manager().RunDefaultScripts();
+
+		// Allow overriding the value of any ConVar with a suitably named environment variable
+		// (gamescope_ConVar_name=override_value). This takes precedence over the ConVar's
+		// default value and over values assigned by default scripts.
+		char **s = environ;
+		const char *prefix = "gamescope_";
+		size_t prefix_len = strlen( prefix );
+		for ( ; *s; s++ )
+		{
+			char *envvar = strdup( *s );
+			if ( strncmp( envvar, prefix, prefix_len ) == 0 ) {
+				std::string_view name( strtok( envvar, "=" ) + prefix_len );
+				if ( ! name.empty() )
+				{
+					std::string_view value( strtok( nullptr, "=" ) );
+					if ( script.Manager().Gamescope().Convars.Base[name].valid() )
+					{
+						auto override_script = std::format( "gamescope.convars.{}.value = {}", name, value );
+						console_log.infof( "Overriding from environment variable: %s", override_script.c_str() );
+						script->script( override_script );
+					}
+				}
+			}
+			free( envvar );
+		}
 	}
 
 	XInitThreads();
@@ -879,6 +911,14 @@ int main(int argc, char **argv)
 
 	g_pOriginalDisplay = getenv("DISPLAY");
 	g_pOriginalWaylandDisplay = getenv("WAYLAND_DISPLAY");
+
+	// Allow overriding the selected backend (even the backend
+	// requested on the command line) in a startup script.
+	auto backendOverride = parse_backend_name( gamescope::cv_backend.Get().c_str() );
+	if ( backendOverride != gamescope::GamescopeBackend::Auto )
+	{
+		eCurrentBackend = backendOverride;
+	}
 
 	if ( eCurrentBackend == gamescope::GamescopeBackend::Auto )
 	{

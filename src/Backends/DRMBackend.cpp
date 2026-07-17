@@ -22,6 +22,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -168,6 +169,14 @@ bool drm_set_mode( struct drm_t *drm, const drmModeModeInfo *mode );
 using namespace std::literals;
 
 struct drm_t g_DRM = {};
+
+// Flip handler thread control. Keep the thread object global so we
+// can join it during shutdown instead of detaching and risking the
+// thread still using the DRM fd while we clean up.
+static std::thread g_page_flip_handler_thread;
+static std::atomic<bool> g_page_flip_handler_thread_should_exit{false};
+
+static int g_page_flip_pipe_fds[2] = { -1, -1 };
 
 namespace gamescope
 {
@@ -393,6 +402,12 @@ namespace gamescope
 		const displaycolorimetry_t& GetDisplayColorimetry() const { return m_Mutable.DisplayColorimetry; }
 
 		std::span<const uint8_t> GetRawEDID() const override { return std::span<const uint8_t>{ m_Mutable.EdidData.begin(), m_Mutable.EdidData.end() }; }
+		bool HandleEdidChange()
+		{
+			bool bChanged = m_Mutable.bEdidChanged;
+			m_Mutable.bEdidChanged = false;
+			return bChanged;
+		}
 
 		bool SupportsHDR10() const
 		{
@@ -510,9 +525,11 @@ namespace gamescope
 			std::vector<uint32_t> ValidDynamicRefreshRates{};
 			std::vector<uint8_t> EdidData; // Raw, unmodified.
 			std::vector<BackendMode> BackendModes;
-
+			
 			displaycolorimetry_t DisplayColorimetry = displaycolorimetry_709;
 			BackendConnectorHDRInfo HDR;
+
+			bool bEdidChanged = false;
 		} m_Mutable;
 
 		GamescopePanelOrientation m_ChosenOrientation = GAMESCOPE_PANEL_ORIENTATION_AUTO;
@@ -777,25 +794,44 @@ void flip_handler_thread_run(void)
 {
 	pthread_setname_np( pthread_self(), "gamescope-kms" );
 
-	struct pollfd pollfd = {
-		.fd = g_DRM.fd,
-		.events = POLLIN,
-	};
+	// Prepare pollfds: one for DRM fd and one for the pipe read end to
+	// detect when the write end is closed (POLLHUP) to exit.
+	struct pollfd fds[2];
+	int nfds = 0;
 
-	while ( true )
+	fds[nfds].fd = g_DRM.fd;
+	fds[nfds].events = POLLIN;
+	nfds++;
+
+	fds[nfds].fd = g_page_flip_pipe_fds[0];
+	fds[nfds].events = POLLIN;
+	nfds++;
+
+	while ( !g_page_flip_handler_thread_should_exit.load( std::memory_order_acquire ) )
 	{
-		int ret = poll( &pollfd, 1, -1 );
+		int ret = poll( fds, nfds, -1 );
 		if ( ret < 0 ) {
+			if ( errno == EINTR )
+				continue;
 			drm_log.errorf_errno( "polling for DRM events failed" );
 			break;
 		}
 
-		drmEventContext evctx = {
-			.version = 3,
-			.page_flip_handler2 = page_flip_handler,
-		};
-		drmHandleEvent(g_DRM.fd, &evctx);
+		// Check if the pipe read end got POLLHUP (write end closed) to exit.
+		if ( fds[1].revents & (POLLIN | POLLHUP) ) {
+			break;
+		}
+
+		if ( (fds[0].revents & POLLIN) ) {
+			drmEventContext evctx = {
+				.version = 3,
+				.page_flip_handler2 = page_flip_handler,
+			};
+			drmHandleEvent( g_DRM.fd, &evctx );
+		}
 	}
+
+	drm_log.debugf("page_flip_handler_thread exiting");
 }
 
 static bool refresh_state( drm_t *drm )
@@ -1045,6 +1081,16 @@ static bool setup_best_connector(struct drm_t *drm, bool force, bool initial)
 		{
 			best = pConnector;
 			nBestPriority = nPriority;
+		}
+	}
+
+	if ( best && best == drm->pConnector )
+	{
+		// If the device's EDID changed from user us, force a mode-change
+		// as we might
+		if ( best->HandleEdidChange() )
+		{
+			force = true;
 		}
 	}
 
@@ -1379,8 +1425,14 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 		}
 	}
 
-	std::thread flip_handler_thread( flip_handler_thread_run );
-	flip_handler_thread.detach();
+	// Create a pipe to wake the flip handler poll for immediate exit.
+	// Closing the write end will cause the read end to get POLLHUP.
+	if ( pipe2( g_page_flip_pipe_fds, O_CLOEXEC ) != 0 ) {
+		drm_log.errorf_errno( "page-flip pipe creation failed" );
+		return false;
+	}
+
+	g_page_flip_handler_thread = std::thread( flip_handler_thread_run );
 
 	// Set log priority to the max, liftoff_log_scope will filter for us.
 	liftoff_log_set_priority(LIFTOFF_DEBUG);
@@ -1551,9 +1603,23 @@ void finish_drm(struct drm_t *drm)
 	drm->connectors.clear();
 
 
+	// Signal the page-flip handler thread to exit and join it so it won't be
+	// using the DRM fd while we clean it up. Closing the pipe write end
+	// causes the read end to get POLLHUP, waking the thread.
+	if ( g_page_flip_handler_thread.joinable() ) {
+		g_page_flip_handler_thread_should_exit.store( true, std::memory_order_release );
 
-	// We can't close the DRM FD here, it might still be in use by the
-	// page-flip handler thread.
+		close( g_page_flip_pipe_fds[1] );
+		g_page_flip_pipe_fds[1] = -1;
+
+		g_page_flip_handler_thread.join();
+
+		close( g_page_flip_pipe_fds[0] );
+		g_page_flip_pipe_fds[0] = -1;
+	}
+
+	wlsession_close_kms();
+	g_DRM.fd = -1;
 }
 
 gamescope::OwningRc<gamescope::IBackendFb> drm_fbid_from_dmabuf( struct drm_t *drm, struct wlr_dmabuf_attributes *dma_buf )
@@ -2122,6 +2188,9 @@ namespace gamescope
 			return a.vrefresh > b.vrefresh;
 		} );
 
+		std::vector<uint8_t> oldEdid = std::move( m_Mutable.EdidData );
+		m_Mutable.EdidData.clear();
+
 		// Clear this information out.
 		m_Mutable = MutableConnectorState{};
 
@@ -2160,6 +2229,11 @@ namespace gamescope
 		}
 
 		ParseEDID();
+
+		if ( m_Mutable.EdidData != oldEdid )
+		{
+			m_Mutable.bEdidChanged = true;
+		}
 	}
 
 	int CDRMConnector::Present( const FrameInfo_t *pFrameInfo, bool bAsync )
@@ -2561,7 +2635,7 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 		if ( i < frameInfo->layerCount )
 		{
 			const FrameInfo_t::Layer_t *pLayer = &frameInfo->layers[ i ];
-			gamescope::CDRMFb *pDrmFb = static_cast<gamescope::CDRMFb *>( (pLayer->tex && pLayer->tex->GetBackendFb()) ? pLayer->tex->GetBackendFb()->Unwrap() : nullptr );
+			gamescope::CDRMFb *pDrmFb = static_cast<gamescope::CDRMFb *>( (pLayer->tex && pLayer->tex->GetBackendFb()) ? pLayer->tex->GetBackendFb()->EnsureImported() : nullptr );
 
 			if ( pDrmFb == nullptr )
 			{
@@ -2984,6 +3058,17 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 		{
 			drm->pCRTC->GetProperties().ACTIVE->SetPendingValue( drm->req, 1u, true );
 			drm->pCRTC->GetProperties().MODE_ID->SetPendingValue( drm->req, drm->pending.mode_id ? drm->pending.mode_id->GetBlobValue() : 0lu, true );
+
+			// Clear color properties inherited from a previous DRM master (i.e. KDE's
+			// night light).
+			if ( drm->pCRTC->GetProperties().GAMMA_LUT )
+				drm->pCRTC->GetProperties().GAMMA_LUT->SetPendingValue( drm->req, 0, true );
+
+			if ( drm->pCRTC->GetProperties().DEGAMMA_LUT )
+				drm->pCRTC->GetProperties().DEGAMMA_LUT->SetPendingValue( drm->req, 0, true );
+
+			if ( drm->pCRTC->GetProperties().CTM )
+				drm->pCRTC->GetProperties().CTM->SetPendingValue( drm->req, 0, true );
 
 			if ( drm->pCRTC->GetProperties().VRR_ENABLED )
 				drm->pCRTC->GetProperties().VRR_ENABLED->SetPendingValue( drm->req, bVRREnabled, true );
@@ -3426,7 +3511,7 @@ namespace gamescope
         }
 		virtual bool ValidPhysicalDevice( VkPhysicalDevice pVkPhysicalDevice ) const override
 		{
-			return true;
+			return vulkan_has_drm_props();
 		}
 
 		virtual int Present( const FrameInfo_t *pFrameInfo, bool bAsync )
@@ -3485,11 +3570,16 @@ namespace gamescope
 			bool bDoComposite = true;
 			if ( !bNeedsFullComposite && !bWantsPartialComposite )
 			{
+				// Save the pending mode so it can be restored after drm_rollback() and carried
+				// over to the composite path
+				std::shared_ptr<gamescope::BackendBlob> pPendingModeId = g_DRM.pending.mode_id;
 				int ret = drm_prepare( &g_DRM, bAsync, pFrameInfo );
 				if ( ret == 0 )
 					bDoComposite = false;
 				else if ( ret == -EACCES )
 					return 0;
+				else if ( g_DRM.needs_modeset )
+					g_DRM.pending.mode_id = pPendingModeId;
 			}
 
 			// Update to let the vblank manager know we are currently compositing.
@@ -3498,7 +3588,7 @@ namespace gamescope
 			if ( !bDoComposite )
 			{
 				// Scanout + Planes Path
-				m_bWasPartialCompsiting = false;
+				m_bWasPartialCompositing = false;
 				m_bWasCompositing = false;
 				if ( pFrameInfo->layerCount == 2 )
 					m_nLastSingleOverlayZPos = pFrameInfo->layers[1].zpos;
@@ -3549,7 +3639,7 @@ namespace gamescope
 			// We were already stalling for the full composition before, so it's not an issue
 			// for latency, we just need to make sure we get 1 partial frame that isn't deferred
 			// in time so we don't lose layers.
-			bool bDefer = !bNeedsFullComposite && ( !m_bWasCompositing || m_bWasPartialCompsiting );
+			bool bDefer = !bNeedsFullComposite && ( !m_bWasCompositing || m_bWasPartialCompositing );
 
 			// If doing a partial composition then remove the baseplane
 			// from our frameinfo to composite.
@@ -3608,11 +3698,11 @@ namespace gamescope
 				baseLayer->ctm = nullptr;
 				baseLayer->colorspace = pFrameInfo->outputEncodingEOTF == EOTF_PQ ? GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ : GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB;
 
-				m_bWasPartialCompsiting = false;
+				m_bWasPartialCompositing = false;
 			}
 			else
 			{
-				if ( m_bWasPartialCompsiting || !bDefer )
+				if ( m_bWasPartialCompositing || !bDefer )
 				{
 					presentCompFrameInfo.applyOutputColorMgmt = g_ColorMgmt.pending.enabled;
 					presentCompFrameInfo.layerCount = 2;
@@ -3665,7 +3755,7 @@ namespace gamescope
 					}
 				}
 
-				m_bWasPartialCompsiting = true;
+				m_bWasPartialCompositing = true;
 			}
 
 			int ret = drm_prepare( &g_DRM, bAsync, &presentCompFrameInfo );
@@ -3868,7 +3958,7 @@ namespace gamescope
 
 	private:
 		bool m_bWasCompositing = false;
-		bool m_bWasPartialCompsiting = false;
+		bool m_bWasPartialCompositing = false;
 		int m_nLastSingleOverlayZPos = 0;
 
 		uint32_t m_uNextPresentCtx = 0;

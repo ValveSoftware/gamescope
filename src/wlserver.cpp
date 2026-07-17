@@ -44,6 +44,7 @@
 #include <wlr/types/wlr_relative_pointer_v1.h>
 #include <wlr/types/wlr_pointer_constraints_v1.h>
 #include <wlr/types/wlr_layer_shell_v1.h>
+#include <wlr/types/wlr_data_device.h>
 #include <wlr/util/region.h>
 #include "wlr_end.hpp"
 
@@ -475,6 +476,29 @@ static void wlserver_handle_touch_motion(struct wl_listener *listener, void *dat
 	wlserver_touchmotion( event->x, event->y, event->touch_id, event->time_msec, false, touch->connector );
 }
 
+static void wlserver_handle_pointer_destroy(struct wl_listener *listener, void *data)
+{
+	struct wlserver_pointer *pointer = wl_container_of( listener, pointer, destroy );
+
+	wl_list_remove( &pointer->motion.link );
+	wl_list_remove( &pointer->button.link );
+	wl_list_remove( &pointer->axis.link );
+	wl_list_remove( &pointer->frame.link );
+	wl_list_remove( &pointer->destroy.link );
+	free( pointer );
+}
+
+static void wlserver_handle_touch_destroy(struct wl_listener *listener, void *data)
+{
+	struct wlserver_touch *touch = wl_container_of( listener, touch, destroy );
+
+	wl_list_remove( &touch->down.link );
+	wl_list_remove( &touch->up.link );
+	wl_list_remove( &touch->motion.link );
+	wl_list_remove( &touch->destroy.link );
+	free( touch );
+}
+
 static void wlserver_new_input(struct wl_listener *listener, void *data)
 {
 	struct wlr_input_device *device = (struct wlr_input_device *) data;
@@ -504,7 +528,7 @@ static void wlserver_new_input(struct wl_listener *listener, void *data)
 		{
 			struct wlserver_pointer *pointer = (struct wlserver_pointer *) calloc( 1, sizeof( struct wlserver_pointer ) );
 
-			pointer->wlr = (struct wlr_pointer *)device;
+			pointer->wlr = wlr_pointer_from_input_device( device );
 
 			pointer->motion.notify = wlserver_handle_pointer_motion;
 			wl_signal_add( &pointer->wlr->events.motion, &pointer->motion );
@@ -514,13 +538,15 @@ static void wlserver_new_input(struct wl_listener *listener, void *data)
 			wl_signal_add( &pointer->wlr->events.axis, &pointer->axis);
 			pointer->frame.notify = wlserver_handle_pointer_frame;
 			wl_signal_add( &pointer->wlr->events.frame, &pointer->frame);
+			pointer->destroy.notify = wlserver_handle_pointer_destroy;
+			wl_signal_add( &device->events.destroy, &pointer->destroy);
 		}
 		break;
 		case WLR_INPUT_DEVICE_TOUCH:
 		{
 			struct wlserver_touch *touch = (struct wlserver_touch *) calloc( 1, sizeof( struct wlserver_touch ) );
 
-			touch->wlr = (struct wlr_touch *)device;
+			touch->wlr = wlr_touch_from_input_device( device );
 
 			touch->down.notify = wlserver_handle_touch_down;
 			wl_signal_add( &touch->wlr->events.down, &touch->down );
@@ -528,6 +554,8 @@ static void wlserver_new_input(struct wl_listener *listener, void *data)
 			wl_signal_add( &touch->wlr->events.up, &touch->up );
 			touch->motion.notify = wlserver_handle_touch_motion;
 			wl_signal_add( &touch->wlr->events.motion, &touch->motion );
+			touch->destroy.notify = wlserver_handle_touch_destroy;
+			wl_signal_add( &device->events.destroy, &touch->destroy);
 
 			wlserver_touch_associate_connector( touch );
 		}
@@ -610,6 +638,9 @@ static void handle_wl_surface_destroy( struct wl_listener *l, void *data )
 		wl_resource_set_user_data( pSwapchain, nullptr );
 	}
 
+	wl_list_remove( &surf->commit.link );
+	wl_list_remove( &surf->destroy.link );
+
 	delete surf;
 }
 
@@ -684,6 +715,19 @@ void gamescope_xwayland_server_t::destroy_content_override( struct wlserver_x11_
 		destroy_content_override(iter->second);
 }
 
+void gamescope_xwayland_server_t::clear_content_override_swapchain( struct wl_resource *gamescope_swapchain_resource )
+{
+	for ( auto &iter : content_overrides )
+	{
+		if ( iter.second->gamescope_swapchain == gamescope_swapchain_resource )
+		{
+#ifdef GAMESCOPE_SWAPCHAIN_DEBUG
+			wl_log.infof( "clear_content_override_swapchain swapchain: %p co: %p", gamescope_swapchain_resource, iter.second );
+#endif
+			iter.second->gamescope_swapchain = nullptr;
+		}
+	}
+}
 
 static void content_override_handle_surface_destroy( struct wl_listener *listener, void *data )
 {
@@ -858,6 +902,10 @@ static void gamescope_swapchain_handle_resource_destroy( struct wl_resource *res
 #ifdef GAMESCOPE_SWAPCHAIN_DEBUG
 	wl_log.infof( "gamescope_swapchain_handle_resource_destroy swapchain: %p", resource );
 #endif
+	gamescope_xwayland_server_t *server = NULL;
+	for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
+		server->clear_content_override_swapchain( resource );
+
 	wlserver_wl_surface_info *wl_surface_info = (wlserver_wl_surface_info *)wl_resource_get_user_data( resource );
 	if ( wl_surface_info )
 	{
@@ -1702,16 +1750,20 @@ int wlsession_open_kms( const char *device_name ) {
 		}
 	}
 
-	struct wl_listener *listener = new wl_listener();
-	listener->notify = kms_device_handle_change;
-	wl_signal_add( &wlserver.wlr.device->events.change, listener );
+	wlserver.wlr.device_change_listener.notify = kms_device_handle_change;
+	wl_signal_add( &wlserver.wlr.device->events.change, &wlserver.wlr.device_change_listener );
 
 	return wlserver.wlr.device->fd;
 }
 
 void wlsession_close_kms()
 {
+	if ( wlserver.wlr.device )
+	{
+		wl_list_remove( &wlserver.wlr.device_change_listener.link );
+	}
 	wlr_session_close_file( wlserver.wlr.session, wlserver.wlr.device );
+	wlserver.wlr.device = nullptr;
 }
 
 #endif
@@ -1723,7 +1775,7 @@ gamescope_xwayland_server_t::gamescope_xwayland_server_t(wl_display *display, in
 	struct wlr_xwayland_server_options xwayland_options = {
 		.lazy = false,
 		.enable_wm = false,
-		.no_touch_pointer_emulation = true,
+		.no_touch_pointer_emulation = g_bNoTouchPointerEmulation,
 		.force_xrandr_emulation = true,
 	};
 	xwayland_server = wlr_xwayland_server_create(display, &xwayland_options);
@@ -1772,6 +1824,8 @@ gamescope_xwayland_server_t::~gamescope_xwayland_server_t()
 		free( co.second );
 	}
 	content_overrides.clear();
+
+	wl_list_remove(&xwayland_ready_listener.link);
 
 	wlr_xwayland_server_destroy(xwayland_server);
 	xwayland_server = nullptr;
@@ -2038,6 +2092,8 @@ bool wlserver_init( void ) {
 	wlserver.new_pointer_constraint.notify = handle_pointer_constraint;
 	wl_signal_add(&wlserver.constraints->events.new_constraint, &wlserver.new_pointer_constraint);
 
+	wlr_data_device_manager_create(wlserver.display);
+
 	wlserver.xdg_shell = wlr_xdg_shell_create(wlserver.display, 3);
 	if (!wlserver.xdg_shell)
 	{
@@ -2080,7 +2136,11 @@ bool wlserver_init( void ) {
 
 	wl_log.infof("Running compositor on wayland display '%s'", wlserver.wl_display_name);
 
-	if (!wlr_backend_start( wlserver.wlr.multi_backend ))
+	wlserver_lock();
+	bool bBackendStarted = wlr_backend_start( wlserver.wlr.multi_backend );
+	wlserver_unlock();
+
+	if (!bBackendStarted)
 	{
 		wl_log.errorf("Failed to start backend");
 		wlr_backend_destroy( wlserver.wlr.multi_backend );
@@ -2122,8 +2182,11 @@ bool wlserver_init( void ) {
 	for (size_t i = 0; i < wlserver.wlr.xwayland_servers.size(); i++)
 	{
 		while (!wlserver.wlr.xwayland_servers[i]->is_xwayland_ready()) {
+			wlserver_lock();
 			wl_display_flush_clients(wlserver.display);
-			if (wl_event_loop_dispatch(wlserver.event_loop, -1) < 0) {
+			int ret = wl_event_loop_dispatch(wlserver.event_loop, -1);
+			wlserver_unlock();
+			if (ret < 0) {
 				wl_log.errorf("wl_event_loop_dispatch failed\n");
 				return false;
 			}
@@ -2240,6 +2303,19 @@ void wlserver_run(void)
 	// wlroots will restart it automatically.
 	wlserver_lock();
 	wlserver.wlr.xwayland_servers.clear();
+
+	wl_list_remove( &new_surface_listener.link );
+	wl_list_remove( &new_input_listener.link );
+	wl_list_remove( &wlserver.new_pointer_constraint.link );
+	wl_list_remove( &wlserver.new_xdg_surface.link );
+	wl_list_remove( &wlserver.new_xdg_toplevel.link );
+	wl_list_remove( &wlserver.new_layer_shell_surface.link );
+
+#if HAVE_SESSION
+	if ( wlserver.wlr.session )
+		wl_list_remove( &wlserver.session_active.link );
+#endif
+
 	wl_display_destroy_clients(wlserver.display);
 	wl_display_destroy(wlserver.display);
     wlserver.display = NULL;
@@ -2653,6 +2729,10 @@ static bool wlserver_apply_constraint( double *dx, double *dy )
 		if ( pConstraint->type == WLR_POINTER_CONSTRAINT_V1_LOCKED )
 			return false;
 
+		// wlroots >= 0.19 leaves constraint->region empty until the first commit after a regionless confine
+		if ( pixman_region32_empty( &wlserver.confine ) )
+			return true;
+
 		double sx = wlserver.mouse_surface_cursorx;
 		double sy = wlserver.mouse_surface_cursory;
 
@@ -2844,7 +2924,10 @@ void wlserver_touchmotion( double x, double y, int touch_id, uint32_t time, bool
 		double tx = x;
 		double ty = y;
 
-		apply_touchscreen_orientation((connector ? connector : GetBackend()->GetCurrentConnector())->GetCurrentOrientation(), &tx, &ty);
+		if ( connector )
+		{
+			apply_touchscreen_orientation(connector->GetCurrentOrientation(), &tx, &ty);
+		}
 
 		tx *= g_nOutputWidth;
 		ty *= g_nOutputHeight;
@@ -2899,7 +2982,10 @@ void wlserver_touchdown( double x, double y, int touch_id, uint32_t time, gamesc
 		double tx = x;
 		double ty = y;
 
-		apply_touchscreen_orientation((connector ? connector : GetBackend()->GetCurrentConnector())->GetCurrentOrientation(), &tx, &ty);
+		if ( connector )
+		{
+			apply_touchscreen_orientation(connector->GetCurrentOrientation(), &tx, &ty);
+		}
 
 		tx *= g_nOutputWidth;
 		ty *= g_nOutputHeight;

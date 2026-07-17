@@ -4,6 +4,7 @@
 
 #include "reshade_effect_manager.hpp"
 #include "log.hpp"
+#include "Utils/DirHelpers.h"
 
 #include "steamcompmgr.hpp"
 
@@ -13,17 +14,12 @@
 #include "gamescope-reshade-protocol.h"
 
 #include "reshade_api_format.hpp"
-#include "convar.h"
 
 #include <stb_image.h>
 #define STB_IMAGE_RESIZE_IMPLEMENTATION
 #include <stb_image_resize.h>
 
 #include <mutex>
-#include <unistd.h>
-#include <sys/types.h>
-#include <pwd.h>
-#include <iostream>
 
 // This is based on wl_array_for_each from `wayland-util.h` in the Wayland client library.
 #define uint8_array_for_each(pos, data, size) \
@@ -35,31 +31,6 @@ static auto g_runtimeUniforms = std::unordered_map<std::string, uint8_t*>();
 static std::mutex g_runtimeUniformsMutex;
 
 extern int g_nOutputRefresh;
-
-const char *homedir;
-
-std::string_view GetHomeDir()
-{
-    static std::string s_sHomeDir = []() -> std::string
-    {
-        const char *pszHomeDir = getenv( "HOME" );
-        if ( pszHomeDir )
-            return pszHomeDir;
-
-        return getpwuid( getuid() )->pw_dir;
-    }();
-    return s_sHomeDir;
-}
-
-static std::string GetLocalUsrDir()
-{
-    return std::string{ GetHomeDir() } + "/.local";
-}
-
-static std::string GetUsrDir()
-{
-    return "/usr";
-}
 
 static LogScope reshade_log("gamescope_reshade");
 
@@ -967,8 +938,8 @@ bool ReshadeEffectPipeline::init(CVulkanDevice *device, const ReshadeEffectKey &
 
     std::string gamescope_reshade_share_path = "/share/gamescope/reshade";
 
-    std::string local_reshade_path = GetLocalUsrDir() + gamescope_reshade_share_path;
-    std::string global_reshade_path = GetUsrDir() + gamescope_reshade_share_path;
+    std::string local_reshade_path = gamescope::GetLocalUsrDir() + gamescope_reshade_share_path;
+    std::string global_reshade_path = gamescope::GetUsrDir() + gamescope_reshade_share_path;
 
     pp.add_include_path(local_reshade_path + "/Shaders");
 	pp.add_include_path(global_reshade_path + "/Shaders");

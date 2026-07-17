@@ -9,7 +9,6 @@
 #include <algorithm>
 #include <array>
 #include <bitset>
-#include <thread>
 #include <dlfcn.h>
 #include "vulkan_include.h"
 #include "Utils/Algorithm.h"
@@ -317,8 +316,7 @@ bool CVulkanDevice::BInit(VkInstance instance, VkSurfaceKHR surface)
 
 	m_bInitialized = true;
 
-	std::thread piplelineThread([this](){compileAllPipelines();});
-	piplelineThread.detach();
+	m_pipelineThread = std::jthread([this](std::stop_token st){compileAllPipelines(st);});
 
 	g_reshadeManager.init(this);
 
@@ -431,46 +429,41 @@ bool CVulkanDevice::selectPhysDev(VkSurfaceKHR surface)
 
 bool CVulkanDevice::createDevice()
 {
-	vk.GetPhysicalDeviceMemoryProperties( physDev(), &m_memoryProperties );
-
 	uint32_t supportedExtensionCount;
 	vk.EnumerateDeviceExtensionProperties( physDev(), NULL, &supportedExtensionCount, NULL );
 
-	std::vector<VkExtensionProperties> supportedExts(supportedExtensionCount);
-	vk.EnumerateDeviceExtensionProperties( physDev(), NULL, &supportedExtensionCount, supportedExts.data() );
+	m_supportedExts.resize(supportedExtensionCount);
+	vk.EnumerateDeviceExtensionProperties( physDev(), NULL, &supportedExtensionCount, m_supportedExts.data() );
 
-	bool hasDrmProps = false;
+	if ( !GetBackend()->ValidPhysicalDevice( physDev() ) ) {
+		vk_log.errorf( "not a valid physical device" );
+		return false;
+	}
+
+	vk.GetPhysicalDeviceMemoryProperties( physDev(), &m_memoryProperties );
+
+	bool hasDrmProps = vulkan_has_drm_props();
 	bool supportsForeignQueue = false;
 	bool supportsHDRMetadata = false;
-	for ( uint32_t i = 0; i < supportedExtensionCount; ++i )
-	{
-		if ( strcmp(supportedExts[i].extensionName,
-		     VK_EXT_IMAGE_DRM_FORMAT_MODIFIER_EXTENSION_NAME) == 0 )
+	for (const auto& ext : m_supportedExts) {
+		if ( strcmp(ext.extensionName, VK_EXT_IMAGE_DRM_FORMAT_MODIFIER_EXTENSION_NAME) == 0 )
 			m_bSupportsModifiers = true;
 
-		if ( strcmp(supportedExts[i].extensionName,
-		            VK_EXT_PHYSICAL_DEVICE_DRM_EXTENSION_NAME) == 0 )
-			hasDrmProps = true;
-
-		if ( strcmp(supportedExts[i].extensionName,
-		     VK_EXT_QUEUE_FAMILY_FOREIGN_EXTENSION_NAME) == 0 )
+		if ( strcmp(ext.extensionName, VK_EXT_QUEUE_FAMILY_FOREIGN_EXTENSION_NAME) == 0 )
 			supportsForeignQueue = true;
 
-		if ( strcmp(supportedExts[i].extensionName,
-			 VK_EXT_HDR_METADATA_EXTENSION_NAME) == 0 )
-			 supportsHDRMetadata = true;
+		if ( strcmp(ext.extensionName, VK_EXT_HDR_METADATA_EXTENSION_NAME) == 0 )
+			supportsHDRMetadata = true;
 	}
 
 	vk_log.infof( "physical device %s DRM format modifiers", m_bSupportsModifiers ? "supports" : "does not support" );
 
-	if ( !GetBackend()->ValidPhysicalDevice( physDev() ) )
-		return false;
-
+	if ( !hasDrmProps ) {
+		// This could happen when e.g. running the lavapipe driver
+		// (without an actual physical device)
+		vk_log.warnf( "physical device doesn't support VK_EXT_physical_device_drm" );
+	} else {
 #if HAVE_DRM
-	// XXX(JoshA): Move this to ValidPhysicalDevice.
-	// We need to refactor some Vulkan stuff to do that though.
-	if ( hasDrmProps )
-	{
 		VkPhysicalDeviceDrmPropertiesEXT drmProps = {
 			.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRM_PROPERTIES_EXT,
 		};
@@ -509,12 +502,9 @@ bool CVulkanDevice::createDevice()
 			m_bHasDrmPrimaryDevId = true;
 			m_drmPrimaryDevId = makedev( drmProps.primaryMajor, drmProps.primaryMinor );
 		}
-	}
-	else
+#else
+		vk_log.warnf( "built without DRM support" );
 #endif
-	{
-		vk_log.errorf( "physical device doesn't support VK_EXT_physical_device_drm" );
-		return false;
 	}
 
 	if ( m_bSupportsModifiers && !supportsForeignQueue ) {
@@ -594,6 +584,27 @@ bool CVulkanDevice::createDevice()
 
 	for ( auto& extension : GetBackend()->GetDeviceExtensions( physDev() ) )
 		enabledExtensions.push_back( extension );
+
+	uint32_t devExtPropCount = 0;
+	vk.EnumerateDeviceExtensionProperties( physDev(), nullptr, &devExtPropCount, nullptr );
+	std::vector<VkExtensionProperties> devExtProp( devExtPropCount );
+	vk.EnumerateDeviceExtensionProperties( physDev(), nullptr, &devExtPropCount, devExtProp.data() );
+	bool anyMissing = false;
+	for ( auto& requiredExt : enabledExtensions ) {
+		bool extFound = false;
+		for ( auto & availableExt : devExtProp ) {
+			if ( strcmp( requiredExt, availableExt.extensionName ) == 0 ) {
+				extFound = true;
+				break;
+			}
+		}
+		if ( !extFound ) {
+			vk_log.errorf( "Missing required extension: %s", requiredExt );
+			anyMissing = true;
+		}
+	}
+	if ( anyMissing )
+		return false;
 
 #if 0
 	VkPhysicalDeviceMaintenance5FeaturesKHR maintenance5 = {
@@ -1170,7 +1181,7 @@ VkPipeline CVulkanDevice::compilePipeline(uint32_t layerCount, uint32_t ycbcrMas
 	return result;
 }
 
-void CVulkanDevice::compileAllPipelines()
+void CVulkanDevice::compileAllPipelines(std::stop_token st)
 {
 	pthread_setname_np( pthread_self(), "gamescope-shdr" );
 
@@ -1199,6 +1210,7 @@ void CVulkanDevice::compileAllPipelines()
 					{
 						std::lock_guard<std::mutex> lock(m_pipelineMutex);
 						PipelineInfo_t key = {info.shaderType, layerCount, ycbcrMask, blur_layers, info.compositeDebug};
+						if (st.stop_requested()) return;
 						auto result = m_pipelineMap.emplace(std::make_pair(key, newPipeline));
 						if (!result.second)
 							vk.DestroyPipeline(device(), newPipeline, nullptr);
@@ -3255,9 +3267,11 @@ bool vulkan_remake_swapchain( void )
 
 	g_device.vk.DestroySwapchainKHR( g_device.device(), pOutput->swapChain, nullptr );
 
-	// Delete screenshot image to be remade if needed
-	for (auto& pScreenshotImage : pOutput->pScreenshotImages)
-		pScreenshotImage = nullptr;
+	// Delete screenshot/capture textures to be remade if needed
+	for (auto& pScreenshotTexture : pOutput->pScreenshotTextures)
+		pScreenshotTexture = nullptr;
+	for (auto& pCaptureTexture : pOutput->pCaptureTextures)
+		pCaptureTexture = nullptr;
 
 	bool bRet = vulkan_make_swapchain( pOutput );
 	assert( bRet ); // Something has gone horribly wrong!
@@ -3351,9 +3365,11 @@ bool vulkan_remake_output_images()
 
 	pOutput->nOutImage = 0;
 
-	// Delete screenshot image to be remade if needed
-	for (auto& pScreenshotImage : pOutput->pScreenshotImages)
-		pScreenshotImage = nullptr;
+	// Delete screenshot/capture textures to be remade if needed
+	for (auto& pScreenshotTexture : pOutput->pScreenshotTextures)
+		pScreenshotTexture = nullptr;
+	for (auto& pCaptureTexture : pOutput->pCaptureTextures)
+		pCaptureTexture = nullptr;
 
 	bool bRet = vulkan_make_output_images( pOutput );
 	assert( bRet );
@@ -3601,40 +3617,64 @@ void vulkan_garbage_collect( void )
 	g_device.garbageCollect();
 }
 
-gamescope::Rc<CVulkanTexture> vulkan_acquire_screenshot_texture(uint32_t width, uint32_t height, bool exportable, uint32_t drmFormat, EStreamColorspace colorspace)
+static gamescope::Rc<CVulkanTexture> acquire_pooled_texture( auto& pool, uint32_t width, uint32_t height, bool exportable, uint32_t drmFormat, EStreamColorspace colorspace )
 {
-	for (auto& pScreenshotImage : g_output.pScreenshotImages)
+	for (auto& pTexture : pool)
 	{
-		if (pScreenshotImage == nullptr)
+		// Evict a stale texture and reuse the slot
+		if (pTexture && pTexture->GetRefCount() == 0 &&
+			(width != pTexture->width() ||
+			 height != pTexture->height() ||
+			 drmFormat != pTexture->drmFormat()))
 		{
-			pScreenshotImage = new CVulkanTexture();
+			pTexture = nullptr;
+		}
 
-			CVulkanTexture::createFlags screenshotImageFlags;
-			screenshotImageFlags.bMappable = true;
-			screenshotImageFlags.bTransferDst = true;
-			screenshotImageFlags.bStorage = true;
+		if (pTexture == nullptr)
+		{
+			pTexture = new CVulkanTexture();
+
+			CVulkanTexture::createFlags textureFlags;
+			textureFlags.bMappable = true;
+			textureFlags.bTransferDst = true;
+			textureFlags.bStorage = true;
 			if (exportable || drmFormat == DRM_FORMAT_NV12) {
-				screenshotImageFlags.bExportable = true;
-				screenshotImageFlags.bLinear = true; // TODO: support multi-planar DMA-BUF export via PipeWire
+				textureFlags.bExportable = true;
+				textureFlags.bLinear = true; // TODO: support multi-planar DMA-BUF export via PipeWire
 			}
 
-			bool bSuccess = pScreenshotImage->BInit( width, height, 1u, drmFormat, screenshotImageFlags );
-			pScreenshotImage->setStreamColorspace(colorspace);
+			bool bSuccess = pTexture->BInit( width, height, 1u, drmFormat, textureFlags );
+			pTexture->setStreamColorspace(colorspace);
 
 			assert( bSuccess );
 		}
 
-		if (pScreenshotImage->GetRefCount() != 0 ||
-			width != pScreenshotImage->width() ||
-			height != pScreenshotImage->height() ||
-			drmFormat != pScreenshotImage->drmFormat())
+		if (pTexture->GetRefCount() != 0 ||
+			width != pTexture->width() ||
+			height != pTexture->height() ||
+			drmFormat != pTexture->drmFormat())
 			continue;
 
-		return pScreenshotImage.get();
+		return pTexture.get();
 	}
 
-	vk_log.errorf("Unable to acquire screenshot texture. Out of textures.");
 	return nullptr;
+}
+
+gamescope::Rc<CVulkanTexture> vulkan_acquire_screenshot_texture(uint32_t width, uint32_t height, bool exportable, uint32_t drmFormat, EStreamColorspace colorspace)
+{
+	auto texture = acquire_pooled_texture(g_output.pScreenshotTextures, width, height, exportable, drmFormat, colorspace);
+	if (!texture)
+		vk_log.errorf("Unable to acquire screenshot texture. Out of textures.");
+	return texture;
+}
+
+gamescope::Rc<CVulkanTexture> vulkan_acquire_capture_texture(uint32_t width, uint32_t height, bool exportable, uint32_t drmFormat, EStreamColorspace colorspace)
+{
+	auto texture = acquire_pooled_texture(g_output.pCaptureTextures, width, height, exportable, drmFormat, colorspace);
+	if (!texture)
+		vk_log.errorf("Unable to acquire capture texture. Out of textures.");
+	return texture;
 }
 
 // Internal display's native brightness.
@@ -4184,6 +4224,16 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 void vulkan_wait( uint64_t ulSeqNo, bool bReset )
 {
 	return g_device.wait( ulSeqNo, bReset );
+}
+
+bool vulkan_has_drm_props()
+{
+	for (const auto& ext : g_device.supportedExtensions()) {
+		if ( strcmp(ext.extensionName, VK_EXT_PHYSICAL_DEVICE_DRM_EXTENSION_NAME) == 0 )
+			return true;
+	}
+
+	return false;
 }
 
 gamescope::Rc<CVulkanTexture> vulkan_get_last_output_image( bool partial, bool defer )

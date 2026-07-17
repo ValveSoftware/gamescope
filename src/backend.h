@@ -31,6 +31,8 @@ namespace gamescope
     class BackendBlob;
     class INestedHints;
 
+    extern ConVar<std::string> cv_backend;
+
     namespace VirtualConnectorStrategies
     {
         enum VirtualConnectorStrategy : uint32_t
@@ -269,6 +271,8 @@ namespace gamescope
         virtual void SetTitle( std::shared_ptr<std::string> szTitle ) = 0;
         virtual void SetIcon( std::shared_ptr<std::vector<uint32_t>> uIconPixels ) = 0;
         virtual void SetSelection( std::shared_ptr<std::string> szContents, GamescopeSelection eSelection ) = 0;
+
+        virtual bool ShouldPaintCursor() { return false; }
     };
 
     class IBackendFb : public IRcObject
@@ -277,7 +281,7 @@ namespace gamescope
         virtual void SetBuffer( wlr_buffer *pClientBuffer ) = 0;
         virtual void SetReleasePoint( std::shared_ptr<CReleaseTimelinePoint> pReleasePoint ) = 0;
 
-        virtual IBackendFb *Unwrap() = 0;
+        virtual IBackendFb *EnsureImported() = 0;
     };
 
     class IBackendPlane
@@ -298,7 +302,7 @@ namespace gamescope
         void SetBuffer( wlr_buffer *pClientBuffer ) override;
         void SetReleasePoint( std::shared_ptr<CReleaseTimelinePoint> pReleasePoint ) override;
 
-        virtual IBackendFb *Unwrap() override { return this; };
+        virtual IBackendFb *EnsureImported() override { return this; };
 
     private:
         wlr_buffer *m_pClientBuffer = nullptr;
@@ -349,6 +353,10 @@ namespace gamescope
 		}
 
         virtual IBackendConnector *GetCurrentConnector() = 0;
+        virtual IBackendConnector *GetCurrentMouseConnector()
+        {
+            return this->GetCurrentConnector();
+        }
         virtual IBackendConnector *GetConnector( GamescopeScreenType eScreenType ) = 0;
 
         virtual bool SupportsPlaneHardwareCursor() const = 0;
@@ -394,6 +402,8 @@ namespace gamescope
 
         virtual bool ShouldFitWindows() = 0;
 
+        virtual void OnEndFrame() = 0;
+
         static IBackend *Get();
         template <typename T>
         static bool Set();
@@ -430,6 +440,8 @@ namespace gamescope
         virtual bool NewlyInitted() override { return false; }
 
         virtual bool ShouldFitWindows() override { return true; }
+
+        virtual void OnEndFrame() override {}
     };
 
     // This is a blob of data that may be associated with
@@ -494,4 +506,3 @@ inline gamescope::IBackend *GetBackend()
 {
     return gamescope::IBackend::Get();
 }
-

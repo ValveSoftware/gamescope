@@ -11,6 +11,7 @@
 #include <bitset>
 #include <mutex>
 #include <optional>
+#include <thread>
 
 #include "main.hpp"
 
@@ -412,6 +413,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 void vulkan_wait( uint64_t ulSeqNo, bool bReset );
 gamescope::Rc<CVulkanTexture> vulkan_get_last_output_image( bool partial, bool defer );
 gamescope::Rc<CVulkanTexture> vulkan_acquire_screenshot_texture(uint32_t width, uint32_t height, bool exportable, uint32_t drmFormat, EStreamColorspace colorspace = k_EStreamColorspace_Unknown);
+gamescope::Rc<CVulkanTexture> vulkan_acquire_capture_texture(uint32_t width, uint32_t height, bool exportable, uint32_t drmFormat, EStreamColorspace colorspace = k_EStreamColorspace_Unknown);
 
 void vulkan_present_to_window( void );
 
@@ -537,7 +539,8 @@ struct VulkanOutput_t
 	uint32_t uOutputFormat = DRM_FORMAT_INVALID;
 	uint32_t uOutputFormatOverlay = DRM_FORMAT_INVALID;
 
-	std::array<gamescope::OwningRc<CVulkanTexture>, 2> pScreenshotImages;
+	std::array<gamescope::OwningRc<CVulkanTexture>, 2> pScreenshotTextures;
+	std::array<gamescope::OwningRc<CVulkanTexture>, 2> pCaptureTextures;
 
 	// NIS and FSR
 	gamescope::OwningRc<CVulkanTexture> tmpOutput;
@@ -804,6 +807,7 @@ public:
 	inline bool hasDrmPrimaryDevId() {return m_bHasDrmPrimaryDevId;}
 	inline dev_t primaryDevId() {return m_drmPrimaryDevId;}
 	inline bool supportsFp16() {return m_bSupportsFp16;}
+	inline std::vector<VkExtensionProperties>& supportedExtensions() {return m_supportedExts;}
 
 	inline std::pair<void *, uint32_t> uploadBufferData(uint32_t size)
 	{
@@ -843,7 +847,7 @@ protected:
 	bool createShaders();
 	bool createScratchResources();
 	VkPipeline compilePipeline(uint32_t layerCount, uint32_t ycbcrMask, ShaderType type, uint32_t blur_layer_count, uint32_t composite_debug, uint32_t colorspace_mask, uint32_t output_eotf, bool itm_enable);
-	void compileAllPipelines();
+	void compileAllPipelines(std::stop_token st);
 
 	VkDevice m_device = nullptr;
 	VkPhysicalDevice m_physDev = nullptr;
@@ -894,6 +898,10 @@ protected:
 	std::atomic<uint64_t> m_submissionSeqNo = { 0 };
 	std::vector<std::unique_ptr<CVulkanCmdBuffer>> m_unusedCmdBufs;
 	std::map<uint64_t, std::unique_ptr<CVulkanCmdBuffer>> m_pendingCmdBufs;
+
+private:
+	std::vector<VkExtensionProperties> m_supportedExts;
+	std::jthread m_pipelineThread;
 };
 
 struct TextureState
@@ -995,5 +1003,8 @@ gamescope::OwningRc<CVulkanTexture> vulkan_create_flat_texture( uint32_t width, 
 bool vulkan_supports_hdr10();
 
 void vulkan_wait_idle();
+
+// Whether the driver implements VK_EXT_physical_device_drm
+bool vulkan_has_drm_props();
 
 extern CVulkanDevice g_device;

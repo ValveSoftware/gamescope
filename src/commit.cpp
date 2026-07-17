@@ -91,7 +91,7 @@ void commit_t::Signal()
     }
 
     if ( m_bMangoNudge )
-        mangoapp_update( IsPerfOverlayFIFO() ? uint64_t(~0ull) : frametime, frametime, uint64_t(~0ull) );
+        mangoapp_update( uint64_t(~0ull), frametime, uint64_t(~0ull) );
 }
 
 void commit_t::OnPollHangUp()

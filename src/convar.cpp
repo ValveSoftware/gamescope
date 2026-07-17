@@ -1,6 +1,8 @@
 #include "convar.h"
 #include "Utils/Version.h"
+
 #include <algorithm>
+#include <cassert>
 
 LogScope console_log("console");
 
@@ -18,7 +20,7 @@ namespace gamescope
 
 #if HAVE_SCRIPTING
         if ( bRegisterScript )
-            CScriptScopedLock().Manager().Gamescope().Convars.Base[pszName] = this;
+            RegisterScript( pszName, this );
 #endif
     }
 

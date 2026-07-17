@@ -1,0 +1,66 @@
+{
+    "version": "0.2.0",
+    "inputs" : [
+        {
+            "id": "device_ip",
+            "type": "command",
+            "command": "shellCommand.execute",
+            "args": {
+                "command": "echo '${prompt:prompt=SteamOS Device IP or hostname}'",
+                "useFirstResult": true
+            }
+        },
+        {
+            "id": "gamescope_pid",
+            "type": "command",
+            "command": "shellCommand.execute",
+            "args": {
+                "command": "ssh steamos@${input:device_ip} 'pidof gamescope'",
+                "useFirstResult": true
+            }
+        },
+        {
+            "id" : "device_password",
+            "description" : "'steamos' user's password",
+            "type" : "promptString",
+            "password": true,
+        },
+    ],
+    "configurations": [
+        {
+            "name": "Attach to Gamescope (Remote)",
+            "type": "cppdbg",
+            "request": "attach",
+            "program": "/home/steamos/gamescope_local/build.local/src/gamescope",
+            "processId": "${input:gamescope_pid}",
+            "pipeTransport": {
+                "debuggerPath": "/usr/bin/gdb",
+                "pipeProgram": "/usr/bin/sshpass",
+                "pipeArgs": [
+                    "-p",
+                    "${input:device_password}",
+                    "--",
+                    "/usr/bin/ssh",
+                    "steamos@${input:device_ip}"
+                ],
+                "pipeCwd": "${workspaceFolder}"
+            },
+            "sourceFileMap": {
+                "/home/steamos/gamescope_local": "${workspaceFolder}"
+            },
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                },
+                {
+                    "description": "Set Disassembly Flavor to Intel",
+                    "text": "-gdb-set disassembly-flavor intel",
+                    "ignoreFailures": true
+                }
+            ]
+        }
+    ]
+}

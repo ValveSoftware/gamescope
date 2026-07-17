@@ -174,7 +174,7 @@ namespace gamescope::WaylandServer
             uint32_t uTimeHi = static_cast<uint32_t>( ulNow >> 32 );
 
             log_binding.debugf( "(%s) -> Triggered!", m_sDescription.c_str() );
-            gamescope_action_binding_send_triggered( GetResource(), s_uSequence++, uTriggerFlags, uTimeLo, uTimeHi );
+            gamescope_action_binding_send_triggered( GetResource(), s_uSequence++, uTimeLo, uTimeHi, uTriggerFlags );
 
             if ( uArmFlags & GAMESCOPE_ACTION_BINDING_ARM_FLAG_ONE_SHOT )
             {

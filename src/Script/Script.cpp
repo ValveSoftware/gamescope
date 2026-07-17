@@ -2,11 +2,10 @@
 #include "convar.h"
 #include "color_helpers.h"
 #include "../log.hpp"
+#include "Utils/DirHelpers.h"
 
 #include <filesystem>
 #include <algorithm>
-
-std::string_view GetHomeDir();
 
 namespace gamescope
 {
@@ -17,20 +16,6 @@ namespace gamescope
 
     static ConVar<bool> cv_script_use_local_scripts{ "script_use_local_scripts", false, "Whether or not to use the local scripts (../config) as opposed to the ones in /etc/gamescope.d" };
     static ConVar<bool> cv_script_use_user_scripts{ "script_use_user_scripts", true, "Whether or not to use user config scripts ($XDG_CONFIG_DIR/gamescope) at all." };
-
-    static std::string_view GetConfigDir()
-    {
-        static std::string s_sConfigDir = []() -> std::string
-        {
-            const char *pszConfigHome = getenv( "XDG_CONFIG_HOME" );
-            if ( pszConfigHome && *pszConfigHome )
-                return pszConfigHome;
-
-            return std::string{ GetHomeDir() } + "/.config";
-        }();
-
-        return s_sConfigDir;
-    }
 
     static inline void PanicFunction( sol::optional<std::string> oMsg )
     {
@@ -69,8 +54,8 @@ namespace gamescope
 
     CScriptManager &CScriptManager::GlobalScriptScope()
     {
-        static CScriptManager s_State;
-        return s_State;
+        static CScriptManager *s_pState = new CScriptManager;
+        return *s_pState;
     }
 
     CScriptManager::CScriptManager()

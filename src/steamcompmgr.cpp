@@ -78,6 +78,7 @@
 #include <linux/input-event-codes.h>
 #include <X11/Xmu/CurUtil.h>
 #include "waitable.h"
+#include <inttypes.h>
 
 #include "main.hpp"
 #include "wlserver.hpp"
@@ -90,6 +91,7 @@
 #include "edid.h"
 #include "hdmi.h"
 #include "convar.h"
+#include "Script/Script.h"
 #include "refresh_rate.h"
 #include "commit.h"
 #include "reshade_effect_manager.hpp"
@@ -120,16 +122,13 @@ static const int g_nBaseCursorScale = 36;
 #define GPUVIS_TRACE_IMPLEMENTATION
 #include "gpuvis_trace_utils.h"
 
-#if HAVE_LIBSYSTEMD
-
-#include <systemd/sd-bus.h>
-
-#endif
-
 LogScope xwm_log("xwm");
+LogScope focus_log("focus");
 LogScope g_WaitableLog("waitable");
 
 gamescope::ConVar<bool> cv_overlay_unmultiplied_alpha{ "overlay_unmultiplied_alpha", false };
+
+gamescope::ConVar<bool> cv_vr_show_forwarded_overlays{ "vr_show_forwarded_overlays", false };
 
 std::string *g_pVROverlayKey = nullptr;
 bool g_bWasPartialComposite = false;
@@ -137,6 +136,8 @@ bool g_bWasPartialComposite = false;
 bool ShouldDrawCursor();
 
 std::atomic<uint32_t> g_unCurrentVRSceneAppId;
+std::atomic<uint64_t> g_FocusedVROverlayMouse;
+std::atomic<uint64_t> g_FocusedVROverlayKeyboard;
 
 ///
 // Color Mgmt
@@ -182,81 +183,77 @@ namespace gamescope
 	extern std::shared_ptr<INestedHints::CursorInfo> GetX11HostCursor();
 }
 
-#if HAVE_LIBSYSTEMD
-static sd_bus *g_dbus;
 static std::unordered_map<std::string, uint64_t> g_vramCapacities;
 
-static const char *unit_from_pid(pid_t pid) {
+static const char *cgroupPathFromPID(pid_t pid) {
 	if (!pid)
 		return NULL;
 
-	sd_bus_message *reply = NULL;
-	const char *path = NULL;
+	char procfsPath[512];
+	if (snprintf(procfsPath, 512, "/proc/%ld/cgroup", (long)pid) < 0)
+		return NULL;
 
-	if (sd_bus_call_method(g_dbus, "org.freedesktop.systemd1", "/org/freedesktop/systemd1",
-								  "org.freedesktop.systemd1.Manager", "GetUnitByPID", NULL, &reply, "u", pid) < 0) {
-		xwm_log.warnf("D-Bus call to get unit corresponding to pid %u failed!\n", pid);
-		goto fail;
+	FILE *procfsFile = fopen(procfsPath, "r");
+	if (!procfsFile)
+		return NULL;
+
+	char *retPath = NULL;
+
+	char *line = NULL;
+	size_t lineSize;
+	while (getline(&line, &lineSize, procfsFile) > 0) {
+		/* cgroup v2 pathsi are always in the format "0::$PATH" */
+		const char *pathHeader = "0::";
+		/* Does the line start with "0::"? */
+		if (strncmp(line, pathHeader, strlen(pathHeader)))
+			continue;
+		char *path = line;
+		/* Skip over the header */
+		path = path + strlen(pathHeader);
+
+		/* According to https://docs.kernel.org/admin-guide/cgroup-v2.html,
+		 * (deleted) is added to the path if pid refers to a zombie process,
+		 * and the process's cgroup has been deleted.
+		 * It's nonsensical for us to try setting cgroup limits in such a case,
+		 * so bail out.
+		 */
+		if (strstr(path, "(deleted)"))
+			break;
+
+		/* Remove trailing newlines. */
+		char *delim = strstr(path, "\n");
+		if (delim)
+			*delim = '\0';
+
+		retPath = strdup(path);
+		break;
 	}
 
-	if (sd_bus_message_read(reply, "o", &path) < 0)
-		xwm_log.warnf("Failed to extract unit from D-Bus reply for PID %u!\n", pid);
-
-	path = strdup(path);
-	fail:
-	sd_bus_message_unref(reply);
-	return path;
+	free(line);
+	fclose(procfsFile);
+	return retPath;
 }
 
-static int set_memory_low(const char *unit_path, bool focused) {
-	sd_bus_message *message;
-	sd_bus_message *reply;
+static int setDMemMemoryLow(const char *cgroupPath, bool focused) {
+	char *limitPath;
 
-#define CHECK_MESSAGE(expr)   \
-   ret = expr;                \
-   if (ret < 0) {             \
-      fprintf(stderr, #expr "failed with ret %d\n", ret);                        \
-      goto fail_message;      \
-}
+	int r = asprintf(&limitPath, "/sys/fs/cgroup%s/dmem.low", cgroupPath);
+	if (r < 0)
+		return r;
 
+	FILE *limitFile = fopen(limitPath, "w");
 
-	int ret = sd_bus_message_new_method_call(g_dbus, &message, "org.freedesktop.systemd1", unit_path,
-														  "org.freedesktop.systemd1.Unit", "SetProperties");
-	if (ret < 0)
-		return ret;
-	CHECK_MESSAGE(sd_bus_message_append(message, "b", false));
-	CHECK_MESSAGE(sd_bus_message_open_container(message, SD_BUS_TYPE_ARRAY, "(sv)"));
-	{
-		CHECK_MESSAGE(sd_bus_message_open_container(message, SD_BUS_TYPE_STRUCT, "sv"));
-		{
-			CHECK_MESSAGE(sd_bus_message_append(message, "s", "DevMemoryLow"));
-			CHECK_MESSAGE(sd_bus_message_open_container(message, SD_BUS_TYPE_VARIANT, "a(st)"));
-			{
-				CHECK_MESSAGE(sd_bus_message_open_container(message, SD_BUS_TYPE_ARRAY, "(st)"));
-				for (auto &cap: g_vramCapacities) {
-					CHECK_MESSAGE(
-							  sd_bus_message_append(message, "(st)", cap.first.c_str(), focused ? cap.second : 0u));
-				}
-				CHECK_MESSAGE(sd_bus_message_close_container(message));
-			}
-			CHECK_MESSAGE(sd_bus_message_close_container(message));
-		}
-		CHECK_MESSAGE(sd_bus_message_close_container(message));
+	free(limitPath);
+	if (!limitFile)
+		return -1;
+
+	for (const auto& cap : g_vramCapacities) {
+		fprintf(limitFile, "%s %" PRIu64 "\n", cap.first.c_str(), focused ? cap.second : 0);
 	}
-	CHECK_MESSAGE(sd_bus_message_close_container(message));
 
-	CHECK_MESSAGE(sd_bus_call(g_dbus, message, UINT64_MAX, NULL, &reply));
-
-
-	sd_bus_message_unref(reply);
-
-	fail_message:
-	sd_bus_message_unref(message);
-
-	return ret;
+	fclose(limitFile);
+	return 0;
 }
-
-#endif
 
 static std::vector< steamcompmgr_win_t* > GetGlobalPossibleFocusWindows();
 static bool
@@ -830,7 +827,7 @@ Window x11_win(steamcompmgr_win_t *w) {
 	return w->xwayland().id;
 }
 
-static uint64_t s_ulFocusSerial = 0ul;
+static std::atomic<uint64_t> s_ulFocusSerial = 0ul;
 void MakeFocusDirty()
 {
 	s_ulFocusSerial++;
@@ -873,19 +870,24 @@ struct global_focus_t : public focus_t
 std::unordered_map<gamescope::VirtualConnectorKey_t, global_focus_t> g_VirtualConnectorFocuses;
 global_focus_t *GetCurrentFocus()
 {
-	if ( GetBackend()->GetCurrentConnector() )
-	{
-		uint64_t ulKey = GetBackend()->GetCurrentConnector()->GetVirtualConnectorKey();
+	uint64_t ulKey = GetBackend()->GetCurrentConnector() ? GetBackend()->GetCurrentConnector()->GetVirtualConnectorKey() : 0;
 
-		auto iter = g_VirtualConnectorFocuses.find( ulKey );
-		if ( iter != g_VirtualConnectorFocuses.end() )
-			return &iter->second;
-	}
-
-	if ( g_VirtualConnectorFocuses.size() > 0 )
-		return &g_VirtualConnectorFocuses.begin()->second;
+	auto iter = g_VirtualConnectorFocuses.find( ulKey );
+	if ( iter != g_VirtualConnectorFocuses.end() )
+		return &iter->second;
 
 	return nullptr;
+}
+
+global_focus_t *GetCurrentMouseFocus()
+{
+	uint64_t ulKey = GetBackend()->GetCurrentMouseConnector() ? GetBackend()->GetCurrentMouseConnector()->GetVirtualConnectorKey() : 0;
+
+	auto iter = g_VirtualConnectorFocuses.find( ulKey );
+	if ( iter != g_VirtualConnectorFocuses.end() )
+		return &iter->second;
+
+	return GetCurrentFocus();
 }
 
 uint32_t		currentOutputWidth, currentOutputHeight;
@@ -914,6 +916,8 @@ uint32_t		lastPublishedInputCounter;
 std::atomic<bool> hasRepaint = false;
 bool			hasRepaintNonBasePlane = false;
 
+bool			g_bUpdateForwardedVROverlays = false;
+
 static gamescope::ConCommand cc_debug_force_repaint( "debug_force_repaint", "Force a repaint",
 []( std::span<std::string_view> args )
 {
@@ -939,6 +943,7 @@ std::mutex g_SteamCompMgrXWaylandServerMutex;
 gamescope::VBlankTime g_SteamCompMgrVBlankTime = {};
 
 uint64_t g_uCurrentBasePlaneCommitID = 0;
+uint32_t g_uCurrentBasePlaneAppID = 0;
 bool g_bCurrentBasePlaneIsFifo = false;
 
 static int g_nSteamCompMgrTargetFPS = 0;
@@ -1395,6 +1400,7 @@ import_commit (
 	commit->async = async;
 	commit->fifo = fifo;
 	commit->is_steam = window_is_steam( w );
+	commit->appID = w->appID;
 	commit->presentation_feedbacks = std::move(presentation_feedbacks);
 	if (swapchain_feedback)
 		commit->feedback = *swapchain_feedback;
@@ -1914,8 +1920,8 @@ void MouseCursor::paint(steamcompmgr_win_t *window, steamcompmgr_win_t *fit, str
 	if ( fit )
 	{
 		// If we have an override window, try to fit it in as long as it won't make our scale go below 1.0.
-		sourceWidth = std::max<int32_t>( sourceWidth, clamp<int>( fit->GetGeometry().nX + fit->GetGeometry().nWidth, 0, currentOutputWidth ) );
-		sourceHeight = std::max<int32_t>( sourceHeight, clamp<int>( fit->GetGeometry().nY + fit->GetGeometry().nHeight, 0, currentOutputHeight ) );
+		sourceWidth = std::max<int32_t>( sourceWidth, clamp<int>( fit->GetGeometry().nX - window->GetGeometry().nX + fit->GetGeometry().nWidth, 0, currentOutputWidth ) );
+		sourceHeight = std::max<int32_t>( sourceHeight, clamp<int>( fit->GetGeometry().nY - window->GetGeometry().nY + fit->GetGeometry().nHeight, 0, currentOutputHeight ) );
 	}
 
 	float cursor_scale = 1.0f;
@@ -1937,9 +1943,14 @@ void MouseCursor::paint(steamcompmgr_win_t *window, steamcompmgr_win_t *fit, str
 	cursorOffsetX = (currentOutputWidth - sourceWidth * currentScaleRatio_x) / 2.0f;
 	cursorOffsetY = (currentOutputHeight - sourceHeight * currentScaleRatio_y) / 2.0f;
 
-	// Actual point on scaled screen where the cursor hotspot should be
-	scaledX = (winX - window->GetGeometry().nX) * currentScaleRatio_x + cursorOffsetX;
-	scaledY = (winY - window->GetGeometry().nY) * currentScaleRatio_y + cursorOffsetY;
+	// Actual point on scaled screen where the cursor hotspot should be.
+	// Compositing ignores the focused window's X11 origin, so the cursor
+	// must also ignore it to stay consistent with the composited output.
+	bool isFocusWindow = (window == m_ctx->focus.focusWindow);
+	int32_t winOriginX = isFocusWindow ? 0 : window->GetGeometry().nX;
+	int32_t winOriginY = isFocusWindow ? 0 : window->GetGeometry().nY;
+	scaledX = (winX - winOriginX) * currentScaleRatio_x + cursorOffsetX;
+	scaledY = (winY - winOriginY) * currentScaleRatio_y + cursorOffsetY;
 
 	if ( zoomScaleRatio != 1.0 )
 	{
@@ -2134,15 +2145,21 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
 		if ( fit )
 		{
 			// If we have an override window, try to fit it in as long as it won't make our scale go below 1.0.
-			sourceWidth = std::max<uint32_t>( sourceWidth, clamp<int>( fit->GetGeometry().nX + fit->GetGeometry().nWidth, 0, currentOutputWidth ) );
-			sourceHeight = std::max<uint32_t>( sourceHeight, clamp<int>( fit->GetGeometry().nY + fit->GetGeometry().nHeight, 0, currentOutputHeight ) );
+			int32_t fitX = fit->GetGeometry().nX - scaleW->GetGeometry().nX;
+			int32_t fitY = fit->GetGeometry().nY - scaleW->GetGeometry().nY;
+			sourceWidth = std::max<uint32_t>( sourceWidth, clamp<int>( fitX + fit->GetGeometry().nWidth, 0, currentOutputWidth ) );
+			sourceHeight = std::max<uint32_t>( sourceHeight, clamp<int>( fitY + fit->GetGeometry().nHeight, 0, currentOutputHeight ) );
 
-			baseWidth = std::max<uint32_t>( baseWidth, clamp<int>( fit->GetGeometry().nX + fit->GetGeometry().nWidth, 0, currentOutputWidth ) );
-			baseHeight = std::max<uint32_t>( baseHeight, clamp<int>( fit->GetGeometry().nY + fit->GetGeometry().nHeight, 0, currentOutputHeight ) );
+			baseWidth = std::max<uint32_t>( baseWidth, clamp<int>( fitX + fit->GetGeometry().nWidth, 0, currentOutputWidth ) );
+			baseHeight = std::max<uint32_t>( baseHeight, clamp<int>( fitY + fit->GetGeometry().nHeight, 0, currentOutputHeight ) );
 		}
 	}
 
-	bool offset = ( ( w->GetGeometry().nX || w->GetGeometry().nY ) && w != scaleW );
+	// Compositing ignores the base window's origin, so position overrides relative to it.
+	int32_t winOffsetX = w->GetGeometry().nX - scaleW->GetGeometry().nX;
+	int32_t winOffsetY = w->GetGeometry().nY - scaleW->GetGeometry().nY;
+
+	bool offset = ( ( winOffsetX || winOffsetY ) && w != scaleW );
 
 	if (sourceWidth != (int32_t)currentOutputWidth || sourceHeight != (int32_t)currentOutputHeight || offset || globalScaleRatio != 1.0f)
 	{
@@ -2153,8 +2170,8 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
 
 		if ( w != scaleW )
 		{
-			drawXOffset += w->GetGeometry().nX * currentScaleRatio_x;
-			drawYOffset += w->GetGeometry().nY * currentScaleRatio_y;
+			drawXOffset += winOffsetX * currentScaleRatio_x;
+			drawYOffset += winOffsetY * currentScaleRatio_y;
 		}
 
 		calc_scale_factor(baseScaleRatio_x, baseScaleRatio_y, baseWidth, baseHeight);
@@ -2269,6 +2286,7 @@ paint_window(steamcompmgr_win_t *w, steamcompmgr_win_t *scaleW, struct FrameInfo
 			g_CachedPlanes[ HELD_COMMIT_FADE ] = basePlane;
 
 		g_uCurrentBasePlaneCommitID = lastCommit->commitID;
+		g_uCurrentBasePlaneAppID = lastCommit->appID;
 		g_bCurrentBasePlaneIsFifo = lastCommit->IsPerfOverlayFIFO();
 	}
 }
@@ -2391,8 +2409,14 @@ static void paint_pipewire()
 	if ( pFocus->overrideWindow && !pFocus->focusWindow->isSteamStreamingClient )
 		paint_window( pFocus->overrideWindow, pFocus->focusWindow, &frameInfo, nullptr, PaintWindowFlag::NoFilter, 1.0f, pFocus->overrideWindow );
 
+	if ( !ulFocusAppId && pFocus->overlayWindow && pFocus->overlayWindow->opacity )
+	{
+		paint_window( pFocus->overlayWindow, pFocus->overlayWindow, &frameInfo, nullptr, PaintWindowFlag::DrawBorders | PaintWindowFlag::NoFilter |
+				( cv_overlay_unmultiplied_alpha ? PaintWindowFlag::CoverageMode : 0 )  );
+	}
+
 	gamescope::Rc<CVulkanTexture> pRGBTexture = s_pPipewireBuffer->texture->isYcbcr()
-		? vulkan_acquire_screenshot_texture( uWidth, uHeight, false, DRM_FORMAT_XRGB2101010 )
+		? vulkan_acquire_capture_texture( uWidth, uHeight, false, DRM_FORMAT_XRGB2101010 )
 		: gamescope::Rc<CVulkanTexture>{ s_pPipewireBuffer->texture };
 
 	gamescope::Rc<CVulkanTexture> pYUVTexture = s_pPipewireBuffer->texture->isYcbcr() ? s_pPipewireBuffer->texture : nullptr;
@@ -2433,7 +2457,10 @@ bool ShouldDrawCursor()
 	if ( !pFocus )
 		return false;
 
-	return !pFocus->GetNestedHints();
+	if ( !pFocus->GetNestedHints() )
+		return true;
+
+	return pFocus->GetNestedHints()->ShouldPaintCursor();
 }
 
 static void ForwardVROverlayTargets()
@@ -2443,22 +2470,26 @@ static void ForwardVROverlayTargets()
 	{
 		for ( steamcompmgr_win_t *w = server->ctx->list; w; w = w->xwayland().next )
 		{
-			if ( w->oulTargetVROverlay )
+			if ( w->oulTargetVROverlay && w->bNeedsForwarding )
 			{
 				gamescope::Rc<commit_t> lastCommit;
 				get_window_last_done_commit( w, lastCommit );
 				if ( !lastCommit )
 					continue;
 
-                gamescope::IBackendFb* pFb = lastCommit->vulkanTex->GetBackendFb()->Unwrap();
+                gamescope::IBackendFb* pFb = lastCommit->vulkanTex->GetBackendFb();
 				if ( !pFb )
 					continue;
 
 				const uint64_t ulOverlayHandle = *w->oulTargetVROverlay;
 				GetBackend()->ForwardFramebuffer( w->pForwarderPlane, pFb, &ulOverlayHandle );
+
+				w->bNeedsForwarding = false;
 			}
 		}
 	}
+
+	gpuvis_trace_printf( "Forward VR Overlays" );
 }
 
 gamescope::ConVar<bool> cv_paint_primary_plane{ "paint_primary_plane", true };
@@ -2809,8 +2840,6 @@ paint_all( global_focus_t *pFocus, bool async )
 			frameInfo.lut3D[i] = g_ColorMgmtLuts[i].vk_lut3d;
 		}
 	}
-
-	ForwardVROverlayTargets();
 
 	if ( pConnector && pConnector->Present( &frameInfo, async ) != 0 )
 	{
@@ -3431,6 +3460,11 @@ static bool is_good_override_candidate( steamcompmgr_win_t *override, steamcompm
 	if ( !focus )
 		return false;
 
+	// The pids should probably match for a dropdown to be a good candidate for this window,
+	// unless a non-zero appID says they are the same app (eg. Xalia's highlight overlay).
+	if (override->pid != focus->pid && (focus->appID == 0 || override->appID != focus->appID))
+		return false;
+
 	auto rect = override->GetGeometry();
 	return override != focus && (rect.nX + rect.nWidth) > 0 && (rect.nY + rect.nHeight) > 0;
 } 
@@ -3667,7 +3701,7 @@ found:;
 		}
 
 		// Skip overlay targets
-		if ( w->oulTargetVROverlay )
+		if ( w->oulTargetVROverlay && !cv_vr_show_forwarded_overlays )
 		{
 			continue;
 		}
@@ -3767,30 +3801,33 @@ void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win
 
 	pick_primary_focus_and_override( &ctx->focus, ctx->focusControlWindow, vecPossibleFocusWindows, false, vecFocuscontrolAppIDs, ulKey, eStrategy );
 
+	if ( !ctx->focus.overrideWindowMouse )
+	{
+		ctx->focus.overrideWindowMouse = ctx->focus.overrideWindow;
+	}
+
 	if ( inputFocus == NULL )
 	{
 		inputFocus = ctx->focus.focusWindow;
 	}
 
-	if ( !ctx->focus.focusWindow )
+	if ( ctx->focus.focusWindow )
 	{
-		return;
-	}
-
-	if ( prevFocusWindow != ctx->focus.focusWindow )
-	{
-		/* Some games (e.g. DOOM Eternal) don't react well to being put back as
-		* iconic, so never do that. Only take them out of iconic. */
-		set_wm_state( ctx, ctx->focus.focusWindow->xwayland().id, ICCCM_NORMAL_STATE );
-
-		gpuvis_trace_printf( "determine_and_apply_focus focus %lu", ctx->focus.focusWindow->xwayland().id );
-
-		if ( debugFocus == true )
+		if ( prevFocusWindow != ctx->focus.focusWindow )
 		{
-			xwm_log.debugf( "determine_and_apply_focus focus %lu", ctx->focus.focusWindow->xwayland().id );
-			char buf[512];
-			sprintf( buf,  "xwininfo -id 0x%lx; xprop -id 0x%lx; xwininfo -root -tree", ctx->focus.focusWindow->xwayland().id, ctx->focus.focusWindow->xwayland().id );
-			system( buf );
+			/* Some games (e.g. DOOM Eternal) don't react well to being put back as
+			* iconic, so never do that. Only take them out of iconic. */
+			set_wm_state( ctx, ctx->focus.focusWindow->xwayland().id, ICCCM_NORMAL_STATE );
+
+			gpuvis_trace_printf( "determine_and_apply_focus focus %lu", ctx->focus.focusWindow->xwayland().id );
+
+			if ( debugFocus == true )
+			{
+				xwm_log.debugf( "determine_and_apply_focus focus %lu", ctx->focus.focusWindow->xwayland().id );
+				char buf[512];
+				sprintf( buf,  "xwininfo -id 0x%lx; xprop -id 0x%lx; xwininfo -root -tree", ctx->focus.focusWindow->xwayland().id, ctx->focus.focusWindow->xwayland().id );
+				system( buf );
+			}
 		}
 	}
 
@@ -3800,6 +3837,67 @@ void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win
 	{
 		if ( inputFocus && inputFocus->inputFocusMode == 2 )
 			keyboardFocusWin = ctx->focus.focusWindow;
+	}
+	else
+	{
+		// Handle mouse focus being totally disjoint from KB in VR.
+		if ( GetBackend() && GetBackend()->GetCurrentMouseConnector() )
+		{
+			gamescope::VirtualConnectorKey_t ulMouseKey = GetBackend()->GetCurrentMouseConnector()->GetVirtualConnectorKey();
+			
+			focus_t mouse_focus{};
+			pick_primary_focus_and_override( &mouse_focus, ctx->focusControlWindow, vecPossibleFocusWindows, false, vecFocuscontrolAppIDs, ulMouseKey, eStrategy );
+
+			if ( mouse_focus.overrideWindow || mouse_focus.focusWindow )
+			{
+				inputFocus = mouse_focus.overrideWindow ? mouse_focus.overrideWindow : mouse_focus.focusWindow;
+				ctx->focus.overrideWindowMouse = mouse_focus.overrideWindow;
+			}
+		}
+
+		uint64_t ulFocusedKeyboardOverlayVR = g_FocusedVROverlayKeyboard;
+		uint64_t ulFocusedMouseOverlayVR = g_FocusedVROverlayMouse;
+
+		if ( ulFocusedKeyboardOverlayVR || ulFocusedMouseOverlayVR )
+		{
+			for ( steamcompmgr_win_t *queryWindow = ctx->list; queryWindow; queryWindow = queryWindow->xwayland().next )
+			{
+				if ( queryWindow->oulTargetVROverlay && *queryWindow->oulTargetVROverlay == ulFocusedKeyboardOverlayVR )
+				{
+					focus_log.debugf( "[XWL] Overriding keyboard focus window with VR forwarder overlay! Overlay: 0x%lx XWindow: 0x%x Title: %s", ulFocusedKeyboardOverlayVR, queryWindow->id(), queryWindow->debug_name() );
+
+					keyboardFocusWin = queryWindow;
+					ctx->focus.focusWindow = queryWindow;
+
+					// No support for overrides with this VR path!
+					ctx->focus.overrideWindow = nullptr;
+					ctx->focus.overrideWindowMouse = nullptr;
+				}
+
+				if ( queryWindow->oulTargetVROverlay && *queryWindow->oulTargetVROverlay == ulFocusedMouseOverlayVR )
+				{
+					// We don't want to do any mouse input for target VR overlays right now.
+					// SteamWebHelper is handling this.
+
+					if ( !inputFocus )
+						inputFocus = queryWindow;
+
+					// No support for overrides with this VR path!
+					ctx->focus.overrideWindow = nullptr;
+					ctx->focus.overrideWindowMouse = nullptr;
+				}
+			}
+		}
+	}
+
+	if ( !ctx->focus.focusWindow )
+	{
+		return;
+	}
+
+	if ( !inputFocus )
+	{
+		inputFocus = ctx->focus.focusWindow;
 	}
 
 	Window keyboardFocusWindow = keyboardFocusWin ? keyboardFocusWin->xwayland().id : None;
@@ -3820,7 +3918,14 @@ void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win
 		}
 
 		if ( !ctx->focus.overrideWindow || ctx->focus.overrideWindow != keyboardFocusWin )
+		{
 			XSetInputFocus(ctx->dpy, keyboardFocusWin->xwayland().id, RevertToNone, CurrentTime);
+
+			// wine >= 10.0 treats _NET_ACTIVE_WINDOW as foreground, so it must track real keyboard focus.
+			Window activeWindow = keyboardFocusWin->xwayland().id;
+			XChangeProperty(ctx->dpy, ctx->root, ctx->atoms.netActiveWindowAtom,
+							XA_WINDOW, 32, PropModeReplace, (unsigned char *)&activeWindow, 1);
+		}
 
 		if ( ctx->focus.inputFocusWindow != inputFocus ||
 			 ctx->focus.inputFocusMode != inputFocus->inputFocusMode )
@@ -3849,20 +3954,11 @@ void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win
 	steamcompmgr_win_t *w;
 	w = ctx->focus.focusWindow;
 
-	if ( inputFocus == ctx->focus.focusWindow && ctx->focus.overrideWindow )
-	{
-		if ( ctx->list[0].xwayland().id != ctx->focus.overrideWindow->xwayland().id )
-		{
-			XRaiseWindow(ctx->dpy, ctx->focus.overrideWindow->xwayland().id);
-		}
-	}
-	else
-	{
-		if ( ctx->list[0].xwayland().id != inputFocus->xwayland().id )
-		{
-			XRaiseWindow(ctx->dpy, inputFocus->xwayland().id);
-		}
-	}
+	if ( inputFocus == ctx->focus.focusWindow && ctx->focus.overrideWindowMouse )
+		inputFocus = ctx->focus.overrideWindowMouse;
+
+	if ( ctx->list[0].xwayland().id != inputFocus->xwayland().id )
+		inputFocus->Raise();
 
 	if (!ctx->focus.focusWindow->nudged)
 	{
@@ -3870,12 +3966,9 @@ void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win
 		ctx->focus.focusWindow->nudged = true;
 	}
 
-	if (w->GetGeometry().nX != 0 || w->GetGeometry().nY != 0)
-		XMoveWindow(ctx->dpy, ctx->focus.focusWindow->xwayland().id, 0, 0);
-
 	if ( win_has_game_id( w ) )
 	{
-		if ( window_is_fullscreen( ctx->focus.focusWindow ) )
+		if ( window_is_fullscreen( ctx->focus.focusWindow ) || ctx->force_windows_fullscreen )
 		{
 			bool bIsSteam = window_is_steam( ctx->focus.focusWindow );
 			int fs_width  = ctx->root_width;
@@ -4017,6 +4110,8 @@ determine_and_apply_focus( global_focus_t *pFocus )
 	pFocus->pVirtualConnector = previousLocalFocus.pVirtualConnector;
 	gameFocused = false;
 
+	focus_log.debugf( "Rerolling global focus..." );
+
 	std::vector< unsigned long > focusable_appids;
 	std::vector< unsigned long > focusable_windows;
 
@@ -4121,6 +4216,38 @@ determine_and_apply_focus( global_focus_t *pFocus )
 		pFocus->keyboardFocusWindow = pFocus->overrideWindow ? pFocus->overrideWindow : pFocus->focusWindow;
 	}
 
+	if ( !gamescope::VirtualConnectorIsSingleOutput() )
+	{
+		uint64_t ulFocusedKeyboardOverlayVR = g_FocusedVROverlayKeyboard;
+		uint64_t ulFocusedMouseOverlayVR = g_FocusedVROverlayMouse;
+
+		focus_log.debugf( "Current focus VR overlays: keyboard 0x%lx | mouse 0x%lx", ulFocusedKeyboardOverlayVR, ulFocusedMouseOverlayVR );
+
+		if ( ulFocusedKeyboardOverlayVR || ulFocusedMouseOverlayVR )
+		{
+			for ( steamcompmgr_win_t *queryWindow = root_ctx->list; queryWindow; queryWindow = queryWindow->xwayland().next )
+			{
+				if ( queryWindow->oulTargetVROverlay && *queryWindow->oulTargetVROverlay == ulFocusedKeyboardOverlayVR )
+				{
+					focus_log.debugf( "[WL GLOBAL] Overriding keyboard focus window with VR forwarder overlay! Overlay: 0x%lx XWindow: 0x%x Title: %s", ulFocusedKeyboardOverlayVR, queryWindow->id(), queryWindow->debug_name() );
+					pFocus->keyboardFocusWindow = queryWindow;
+
+					pFocus->overrideWindow = nullptr;
+				}
+
+				if ( queryWindow->oulTargetVROverlay && *queryWindow->oulTargetVROverlay == ulFocusedMouseOverlayVR )
+				{
+					// We don't want to do any mouse input for target VR overlays right now.
+					// SteamWebHelper is handling this.
+
+					//pFocus->inputFocusWindow = queryWindow;
+
+					pFocus->overrideWindow = nullptr;
+				}
+			}
+		}
+	}
+
 	// Pick cursor from our input focus window
 
 	// Initially pick cursor from the ctx of our input focus.
@@ -4161,9 +4288,7 @@ determine_and_apply_focus( global_focus_t *pFocus )
 		static gamescope::VirtualConnectorKey_t s_ulPreviousGlobalFocusKey;
 
 		// Tell wlserver about our keyboard/mouse focus.
-		if ( pFocus->inputFocusWindow   != previousLocalFocus.inputFocusWindow ||
-			pFocus->keyboardFocusWindow != previousLocalFocus.keyboardFocusWindow ||
-			pFocus->overrideWindow      != previousLocalFocus.overrideWindow ||
+		if (pFocus->keyboardFocusWindow != previousLocalFocus.keyboardFocusWindow ||
 			pFocus->ulVirtualFocusKey   != s_ulPreviousGlobalFocusKey )
 		{
 			if ( win_surface(pFocus->inputFocusWindow)    != nullptr ||
@@ -4171,13 +4296,46 @@ determine_and_apply_focus( global_focus_t *pFocus )
 			{
 				wlserver_lock();
 
+				if ( win_surface(pFocus->keyboardFocusWindow) != nullptr )
+				{
+					wlserver_keyboardfocus( pFocus->keyboardFocusWindow->main_surface() );
+					focus_log.debugf( "Setting keyboard focus to: %s (%x)", pFocus->keyboardFocusWindow->debug_name(), pFocus->keyboardFocusWindow->id() );
+				}
+
+				wlserver_unlock();
+			}
+		}
+
+		s_ulPreviousGlobalFocusKey = pFocus->ulVirtualFocusKey;
+	}
+
+	if ( pFocus == GetCurrentMouseFocus() )
+	{
+		static gamescope::VirtualConnectorKey_t s_ulPreviousGlobalFocusKey;
+
+		// Tell wlserver about our keyboard/mouse focus.
+		if ( pFocus->inputFocusWindow   != previousLocalFocus.inputFocusWindow ||
+			pFocus->overrideWindow      != previousLocalFocus.overrideWindow ||
+			pFocus->ulVirtualFocusKey   != s_ulPreviousGlobalFocusKey )
+		{
+			if ( win_surface(pFocus->inputFocusWindow) != nullptr )
+			{
+				wlserver_lock();
+
 				wlserver_clear_dropdowns();
 				if ( win_surface( pFocus->overrideWindow ) != nullptr )
-					wlserver_notify_dropdown( pFocus->overrideWindow->main_surface(), pFocus->overrideWindow->xwayland().a.x, pFocus->overrideWindow->xwayland().a.y );
+				{
+					// Relative to the focus window's origin, matching the cursor's coordinate space.
+					int32_t nBaseX = pFocus->focusWindow ? pFocus->focusWindow->GetGeometry().nX : 0;
+					int32_t nBaseY = pFocus->focusWindow ? pFocus->focusWindow->GetGeometry().nY : 0;
+					wlserver_notify_dropdown( pFocus->overrideWindow->main_surface(),
+											  pFocus->overrideWindow->xwayland().a.x - nBaseX,
+											  pFocus->overrideWindow->xwayland().a.y - nBaseY );
+				}
 
 				if ( gamescope::VirtualConnectorInSteamPerAppState() && pFocus->inputFocusWindow )
 				{
-					if ( pFocus->focusWindow->type == steamcompmgr_win_type_t::XWAYLAND )
+					if ( pFocus->inputFocusWindow->type == steamcompmgr_win_type_t::XWAYLAND )
 					{
 						xwayland_ctx_t *ctx = pFocus->inputFocusWindow->xwayland().ctx;
 						bool bTouchPointerEmulation = gamescope::VirtualConnectorKeyIsNonSteamWindow( pFocus->ulVirtualFocusKey );
@@ -4195,10 +4353,11 @@ determine_and_apply_focus( global_focus_t *pFocus )
 				}
 
 				if ( win_surface(pFocus->inputFocusWindow) != nullptr && pFocus->cursor )
+				{
 					wlserver_mousefocus( pFocus->inputFocusWindow->main_surface(), pFocus->cursor->x(), pFocus->cursor->y() );
+					focus_log.debugf( "Setting mouse focus to: %s (%x)", pFocus->inputFocusWindow->debug_name(), pFocus->inputFocusWindow->id() );
+				}
 
-				if ( win_surface(pFocus->keyboardFocusWindow) != nullptr )
-					wlserver_keyboardfocus( pFocus->keyboardFocusWindow->main_surface() );
 				wlserver_unlock();
 			}
 
@@ -4236,19 +4395,17 @@ determine_and_apply_focus( global_focus_t *pFocus )
 		s_ulPreviousGlobalFocusKey = pFocus->ulVirtualFocusKey;
 	}
 
-#if HAVE_LIBSYSTEMD
 	pid_t newFocusedWindowPID = pFocus->focusWindow ? pFocus->focusWindow->pid : 0;
-	if (g_dbus && sdFocusWindow_pid != newFocusedWindowPID) {
-		const char *unfocusedWindowUnit = unit_from_pid(sdFocusWindow_pid);
-		const char *focusedWindowUnit = unit_from_pid(newFocusedWindowPID);
-		bool sameUnit = unfocusedWindowUnit && focusedWindowUnit && !strcmp(unfocusedWindowUnit, focusedWindowUnit);
+	if (sdFocusWindow_pid != newFocusedWindowPID) {
+		const char *unfocusedWindowCGroup = cgroupPathFromPID(sdFocusWindow_pid);
+		const char *focusedWindowCGroup = cgroupPathFromPID(newFocusedWindowPID);
+		bool sameUnit = unfocusedWindowCGroup && focusedWindowCGroup && !strcmp(unfocusedWindowCGroup, focusedWindowCGroup);
 
-		if (unfocusedWindowUnit && !sameUnit)
-			set_memory_low(unfocusedWindowUnit, false);
-		if (focusedWindowUnit && !sameUnit)
-			set_memory_low(focusedWindowUnit, true);
+		if (unfocusedWindowCGroup && !sameUnit)
+			setDMemMemoryLow(unfocusedWindowCGroup, false);
+		if (focusedWindowCGroup && !sameUnit)
+			setDMemMemoryLow(focusedWindowCGroup, true);
 	}
-#endif
 
 	if ( pFocus->pVirtualConnector && pFocus->inputFocusWindow )
 	{
@@ -4559,7 +4716,7 @@ handle_desktop_window(steamcompmgr_win_t *w)
 	if ( w->type != steamcompmgr_win_type_t::XWAYLAND )
 		return;
 
-	if ( w->xwayland().a.override_redirect || w->oulTargetVROverlay )
+	if ( w->xwayland().a.override_redirect || ( w->oulTargetVROverlay && !cv_vr_show_forwarded_overlays ) )
 		return;
 
 	if ( win_maybe_a_dropdown( w ) || win_is_useless( w ) )
@@ -4567,7 +4724,7 @@ handle_desktop_window(steamcompmgr_win_t *w)
 
 	xwayland_ctx_t *ctx = w->xwayland().ctx;
 
-	if ( w->sizeHintsSpecified && !window_is_fullscreen( w ) )
+	if ( w->sizeHintsSpecified && !(window_is_fullscreen( w ) || ctx->force_windows_fullscreen) )
 	{
 		if ((unsigned)w->GetGeometry().nWidth != w->requestedWidth || (unsigned)w->GetGeometry().nHeight != w->requestedHeight)
 		{
@@ -4648,6 +4805,11 @@ map_win(xwayland_ctx_t* ctx, Window id, unsigned long sequence)
 		w->appID = 0;
 
 	w->oulTargetVROverlay = get_u64_prop(ctx, w->xwayland().id, ctx->atoms.steamGamescopeVROverlayTarget);
+	if ( w->oulTargetVROverlay )
+	{
+		g_bUpdateForwardedVROverlays = true;
+		w->bNeedsForwarding = true;
+	}
 	w->pForwarderPlane = nullptr;
 
 	get_size_hints(ctx, w);
@@ -4659,9 +4821,7 @@ map_win(xwayland_ctx_t* ctx, Window id, unsigned long sequence)
 	if ( wmHints != nullptr )
 	{
 		if ( wmHints->flags & (InputHint | StateHint ) && wmHints->input == true && wmHints->initial_state == NormalState )
-		{
-			XRaiseWindow( ctx->dpy, w->xwayland().id );
-		}
+			w->Raise();
 
 		XFree( wmHints );
 	}
@@ -5169,6 +5329,8 @@ destroy_win(xwayland_ctx_t *ctx, Window id, bool gone, bool fade)
 		ctx->focus.notificationWindow = nullptr;
 	if (x11_win(ctx->focus.overrideWindow) == id && gone)
 		ctx->focus.overrideWindow = nullptr;
+	if (x11_win(ctx->focus.overrideWindowMouse) == id && gone)
+		ctx->focus.overrideWindowMouse = nullptr;
 	if (ctx->currentKeyboardFocusWindow == id && gone)
 		ctx->currentKeyboardFocusWindow = None;
 
@@ -5217,7 +5379,7 @@ damage_win(xwayland_ctx_t *ctx, XDamageNotifyEvent *de)
 	bool bCareAboutWindow = true;
 
 	if ( win_is_useless( w ) || w->IsAnyOverlay() ||
-	    w->oulTargetVROverlay || w->isSysTrayIcon ||
+	    ( w->oulTargetVROverlay && !cv_vr_show_forwarded_overlays ) || w->isSysTrayIcon ||
 		w->xwayland().a.map_state != IsViewable )
 	{
 		bCareAboutWindow = false;
@@ -5385,9 +5547,9 @@ handle_client_message(xwayland_ctx_t *ctx, XClientMessageEvent *ev)
 		{
 			handle_wl_surface_id( ctx, w, uint32_t(ev->data.l[0]));
 		}
-		else if ( ev->message_type == ctx->atoms.activeWindowAtom )
+		else if ( ev->message_type == ctx->atoms.netActiveWindowAtom )
 		{
-			XRaiseWindow( ctx->dpy, w->xwayland().id );
+			w->Raise();
 		}
 		else if ( ev->message_type == ctx->atoms.netWMStateAtom )
 		{
@@ -5437,7 +5599,10 @@ void gamescope_set_selection(std::string contents, GamescopeSelection eSelection
 	gamescope_xwayland_server_t *server = NULL;
 	for (int i = 0; (server = wlserver_get_xwayland_server(i)); i++)
 	{
-		x11_set_selection_owner(server->ctx.get(), contents, eSelection);
+		xwayland_ctx_t *ctx = server->ctx.get();
+
+		if (ctx)
+			x11_set_selection_owner(ctx, contents, eSelection);
 	}
 }
 
@@ -5792,6 +5957,8 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 			w->pForwarderPlane = nullptr;
 			MakeFocusDirty();
 			hasRepaint = true;
+			g_bUpdateForwardedVROverlays = true;
+			w->bNeedsForwarding = true;
 		}
 	}
 	if (ev->atom == ctx->atoms.gamescopeCtrlAppIDAtom )
@@ -6561,11 +6728,8 @@ steamcompmgr_exit(void)
 [[noreturn]] static int
 handle_io_error(Display *dpy)
 {
-	xwm_log.errorf("X11 I/O error");
-	steamcompmgr_exit();
-
-	g_SteamCompMgrXWaylandServerMutex.unlock();
-	pthread_exit(NULL);
+	xwm_log.errorf("X11 I/O error! This is fatal. Aborting...");
+	abort();
 }
 
 static bool
@@ -6670,7 +6834,8 @@ bool handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint64_t co
 			// If this is a forwarded vr plane, repaint
 			if ( w->oulTargetVROverlay )
 			{
-				hasRepaint = true;
+				g_bUpdateForwardedVROverlays = true;
+				w->bNeedsForwarding = true;
 			}
 
 			for ( auto &iter : g_VirtualConnectorFocuses )
@@ -6876,6 +7041,8 @@ void handle_done_commits_xdg( bool vblank, uint64_t vblank_idx )
 	g_steamcompmgr_xdg_done_commits.listCommitsDone.swap( commits_before_their_time );
 }
 
+gamescope::ConVar<bool> cv_mangoapp_use_output_timing{ "mangoapp_use_output_timing", true };
+
 void handle_presented_for_window( steamcompmgr_win_t* w )
 {
 	// wlserver_lock is held.
@@ -6889,15 +7056,18 @@ void handle_presented_for_window( steamcompmgr_win_t* w )
 	commit_t *lastCommit = get_window_last_done_commit_peek(w);
 	if (lastCommit)
 	{
-		// We might present the same commit multiple times. In these cases
-		// there will be no frametime delta as the last frame was just re-used.
-		uint64_t frametime_ns = lastCommit->present_time - w->last_commit_present_time;
-		if ( frametime_ns > 0 )
+		if ( !cv_mangoapp_use_output_timing )
 		{
-			if ( w->appID > 0 )
-				wlserver_app_presented( w->appID, frametime_ns );
+			// We might present the same commit multiple times. In these cases
+			// there will be no frametime delta as the last frame was just re-used.
+			uint64_t frametime_ns = lastCommit->present_time - w->last_commit_present_time;
+			if ( frametime_ns > 0 )
+			{
+				if ( w->appID > 0 )
+					wlserver_app_presented( w->appID, frametime_ns );
 
-			w->last_commit_present_time = lastCommit->present_time;
+				w->last_commit_present_time = lastCommit->present_time;
+			}
 		}
 
 		if (!lastCommit->presentation_feedbacks.empty() || lastCommit->present_id)
@@ -7095,7 +7265,7 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 		wlserver_lock();
 		wlr_buffer_unlock( buf );
 		wlserver_unlock();
-		xwm_log.warnf( "got the same buffer committed twice, ignoring." );
+		xwm_log.debugf( "got the same buffer committed twice, ignoring." );
 
 		// If we have a duplicated commit + frame callback, ensure that is signalled.
 		// This matches Mutter and Weston behavior, so it's plausible that some application relies on forward progress.
@@ -7153,7 +7323,7 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 			upscaledFrameInfo.useNISLayer0 = g_upscaleFilter == GamescopeUpscaleFilter::NIS;
 			globalScaleRatio = flOldGlobalScale;
 			zoomScaleRatio = flOldZoomScale;
-			flOldOverscanScale = flOldOverscanScale;
+			overscanScaleRatio = flOldOverscanScale;
 
 			TempUpscaleImage_t *pTempImage = GetTempUpscaleImage( g_nOutputWidth, g_nOutputHeight, g_output.uOutputFormat );
 			if ( pTempImage )
@@ -7612,7 +7782,7 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 	ctx->atoms.winNormalAtom = XInternAtom(ctx->dpy, "_NET_WM_WINDOW_TYPE_NORMAL", false);
 	ctx->atoms.sizeHintsAtom = XInternAtom(ctx->dpy, "WM_NORMAL_HINTS", false);
 	ctx->atoms.netWMStateFullscreenAtom = XInternAtom(ctx->dpy, "_NET_WM_STATE_FULLSCREEN", false);
-	ctx->atoms.activeWindowAtom = XInternAtom(ctx->dpy, "_NET_ACTIVE_WINDOW", false);
+	ctx->atoms.netActiveWindowAtom = XInternAtom(ctx->dpy, "_NET_ACTIVE_WINDOW", false);
 	ctx->atoms.netWMStateAtom = XInternAtom(ctx->dpy, "_NET_WM_STATE", false);
 	ctx->atoms.WMTransientForAtom = XInternAtom(ctx->dpy, "WM_TRANSIENT_FOR", false);
 	ctx->atoms.netWMStateHiddenAtom = XInternAtom(ctx->dpy, "_NET_WM_STATE_HIDDEN", false);
@@ -8231,18 +8401,12 @@ steamcompmgr_main(int argc, char **argv)
 
 	globalScaleRatio = overscanScaleRatio * zoomScaleRatio;
 
-	if ( gamescope::VirtualConnectorIsSingleOutput() )
+	static constexpr uint64_t k_unSingleOutputVirtualConnectorKey = 0;
+	g_VirtualConnectorFocuses[ k_unSingleOutputVirtualConnectorKey ] = global_focus_t
 	{
-		// misyl: Make the virtual connector up-front if we are in a single-output mode.
-		// So we don't delay in getting display/output info to the game
-		static constexpr uint64_t k_unSingleOutputVirtualConnectorKey = 0;
-
-		g_VirtualConnectorFocuses[ k_unSingleOutputVirtualConnectorKey ] = global_focus_t
-		{
-			.ulVirtualFocusKey = k_unSingleOutputVirtualConnectorKey,
-			.pVirtualConnector = GetBackend()->UsesVirtualConnectors() ? GetBackend()->CreateVirtualConnector( k_unSingleOutputVirtualConnectorKey ) : nullptr,
-		};
-	}
+		.ulVirtualFocusKey = k_unSingleOutputVirtualConnectorKey,
+		.pVirtualConnector = GetBackend()->UsesVirtualConnectors() ? GetBackend()->CreateVirtualConnector( k_unSingleOutputVirtualConnectorKey ) : nullptr,
+	};
 
 	for ( auto &iter : g_VirtualConnectorFocuses )
 	{
@@ -8296,14 +8460,6 @@ steamcompmgr_main(int argc, char **argv)
 	// ie. color.rgb = color.rgba * u_ctm[offsetLayerIdx];
 	s_scRGB709To2020Matrix = GetBackend()->CreateBackendBlob( glm::mat3x4( glm::transpose( k_2020_from_709 ) ) );
 
-#if HAVE_LIBSYSTEMD
-	int res = sd_bus_default(&g_dbus);
-	if (res < 0) {
-		g_dbus = NULL;
-		s_LaunchLogScope.warnf(
-				  "Failed to open systemd message bus, there will be no cgroup protection for focused windows.\n");
-	}
-
 	FILE *sysfs_caps = fopen("/sys/fs/cgroup/dmem.capacity", "r");
 	if (sysfs_caps != nullptr) {
 		char *line = NULL;
@@ -8319,7 +8475,6 @@ steamcompmgr_main(int argc, char **argv)
 			g_vramCapacities.emplace(idString, vramSize);
 		}
 	}
-#endif
 
 	for (;;)
 	{
@@ -8392,18 +8547,15 @@ steamcompmgr_main(int argc, char **argv)
 
 			xwm_log.infof( "Late init of virtual connector stuff." );
 
-			if ( gamescope::VirtualConnectorIsSingleOutput() )
-			{
-				// misyl: Make the virtual connector up-front if we are in a single-output mode.
-				// So we don't delay in getting display/output info to the game
-				static constexpr uint64_t k_unSingleOutputVirtualConnectorKey = 0;
+			// misyl: Make the virtual connector up-front if we are in a single-output mode.
+			// So we don't delay in getting display/output info to the game
+			static constexpr uint64_t k_unSingleOutputVirtualConnectorKey = 0;
 
-				g_VirtualConnectorFocuses[ k_unSingleOutputVirtualConnectorKey ] = global_focus_t
-				{
-					.ulVirtualFocusKey = k_unSingleOutputVirtualConnectorKey,
-					.pVirtualConnector = GetBackend()->UsesVirtualConnectors() ? GetBackend()->CreateVirtualConnector( k_unSingleOutputVirtualConnectorKey ) : nullptr,
-				};
-			}
+			g_VirtualConnectorFocuses[ k_unSingleOutputVirtualConnectorKey ] = global_focus_t
+			{
+				.ulVirtualFocusKey = k_unSingleOutputVirtualConnectorKey,
+				.pVirtualConnector = GetBackend()->UsesVirtualConnectors() ? GetBackend()->CreateVirtualConnector( k_unSingleOutputVirtualConnectorKey ) : nullptr,
+			};
 
 			hasRepaint = true;
 		}
@@ -8444,7 +8596,8 @@ steamcompmgr_main(int argc, char **argv)
 				{
 					// Exclude windows that are useless (1x1), or override redirect windows
 					if ( win_is_useless( pWindow ) ||
-						( pWindow->type == steamcompmgr_win_type_t::XWAYLAND && pWindow->xwayland().a.override_redirect ) )
+						( pWindow->type == steamcompmgr_win_type_t::XWAYLAND && pWindow->xwayland().a.override_redirect &&
+						 !pWindow->isSteamLegacyBigPicture ) ) // bootstrapper is override redirect :(
 					{
 						continue;
 					}
@@ -8491,6 +8644,7 @@ steamcompmgr_main(int argc, char **argv)
 				for ( gamescope::VirtualConnectorKey_t ulKey : diffKeys )	
 				{
 					bool bIsSteam = gamescope::VirtualConnectorKeyIsSteam( ulKey );
+					bool bIsBaseKey = ulKey == 0;
 
 					if ( gamescope::Algorithm::Contains( newKeys, ulKey ) )
 					{
@@ -8500,7 +8654,7 @@ steamcompmgr_main(int argc, char **argv)
 							.pVirtualConnector = GetBackend()->UsesVirtualConnectors() ? GetBackend()->CreateVirtualConnector( ulKey ) : nullptr,
 						};
 					}
-					else if ( !bIsSteam ) // Never remove Steam's virtual conn	ector.
+					else if ( !bIsSteam && !bIsBaseKey ) // Never remove Steam's virtual connector or the 0th connector.
 					{
 						g_VirtualConnectorFocuses.erase( ulKey );
 					}
@@ -8944,8 +9098,19 @@ steamcompmgr_main(int argc, char **argv)
 			}
 		}
 
+		if ( vblank && g_bUpdateForwardedVROverlays )
+		{
+			ForwardVROverlayTargets();
+
+			g_bUpdateForwardedVROverlays = false;
+
+			bPainted = true;
+		}
+
 		if ( bPainted )
 		{
+			GetBackend()->OnEndFrame();
+
 			hasRepaint = false;
 			hasRepaintNonBasePlane = false;
 			nIgnoredOverlayRepaints = 0;
