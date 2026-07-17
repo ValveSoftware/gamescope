@@ -7285,144 +7285,148 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 		reslistentry.desired_present_time,
 		reslistentry.fifo );
 
-	int fence = -1;
-	if ( newCommit != nullptr )
+
+	if ( newCommit == nullptr )
 	{
-		global_focus_t *pCurrentFocus = GetCurrentFocus();
+		// Import failed to import, early exit.
+		return;
+	}
 
-		static bool bMangoappSocketDisable = env_to_bool( getenv( "GAMESCOPE_MANGOAPP_SOCKET_DISABLE" ));
+	int fence = -1;
+	global_focus_t *pCurrentFocus = GetCurrentFocus();
 
-		// Whether or not to nudge mango app when this commit is done.
-		const bool mango_nudge = pCurrentFocus && ( ( w == pCurrentFocus->focusWindow && !w->isSteamStreamingClient ) ||
-									( pCurrentFocus->focusWindow && pCurrentFocus->focusWindow->isSteamStreamingClient && w->isSteamStreamingClientVideo ) )
-									&& !bMangoappSocketDisable;
+	static bool bMangoappSocketDisable = env_to_bool( getenv( "GAMESCOPE_MANGOAPP_SOCKET_DISABLE" ));
 
-		bool bValidPreemptiveScale = reslistentry.pAcquirePoint && pCurrentFocus && w == pCurrentFocus->focusWindow && cv_upscale_preemptive;
-		bool bPreemptiveUpscale = bValidPreemptiveScale && newCommit->ShouldPreemptivelyUpscale();
+	// Whether or not to nudge mango app when this commit is done.
+	const bool mango_nudge = pCurrentFocus && ( ( w == pCurrentFocus->focusWindow && !w->isSteamStreamingClient ) ||
+								( pCurrentFocus->focusWindow && pCurrentFocus->focusWindow->isSteamStreamingClient && w->isSteamStreamingClientVideo ) )
+								&& !bMangoappSocketDisable;
 
-		bool bKnownReady = false;
+	bool bValidPreemptiveScale = reslistentry.pAcquirePoint && pCurrentFocus && w == pCurrentFocus->focusWindow && cv_upscale_preemptive;
+	bool bPreemptiveUpscale = bValidPreemptiveScale && newCommit->ShouldPreemptivelyUpscale();
 
-		std::pair<int32_t, bool> eventFd = gamescope::CAcquireTimelinePoint::k_InvalidEvent;
+	bool bKnownReady = false;
 
-		if ( bPreemptiveUpscale )
+	std::pair<int32_t, bool> eventFd = gamescope::CAcquireTimelinePoint::k_InvalidEvent;
+
+	if ( bPreemptiveUpscale )
+	{
+		FrameInfo_t upscaledFrameInfo{};
+		upscaledFrameInfo.applyOutputColorMgmt = true;
+		upscaledFrameInfo.outputEncodingEOTF = ( newCommit->colorspace() == GAMESCOPE_APP_TEXTURE_COLORSPACE_LINEAR || newCommit->colorspace() == GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB )
+			? EOTF_Gamma22
+			: EOTF_PQ;
+
+		float flOldGlobalScale = globalScaleRatio;
+		float flOldZoomScale = zoomScaleRatio;
+		float flOldOverscanScale = overscanScaleRatio;
+		overscanScaleRatio = 1.0f;
+		zoomScaleRatio = 1.0f;
+		globalScaleRatio = 1.0f;
+		paint_window_commit( newCommit, w, w, &upscaledFrameInfo, nullptr );
+		upscaledFrameInfo.useFSRLayer0 = g_upscaleFilter == GamescopeUpscaleFilter::FSR;
+		upscaledFrameInfo.useNISLayer0 = g_upscaleFilter == GamescopeUpscaleFilter::NIS;
+		globalScaleRatio = flOldGlobalScale;
+		zoomScaleRatio = flOldZoomScale;
+		overscanScaleRatio = flOldOverscanScale;
+
+		TempUpscaleImage_t *pTempImage = GetTempUpscaleImage( g_nOutputWidth, g_nOutputHeight, g_output.uOutputFormat );
+		if ( pTempImage )
 		{
-			FrameInfo_t upscaledFrameInfo{};
-			upscaledFrameInfo.applyOutputColorMgmt = true;
-			upscaledFrameInfo.outputEncodingEOTF = ( newCommit->colorspace() == GAMESCOPE_APP_TEXTURE_COLORSPACE_LINEAR || newCommit->colorspace() == GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB )
-				? EOTF_Gamma22
-				: EOTF_PQ;
+			const uint64_t ulNextReleasePoint = ++pTempImage->ulLastPoint;
 
-			float flOldGlobalScale = globalScaleRatio;
-			float flOldZoomScale = zoomScaleRatio;
-			float flOldOverscanScale = overscanScaleRatio;
-			overscanScaleRatio = 1.0f;
-			zoomScaleRatio = 1.0f;
-			globalScaleRatio = 1.0f;
-			paint_window_commit( newCommit, w, w, &upscaledFrameInfo, nullptr );
-			upscaledFrameInfo.useFSRLayer0 = g_upscaleFilter == GamescopeUpscaleFilter::FSR;
-			upscaledFrameInfo.useNISLayer0 = g_upscaleFilter == GamescopeUpscaleFilter::NIS;
-			globalScaleRatio = flOldGlobalScale;
-			zoomScaleRatio = flOldZoomScale;
-			overscanScaleRatio = flOldOverscanScale;
+			std::unique_ptr<CVulkanCmdBuffer> pCommandBuffer = g_device.commandBuffer();
+			
+			pCommandBuffer->AddDependency( reslistentry.pAcquirePoint->GetTimeline()->ToVkSemaphore(), reslistentry.pAcquirePoint->GetPoint() );
+			pCommandBuffer->AddSignal( pTempImage->pReleaseTimeline->ToVkSemaphore(), ulNextReleasePoint );
 
-			TempUpscaleImage_t *pTempImage = GetTempUpscaleImage( g_nOutputWidth, g_nOutputHeight, g_output.uOutputFormat );
-			if ( pTempImage )
+			static std::optional<uint64_t> s_ulLastPreemptiveUpscaleSeqNo;
+
+			if ( s_ulLastPreemptiveUpscaleSeqNo )
 			{
-				const uint64_t ulNextReleasePoint = ++pTempImage->ulLastPoint;
-
-				std::unique_ptr<CVulkanCmdBuffer> pCommandBuffer = g_device.commandBuffer();
-				
-				pCommandBuffer->AddDependency( reslistentry.pAcquirePoint->GetTimeline()->ToVkSemaphore(), reslistentry.pAcquirePoint->GetPoint() );
-				pCommandBuffer->AddSignal( pTempImage->pReleaseTimeline->ToVkSemaphore(), ulNextReleasePoint );
-
-				static std::optional<uint64_t> s_ulLastPreemptiveUpscaleSeqNo;
-
-				if ( s_ulLastPreemptiveUpscaleSeqNo )
-				{
-					vulkan_wait( *s_ulLastPreemptiveUpscaleSeqNo, true );
-				}
-
-				std::optional<uint64_t> seqNo = vulkan_composite( &upscaledFrameInfo, nullptr, false, pTempImage->pTexture, false, std::move( pCommandBuffer ) );
-
-				if ( cv_upscale_preemptive_debug_force_sync )
-				{
-					vulkan_wait( *seqNo, true );
-				}
-
-				s_ulLastPreemptiveUpscaleSeqNo = seqNo;
-
-				newCommit->upscaledTexture = std::optional<UpscaledTexture_t>
-				{
-					std::in_place_t{},
-					g_upscaleFilter,
-					g_upscaleScaler,
-					g_nOutputWidth,
-					g_nOutputHeight,
-					pTempImage->pTexture,
-					upscaledFrameInfo.outputEncodingEOTF == EOTF_Gamma22 ? VK_COLOR_SPACE_SRGB_NONLINEAR_KHR : VK_COLOR_SPACE_HDR10_ST2084_EXT,
-				};
-
-				// Manifest a new acquire timeline point with this inline work.
-				eventFd = gamescope::CAcquireTimelinePoint( pTempImage->pReleaseTimeline, ulNextReleasePoint ).CreateEventFd();
-
-				//xwm_log.infof( "Pre-emptively upscaling!" );
-			}
-			else
-			{
-				bPreemptiveUpscale = false;
-			}
-		}
-		
-		if ( !bPreemptiveUpscale )
-		{
-			if ( bValidPreemptiveScale )
-			{
-				ClearUpscaleImages();
+				vulkan_wait( *s_ulLastPreemptiveUpscaleSeqNo, true );
 			}
 
-			if ( reslistentry.pAcquirePoint )
+			std::optional<uint64_t> seqNo = vulkan_composite( &upscaledFrameInfo, nullptr, false, pTempImage->pTexture, false, std::move( pCommandBuffer ) );
+
+			if ( cv_upscale_preemptive_debug_force_sync )
 			{
-				eventFd = reslistentry.pAcquirePoint->CreateEventFd();
+				vulkan_wait( *seqNo, true );
 			}
-		}
 
-		if ( gamescope::IBackendFb *pBackendFb = newCommit->vulkanTex->GetBackendFb() )
-		{
-			if ( reslistentry.pReleasePoint )
-				pBackendFb->SetReleasePoint( reslistentry.pReleasePoint );
-			else
-				pBackendFb->SetBuffer( buf );
-		}
+			s_ulLastPreemptiveUpscaleSeqNo = seqNo;
 
-		if ( eventFd != gamescope::CAcquireTimelinePoint::k_InvalidEvent )
-		{
-			fence = eventFd.first;
-			bKnownReady = eventFd.second;
+			newCommit->upscaledTexture = std::optional<UpscaledTexture_t>
+			{
+				std::in_place_t{},
+				g_upscaleFilter,
+				g_upscaleScaler,
+				g_nOutputWidth,
+				g_nOutputHeight,
+				pTempImage->pTexture,
+				upscaledFrameInfo.outputEncodingEOTF == EOTF_Gamma22 ? VK_COLOR_SPACE_SRGB_NONLINEAR_KHR : VK_COLOR_SPACE_HDR10_ST2084_EXT,
+			};
+
+			// Manifest a new acquire timeline point with this inline work.
+			eventFd = gamescope::CAcquireTimelinePoint( pTempImage->pReleaseTimeline, ulNextReleasePoint ).CreateEventFd();
+
+			//xwm_log.infof( "Pre-emptively upscaling!" );
 		}
 		else
 		{
-			struct wlr_dmabuf_attributes dmabuf = {0};
-			if ( wlr_buffer_get_dmabuf( buf, &dmabuf ) )
-			{
-				fence = dup( dmabuf.fd[0] );
-			}
-			else
-			{
-				fence = newCommit->vulkanTex->memoryFence();
-			}
+			bPreemptiveUpscale = false;
 		}
-
-		gpuvis_trace_printf( "pushing wait for commit %lu win %lx", newCommit->commitID, w->type == steamcompmgr_win_type_t::XWAYLAND ? w->xwayland().id : 0 );
-		{
-			newCommit->SetFence( fence, mango_nudge, doneCommits );
-			if ( bKnownReady )
-				newCommit->Signal();
-			else
-				g_ImageWaiter.AddWaitable( newCommit.get() );
-		}
-
-		w->commit_queue.push_back( std::move(newCommit) );
 	}
+	
+	if ( !bPreemptiveUpscale )
+	{
+		if ( bValidPreemptiveScale )
+		{
+			ClearUpscaleImages();
+		}
+
+		if ( reslistentry.pAcquirePoint )
+		{
+			eventFd = reslistentry.pAcquirePoint->CreateEventFd();
+		}
+	}
+
+	if ( gamescope::IBackendFb *pBackendFb = newCommit->vulkanTex->GetBackendFb() )
+	{
+		if ( reslistentry.pReleasePoint )
+			pBackendFb->SetReleasePoint( reslistentry.pReleasePoint );
+		else
+			pBackendFb->SetBuffer( buf );
+	}
+
+	if ( eventFd != gamescope::CAcquireTimelinePoint::k_InvalidEvent )
+	{
+		fence = eventFd.first;
+		bKnownReady = eventFd.second;
+	}
+	else
+	{
+		struct wlr_dmabuf_attributes dmabuf = {0};
+		if ( wlr_buffer_get_dmabuf( buf, &dmabuf ) )
+		{
+			fence = dup( dmabuf.fd[0] );
+		}
+		else
+		{
+			fence = newCommit->vulkanTex->memoryFence();
+		}
+	}
+
+	gpuvis_trace_printf( "pushing wait for commit %lu win %lx", newCommit->commitID, w->type == steamcompmgr_win_type_t::XWAYLAND ? w->xwayland().id : 0 );
+	{
+		newCommit->SetFence( fence, mango_nudge, doneCommits );
+		if ( bKnownReady )
+			newCommit->Signal();
+		else
+			g_ImageWaiter.AddWaitable( newCommit.get() );
+	}
+
+	w->commit_queue.push_back( std::move(newCommit) );
 }
 
 void check_new_xwayland_res(xwayland_ctx_t *ctx)
