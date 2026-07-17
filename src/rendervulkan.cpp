@@ -2339,6 +2339,12 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 		if ( res != VK_SUCCESS )
 		{
 			vk_errorf( res, "vkAllocateMemory failed" );
+			if ( pDMA != nullptr )
+			{
+				// When import doesn't succeed, the driver hasn't taken ownership of the FD
+				// Close it so it doesn't become an FD leak
+				close( importMemoryInfo.fd );
+			}
 			return false;
 		}
 
