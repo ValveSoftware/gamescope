@@ -42,5 +42,6 @@ namespace gamescope::Process
     void RestoreRealtime();
 
     const char *GetProcessName();
+    int GetProcessName( pid_t pid, char *buf, size_t size );
 
 }

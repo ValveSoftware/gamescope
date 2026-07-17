@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstring>
 
 #include <errno.h>
 #include <pthread.h>
@@ -537,5 +538,29 @@ namespace gamescope::Process
     {
         return __progname;
     }
+
+	int GetProcessName( pid_t pid, char *buf, size_t size )
+	{
+		char path[128];
+		snprintf(path, sizeof(path), "/proc/%d/comm", pid);
+
+		FILE *f = fopen(path, "r");
+		if (!f)
+			return -1;
+
+		if (!fgets(buf, size, f)) {
+			fclose(f);
+			return -1;
+		}
+
+		fclose(f);
+
+		// Remove trailing newline.
+		char *nl = strchr(buf, '\n');
+		if (nl)
+			*nl = '\0';
+
+		return 0;
+	}
 
 }

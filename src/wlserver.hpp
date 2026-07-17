@@ -67,6 +67,7 @@ public:
 	const char *get_nested_display_name() const;
 
 	void set_wl_id( struct wlserver_x11_surface_info *surf, uint32_t id );
+	void link_override( struct wlserver_x11_surface_info *surf );
 
 	_XDisplay *get_xdisplay();
 

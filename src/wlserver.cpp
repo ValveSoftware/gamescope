@@ -86,7 +86,7 @@ using namespace std::literals;
 
 extern gamescope::ConVar<bool> cv_drm_debug_disable_explicit_sync;
 
-//#define GAMESCOPE_SWAPCHAIN_DEBUG
+#define GAMESCOPE_SWAPCHAIN_DEBUG
 
 struct wlserver_t wlserver = {
 	.touch_down_ids = {}
@@ -256,17 +256,29 @@ void xwayland_surface_commit(struct wlr_surface *wlr_surface) {
 
 	gpuvis_trace_printf( "xwayland_surface_commit wlr_surface %p", wlr_surface );
 
+
+	char szProcessName[ 256 ];
+	{
+		pid_t pid; uid_t uid; gid_t gid;
+		wl_client_get_credentials( wlr_surface->resource->client, &pid, &uid, &gid );
+
+		gamescope::Process::GetProcessName( pid, szProcessName, sizeof( szProcessName ) );
+	}
+
 	if (wlserver_x11_surface_info)
 	{
+		wl_log.infof("[Commit] %s: X11 wlr_surface %p\n", szProcessName, wlr_surface );
 		assert(wlserver_x11_surface_info->xwayland_server);
 		wlserver_x11_surface_info->xwayland_server->wayland_commit( wlr_surface, buf );
 	}
 	else if (wlserver_xdg_surface_info)
 	{
+		wl_log.infof("[Commit] %s: XDG wlr_surface %p\n", szProcessName, wlr_surface );
 		wlserver_xdg_commit(wlr_surface, buf);
 	}
 	else
 	{
+		wl_log.infof("[Commit] %s: Pending wlr_surface %p\n", szProcessName, wlr_surface );
 		g_PendingCommits.push_back(PendingCommit_t{ wlr_surface, buf });
 	}
 }
@@ -657,7 +669,10 @@ void gamescope_xwayland_server_t::destroy_content_override( struct wlserver_cont
 	{
 		wlserver_wl_surface_info *wl_surface_info = get_wl_surface_info( co->surface );
 		if ( wl_surface_info )
+		{
+			wl_log.infof( "gamescope_xwayland_server_t::destroy_content_override: NO MORE X11 SURFACE: wlr_surface: %p\n", co->surface );
 			wl_surface_info->x11_surface = nullptr;
+		}
 	}
 
 	if ( co->gamescope_swapchain )
@@ -704,20 +719,19 @@ static void gamescope_swapchain_destroy_co( struct wl_resource *resource );
 
 void gamescope_xwayland_server_t::handle_override_window_content( struct wl_client *client, struct wl_resource *gamescope_swapchain_resource, struct wlr_surface *surface, uint32_t x11_window )
 {
+	x11_window = x11_find_toplevel_for_xid( this->ctx->dpy, x11_window );
+
 	wlserver_x11_surface_info *x11_surface = lookup_x11_surface_info_from_xid( this, x11_window );
-	// If we found an x11_surface, go back up to our parent.
-	if ( x11_surface )
-		x11_window = x11_surface->x11_id;
 
 #ifdef GAMESCOPE_SWAPCHAIN_DEBUG
-	wl_log.infof( "handle_override_window_content: (1) x11_window: 0x%x swapchain_resource: %p surface: %p", x11_window, gamescope_swapchain_resource, surface );
+	wl_log.infof( "handle_override_window_content: (1) x11_window: 0x%x swapchain_resource: %p surface: %p x11_surface: %p", x11_window, gamescope_swapchain_resource, surface, x11_surface );
 #endif
 
 	if ( content_overrides.count( x11_window ) ) {
 		if ( content_overrides[x11_window]->gamescope_swapchain == gamescope_swapchain_resource )
 			return;
 #ifdef GAMESCOPE_SWAPCHAIN_DEBUG
-		wl_log.infof( "handle_override_window_content: (2) DESTROYING x11_window: 0x%x old_swapchain: %p new_swapchain: %p", x11_window, content_overrides[x11_window]->gamescope_swapchain, gamescope_swapchain_resource );
+		wl_log.infof( "handle_override_window_content: (2) DESTROYING x11_window: 0x%x old_swapchain: %p new_swapchain: %p x11_surface: %p", x11_window, content_overrides[x11_window]->gamescope_swapchain, gamescope_swapchain_resource, x11_surface );
 #endif
 		destroy_content_override( content_overrides[ x11_window ] );
 	}
@@ -737,7 +751,7 @@ void gamescope_xwayland_server_t::handle_override_window_content( struct wl_clie
 	content_overrides[ x11_window ] = co;
 
 #ifdef GAMESCOPE_SWAPCHAIN_DEBUG
-	wl_log.infof( "handle_override_window_content: (3) x11_window: 0x%x swapchain_resource: %p surface: %p co: %p", x11_window, gamescope_swapchain_resource, surface, co );
+	wl_log.infof( "handle_override_window_content: (3) x11_window: 0x%x swapchain_resource: %p surface: %p co: %p x11_surface: %p", x11_window, gamescope_swapchain_resource, surface, co, x11_surface );
 #endif
 
 	if ( x11_surface )
@@ -753,7 +767,7 @@ void gamescope_xwayland_server_t::handle_override_window_content( struct wl_clie
 
                 // Still have the buffer lock from before...
                 assert(x11_surface);
-                assert(x11_surface->xwayland_server);
+                assert(x11_surface->xwayland_server == this);
                 x11_surface->xwayland_server->wayland_commit( pending.surf, pending.buf );
 
                 it = g_PendingCommits.erase(it);
@@ -3030,17 +3044,20 @@ static void wlserver_x11_surface_info_set_wlr( struct wlserver_x11_surface_info 
 	{
 		if ( surf->override_surface )
 		{
+			wl_log.infof( "wlserver_x11_surface_info_set_wlr: OVERRIDING override_surface: XID: 0x%x SURF: %p -> %p\n", surf->x11_id, surf->override_surface.load(), wlr_surf );
 			wlserver_wl_surface_info *wl_info = get_wl_surface_info(surf->override_surface);
 			if (wl_info)
 				wl_info->x11_surface = nullptr;
 		}
 
+		wl_log.infof( "wlserver_x11_surface_info_set_wlr: SETTING override_surface: XID: 0x%x SURF: %p\n", surf->x11_id, wlr_surf );
 		surf->override_surface = wlr_surf;
 	}
 	else
 	{
 		if ( surf->main_surface )
 		{
+			wl_log.infof( "wlserver_x11_surface_info_set_wlr: OVERRIDING main_surface: %p -> %p\n", surf->main_surface.load(), wlr_surf );
 			wlserver_wl_surface_info *wl_info = get_wl_surface_info(surf->main_surface);
 			if (wl_info)
 				wl_info->x11_surface = nullptr;
@@ -3100,6 +3117,7 @@ void gamescope_xwayland_server_t::set_wl_id( struct wlserver_x11_surface_info *s
 				return;
 			}
 
+			wl_log.errorf("gamescope_xwayland_server_t::set_wl_id: main_surface: %p", surf->main_surface.load());
 			wlserver_wl_surface_info *old_surface_info = get_wl_surface_info(old_wlr_surf);
 			old_surface_info->x11_surface = nullptr;
 		}
@@ -3116,12 +3134,7 @@ void gamescope_xwayland_server_t::set_wl_id( struct wlserver_x11_surface_info *s
 
 	wl_list_insert( &pending_surfaces, &surf->pending_link );
 
-	struct wlr_surface *wlr_override_surf = nullptr;
 	struct wlr_surface *wlr_surf = nullptr;
-	if ( content_overrides.count( surf->x11_id ) )
-	{
-		wlr_override_surf = content_overrides[ surf->x11_id ]->surface;
-	}
 
 	struct wl_resource *resource = wl_client_get_object( xwayland_server->client, id );
 	if ( resource != nullptr )
@@ -3129,6 +3142,17 @@ void gamescope_xwayland_server_t::set_wl_id( struct wlserver_x11_surface_info *s
 
 	if ( wlr_surf != nullptr )
 		wlserver_x11_surface_info_set_wlr( surf, wlr_surf, false );
+}
+
+void gamescope_xwayland_server_t::link_override( struct wlserver_x11_surface_info *surf )
+{
+	xwm_log.infof( "link_override! xid: 0x%x", (uint32_t)surf->x11_id );
+
+	struct wlr_surface *wlr_override_surf = nullptr;
+	if ( content_overrides.count( surf->x11_id ) )
+	{
+		wlr_override_surf = content_overrides[ surf->x11_id ]->surface;
+	}
 
 	if ( wlr_override_surf != nullptr )
 		wlserver_x11_surface_info_set_wlr( surf, wlr_override_surf, true );
@@ -3152,6 +3176,8 @@ const char *gamescope_xwayland_server_t::get_nested_display_name() const
 void wlserver_x11_surface_info_finish( struct wlserver_x11_surface_info *surf )
 {
 	assert( wlserver_is_lock_held() );
+
+	wl_log.infof( "wlserver_x11_surface_info_finish: main_surface: %p, override_surface: %p\n", surf->main_surface.load(), surf->override_surface.load() );
 
 	if (surf->main_surface)
 	{

@@ -255,6 +255,9 @@ static int setDMemMemoryLow(const char *cgroupPath, bool focused) {
 	return 0;
 }
 
+static void
+handle_wl_surface_id(xwayland_ctx_t *ctx, steamcompmgr_win_t *w, uint32_t surfaceID);
+
 static std::vector< steamcompmgr_win_t* > GetGlobalPossibleFocusWindows();
 static bool
 pick_primary_focus_and_override(
@@ -5174,6 +5177,10 @@ add_win(xwayland_ctx_t *ctx, Window id, Window prev, unsigned long sequence)
 	if (new_win->xwayland().a.map_state == IsViewable)
 		map_win(ctx, id, sequence);
 
+	xwm_log.infof( "AddWin! xid: 0x%x", (uint32_t)new_win->xwayland().id );
+
+	handle_wl_surface_id( ctx, new_win, 0 );
+
 	MakeFocusDirty();
 }
 
@@ -5427,7 +5434,14 @@ handle_wl_surface_id(xwayland_ctx_t *ctx, steamcompmgr_win_t *w, uint32_t surfac
 
 	wlserver_lock();
 
-	ctx->xwayland_server->set_wl_id( &w->xwayland().surface, surfaceID );
+	if ( surfaceID )
+	{
+		ctx->xwayland_server->set_wl_id( &w->xwayland().surface, surfaceID );
+	}
+	else
+	{
+		ctx->xwayland_server->link_override( &w->xwayland().surface );
+	}
 
 	current_surface = w->xwayland().surface.current_surface();
 	main_surface = w->xwayland().surface.main_surface;
@@ -9190,6 +9204,33 @@ struct wlr_surface *steamcompmgr_get_server_input_surface( size_t idx )
 	return NULL;
 }
 
+Window x11_find_toplevel_for_xid( _XDisplay *dpy, Window xid )
+{
+	Window current = xid;
+
+	for ( ;; )
+	{
+		Window root = 0, parent = 0;
+		Window *children = nullptr;
+		unsigned int nchildren = 0;
+
+		if ( !XQueryTree( dpy, current, &root, &parent, &children, &nchildren ) )
+		{
+			if ( children )
+				XFree( children );
+			return None;
+		}
+
+		if ( children )
+			XFree( children );
+
+		if ( parent == root || parent == None )
+			return current;
+
+		current = parent;
+	}
+}
+
 struct wlserver_x11_surface_info *lookup_x11_surface_info_from_xid( gamescope_xwayland_server_t *xwayland_server, uint32_t xid )
 {
 	if ( !xwayland_server )
@@ -9198,12 +9239,8 @@ struct wlserver_x11_surface_info *lookup_x11_surface_info_from_xid( gamescope_xw
 	if ( !xwayland_server->ctx )
 		return nullptr;
 
-	// Lookup children too so we can get the window
-	// and go back to it's top-level parent.
-	// The xwayland bypass layer does this as we can have child windows
-	// that cover the whole parent.
 	std::unique_lock lock( xwayland_server->ctx->list_mutex );
-	steamcompmgr_win_t *w = find_win( xwayland_server->ctx.get(), xid, true );
+	steamcompmgr_win_t *w = find_win( xwayland_server->ctx.get(), xid, false );
 	if ( !w )
 		return nullptr;
 

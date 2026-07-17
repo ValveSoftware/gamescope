@@ -1,3 +1,4 @@
+#include <string_view>
 #define VK_USE_PLATFORM_WAYLAND_KHR
 #define VK_USE_PLATFORM_XCB_KHR
 #define VK_USE_PLATFORM_XLIB_KHR
@@ -1099,6 +1100,7 @@ namespace GamescopeWSILayer {
         static bool s_warned = false;
         if (!s_warned) {
           int messageId = -1;
+#if 0
           messagey::ShowSimple(
             "CreateSwapchainKHR: Creating swapchain for non-Gamescope swapchain.\nHooking has failed somewhere!\nYou may have a bad Vulkan layer interfering.\nPress OK to try to power through this error, or Cancel to stop.",
             "Gamescope WSI Layer Error",
@@ -1106,6 +1108,7 @@ namespace GamescopeWSILayer {
             &messageId);
           if (messageId == 0) // Cancel
             abort();
+#endif
           s_warned = true;
         }
         return pDispatch->CreateSwapchainKHR(device, pCreateInfo, pAllocator, pSwapchain);
@@ -1164,7 +1167,11 @@ namespace GamescopeWSILayer {
         minImageCount = std::max(getMinImageCount(), minImageCount);
       swapchainInfo.minImageCount = minImageCount;
 
-      fprintf(stderr, "[Gamescope WSI] Creating swapchain for xid: 0x%0x - oldSwapchain: %p - provided minImageCount: %u - minImageCount: %u - format: %s - colorspace: %s - flip: %s\n",
+      std::string_view execName = getExecutableName();
+
+      fprintf(stderr, "[Gamescope WSI] Creating swapchain for execName: %.*s, xid: 0x%0x - oldSwapchain: %p - provided minImageCount: %u - minImageCount: %u - format: %s - colorspace: %s - flip: %s\n",
+        int( execName.length() ),
+        execName.data(),
         gamescopeSurface->window,
         reinterpret_cast<void*>(pCreateInfo->oldSwapchain),
         pCreateInfo->minImageCount,
@@ -1288,7 +1295,20 @@ namespace GamescopeWSILayer {
             VkDevice                   device,
       const VkAcquireNextImageInfoKHR* pAcquireInfo,
             uint32_t*                  pImageIndex) {
+      fprintf(stderr, "[Gamescope WSI] AcquireNextImage2KHR Hit!\n");
+
       if (auto gamescopeSwapchain = GamescopeSwapchain::get(pAcquireInfo->swapchain)) {
+        auto gamescopeSurface = GamescopeSurface::get(gamescopeSwapchain->surface);
+        if (gamescopeSurface) {
+          std::string_view execName = getExecutableName();
+          fprintf(stderr, "[Gamescope WSI] AcquireNextImage2KHR: executable: %.*s, xid: 0x%x, swapchain: %p retired: %s\n",
+            int( execName.length() ),
+            execName.data(),
+            gamescopeSurface->window,
+            pAcquireInfo->swapchain,
+            gamescopeSwapchain->retired ? "true" : "false"
+          );
+        }
         if (gamescopeSwapchain->retired)
           return VK_ERROR_OUT_OF_DATE_KHR;
       }
@@ -1300,6 +1320,8 @@ namespace GamescopeWSILayer {
       const vkroots::VkDeviceDispatch* pDispatch,
             VkQueue                    queue,
       const VkPresentInfoKHR*          pPresentInfo) {
+      fprintf(stderr, "[Gamescope WSI] QueuePresentKHR Hit!\n");
+      
       VkPresentInfoKHR presentInfo = *pPresentInfo;
 
       bool forceFifo = gamescopeIsForcingFifo();
@@ -1309,6 +1331,18 @@ namespace GamescopeWSILayer {
       wl_display *display = nullptr;
       for (uint32_t i = 0; i < presentInfo.swapchainCount; i++) {
         if (auto gamescopeSwapchain = GamescopeSwapchain::get(presentInfo.pSwapchains[i])) {
+          auto gamescopeSurface = GamescopeSurface::get(gamescopeSwapchain->surface);
+          if (gamescopeSurface) {
+            std::string_view execName = getExecutableName();
+            fprintf(stderr, "[Gamescope WSI] QueuePresentKHR: executable: %.*s, xid: 0x%x, swapchain: %p retired: %s\n",
+              int( execName.length() ),
+              execName.data(),
+              gamescopeSurface->window,
+              presentInfo.pSwapchains[i],
+              gamescopeSwapchain->retired ? "true" : "false"
+            );
+          }
+
           if (gamescopeSwapchain->retired) {
             return VK_ERROR_OUT_OF_DATE_KHR;
           }
@@ -1370,6 +1404,7 @@ namespace GamescopeWSILayer {
       } else {
         static bool s_warned = false;
         if (!s_warned) {
+#if 0
           int messageId = -1;
           messagey::ShowSimple(
             "QueuePresentKHR: Attempting to present to a non-hooked swapchain.\nHooking has failed somewhere!\nYou may have a bad Vulkan layer interfering.\nPress OK to try to power through this error, or Cancel to stop.",
@@ -1378,6 +1413,7 @@ namespace GamescopeWSILayer {
             &messageId);
           if (messageId == 0) // Cancel
             abort();
+#endif
           s_warned = true;
         }
       }
