@@ -1426,6 +1426,12 @@ import_commit (
 	}
 
 	gamescope::OwningRc<CVulkanTexture> pOwnedTexture = vulkan_create_texture_from_wlr_buffer( buf, std::move( pBackendFb ) );
+
+	if ( pOwnedTexture == nullptr ) {
+		// Failed to create Vulkan texture from Wayland buffer for some reason.
+		return nullptr;
+	}
+
 	commit->vulkanTex = pOwnedTexture;
 
 	s_BufferMemos.MemoizeBuffer( buf, std::move( pOwnedTexture ) );
