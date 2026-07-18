@@ -94,6 +94,14 @@ endif
 
 subdir('protocol')
 
+if not get_option('enable_zenity')
+  add_project_arguments(
+    '-DDISABLE_ZENITY',
+    language: 'cpp',
+  )
+endif
+
+
 if get_option('enable_gamescope_wsi_layer')
   subdir('layer')
 endif
