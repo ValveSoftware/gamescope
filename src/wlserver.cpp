@@ -730,6 +730,8 @@ static void gamescope_swapchain_destroy_co( struct wl_resource *resource );
 
 void gamescope_xwayland_server_t::handle_override_window_content( struct wl_client *client, struct wl_resource *gamescope_swapchain_resource, struct wlr_surface *surface, uint32_t x11_window )
 {
+	x11_window = x11_find_toplevel_for_xid( this->ctx->dpy, x11_window );
+
 	wlserver_x11_surface_info *x11_surface = lookup_x11_surface_info_from_xid( this, x11_window );
 	// If we found an x11_surface, go back up to our parent.
 	if ( x11_surface )
