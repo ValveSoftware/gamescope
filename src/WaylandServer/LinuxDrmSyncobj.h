@@ -4,6 +4,7 @@
 #include "../Utils/Process.h"
 
 #include "linux-drm-syncobj-v1-protocol.h"
+#include <string>
 
 namespace gamescope::WaylandServer
 {
@@ -22,7 +23,11 @@ namespace gamescope::WaylandServer
 
 			char szProcessName[ 256 ];
 			Process::GetProcessName( pid, szProcessName, sizeof( szProcessName ) );
-			m_pTimeline->SetName( szProcessName );
+
+			static uint32_t s_ulTimelineSerial = 0;
+			std::string sName = std::string( szProcessName ) + " " + std::to_string( ++s_ulTimelineSerial );
+
+			m_pTimeline->SetName( sName );
 		}
 
 		std::shared_ptr<CTimeline> GetTimeline() const
