@@ -9139,12 +9139,13 @@ steamcompmgr_main(int argc, char **argv)
 			// Juuust in case pageflip handler doesn't happen
 			// so we don't stop vblanking forever.
 			GetVBlankTimer().ArmNextVBlank( true );
+		}
 
 #if HAVE_PIPEWIRE
-			if ( pipewire_is_streaming() )
-				paint_pipewire();
+		// Drive on vblank, not the timer: under VRR the timer starves (page flips re-arm it).
+		if ( vblank && pipewire_is_streaming() )
+			paint_pipewire();
 #endif
-		}
 
 		update_vrr_atoms(root_ctx, false, &flush_root);
 
