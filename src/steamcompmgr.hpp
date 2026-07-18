@@ -140,6 +140,7 @@ extern void mangoapp_update( uint64_t visible_frametime, uint64_t app_frametime_
 struct wlr_surface *steamcompmgr_get_server_input_surface( size_t idx );
 wlserver_vk_swapchain_feedback* steamcompmgr_get_base_layer_swapchain_feedback();
 
+Window x11_find_toplevel_for_xid( _XDisplay *dpy, Window xid );
 struct wlserver_x11_surface_info *lookup_x11_surface_info_from_xid( gamescope_xwayland_server_t *xwayland_server, uint32_t xid );
 
 extern gamescope::VBlankTime g_SteamCompMgrVBlankTime;
