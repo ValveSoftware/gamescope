@@ -19,7 +19,10 @@ namespace gamescope
         int32_t nRet;
         uint32_t uHandle = 0;
         if ( ( nRet = drmSyncobjFDToHandle( g_device.drmRenderFd(), nFd, &uHandle ) ) < 0 )
+        {
+            s_TimelineLog.errorf_errno( "SyncobjFdToHandle failed with: ret = %d", nRet );
             return 0;
+        }
 
         return uHandle;
     }
@@ -84,7 +87,11 @@ namespace gamescope
         {
             const uint32_t uHandle = m_pTimeline->GetSyncobjHandle();
 
-            drmSyncobjTimelineSignal( m_pTimeline->GetDrmRenderFD(), &uHandle, &m_ulPoint, 1 );
+            int32_t nRet = 0;
+            if ( ( nRet = drmSyncobjTimelineSignal( m_pTimeline->GetDrmRenderFD(), &uHandle, &m_ulPoint, 1 ) ) < 0 )
+            {
+                s_TimelineLog.errorf_errno( "drmSyncobjTimelineSignal failed with: ret = %d", nRet );
+            }
         }
     }
 
@@ -101,6 +108,11 @@ namespace gamescope
             lTimeout,
             DRM_SYNCOBJ_WAIT_FLAGS_WAIT_ALL,
             nullptr );
+
+        if ( nRet < 0 )
+        {
+            s_TimelineLog.errorf_errno( "drmSyncobjTimelineWait failed with: ret = %d", nRet );
+        }
 
         return nRet == 0;
     }
