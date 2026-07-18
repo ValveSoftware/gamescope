@@ -1316,6 +1316,9 @@ get_time_in_milliseconds(void)
 	return (unsigned int)(get_time_in_nanos() / 1'000'000ul);
 }
 
+static void
+handle_wl_surface_id(xwayland_ctx_t *ctx, steamcompmgr_win_t *w, uint32_t surfaceID);
+
 bool xwayland_ctx_t::HasQueuedEvents()
 {
 	// If mode is QueuedAlready, XEventsQueued() returns the number of
@@ -5170,6 +5173,8 @@ add_win(xwayland_ctx_t *ctx, Window id, Window prev, unsigned long sequence)
 	if (new_win->xwayland().a.map_state == IsViewable)
 		map_win(ctx, id, sequence);
 
+	handle_wl_surface_id( ctx, new_win, 0 );
+
 	MakeFocusDirty();
 }
 
@@ -5423,7 +5428,14 @@ handle_wl_surface_id(xwayland_ctx_t *ctx, steamcompmgr_win_t *w, uint32_t surfac
 
 	wlserver_lock();
 
-	ctx->xwayland_server->set_wl_id( &w->xwayland().surface, surfaceID );
+	if ( surfaceID )
+	{
+		ctx->xwayland_server->set_wl_id( &w->xwayland().surface, surfaceID );
+	}
+	else
+	{
+		ctx->xwayland_server->link_override( &w->xwayland().surface );
+	}
 
 	current_surface = w->xwayland().surface.current_surface();
 	main_surface = w->xwayland().surface.main_surface;

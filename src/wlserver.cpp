@@ -3171,22 +3171,26 @@ void gamescope_xwayland_server_t::set_wl_id( struct wlserver_x11_surface_info *s
 
 	wl_list_insert( &pending_surfaces, &surf->pending_link );
 
-	struct wlr_surface *wlr_override_surf = nullptr;
-	struct wlr_surface *wlr_surf = nullptr;
-	if ( content_overrides.count( surf->x11_id ) )
-	{
-		wlr_override_surf = content_overrides[ surf->x11_id ]->surface;
-	}
-
+	
 	struct wl_resource *resource = wl_client_get_object( xwayland_server->client, id );
 	if ( resource != nullptr )
-		wlr_surf = wlr_surface_from_resource( resource );
+	{
+		struct wlr_surface *wlr_surf = wlr_surface_from_resource( resource );
 
-	if ( wlr_surf != nullptr )
-		wlserver_x11_surface_info_set_wlr( surf, wlr_surf, false );
+		if ( wlr_surf != nullptr )
+			wlserver_x11_surface_info_set_wlr( surf, wlr_surf, false );
+	}
+}
 
-	if ( wlr_override_surf != nullptr )
-		wlserver_x11_surface_info_set_wlr( surf, wlr_override_surf, true );
+void gamescope_xwayland_server_t::link_override( struct wlserver_x11_surface_info *surf )
+{
+	if ( content_overrides.count( surf->x11_id ) )
+	{
+		struct wlr_surface *wlr_override_surf = content_overrides[ surf->x11_id ]->surface;
+
+		if ( wlr_override_surf != nullptr )
+			wlserver_x11_surface_info_set_wlr( surf, wlr_override_surf, true );
+	}
 }
 
 bool gamescope_xwayland_server_t::is_xwayland_ready() const
