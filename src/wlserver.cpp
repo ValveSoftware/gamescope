@@ -131,7 +131,7 @@ std::vector<ResListEntry_t>& gamescope_xwayland_server_t::retrieve_commits()
 
 gamescope::ConVar<bool> cv_drm_debug_syncobj_force_wait_on_commit( "drm_debug_syncobj_force_wait_on_commit", false, "Force a wait on DRM sync objects before committing buffers" );
 
-std::optional<ResListEntry_t> PrepareCommit( struct wlr_surface *surf, struct wlr_buffer *buf )
+ResListEntry_t PrepareCommit( struct wlr_surface *surf, struct wlr_buffer *buf )
 {
 	auto wl_surf = get_wl_surface_info( surf );
 
@@ -153,8 +153,7 @@ std::optional<ResListEntry_t> PrepareCommit( struct wlr_surface *surf, struct wl
 		}
 	}
 
-	auto oNewEntry = std::optional<ResListEntry_t> {
-		std::in_place_t{},
+	ResListEntry_t newEntry = ResListEntry_t {
 		surf,
 		buf,
 		wlserver_surface_is_async(surf),
@@ -177,40 +176,26 @@ std::optional<ResListEntry_t> PrepareCommit( struct wlr_surface *surf, struct wl
 	if ( pConstraint && pConstraint->surface == pConstraintSurface )
 		wlserver_update_cursor_constraint();
 
-	return oNewEntry;
+	return newEntry;
 }
 
-void gamescope_xwayland_server_t::wayland_commit(struct wlr_surface *surf, struct wlr_buffer *buf)
+void gamescope_xwayland_server_t::wayland_commit( ResListEntry_t entry )
 {
-	std::optional<ResListEntry_t> oEntry = PrepareCommit( surf, buf );
-	if ( !oEntry )
-		return;
-
 	{
 		std::lock_guard<std::mutex> lock( wayland_commit_lock );
-		wayland_commit_queue.emplace_back( std::move( *oEntry ) );
+		wayland_commit_queue.emplace_back( std::move( entry ) );
 	}
 
 	nudge_steamcompmgr();
 }
 
-struct PendingCommit_t
+std::list<ResListEntry_t> g_PendingCommits;
+
+void wlserver_xdg_commit( ResListEntry_t entry )
 {
-	struct wlr_surface *surf;
-	struct wlr_buffer *buf;
-};
-
-std::list<PendingCommit_t> g_PendingCommits;
-
-void wlserver_xdg_commit(struct wlr_surface *surf, struct wlr_buffer *buf)
-{
-	std::optional<ResListEntry_t> oEntry = PrepareCommit( surf, buf );
-	if ( !oEntry )
-		return;
-
 	{
 		std::lock_guard<std::mutex> lock( wlserver.xdg_commit_lock );
-		wlserver.xdg_commit_queue.push_back( std::move( *oEntry ) );
+		wlserver.xdg_commit_queue.push_back( std::move( entry ) );
 	}
 
 	nudge_steamcompmgr();
@@ -250,18 +235,20 @@ void xwayland_surface_commit(struct wlr_surface *wlr_surface) {
 
 	gpuvis_trace_printf( "xwayland_surface_commit wlr_surface %p", wlr_surface );
 
+	ResListEntry_t entry = PrepareCommit( wlr_surface, buf );
+
 	if (wlserver_x11_surface_info)
 	{
 		assert(wlserver_x11_surface_info->xwayland_server);
-		wlserver_x11_surface_info->xwayland_server->wayland_commit( wlr_surface, buf );
+		wlserver_x11_surface_info->xwayland_server->wayland_commit( std::move( entry ) );
 	}
 	else if (wlserver_xdg_surface_info)
 	{
-		wlserver_xdg_commit(wlr_surface, buf);
+		wlserver_xdg_commit( std::move( entry ) );
 	}
 	else
 	{
-		g_PendingCommits.push_back(PendingCommit_t{ wlr_surface, buf });
+		g_PendingCommits.emplace_back( std::move( entry ) );
 	}
 }
 
@@ -608,8 +595,10 @@ static void handle_wl_surface_destroy( struct wl_listener *l, void *data )
 	{
 		if (it->surf == surf->wlr)
 		{
+			ResListEntry_t pending = std::move( *it );
+
 			// We owned the buffer lock, so unlock it here.
-			wlr_buffer_unlock(it->buf);
+			wlr_buffer_unlock(pending.buf);
 			it = g_PendingCommits.erase(it);
 		}
 		else
@@ -786,12 +775,12 @@ void gamescope_xwayland_server_t::handle_override_window_content( struct wl_clie
         {
             if (it->surf == surface)
             {
-                PendingCommit_t pending = *it;
+				ResListEntry_t pending = std::move( *it );
 
                 // Still have the buffer lock from before...
                 assert(x11_surface);
                 assert(x11_surface->xwayland_server);
-                x11_surface->xwayland_server->wayland_commit( pending.surf, pending.buf );
+                x11_surface->xwayland_server->wayland_commit( std::move( pending ) );
 
                 it = g_PendingCommits.erase(it);
             }
@@ -1944,9 +1933,9 @@ wlserver_xdg_surface_info* waylandy_type_surface_new(struct wl_client *client, s
 	{
 		if (it->surf == surface)
 		{
-			PendingCommit_t pending = *it;
+			ResListEntry_t pending = std::move( *it );
 
-			wlserver_xdg_commit(pending.surf, pending.buf);
+			wlserver_xdg_commit( std::move( pending ) );
 
 			it = g_PendingCommits.erase(it);
 		}
@@ -3120,13 +3109,13 @@ static void wlserver_x11_surface_info_set_wlr( struct wlserver_x11_surface_info 
 	{
 		if (it->surf == wlr_surf)
 		{
-			PendingCommit_t pending = *it;
+			ResListEntry_t pending = std::move( *it );
 
 			// Still have the buffer lock from before...
 			wlserver_x11_surface_info *wlserver_x11_surface_info = get_wl_surface_info(wlr_surf)->x11_surface;
 			assert(wlserver_x11_surface_info);
 			assert(wlserver_x11_surface_info->xwayland_server);
-			wlserver_x11_surface_info->xwayland_server->wayland_commit( pending.surf, pending.buf );
+			wlserver_x11_surface_info->xwayland_server->wayland_commit( std::move( pending ) );
 
 			it = g_PendingCommits.erase(it);
 		}

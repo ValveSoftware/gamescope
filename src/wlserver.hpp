@@ -72,7 +72,7 @@ public:
 
 	std::unique_ptr<xwayland_ctx_t> ctx;
 
-	void wayland_commit(struct wlr_surface *surf, struct wlr_buffer *buf);
+	void wayland_commit(ResListEntry_t entry);
 
 	std::vector<ResListEntry_t>& retrieve_commits();
 
