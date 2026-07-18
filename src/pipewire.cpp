@@ -87,6 +87,11 @@ static void calculate_capture_size()
 			s_nCaptureHeight = s_nRequestedHeight;
 		}
 	}
+
+	// NV12 is 4:2:0 subsampled and only valid at even dimensions, but the ratio math can round odd.
+	constexpr uint32_t kCaptureAlign = 2;
+	s_nCaptureWidth = SPA_ROUND_UP_N(s_nCaptureWidth, kCaptureAlign);
+	s_nCaptureHeight = SPA_ROUND_UP_N(s_nCaptureHeight, kCaptureAlign);
 }
 
 static void build_format_params(struct spa_pod_builder *builder, spa_video_format format, std::vector<const struct spa_pod *> &params) {
