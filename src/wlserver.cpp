@@ -2370,23 +2370,38 @@ void wlserver_keyboardfocus( struct wlr_surface *surface, bool bConstrain )
 bool wlserver_process_hotkeys( wlr_keyboard *keyboard, uint32_t key, bool press )
 {
 	xkb_keycode_t keycode = key + 8;
-	xkb_keysym_t keysym = xkb_state_key_get_one_sym( keyboard->xkb_state, keycode );
 
-	keysym = NormalizeKeysymForHotkey( keysym );
-
-	static std::unordered_set<xkb_keysym_t> s_setPressedKeySyms;
+	// Track syms by keycode so a release always erases what the press
+	// inserted, even if modifiers changed the resolved sym in between.
 	if ( press )
 	{
-		s_setPressedKeySyms.emplace( keysym );
+		xkb_keysym_t keysym = xkb_state_key_get_one_sym( keyboard->xkb_state, keycode );
+		wlserver.mapPressedHotkeyKeys[ { keyboard, keycode } ] = NormalizeKeysymForHotkey( keysym );
 	}
 	else
 	{
-		s_setPressedKeySyms.erase( keysym );
+		auto it = wlserver.mapPressedHotkeyKeys.find( { keyboard, keycode } );
+		if ( it != wlserver.mapPressedHotkeyKeys.end() )
+		{
+			xkb_keysym_t released = it->second;
+			wlserver.mapPressedHotkeyKeys.erase( it );
+
+			// Two keycodes can normalize to the same sym. A release only
+			// ends a binding when it actually drops the sym, otherwise we
+			// would match again on the release and swallow it.
+			for ( const auto &[ deviceKey, uKeySym ] : wlserver.mapPressedHotkeyKeys )
+				if ( uKeySym == released )
+					return false;
+		}
 	}
+
+	std::unordered_set<xkb_keysym_t> setPressedKeySyms;
+	for ( const auto &[ deviceKey, uKeySym ] : wlserver.mapPressedHotkeyKeys )
+		setPressedKeySyms.emplace( uKeySym );
 
 	if ( log_binding.Enabled( LOG_DEBUG ) )
 	{
-		std::string sPressedKeySymsDebugName = ComputeDebugName( s_setPressedKeySyms );
+		std::string sPressedKeySymsDebugName = ComputeDebugName( setPressedKeySyms );
 		log_binding.debugf( "Looking for: [%s].", sPressedKeySymsDebugName.c_str() );
 	}
 
@@ -2406,7 +2421,7 @@ bool wlserver_process_hotkeys( wlr_keyboard *keyboard, uint32_t key, bool press 
 				if ( !pBinding->IsArmed() )
 					break;
 
-				if ( s_setPressedKeySyms != keybind.setKeySyms )
+				if ( setPressedKeySyms != keybind.setKeySyms )
 					continue;
 
 				if ( pBinding->Execute() )

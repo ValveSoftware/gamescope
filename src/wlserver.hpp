@@ -13,6 +13,8 @@
 #include <unordered_map>
 #include <optional>
 
+#include <xkbcommon/xkbcommon.h>
+
 #include "WaylandServer/WaylandDecls.h"
 #include "WaylandServer/WaylandServerLegacy.h"
 
@@ -199,6 +201,9 @@ struct wlserver_t {
     struct wlr_keyboard_group *keyboard_group;
     struct wl_listener keyboard_group_modifiers;
     struct wl_listener keyboard_group_key;
+
+    // Sym each held key resolved to at press time, keyed by device and keycode.
+    std::map<std::pair<struct wlr_keyboard *, xkb_keycode_t>, xkb_keysym_t> mapPressedHotkeyKeys;
 };
 
 extern struct wlserver_t wlserver;
