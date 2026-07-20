@@ -72,6 +72,7 @@ gamescope::ConVar<float> cv_vr_trackpad_sensitivity( "vr_trackpad_sensitivity", 
 gamescope::ConVar<uint64_t> cv_vr_trackpad_click_time( "vr_trackpad_click_time", 250'000'000ul, "Time to consider a 'click' vs a 'drag' when using trackpad mode. In nanoseconds." );
 gamescope::ConVar<float> cv_vr_trackpad_click_max_delta( "vr_trackpad_click_max_delta", 0.14f, "Max amount the cursor can move before not clicking." );
 gamescope::ConVar<bool> cv_vr_debug_force_opaque( "vr_debug_force_opaque", false, "Force textures to be treated as opaque." );
+gamescope::ConVar<bool> cv_vr_nudge_to_visible( "vr_nudge_to_visible", false, "" );
 gamescope::ConVar<bool> cv_vr_nudge_to_visible_per_connector( "vr_nudge_to_visible_per_connector", false, "" );
 
 // Maximum interval between polling for VR events (normally paced by frame sync)
@@ -2157,20 +2158,23 @@ namespace gamescope
                 vr::VROverlay()->SetOverlayTexture( m_hOverlay, &texture );
             }
 
-            if ( !m_bIsSubview )
+            if ( cv_vr_nudge_to_visible )
             {
-                bool bNudgeToVisible = cv_vr_nudge_to_visible_per_connector
-                    ? m_pConnector->ConsumeNudgeToVisible()
-                    : m_pBackend->ConsumeNudgeToVisible();
-
-                if ( bNudgeToVisible )
+                if ( !m_bIsSubview )
                 {
-                    vr::VROverlay()->ShowDashboard( m_sDashboardOverlayKey.c_str() );
+                    bool bNudgeToVisible = cv_vr_nudge_to_visible_per_connector
+                        ? m_pConnector->ConsumeNudgeToVisible()
+                        : m_pBackend->ConsumeNudgeToVisible();
 
-                    // Make sure we don't leave any nudges either side.
-                    m_pConnector->ConsumeNudgeToVisible();
-                    if ( !cv_vr_nudge_to_visible_per_connector )
-                        m_pBackend->ConsumeNudgeToVisible();
+                    if ( bNudgeToVisible )
+                    {
+                        vr::VROverlay()->ShowDashboard( m_sDashboardOverlayKey.c_str() );
+
+                        // Make sure we don't leave any nudges either side.
+                        m_pConnector->ConsumeNudgeToVisible();
+                        if ( !cv_vr_nudge_to_visible_per_connector )
+                            m_pBackend->ConsumeNudgeToVisible();
+                    }
                 }
             }
         }
