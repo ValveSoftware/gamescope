@@ -3684,6 +3684,25 @@ gamescope::Rc<CVulkanTexture> vulkan_acquire_capture_texture(uint32_t width, uin
 	return texture;
 }
 
+// XRGB2101010 storage images are an optional Vulkan feature. The NVIDIA proprietary
+// driver doesn't support them and imageStore lands in XBGR order, swapping R/B.
+uint32_t vulkan_get_rgb10_capture_format( void )
+{
+	static uint32_t s_uFormat = []()
+	{
+		// Pooled capture textures are mappable, hence linear-tiled.
+		VkFormatProperties props;
+		g_device.vk.GetPhysicalDeviceFormatProperties( g_device.physDev(), VK_FORMAT_A2R10G10B10_UNORM_PACK32, &props );
+		constexpr VkFormatFeatureFlags uNeeded = VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
+		if ( ( props.linearTilingFeatures & uNeeded ) == uNeeded )
+			return DRM_FORMAT_XRGB2101010;
+
+		vk_log.infof( "XRGB2101010 lacks linear storage/sampled support, capturing as XBGR2101010" );
+		return DRM_FORMAT_XBGR2101010;
+	}();
+	return s_uFormat;
+}
+
 // Internal display's native brightness.
 float g_flInternalDisplayBrightnessNits = 500.0f;
 
