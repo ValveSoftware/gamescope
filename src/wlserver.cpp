@@ -327,6 +327,10 @@ static void wlserver_handle_key(struct wl_listener *listener, void *data)
 		struct wlr_surface *new_kb_surf = steamcompmgr_get_server_input_surface( 0 );
 		if ( new_kb_surf )
 		{
+			// This key skips hotkey processing, so drop any press we
+			// recorded for it or the stale sym would wedge every binding.
+			wlserver.mapPressedHotkeyKeys.erase( { keyboard, keycode } );
+
 			wlserver_keyboardfocus( new_kb_surf, false );
 			wlr_seat_set_keyboard( wlserver.wlr.seat, keyboard );
 			wlr_seat_keyboard_notify_key( wlserver.wlr.seat, event->time_msec, event->keycode, event->state );
