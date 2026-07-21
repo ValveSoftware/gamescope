@@ -2866,7 +2866,8 @@ bool vulkan_init_format(VkFormat format, uint32_t drmFormat)
 			if ( !is_image_format_modifier_supported( format, drmFormat, modifier ) )
 				continue;
 
-			if ( ( modifierProps[j].drmFormatModifierTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT ) == 0 )
+			const VkFormatFeatureFlags neededFeatures = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT | VK_FORMAT_FEATURE_TRANSFER_SRC_BIT;
+			if ( ( modifierProps[j].drmFormatModifierTilingFeatures & neededFeatures ) != neededFeatures )
 			{
 				continue;
 			}
@@ -2897,6 +2898,10 @@ bool vulkan_init_format(VkFormat format, uint32_t drmFormat)
 
 bool vulkan_init_formats()
 {
+	// Do not collect formats again if we already have them
+	if ( sampledDRMFormats.len > 0 )
+		return true;
+
 	for ( size_t i = 0; s_DRMVKFormatTable[i].DRMFormat != DRM_FORMAT_INVALID; i++ )
 	{
 		if (s_DRMVKFormatTable[i].internal)
@@ -4236,6 +4241,19 @@ bool vulkan_has_drm_props()
 {
 	for (const auto& ext : g_device.supportedExtensions()) {
 		if ( strcmp(ext.extensionName, VK_EXT_PHYSICAL_DEVICE_DRM_EXTENSION_NAME) == 0 )
+			return true;
+	}
+
+	return false;
+}
+
+bool vulkan_supports_drm_format( uint32_t drmFormat )
+{
+	for ( size_t i = 0; i < sampledDRMFormats.len; i++ )
+	{
+		uint32_t fmt = sampledDRMFormats.formats[ i ].format;
+
+		if ( fmt == drmFormat )
 			return true;
 	}
 

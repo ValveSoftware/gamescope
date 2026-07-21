@@ -1007,4 +1007,6 @@ void vulkan_wait_idle();
 // Whether the driver implements VK_EXT_physical_device_drm
 bool vulkan_has_drm_props();
 
+bool vulkan_supports_drm_format( uint32_t drmFormat );
+
 extern CVulkanDevice g_device;
