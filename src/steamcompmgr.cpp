@@ -5572,6 +5572,11 @@ handle_wm_change_state(xwayland_ctx_t *ctx, steamcompmgr_win_t *w, XClientMessag
 	if (state == ICCCM_ICONIC_STATE) {
 		xwm_log.debugf("Faking WM_CHANGE_STATE to ICONIC for window 0x%lx", w->xwayland().id);
 		set_wm_state( ctx, w->xwayland().id, ICCCM_ICONIC_STATE );
+		if (x11_win(ctx->focus.focusWindow) == w->xwayland().id)
+		{
+			ctx->focus.focusWindow = nullptr;
+			MakeFocusDirty();
+		}
 	} else {
 		xwm_log.debugf("Unhandled WM_CHANGE_STATE to %ld for window 0x%lx", state, w->xwayland().id);
 	}
