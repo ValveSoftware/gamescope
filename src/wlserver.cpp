@@ -2418,11 +2418,28 @@ bool wlserver_process_hotkeys( wlr_keyboard *keyboard, uint32_t key, bool press 
 	return false;
 }
 
+void wlserver_modifiers( uint32_t depressed, uint32_t latched, uint32_t locked, uint32_t group )
+{
+	assert( wlserver_is_lock_held() );
+
+	if ( !wlserver.keyboard_group )
+		return;
+
+	struct wlr_keyboard *keyboard = &wlserver.keyboard_group->keyboard;
+	wlr_keyboard_notify_modifiers( keyboard, depressed, latched, locked, group );
+	wlr_seat_set_keyboard( wlserver.wlr.seat, keyboard );
+	wlr_seat_keyboard_notify_modifiers( wlserver.wlr.seat, &keyboard->modifiers );
+
+	bump_input_counter();
+}
+
 void wlserver_key( uint32_t key, bool press, uint32_t time )
 {
 	assert( wlserver_is_lock_held() );
 
-	wlr_keyboard *keyboard = wlserver.wlr.virtual_keyboard_device;
+	wlr_keyboard *keyboard = wlserver.keyboard_group
+		? &wlserver.keyboard_group->keyboard
+		: wlserver.wlr.virtual_keyboard_device;
 
 	if ( !wlserver_process_hotkeys( keyboard, key, press ) )
 	{
