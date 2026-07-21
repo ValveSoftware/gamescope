@@ -36,6 +36,10 @@ enum class GamescopeUpscaleFilter : uint32_t
     FSR,
     NIS,
     PIXEL,
+    SUBPIXEL_RGB,
+    SUBPIXEL_OLED,
+    SUBPIXEL_VBGR,
+    SUBPIXEL_QDOLED,
 
     FROM_VIEW = 0xF, // internal
 };
@@ -73,4 +77,3 @@ extern bool g_bNoTouchPointerEmulation;
 
 extern uint32_t g_preferVendorID;
 extern uint32_t g_preferDeviceID;
-
