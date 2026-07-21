@@ -45,6 +45,7 @@
 #include <wlr/types/wlr_pointer_constraints_v1.h>
 #include <wlr/types/wlr_layer_shell_v1.h>
 #include <wlr/types/wlr_data_device.h>
+#include <wlr/types/wlr_text_input_v3.h>
 #include <wlr/util/region.h>
 #include "wlr_end.hpp"
 
@@ -113,6 +114,7 @@ static void handle_pointer_constraint(struct wl_listener *listener, void *data);
 static void wlserver_constrain_cursor( struct wlr_pointer_constraint_v1 *pNewConstraint );
 struct wlr_surface *wlserver_surface_to_main_surface( struct wlr_surface *pSurface );
 bool wlserver_process_hotkeys( wlr_keyboard *keyboard, uint32_t key, bool press );
+static void handle_focused_surface_update( struct wlserver_t *wlserver );
 
 extern std::atomic<bool> hasRepaint;
 
@@ -600,7 +602,10 @@ static void handle_wl_surface_destroy( struct wl_listener *l, void *data )
 		wlserver.mouse_focus_surface = nullptr;
 
 	if ( surf->wlr == wlserver.kb_focus_surface )
+	{
 		wlserver.kb_focus_surface = nullptr;
+		handle_focused_surface_update( &wlserver );
+	}
 
 	wlserver.current_dropdown_surfaces.erase( surf->wlr );
 
@@ -1677,6 +1682,415 @@ static bool filter_global(const struct wl_client *client, const struct wl_global
 	return server && server->get_output() == output;
 }
 
+static void registry_handle_global_remove(void *data, struct wl_registry *registry, uint32_t name)
+{
+	(void)data; (void)registry; (void)name;
+}
+
+static void registry_handle_global(void *data, struct wl_registry *registry, uint32_t name, const char *iface, uint32_t version)
+{
+	struct wlserver_t* wlserver = static_cast<struct wlserver_t*>(data);
+
+	if (strcmp(iface, zwp_text_input_manager_v3_interface.name) == 0 && version >= 1u) {
+		wlserver->wlserver_text_input_proxy.host_text_input_manager = (struct zwp_text_input_manager_v3 *)wl_registry_bind(registry, name, &zwp_text_input_manager_v3_interface, 1u);
+	}
+}
+
+static const struct wl_registry_listener host_registry_listener = {
+	.global = registry_handle_global,
+	.global_remove = registry_handle_global_remove,
+};
+
+static bool is_same_client( struct wlr_surface *focused_surface, struct wlr_text_input_v3 *wlr_text_input )
+{
+	return wl_resource_get_client( focused_surface->resource ) == wl_resource_get_client( wlr_text_input->resource );
+}
+
+static void handle_host_text_input_enter(void *data,
+		struct zwp_text_input_v3 *zwp_text_input_v3,
+		struct wl_surface *surface) {
+	wl_log.debugf( "text input enter" );
+
+	struct wlserver_t* wlserver = static_cast<struct wlserver_t*>(data);
+	wlserver->wlserver_text_input_proxy.host_entered = true;
+
+	// Send enter to all text input whose wl_client is the same as the kb_focus_surface
+	if ( wlserver->kb_focus_surface != nullptr )
+	{
+		handle_focused_surface_update( wlserver );
+	}
+}
+
+static void handle_host_text_input_leave(void *data,
+		struct zwp_text_input_v3 *zwp_text_input_v3,
+		struct wl_surface *surface) {
+	wl_log.debugf( "text input leave" );
+
+	struct wlserver_t* wlserver = static_cast<struct wlserver_t*>(data);
+	wlserver->wlserver_text_input_proxy.host_entered = false;
+	wlserver->wlserver_text_input_proxy.enabled_text_input = nullptr;
+	wlserver->wlserver_text_input_proxy.enabled_text_input_cursor_rectangle.reset();
+
+	// Send leave to all text input
+	for ( auto& text_input : wlserver->wlserver_text_input_proxy.text_inputs )
+	{
+		if ( text_input->wlr_text_input->focused_surface != nullptr )
+		{
+			wlr_text_input_v3_send_leave( text_input->wlr_text_input );
+		}
+	}
+}
+
+static void handle_host_text_input_commit_string(void *data,
+		struct zwp_text_input_v3 *zwp_text_input_v3,
+		const char *text) {
+	wl_log.debugf( "text input commit string" );
+
+	struct wlserver_t* wlserver = static_cast<struct wlserver_t*>(data);
+
+	if ( wlserver->wlserver_text_input_proxy.enabled_text_input != nullptr )
+	{
+		wlr_text_input_v3_send_commit_string( wlserver->wlserver_text_input_proxy.enabled_text_input->wlr_text_input, text );
+	}
+}
+
+static void handle_host_text_input_delete_surrounding_text(void *data,
+		struct zwp_text_input_v3 *zwp_text_input_v3,
+		uint32_t before_length, uint32_t after_length) {
+	wl_log.debugf( "text input delete surrounding text" );
+
+	struct wlserver_t* wlserver = static_cast<struct wlserver_t*>(data);
+
+	if ( wlserver->wlserver_text_input_proxy.enabled_text_input != nullptr )
+	{
+		wlr_text_input_v3_send_delete_surrounding_text(
+				wlserver->wlserver_text_input_proxy.enabled_text_input->wlr_text_input,
+				before_length, after_length );
+	}
+}
+
+static void handle_host_text_input_preedit_string(void *data,
+		struct zwp_text_input_v3 *zwp_text_input_v3,
+		const char *text, int32_t cursor_begin, int32_t cursor_end) {
+	wl_log.debugf( "text input preedit string" );
+
+	struct wlserver_t* wlserver = static_cast<struct wlserver_t*>(data);
+
+	if ( wlserver->wlserver_text_input_proxy.enabled_text_input != nullptr )
+	{
+		wlr_text_input_v3_send_preedit_string(
+				wlserver->wlserver_text_input_proxy.enabled_text_input->wlr_text_input,
+				text, cursor_begin, cursor_end );
+	}
+}
+
+static void handle_host_text_input_done(void *data,
+		 struct zwp_text_input_v3 *zwp_text_input_v3,
+		 uint32_t incoming_serial) {
+	wl_log.debugf( "text input done" );
+
+	struct wlserver_t* wlserver = static_cast<struct wlserver_t*>(data);
+
+	// What if enabled_text_input is changed before done? Should I cache the preedit_string, commit_string and delete_surrounding_text events? I think the user can reset the state of text input easily and it may not be a big problem.
+	if ( wlserver->wlserver_text_input_proxy.enabled_text_input != nullptr )
+	{
+		wlr_text_input_v3_send_done( wlserver->wlserver_text_input_proxy.enabled_text_input->wlr_text_input );
+	}
+}
+
+static const struct zwp_text_input_v3_listener host_text_input_listener = {
+	.enter = handle_host_text_input_enter,
+	.leave = handle_host_text_input_leave,
+	.preedit_string = handle_host_text_input_preedit_string,
+	.commit_string = handle_host_text_input_commit_string,
+	.delete_surrounding_text = handle_host_text_input_delete_surrounding_text,
+	.done = handle_host_text_input_done,
+};
+
+bool wlserver_text_input_init( struct wl_display *host_display, struct wl_seat *host_seat ) {
+	bool created = false;
+	if ( host_display == nullptr )
+	{
+		// text_input_v3 is optional
+		wl_log.infof( "gamescope isn't running with Wayland Backend, skipping creating text_input_manager" );
+	}
+	else
+	{
+		struct wl_registry *registry = wl_display_get_registry(host_display);
+		wl_registry_add_listener(registry, &host_registry_listener, &wlserver);
+		wl_display_roundtrip(host_display);
+		wl_registry_destroy(registry);
+
+		if ( wlserver.wlserver_text_input_proxy.host_text_input_manager != nullptr && host_seat != nullptr )
+		{
+			wlserver.wlserver_text_input_proxy.host_text_input = zwp_text_input_manager_v3_get_text_input(
+					wlserver.wlserver_text_input_proxy.host_text_input_manager,
+					host_seat );
+			if ( wlserver.wlserver_text_input_proxy.host_text_input == nullptr )
+			{
+				wl_log.infof( "Can't get text input from host" );
+			}
+			else
+			{
+				zwp_text_input_v3_add_listener(
+						wlserver.wlserver_text_input_proxy.host_text_input,
+						&host_text_input_listener,
+						&wlserver );
+				created = true;
+				wl_log.infof( "Text input from host created" );
+			}
+		}
+		else
+		{
+			wl_log.infof(
+					"The host compositor has not enough capabilities: text_input_v3[%s], wl_seat[%s]",
+					wlserver.wlserver_text_input_proxy.host_text_input_manager == nullptr ? "no" : "yes",
+					host_seat == nullptr ? "no" : "yes" );
+		}
+	}
+	return created;
+}
+
+struct wlr_box translate_cursor_rectangle( const struct wlr_box *rect, const double scale )
+{
+	auto x = (static_cast<double>(rect->x) / focusedWindowScaleX - focusedWindowOffsetX) / scale;
+	auto y = (static_cast<double>(rect->y) / focusedWindowScaleY - focusedWindowOffsetY) / scale;
+	auto width = static_cast<double>(rect->width) / focusedWindowScaleX / scale;
+	auto height = static_cast<double>(rect->height) / focusedWindowScaleY / scale;
+	wl_log.debugf(
+			"Convert cursor rect[x: %d, y: %d, width: %d, height: %d] to rect[x: %f, y: %f, width: %f, height: %f]",
+			rect->x,
+			rect->y,
+			rect->width,
+			rect->height,
+			x,
+			y,
+			width,
+			height );
+	return {
+		.x = (int) x,
+		.y = (int) y,
+		.width = (int) width,
+		.height = (int) height,
+	};
+}
+
+void wlserver_set_host_scale( double scale )
+{
+	wlserver.wlserver_text_input_proxy.host_scale = scale;
+}
+
+void wlserver_refresh_cursor_rectangle() {
+	auto &proxy = wlserver.wlserver_text_input_proxy;
+	auto cursor_rectangle = proxy.enabled_text_input_cursor_rectangle;
+	if ( cursor_rectangle )
+	{
+		auto rect = translate_cursor_rectangle( &*cursor_rectangle, proxy.host_scale );
+		zwp_text_input_v3_set_cursor_rectangle(
+				proxy.host_text_input,
+				rect.x,
+				rect.y,
+				rect.width,
+				rect.height );
+		zwp_text_input_v3_set_text_change_cause(
+				proxy.host_text_input,
+				ZWP_TEXT_INPUT_V3_CHANGE_CAUSE_OTHER );
+
+		zwp_text_input_v3_commit( proxy.host_text_input );
+	}
+}
+
+static void handle_text_input_enable( struct wl_listener *listener, void *data )
+{
+	wl_log.debugf( "Text input is enabled inside gamescope" );
+
+	struct wlserver_text_input_t *wlserver_text_input = wl_container_of( listener, wlserver_text_input, enable );
+
+	if ( wlserver_text_input->proxy->enabled_text_input != nullptr )
+	{
+		// Clients must not enable more than one text input on the single seat and should disable the current text input before enabling the new one. Requests to enable a text input when another text input is enabled on the same seat must be ignored by compositor.
+
+		wl_log.infof( "There is already an enabled text input, ignore this request" );
+		return;
+	}
+
+	struct wlserver_t *wlserver = wl_container_of( wlserver_text_input->proxy, wlserver, wlserver_text_input_proxy );
+	if ( is_same_client( wlserver->kb_focus_surface, wlserver_text_input->wlr_text_input ) )
+	{
+		zwp_text_input_v3_enable( wlserver_text_input->proxy->host_text_input );
+		wlserver_text_input->proxy->enabled_text_input = wlserver_text_input;
+	}
+}
+
+static void handle_text_input_disable( struct wl_listener *listener, void *data )
+{
+	wl_log.debugf( "Text input is disabled inside gamescope" );
+
+	struct wlserver_text_input_t *wlserver_text_input = wl_container_of( listener, wlserver_text_input, disable );
+
+	if ( wlserver_text_input->proxy->enabled_text_input == wlserver_text_input )
+	{
+		zwp_text_input_v3_disable( wlserver_text_input->proxy->host_text_input );
+		wlserver_text_input->proxy->enabled_text_input = nullptr;
+		wlserver_text_input->proxy->enabled_text_input_cursor_rectangle.reset();
+	}
+}
+
+static void handle_text_input_commit( struct wl_listener *listener, void *data )
+{
+	wl_log.debugf( "Text input is committed inside gamescope" );
+
+	struct wlserver_text_input_t *wlserver_text_input = wl_container_of( listener, wlserver_text_input, commit );
+
+	if ( wlserver_text_input->proxy->enabled_text_input != wlserver_text_input )
+	{
+		return;
+	}
+
+	auto &state = wlserver_text_input->wlr_text_input->current;
+
+	if (state.features & WLR_TEXT_INPUT_V3_FEATURE_SURROUNDING_TEXT)
+	{
+	    zwp_text_input_v3_set_surrounding_text(
+			wlserver_text_input->proxy->host_text_input,
+	        state.surrounding.text,
+	        state.surrounding.cursor,
+	        state.surrounding.anchor );
+	}
+
+	if (state.features & WLR_TEXT_INPUT_V3_FEATURE_CONTENT_TYPE)
+	{
+		zwp_text_input_v3_set_content_type(
+				wlserver_text_input->proxy->host_text_input,
+				state.content_type.hint,
+				state.content_type.purpose );
+	}
+
+	if (state.features & WLR_TEXT_INPUT_V3_FEATURE_CURSOR_RECTANGLE)
+	{
+		// Save the rectangle, and use it to calculate the rectangle when the host surface is changed
+		wlserver_text_input->proxy->enabled_text_input_cursor_rectangle = state.cursor_rectangle;
+		auto rect = translate_cursor_rectangle( &state.cursor_rectangle, wlserver_text_input->proxy->host_scale );
+		zwp_text_input_v3_set_cursor_rectangle(
+				wlserver_text_input->proxy->host_text_input,
+				rect.x,
+				rect.y,
+				rect.width,
+				rect.height );
+	}
+
+	zwp_text_input_v3_set_text_change_cause(
+			wlserver_text_input->proxy->host_text_input,
+			state.text_change_cause );
+
+	zwp_text_input_v3_commit( wlserver_text_input->proxy->host_text_input );
+}
+
+static void handle_text_input_destroy( struct wl_listener *listener, void *data )
+{
+	wl_log.debugf( "Text input is destroyed inside gamescope" );
+
+	struct wlserver_text_input_t *wlserver_text_input = wl_container_of( listener, wlserver_text_input, destroy );
+
+	wl_list_remove(&wlserver_text_input->enable.link);
+	wl_list_remove(&wlserver_text_input->disable.link);
+	wl_list_remove(&wlserver_text_input->commit.link);
+	wl_list_remove(&wlserver_text_input->destroy.link);
+
+	wlserver_text_input->proxy->text_inputs.remove(wlserver_text_input);
+	if ( wlserver_text_input->proxy->enabled_text_input == wlserver_text_input )
+	{
+		zwp_text_input_v3_disable( wlserver_text_input->proxy->host_text_input );
+		wlserver_text_input->proxy->enabled_text_input = nullptr;
+		wlserver_text_input->proxy->enabled_text_input_cursor_rectangle.reset();
+	}
+
+	delete wlserver_text_input;
+}
+
+static void handle_new_text_input( struct wl_listener *listener, void *data )
+{
+	wl_log.debugf( "New text input inside gamescope" );
+	struct wlr_text_input_v3 *wlr_text_input = (struct wlr_text_input_v3 *)data;
+	struct wlserver_text_input_proxy_t *proxy = wl_container_of( listener, proxy, new_text_input );
+	struct wlserver_t *wlserver = wl_container_of( proxy, wlserver, wlserver_text_input_proxy );
+
+	struct wlserver_text_input_t *wlserver_text_input = new struct wlserver_text_input_t();
+	wlserver_text_input->proxy = proxy;
+	wlserver_text_input->wlr_text_input = wlr_text_input;
+
+	wlserver_text_input->enable.notify = handle_text_input_enable;
+	wlserver_text_input->disable.notify = handle_text_input_disable;
+	wlserver_text_input->commit.notify = handle_text_input_commit;
+	wlserver_text_input->destroy.notify = handle_text_input_destroy;
+
+	wl_signal_add(&wlr_text_input->events.enable, &wlserver_text_input->enable);
+	wl_signal_add(&wlr_text_input->events.disable, &wlserver_text_input->disable);
+	wl_signal_add(&wlr_text_input->events.commit, &wlserver_text_input->commit);
+	wl_signal_add(&wlr_text_input->events.destroy, &wlserver_text_input->destroy);
+
+	proxy->text_inputs.push_back(wlserver_text_input);
+
+	if ( proxy->host_entered && is_same_client( wlserver->kb_focus_surface, wlr_text_input ) )
+	{
+		wlr_text_input_v3_send_enter( wlr_text_input, wlserver->kb_focus_surface );
+	}
+}
+
+static void handle_focused_surface_update( struct wlserver_t *wlserver )
+{
+	if ( wlserver->kb_focus_surface == nullptr )
+	{
+		for ( auto& text_input : wlserver->wlserver_text_input_proxy.text_inputs )
+		{
+			if ( text_input->wlr_text_input->focused_surface != nullptr )
+			{
+				wlr_text_input_v3_send_leave( text_input->wlr_text_input );
+			}
+		}
+		if ( wlserver->wlserver_text_input_proxy.enabled_text_input != nullptr )
+		{
+			zwp_text_input_v3_disable( wlserver->wlserver_text_input_proxy.host_text_input );
+			wlserver->wlserver_text_input_proxy.enabled_text_input = nullptr;
+			wlserver->wlserver_text_input_proxy.enabled_text_input_cursor_rectangle.reset();
+		}
+	}
+	else if ( wlserver->wlserver_text_input_proxy.host_entered )
+	{
+		for ( auto& text_input : wlserver->wlserver_text_input_proxy.text_inputs )
+		{
+			if ( is_same_client( wlserver->kb_focus_surface, text_input->wlr_text_input ) )
+			{
+				if ( text_input->wlr_text_input->focused_surface != nullptr
+						&& text_input->wlr_text_input->focused_surface != wlserver->kb_focus_surface )
+				{
+					// Send leave first
+					wlr_text_input_v3_send_leave( text_input->wlr_text_input );
+				}
+
+				if ( text_input->wlr_text_input->focused_surface == nullptr )
+				{
+					wlr_text_input_v3_send_enter( text_input->wlr_text_input, wlserver->kb_focus_surface );
+				}
+			}
+			else if ( text_input->wlr_text_input->focused_surface != nullptr )
+			{
+				// Send leave to text inputs which aren't the same wl_client
+				wlr_text_input_v3_send_leave( text_input->wlr_text_input );
+			}
+
+			if ( text_input == wlserver->wlserver_text_input_proxy.enabled_text_input
+					&& text_input->wlr_text_input->focused_surface == nullptr )
+			{
+				// not focus any more, disable text input
+				zwp_text_input_v3_disable( wlserver->wlserver_text_input_proxy.host_text_input );
+				wlserver->wlserver_text_input_proxy.enabled_text_input = nullptr;
+				wlserver->wlserver_text_input_proxy.enabled_text_input_cursor_rectangle.reset();
+			}
+		}
+	}
+}
+
 bool wlsession_init( void ) {
 	static bool s_bInitted = false;
 	if ( s_bInitted )
@@ -1694,6 +2108,22 @@ bool wlsession_init( void ) {
 		.description = "Virtual gamescope output",
 	};
 	wlserver_set_output_info( &output_info );
+
+	if ( wlserver.wlserver_text_input_proxy.host_text_input != nullptr )
+	{
+		wlserver.wlserver_text_input_proxy.wlr_text_input_manager = wlr_text_input_manager_v3_create( wlserver.display );
+		if ( wlserver.wlserver_text_input_proxy.wlr_text_input_manager == nullptr )
+		{
+			wl_log.errorf( "Failed to create wlr_text_input_manager" );
+		}
+		else
+		{
+			wlserver.wlserver_text_input_proxy.new_text_input.notify = handle_new_text_input;
+			wl_signal_add(
+					&wlserver.wlserver_text_input_proxy.wlr_text_input_manager->events.text_input,
+					&wlserver.wlserver_text_input_proxy.new_text_input );
+		}
+	}
 
 #if HAVE_SESSION
 	if ( !GetBackend()->IsSessionBased() )
@@ -2302,6 +2732,19 @@ void wlserver_run(void)
 	// We need to shutdown Xwayland before disconnecting all clients, otherwise
 	// wlroots will restart it automatically.
 	wlserver_lock();
+
+	// Destroy host resources
+	if ( wlserver.wlserver_text_input_proxy.host_text_input != nullptr )
+	{
+		zwp_text_input_v3_destroy(wlserver.wlserver_text_input_proxy.host_text_input);
+		wlserver.wlserver_text_input_proxy.host_text_input = nullptr;
+	}
+	if ( wlserver.wlserver_text_input_proxy.host_text_input_manager != nullptr )
+	{
+		zwp_text_input_manager_v3_destroy(wlserver.wlserver_text_input_proxy.host_text_input_manager);
+		wlserver.wlserver_text_input_proxy.host_text_input_manager = nullptr;
+	}
+
 	wlserver.wlr.xwayland_servers.clear();
 
 	wl_list_remove( &new_surface_listener.link );
@@ -2359,6 +2802,7 @@ void wlserver_keyboardfocus( struct wlr_surface *surface, bool bConstrain )
 		wlr_seat_keyboard_notify_enter( wlserver.wlr.seat, surface, keyboard->keycodes, keyboard->num_keycodes, &keyboard->modifiers);
 
 	wlserver.kb_focus_surface = surface;
+	handle_focused_surface_update( &wlserver );
 
 	if ( bConstrain )
 	{
@@ -2430,6 +2874,26 @@ void wlserver_key( uint32_t key, bool press, uint32_t time )
 		wlr_seat_set_keyboard( wlserver.wlr.seat, keyboard );
 		wlr_seat_keyboard_notify_key( wlserver.wlr.seat, time, key, press );
 	}
+
+	bump_input_counter();
+}
+
+void wlserver_modifiers( uint32_t depressed, uint32_t latched, uint32_t locked, uint32_t group )
+{
+	assert( wlserver_is_lock_held() );
+
+	wlr_keyboard *keyboard = wlserver.wlr.virtual_keyboard_device;
+
+	const struct wlr_keyboard_modifiers modifiers = {
+		.depressed = depressed,
+		.latched = latched,
+		.locked = locked,
+		.group = group,
+	};
+
+	assert( keyboard != nullptr );
+	wlr_seat_set_keyboard( wlserver.wlr.seat, keyboard );
+	wlr_seat_keyboard_notify_modifiers( wlserver.wlr.seat, &modifiers );
 
 	bump_input_counter();
 }

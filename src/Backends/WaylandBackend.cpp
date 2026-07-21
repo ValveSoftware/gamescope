@@ -1735,6 +1735,8 @@ namespace gamescope
 
         CommitLibDecor( pConfiguration );
 
+        wlserver_refresh_cursor_rectangle();
+
         force_repaint();
 	}
     void CWaylandPlane::LibDecor_Frame_Close( libdecor_frame *pFrame )
@@ -1935,6 +1937,9 @@ namespace gamescope
             bDirty = true;
         }
 
+        wlserver_set_host_scale( static_cast<double>(uScale) / static_cast<double>(WL_FRACTIONAL_SCALE_DENOMINATOR) );
+        wlserver_refresh_cursor_rectangle();
+
         m_bHasRecievedScale = true;
 
         if ( bDirty )
@@ -2071,7 +2076,9 @@ namespace gamescope
         {
             return false;
         }
-        
+
+        wlserver_text_input_init( m_pDisplay, m_pSeat );
+
         if ( !wlsession_init() )
         {
             xdg_log.errorf( "Failed to initialize Wayland session" );
@@ -3239,6 +3246,10 @@ namespace gamescope
     void CWaylandInputThread::Wayland_Keyboard_Modifiers( wl_keyboard *pKeyboard, uint32_t uSerial, uint32_t uModsDepressed, uint32_t uModsLatched, uint32_t uModsLocked, uint32_t uGroup )
     {
         m_uKeyModifiers = uModsDepressed | uModsLatched | uModsLocked;
+
+        wlserver_lock();
+        wlserver_modifiers( uModsDepressed, uModsLatched, uModsLocked, uGroup );
+        wlserver_unlock();
     }
     void CWaylandInputThread::Wayland_Keyboard_RepeatInfo( wl_keyboard *pKeyboard, int32_t nRate, int32_t nDelay )
     {

@@ -22,6 +22,10 @@
 
 #include "steamcompmgr_shared.hpp"
 
+#include "wlr_begin.hpp"
+#include <text-input-unstable-v3-client-protocol.h>
+#include "wlr_end.hpp"
+
 #if HAVE_DRM
 #define HAVE_SESSION 1
 #endif
@@ -107,6 +111,31 @@ private:
 	std::vector<ResListEntry_t> wayland_commit_queue;
 };
 
+struct wlserver_text_input_proxy_t {
+	// Used to communicate with host compositor
+	struct zwp_text_input_manager_v3 *host_text_input_manager;
+	struct zwp_text_input_v3 *host_text_input;
+	bool host_entered = false;
+	double host_scale = 1.0;
+
+	// Used to communicate with application running inside gamescope
+	struct wlr_text_input_manager_v3 *wlr_text_input_manager;
+	struct wl_listener new_text_input;
+	// Use pointer so the address won't be changed
+	std::list<struct wlserver_text_input_t *> text_inputs;
+	struct wlserver_text_input_t *enabled_text_input;
+	std::optional<struct wlr_box> enabled_text_input_cursor_rectangle;
+};
+
+struct wlserver_text_input_t {
+	struct wlserver_text_input_proxy_t *proxy;
+	struct wlr_text_input_v3 *wlr_text_input;
+	struct wl_listener enable;
+	struct wl_listener disable;
+	struct wl_listener commit;
+	struct wl_listener destroy;
+};
+
 struct wlserver_t {
 	struct wl_display *display;
 	struct wl_event_loop *event_loop;
@@ -130,7 +159,9 @@ struct wlserver_t {
 
 		std::vector<std::unique_ptr<gamescope_xwayland_server_t>> xwayland_servers;
 	} wlr;
-	
+
+	struct wlserver_text_input_proxy_t wlserver_text_input_proxy;
+
 	struct wlr_surface *mouse_focus_surface;
 	struct wlr_surface *kb_focus_surface;
 	std::unordered_map<struct wlr_surface *, std::pair<int, int>> current_dropdown_surfaces;
@@ -228,6 +259,9 @@ struct wlserver_touch {
 
 void xwayland_surface_commit(struct wlr_surface *wlr_surface);
 
+bool wlserver_text_input_init( struct wl_display *host_display, struct wl_seat *host_seat );
+void wlserver_set_host_scale( double scale );
+void wlserver_refresh_cursor_rectangle();
 bool wlsession_init( void );
 int wlsession_open_kms( const char *device_name );
 void wlsession_close_kms();
@@ -242,6 +276,7 @@ bool wlserver_is_lock_held(void);
 
 void wlserver_keyboardfocus( struct wlr_surface *surface, bool bConstrain = true );
 void wlserver_key( uint32_t key, bool press, uint32_t time );
+void wlserver_modifiers( uint32_t depressed, uint32_t latched, uint32_t locked, uint32_t group );
 
 void wlserver_mousefocus( struct wlr_surface *wlrsurface, int x = 0, int y = 0 );
 void wlserver_clear_dropdowns();
