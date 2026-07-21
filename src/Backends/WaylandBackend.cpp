@@ -10,6 +10,7 @@
 #include "refresh_rate.h"
 #include "waitable.h"
 #include "Utils/TempFiles.h"
+#include "Utils/Xkb.h"
 
 #include <cstring>
 #include <unordered_map>
@@ -554,7 +555,7 @@ namespace gamescope
         xkb_keymap *m_pXkbKeymap = nullptr;
 
         uint32_t m_uKeyModifiers = 0;
-        uint32_t m_uModMask[ GAMESCOPE_WAYLAND_MOD_COUNT ];
+        uint32_t m_uModMask[ GAMESCOPE_WAYLAND_MOD_COUNT ] = { 0 };
 
         double m_flScrollAccum[2] = { 0.0, 0.0 };
         uint32_t m_uAxisSource = WL_POINTER_AXIS_SOURCE_WHEEL;
@@ -3178,7 +3179,7 @@ namespace gamescope
         m_pXkbKeymap = pKeymap;
 
         for ( uint32_t i = 0; i < GAMESCOPE_WAYLAND_MOD_COUNT; i++ )
-            m_uModMask[ i ] = 1u << xkb_keymap_mod_get_index( m_pXkbKeymap, WaylandModifierToXkbModifierName( ( WaylandModifierIndex ) i ) );
+            m_uModMask[ i ] = XkbKeymapModMask( m_pXkbKeymap, WaylandModifierToXkbModifierName( ( WaylandModifierIndex ) i ) );
     }
     void CWaylandInputThread::Wayland_Keyboard_Enter( wl_keyboard *pKeyboard, uint32_t uSerial, wl_surface *pSurface, wl_array *pKeys )
     {
@@ -3239,6 +3240,13 @@ namespace gamescope
     void CWaylandInputThread::Wayland_Keyboard_Modifiers( wl_keyboard *pKeyboard, uint32_t uSerial, uint32_t uModsDepressed, uint32_t uModsLatched, uint32_t uModsLocked, uint32_t uGroup )
     {
         m_uKeyModifiers = uModsDepressed | uModsLatched | uModsLocked;
+
+        bool bNumLocked = uModsLocked & m_uModMask[ GAMESCOPE_WAYLAND_MOD_NUM ];
+        bool bCapsLocked = uModsLocked & m_uModMask[ GAMESCOPE_WAYLAND_MOD_CAPS ];
+
+        wlserver_lock();
+        wlserver_set_virtual_keyboard_modifiers( bNumLocked, bCapsLocked );
+        wlserver_unlock();
     }
     void CWaylandInputThread::Wayland_Keyboard_RepeatInfo( wl_keyboard *pKeyboard, int32_t nRate, int32_t nDelay )
     {
