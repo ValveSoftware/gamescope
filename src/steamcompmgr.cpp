@@ -892,6 +892,7 @@ global_focus_t *GetCurrentMouseFocus()
 
 uint32_t		currentOutputWidth, currentOutputHeight;
 int 			currentOutputRefresh;
+uint32_t		currentOutputRotation = 0;
 bool			currentHDROutput = false;
 bool			currentHDRForce = false;
 
@@ -2934,7 +2935,11 @@ paint_all( global_focus_t *pFocus, bool async )
 
 			std::optional<uint64_t> oScreenshotSeq;
 			if ( drmCaptureFormat == DRM_FORMAT_NV12 )
-				oScreenshotSeq = vulkan_composite( &frameInfo, pScreenshotTexture, false, nullptr );
+			{
+				// Logical-sized scratch keeps the capture unrotated and off the live output image.
+				gamescope::Rc<CVulkanTexture> pRGBTexture = vulkan_acquire_screenshot_texture( g_nOutputWidth, g_nOutputHeight, false, DRM_FORMAT_XRGB2101010 );
+				oScreenshotSeq = vulkan_screenshot( &frameInfo, pRGBTexture, pScreenshotTexture );
+			}
 			else if ( oScreenshotInfo->eScreenshotType == GAMESCOPE_CONTROL_SCREENSHOT_TYPE_FULL_COMPOSITION ||
 					  oScreenshotInfo->eScreenshotType == GAMESCOPE_CONTROL_SCREENSHOT_TYPE_SCREEN_BUFFER )
 				oScreenshotSeq = vulkan_composite( &frameInfo, nullptr, false, pScreenshotTexture );
@@ -3767,7 +3772,9 @@ void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win
 	{
 		if (w->isOverlay)
 		{
-			if (w->GetGeometry().nWidth > 1200 && w->opacity >= maxOpacity)
+			// The interactive overlay (Steam/QAM) spans the full output width or asks
+			// for input. Anything narrower is a notification.
+			if (( w->GetGeometry().nWidth >= ctx->root_width || w->inputFocusMode ) && w->opacity >= maxOpacity)
 			{
 				ctx->focus.overlayWindow = w;
 				maxOpacity = w->opacity;
@@ -5900,7 +5907,7 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 			{
 				if (w->isOverlay)
 				{
-					if (w->GetGeometry().nWidth > 1200 && w->opacity >= maxOpacity)
+					if (( w->GetGeometry().nWidth >= ctx->root_width || w->inputFocusMode ) && w->opacity >= maxOpacity)
 					{
 						ctx->focus.overlayWindow = w;
 						maxOpacity = w->opacity;
@@ -8706,6 +8713,7 @@ steamcompmgr_main(int argc, char **argv)
 		if ( currentOutputWidth != g_nOutputWidth ||
 			 currentOutputHeight != g_nOutputHeight ||
 			 currentOutputRefresh != g_nOutputRefresh ||
+			 currentOutputRotation != g_uOutputRotation ||
 			 currentHDROutput != g_bOutputHDREnabled ||
 			 currentHDRForce != g_bForceHDRSupportDebug )
 		{
@@ -8756,6 +8764,7 @@ steamcompmgr_main(int argc, char **argv)
 			currentOutputWidth = g_nOutputWidth;
 			currentOutputHeight = g_nOutputHeight;
 			currentOutputRefresh = g_nOutputRefresh;
+			currentOutputRotation = g_uOutputRotation;
 			currentHDROutput = g_bOutputHDREnabled;
 			currentHDRForce = g_bForceHDRSupportDebug;
 
