@@ -2422,7 +2422,7 @@ static void paint_pipewire()
 	}
 
 	gamescope::Rc<CVulkanTexture> pRGBTexture = s_pPipewireBuffer->texture->isYcbcr()
-		? vulkan_acquire_capture_texture( uWidth, uHeight, false, DRM_FORMAT_XRGB2101010 )
+		? vulkan_acquire_capture_texture( uWidth, uHeight, false, vulkan_get_rgb10_capture_format() )
 		: gamescope::Rc<CVulkanTexture>{ s_pPipewireBuffer->texture };
 
 	gamescope::Rc<CVulkanTexture> pYUVTexture = s_pPipewireBuffer->texture->isYcbcr() ? s_pPipewireBuffer->texture : nullptr;
@@ -2862,7 +2862,7 @@ paint_all( global_focus_t *pFocus, bool async )
 		uint32_t drmCaptureFormat = DRM_FORMAT_INVALID;
 
 		if ( path.extension() == ".avif" )
-			drmCaptureFormat = DRM_FORMAT_XRGB2101010;
+			drmCaptureFormat = vulkan_get_rgb10_capture_format();
 		else if ( path.extension() == ".png" )
 			drmCaptureFormat = DRM_FORMAT_XRGB8888;
 		else if ( path.extension() == ".bin" && path.stem().extension() == ".nv12" )
@@ -3028,11 +3028,16 @@ paint_all( global_focus_t *pFocus, bool async )
 
 				bool bScreenshotSuccess = false;
 
-				if ( pScreenshotTexture->format() == VK_FORMAT_A2R10G10B10_UNORM_PACK32 )
+				if ( pScreenshotTexture->format() == VK_FORMAT_A2R10G10B10_UNORM_PACK32 ||
+				     pScreenshotTexture->format() == VK_FORMAT_A2B10G10R10_UNORM_PACK32 )
 				{
 					// Make our own copy of the image to remove the alpha channel.
 					constexpr uint32_t kCompCnt = 3;
 					auto imageData = std::vector<uint16_t>( width * height * kCompCnt );
+
+					// R sits at bits 20-29 for XRGB, 0-9 for XBGR. B mirrors it.
+					const uint32_t uRedShift = pScreenshotTexture->format() == VK_FORMAT_A2R10G10B10_UNORM_PACK32 ? 20 : 0;
+					const uint32_t uBlueShift = 20 - uRedShift;
 
 					for (uint32_t y = 0; y < height; y++)
 					{
@@ -3041,9 +3046,9 @@ paint_all( global_focus_t *pFocus, bool async )
 							uint32_t *pInPixel = (uint32_t *)&mappedData[(y * pScreenshotTexture->rowPitch()) + x * (32 / 8)];
 							uint32_t uInPixel = *pInPixel;
 
-							imageData[y * width * kCompCnt + x * kCompCnt + 0] = (uInPixel & (0b1111111111 << 20)) >> 20;
-							imageData[y * width * kCompCnt + x * kCompCnt + 1] = (uInPixel & (0b1111111111 << 10)) >> 10;
-							imageData[y * width * kCompCnt + x * kCompCnt + 2] = (uInPixel & (0b1111111111 << 0))  >> 0;
+							imageData[y * width * kCompCnt + x * kCompCnt + 0] = (uInPixel >> uRedShift)  & 0b1111111111;
+							imageData[y * width * kCompCnt + x * kCompCnt + 1] = (uInPixel >> 10) & 0b1111111111;
+							imageData[y * width * kCompCnt + x * kCompCnt + 2] = (uInPixel >> uBlueShift) & 0b1111111111;
 						}
 					}
 
