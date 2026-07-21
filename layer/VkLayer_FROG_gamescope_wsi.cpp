@@ -319,6 +319,14 @@ namespace GamescopeWSILayer {
     return flags;
   }
 
+  // These CatSystem2 engine games mix GDI drawing and D3D9 SWAPEFFECT_COPY
+  // partial presents of the same window, which the Xwayland bypass splits apart.
+  static bool shouldDisableForExecutable() {
+    std::string_view executable = getExecutableName();
+    return executable == "Grisaia.exe"sv ||
+           executable == "Himawari.exe"sv;
+  }
+
   // TODO: Maybe move to Wayland event or something.
   // This just utilizes the same code as the Mesa path used
   // for without the layer or GL though. Need to keep it around anyway.
@@ -612,6 +620,11 @@ namespace GamescopeWSILayer {
       if (!isRunningUnderGamescope() || isAppInfoGamescope(pCreateInfo->pApplicationInfo))
         return pfnCreateInstanceProc(pCreateInfo, pAllocator, pInstance);
 
+      if (shouldDisableForExecutable()) {
+        fprintf(stderr, "[Gamescope WSI] Disabling layer for quirked executable: %s\n", getExecutableName().data());
+        return pfnCreateInstanceProc(pCreateInfo, pAllocator, pInstance);
+      }
+
       auto enabledExts = std::vector<const char*>(
         pCreateInfo->ppEnabledExtensionNames,
         pCreateInfo->ppEnabledExtensionNames + pCreateInfo->enabledExtensionCount);
@@ -696,6 +709,9 @@ namespace GamescopeWSILayer {
       const VkDeviceCreateInfo*          pCreateInfo,
       const VkAllocationCallbacks*       pAllocator,
             VkDevice*                    pDevice) {
+      if (!GamescopeInstance::get(pDispatch->Instance))
+        return pDispatch->CreateDevice(physicalDevice, pCreateInfo, pAllocator, pDevice);
+
       VkDeviceCreateInfo deviceCreateInfo = *pCreateInfo;
 
       std::vector<const char *> extensions(pCreateInfo->ppEnabledExtensionNames, pCreateInfo->ppEnabledExtensionNames + pCreateInfo->enabledExtensionCount);
@@ -1005,6 +1021,10 @@ namespace GamescopeWSILayer {
         }
       }
 
+      // Don't advertise our extensions on instances we never took over.
+      if (!GamescopeInstance::get(pDispatch->Instance))
+        return pDispatch->EnumerateDeviceExtensionProperties(physicalDevice, pLayerName, pPropertyCount, pProperties);
+
       VkResult result = vkroots::helpers::append(
         pDispatch->EnumerateDeviceExtensionProperties,
         s_LayerExposedExts,
@@ -1140,6 +1160,10 @@ namespace GamescopeWSILayer {
       auto gamescopeSurface = GamescopeSurface::get(pCreateInfo->surface);
 
       if (!gamescopeSurface) {
+        // Not a hooking failure if we never took over this instance.
+        if (!GamescopeInstance::get(pDispatch->pPhysicalDeviceDispatch->pInstanceDispatch->Instance))
+          return pDispatch->CreateSwapchainKHR(device, pCreateInfo, pAllocator, pSwapchain);
+
         static bool s_warned = false;
         if (!s_warned) {
           int messageId = -1;
@@ -1320,6 +1344,9 @@ namespace GamescopeWSILayer {
             VkSemaphore                semaphore,
             VkFence                    fence,
             uint32_t*                  pImageIndex) {
+      if (!GamescopeInstance::get(pDispatch->pPhysicalDeviceDispatch->pInstanceDispatch->Instance))
+        return pDispatch->AcquireNextImageKHR(device, swapchain, timeout, semaphore, fence, pImageIndex);
+
       VkAcquireNextImageInfoKHR acquireInfo = {
         .sType      = VK_STRUCTURE_TYPE_ACQUIRE_NEXT_IMAGE_INFO_KHR,
         .swapchain  = swapchain,
@@ -1396,6 +1423,9 @@ namespace GamescopeWSILayer {
       const vkroots::VkDeviceDispatch* pDispatch,
             VkQueue                    queue,
       const VkPresentInfoKHR*          pPresentInfo) {
+      if (!GamescopeInstance::get(pDispatch->pPhysicalDeviceDispatch->pInstanceDispatch->Instance))
+        return pDispatch->QueuePresentKHR(queue, pPresentInfo);
+
       VkPresentInfoKHR presentInfo = *pPresentInfo;
 
       bool forceFifo = gamescopeIsForcingFifo();
@@ -1556,6 +1586,12 @@ namespace GamescopeWSILayer {
             uint32_t                   swapchainCount,
       const VkSwapchainKHR*            pSwapchains,
       const VkHdrMetadataEXT*          pMetadata) {
+      if (!GamescopeInstance::get(pDispatch->pPhysicalDeviceDispatch->pInstanceDispatch->Instance)) {
+        if (pDispatch->SetHdrMetadataEXT)
+          pDispatch->SetHdrMetadataEXT(device, swapchainCount, pSwapchains, pMetadata);
+        return;
+      }
+
       for (uint32_t i = 0; i < swapchainCount; i++) {
         auto gamescopeSwapchain = GamescopeSwapchain::get(pSwapchains[i]);
         if (!gamescopeSwapchain) {
@@ -1596,6 +1632,12 @@ namespace GamescopeWSILayer {
             VkSwapchainKHR                  swapchain,
             uint32_t*                       pPresentationTimingCount,
             VkPastPresentationTimingGOOGLE* pPresentationTimings) {
+      if (!GamescopeInstance::get(pDispatch->pPhysicalDeviceDispatch->pInstanceDispatch->Instance)) {
+        if (!pDispatch->GetPastPresentationTimingGOOGLE)
+          return VK_ERROR_SURFACE_LOST_KHR;
+        return pDispatch->GetPastPresentationTimingGOOGLE(device, swapchain, pPresentationTimingCount, pPresentationTimings);
+      }
+
       auto gamescopeSwapchain = GamescopeSwapchain::get(swapchain);
       if (!gamescopeSwapchain) {
         fprintf(stderr, "[Gamescope WSI] GetPastPresentationTimingGOOGLE: Not a gamescope swapchain.\n");
@@ -1623,6 +1665,12 @@ namespace GamescopeWSILayer {
             VkDevice                        device,
             VkSwapchainKHR                  swapchain,
             VkRefreshCycleDurationGOOGLE*   pDisplayTimingProperties) {
+      if (!GamescopeInstance::get(pDispatch->pPhysicalDeviceDispatch->pInstanceDispatch->Instance)) {
+        if (!pDispatch->GetRefreshCycleDurationGOOGLE)
+          return VK_ERROR_SURFACE_LOST_KHR;
+        return pDispatch->GetRefreshCycleDurationGOOGLE(device, swapchain, pDisplayTimingProperties);
+      }
+
       auto gamescopeSwapchain = GamescopeSwapchain::get(swapchain);
       if (!gamescopeSwapchain) {
         fprintf(stderr, "[Gamescope WSI] GetRefreshCycleDurationGOOGLE: Not a gamescope swapchain.\n");
