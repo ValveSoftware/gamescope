@@ -23,6 +23,7 @@
 #include <thread>
 #include <vector>
 #include <string>
+#include <mutex>
 #include <unistd.h>
 #include <fcntl.h>
 
@@ -846,6 +847,10 @@ namespace gamescope
         zwp_primary_selection_offer_v1 *m_pHostPrimaryOffer = nullptr;
         std::vector<std::string> m_HostPrimaryOfferMimes;
 
+        std::mutex m_LastOutboundMutex;
+        std::string m_sLastOutboundClipboard;
+        std::string m_sLastOutboundPrimary;
+
         struct
         {
             std::vector<wp_color_manager_v1_primaries> ePrimaries;
@@ -1377,7 +1382,7 @@ namespace gamescope
 
     void CWaylandBackend::ImportSelectionFd( int nReadFd, GamescopeSelection eSelection )
     {
-        std::thread( [ nReadFd, eSelection ]()
+        std::thread( [ this, nReadFd, eSelection ]()
         {
             std::string sContents;
             char buf[ 4096 ];
@@ -1398,6 +1403,14 @@ namespace gamescope
             {
                 xdg_log.infof( "Ignoring host clipboard selection larger than %zu bytes", kMaxClipboardBytes );
                 return;
+            }
+
+            {
+                std::scoped_lock lock{ m_LastOutboundMutex };
+                const std::string &sLast = ( eSelection == GAMESCOPE_SELECTION_PRIMARY )
+                    ? m_sLastOutboundPrimary : m_sLastOutboundClipboard;
+                if ( sContents == sLast )
+                    return; // Host is echoing back what we just pushed up; ignore.
             }
 
             gamescope_set_selection( sContents, eSelection );
@@ -1548,6 +1561,10 @@ namespace gamescope
         if ( eSelection == GAMESCOPE_SELECTION_CLIPBOARD && m_pBackend->m_pDataDevice )
         {
             m_pBackend->m_pClipboard = szContents;
+            {
+                std::scoped_lock lock{ m_pBackend->m_LastOutboundMutex };
+                m_pBackend->m_sLastOutboundClipboard = szContents ? *szContents : std::string{};
+            }
             wl_data_source *source = wl_data_device_manager_create_data_source( m_pBackend->m_pDataDeviceManager );
             wl_data_source_add_listener( source, &m_pBackend->s_DataSourceListener, m_pBackend );
             wl_data_source_offer( source, "text/plain" );
@@ -1560,6 +1577,10 @@ namespace gamescope
         else if ( eSelection == GAMESCOPE_SELECTION_PRIMARY && m_pBackend->m_pPrimarySelectionDevice )
         {
             m_pBackend->m_pPrimarySelection = szContents;
+            {
+                std::scoped_lock lock{ m_pBackend->m_LastOutboundMutex };
+                m_pBackend->m_sLastOutboundPrimary = szContents ? *szContents : std::string{};
+            }
             zwp_primary_selection_source_v1 *source = zwp_primary_selection_device_manager_v1_create_source( m_pBackend->m_pPrimarySelectionDeviceManager );
             zwp_primary_selection_source_v1_add_listener( source, &m_pBackend->s_PrimarySelectionSourceListener, m_pBackend );
             zwp_primary_selection_source_v1_offer( source, "text/plain" );
