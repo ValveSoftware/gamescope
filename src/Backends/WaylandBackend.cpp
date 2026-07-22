@@ -1406,14 +1406,17 @@ namespace gamescope
             }
 
             {
+                // Also serializes concurrent reader threads (CLIPBOARD and PRIMARY can both
+                // be in flight at once) so they don't race each other writing to the shared
+                // gamescope_set_selection sink.
                 std::scoped_lock lock{ m_LastOutboundMutex };
                 const std::string &sLast = ( eSelection == GAMESCOPE_SELECTION_PRIMARY )
                     ? m_sLastOutboundPrimary : m_sLastOutboundClipboard;
                 if ( sContents == sLast )
                     return; // Host is echoing back what we just pushed up; ignore.
-            }
 
-            gamescope_set_selection( sContents, eSelection );
+                gamescope_set_selection( sContents, eSelection );
+            }
         } ).detach();
     }
 
@@ -1498,6 +1501,7 @@ namespace gamescope
     {
         if ( !pOffer )
         {
+            // Selection cleared by host: drop the pending offer, leave guest selection intact.
             if ( m_pHostPrimaryOffer )
             {
                 zwp_primary_selection_offer_v1_destroy( m_pHostPrimaryOffer );
@@ -1510,6 +1514,7 @@ namespace gamescope
         const char *pMime = ChooseTextMime( m_HostPrimaryOfferMimes );
         if ( !pMime )
         {
+            // No text mime we can use; discard.
             zwp_primary_selection_offer_v1_destroy( pOffer );
             m_pHostPrimaryOffer = nullptr;
             m_HostPrimaryOfferMimes.clear();
