@@ -795,6 +795,13 @@ namespace gamescope
         void Wayland_DataOffer_Offer( struct wl_data_offer *pOffer, const char *pMime );
         static const wl_data_offer_listener s_DataOfferListener;
 
+        void Wayland_PrimarySelectionDevice_DataOffer( struct zwp_primary_selection_device_v1 *pDevice, struct zwp_primary_selection_offer_v1 *pOffer );
+        void Wayland_PrimarySelectionDevice_Selection( struct zwp_primary_selection_device_v1 *pDevice, struct zwp_primary_selection_offer_v1 *pOffer );
+        static const zwp_primary_selection_device_v1_listener s_PrimarySelectionDeviceListener;
+
+        void Wayland_PrimarySelectionOffer_Offer( struct zwp_primary_selection_offer_v1 *pOffer, const char *pMime );
+        static const zwp_primary_selection_offer_v1_listener s_PrimarySelectionOfferListener;
+
         void InitClipboardDevices();
 
         CWaylandInputThread m_InputThread;
@@ -835,6 +842,9 @@ namespace gamescope
         // Host -> guest inbound clipboard (current pending offers).
         wl_data_offer *m_pHostDataOffer = nullptr;
         std::vector<std::string> m_HostDataOfferMimes;
+
+        zwp_primary_selection_offer_v1 *m_pHostPrimaryOffer = nullptr;
+        std::vector<std::string> m_HostPrimaryOfferMimes;
 
         struct
         {
@@ -956,6 +966,15 @@ namespace gamescope
         .offer           = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_DataOffer_Offer ),
         .source_actions  = WAYLAND_NULL(),
         .action          = WAYLAND_NULL(),
+    };
+    const zwp_primary_selection_device_v1_listener CWaylandBackend::s_PrimarySelectionDeviceListener =
+    {
+        .data_offer = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_PrimarySelectionDevice_DataOffer ),
+        .selection  = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_PrimarySelectionDevice_Selection ),
+    };
+    const zwp_primary_selection_offer_v1_listener CWaylandBackend::s_PrimarySelectionOfferListener =
+    {
+        .offer = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_PrimarySelectionOffer_Offer ),
     };
 
     //////////////////
@@ -1446,6 +1465,64 @@ namespace gamescope
         m_HostDataOfferMimes.clear();
     }
 
+    void CWaylandBackend::Wayland_PrimarySelectionDevice_DataOffer( struct zwp_primary_selection_device_v1 *pDevice, struct zwp_primary_selection_offer_v1 *pOffer )
+    {
+        if ( m_pHostPrimaryOffer )
+            zwp_primary_selection_offer_v1_destroy( m_pHostPrimaryOffer );
+
+        m_pHostPrimaryOffer = pOffer;
+        m_HostPrimaryOfferMimes.clear();
+        zwp_primary_selection_offer_v1_add_listener( pOffer, &s_PrimarySelectionOfferListener, this );
+    }
+
+    void CWaylandBackend::Wayland_PrimarySelectionOffer_Offer( struct zwp_primary_selection_offer_v1 *pOffer, const char *pMime )
+    {
+        if ( pOffer == m_pHostPrimaryOffer && pMime )
+            m_HostPrimaryOfferMimes.emplace_back( pMime );
+    }
+
+    void CWaylandBackend::Wayland_PrimarySelectionDevice_Selection( struct zwp_primary_selection_device_v1 *pDevice, struct zwp_primary_selection_offer_v1 *pOffer )
+    {
+        if ( !pOffer )
+        {
+            if ( m_pHostPrimaryOffer )
+            {
+                zwp_primary_selection_offer_v1_destroy( m_pHostPrimaryOffer );
+                m_pHostPrimaryOffer = nullptr;
+                m_HostPrimaryOfferMimes.clear();
+            }
+            return;
+        }
+
+        const char *pMime = ChooseTextMime( m_HostPrimaryOfferMimes );
+        if ( !pMime )
+        {
+            zwp_primary_selection_offer_v1_destroy( pOffer );
+            m_pHostPrimaryOffer = nullptr;
+            m_HostPrimaryOfferMimes.clear();
+            return;
+        }
+
+        int fds[2];
+        if ( pipe2( fds, O_CLOEXEC ) != 0 )
+        {
+            zwp_primary_selection_offer_v1_destroy( pOffer );
+            m_pHostPrimaryOffer = nullptr;
+            m_HostPrimaryOfferMimes.clear();
+            return;
+        }
+
+        zwp_primary_selection_offer_v1_receive( pOffer, pMime, fds[1] );
+        close( fds[1] );
+        wl_display_flush( m_pDisplay );
+
+        ImportSelectionFd( fds[0], GAMESCOPE_SELECTION_PRIMARY );
+
+        zwp_primary_selection_offer_v1_destroy( pOffer );
+        m_pHostPrimaryOffer = nullptr;
+        m_HostPrimaryOfferMimes.clear();
+    }
+
     void CWaylandBackend::InitClipboardDevices()
     {
         if ( !m_pSeat )
@@ -1458,7 +1535,10 @@ namespace gamescope
         }
 
         if ( m_pPrimarySelectionDeviceManager && !m_pPrimarySelectionDevice )
+        {
             m_pPrimarySelectionDevice = zwp_primary_selection_device_manager_v1_get_device( m_pPrimarySelectionDeviceManager, m_pSeat );
+            zwp_primary_selection_device_v1_add_listener( m_pPrimarySelectionDevice, &s_PrimarySelectionDeviceListener, this );
+        }
     }
 
     void CWaylandConnector::SetSelection( std::shared_ptr<std::string> szContents, GamescopeSelection eSelection )
