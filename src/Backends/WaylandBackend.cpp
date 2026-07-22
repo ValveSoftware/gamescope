@@ -776,6 +776,8 @@ namespace gamescope
         void Wayland_PrimarySelectionSource_Cancelled( struct zwp_primary_selection_source_v1 *pSource );
         static const zwp_primary_selection_source_v1_listener s_PrimarySelectionSourceListener;
 
+        void InitClipboardDevices();
+
         CWaylandInputThread m_InputThread;
 
         wl_display *m_pDisplay = nullptr;
@@ -1296,13 +1298,21 @@ namespace gamescope
         }
     }
 
+    void CWaylandBackend::InitClipboardDevices()
+    {
+        if ( !m_pSeat )
+            return;
+
+        if ( m_pDataDeviceManager && !m_pDataDevice )
+            m_pDataDevice = wl_data_device_manager_get_data_device( m_pDataDeviceManager, m_pSeat );
+
+        if ( m_pPrimarySelectionDeviceManager && !m_pPrimarySelectionDevice )
+            m_pPrimarySelectionDevice = zwp_primary_selection_device_manager_v1_get_device( m_pPrimarySelectionDeviceManager, m_pSeat );
+    }
+
     void CWaylandConnector::SetSelection( std::shared_ptr<std::string> szContents, GamescopeSelection eSelection )
     {
-        if ( m_pBackend->m_pDataDeviceManager && !m_pBackend->m_pDataDevice )
-            m_pBackend->m_pDataDevice = wl_data_device_manager_get_data_device( m_pBackend->m_pDataDeviceManager, m_pBackend->m_pSeat );
-
-        if ( m_pBackend->m_pPrimarySelectionDeviceManager && !m_pBackend->m_pPrimarySelectionDevice )
-            m_pBackend->m_pPrimarySelectionDevice = zwp_primary_selection_device_manager_v1_get_device( m_pBackend->m_pPrimarySelectionDeviceManager, m_pBackend->m_pSeat );
+        m_pBackend->InitClipboardDevices();
 
         if ( eSelection == GAMESCOPE_SELECTION_CLIPBOARD && m_pBackend->m_pDataDevice )
         {
@@ -2008,6 +2018,8 @@ namespace gamescope
 
         // Grab stuff from any extra bindings/listeners we set up, eg. format/modifiers.
         wl_display_roundtrip( m_pDisplay );
+
+        InitClipboardDevices();
 
         wl_registry_destroy( pRegistry );
         pRegistry = nullptr;
