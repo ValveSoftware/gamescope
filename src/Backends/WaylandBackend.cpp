@@ -20,6 +20,12 @@
 #include <linux/input-event-codes.h>
 #include <xkbcommon/xkbcommon.h>
 #include <libdecor.h>
+#include <thread>
+#include <vector>
+#include <string>
+#include <mutex>
+#include <unistd.h>
+#include <fcntl.h>
 
 #include "wlr_begin.hpp"
 #include <wayland-client.h>
@@ -124,6 +130,8 @@ namespace gamescope
     gamescope::ConVar<bool> cv_wayland_use_modifiers( "wayland_use_modifiers", true, "Use DMA-BUF modifiers?" );
 
     gamescope::ConVar<float> cv_wayland_hdr10_saturation_scale( "wayland_hdr10_saturation_scale", 1.0, "Saturation scale for HDR10 content by gamut expansion. 1.0 - 1.2 is a good range to play with." );
+
+    static constexpr size_t kMaxClipboardBytes = 4 * 1024 * 1024;
 
     class CWaylandConnector;
     class CWaylandPlane;
@@ -776,6 +784,27 @@ namespace gamescope
         void Wayland_PrimarySelectionSource_Cancelled( struct zwp_primary_selection_source_v1 *pSource );
         static const zwp_primary_selection_source_v1_listener s_PrimarySelectionSourceListener;
 
+        const char *ChooseTextMime( const std::vector<std::string> &mimes );
+        void ImportSelectionFd( int nReadFd, GamescopeSelection eSelection );
+
+        // Host data device (inbound clipboard).
+        void Wayland_DataDevice_DataOffer( struct wl_data_device *pDevice, struct wl_data_offer *pOffer );
+        void Wayland_DataDevice_Selection( struct wl_data_device *pDevice, struct wl_data_offer *pOffer );
+        static const wl_data_device_listener s_DataDeviceListener;
+
+        // Host data offer (inbound clipboard mime advertisement).
+        void Wayland_DataOffer_Offer( struct wl_data_offer *pOffer, const char *pMime );
+        static const wl_data_offer_listener s_DataOfferListener;
+
+        void Wayland_PrimarySelectionDevice_DataOffer( struct zwp_primary_selection_device_v1 *pDevice, struct zwp_primary_selection_offer_v1 *pOffer );
+        void Wayland_PrimarySelectionDevice_Selection( struct zwp_primary_selection_device_v1 *pDevice, struct zwp_primary_selection_offer_v1 *pOffer );
+        static const zwp_primary_selection_device_v1_listener s_PrimarySelectionDeviceListener;
+
+        void Wayland_PrimarySelectionOffer_Offer( struct zwp_primary_selection_offer_v1 *pOffer, const char *pMime );
+        static const zwp_primary_selection_offer_v1_listener s_PrimarySelectionOfferListener;
+
+        void InitClipboardDevices();
+
         CWaylandInputThread m_InputThread;
 
         wl_display *m_pDisplay = nullptr;
@@ -810,6 +839,17 @@ namespace gamescope
         zwp_primary_selection_device_manager_v1 *m_pPrimarySelectionDeviceManager = nullptr;
         zwp_primary_selection_device_v1 *m_pPrimarySelectionDevice = nullptr;
         std::shared_ptr<std::string> m_pPrimarySelection = nullptr;
+
+        // Host -> guest inbound clipboard (current pending offers).
+        wl_data_offer *m_pHostDataOffer = nullptr;
+        std::vector<std::string> m_HostDataOfferMimes;
+
+        zwp_primary_selection_offer_v1 *m_pHostPrimaryOffer = nullptr;
+        std::vector<std::string> m_HostPrimaryOfferMimes;
+
+        std::mutex m_LastOutboundMutex;
+        std::string m_sLastOutboundClipboard;
+        std::string m_sLastOutboundPrimary;
 
         struct
         {
@@ -916,6 +956,30 @@ namespace gamescope
     {
         .send      = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_PrimarySelectionSource_Send ),
         .cancelled = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_PrimarySelectionSource_Cancelled ),
+    };
+    const wl_data_device_listener CWaylandBackend::s_DataDeviceListener =
+    {
+        .data_offer      = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_DataDevice_DataOffer ),
+        .enter           = WAYLAND_NULL(),
+        .leave           = WAYLAND_NULL(),
+        .motion          = WAYLAND_NULL(),
+        .drop            = WAYLAND_NULL(),
+        .selection       = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_DataDevice_Selection ),
+    };
+    const wl_data_offer_listener CWaylandBackend::s_DataOfferListener =
+    {
+        .offer           = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_DataOffer_Offer ),
+        .source_actions  = WAYLAND_NULL(),
+        .action          = WAYLAND_NULL(),
+    };
+    const zwp_primary_selection_device_v1_listener CWaylandBackend::s_PrimarySelectionDeviceListener =
+    {
+        .data_offer = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_PrimarySelectionDevice_DataOffer ),
+        .selection  = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_PrimarySelectionDevice_Selection ),
+    };
+    const zwp_primary_selection_offer_v1_listener CWaylandBackend::s_PrimarySelectionOfferListener =
+    {
+        .offer = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_PrimarySelectionOffer_Offer ),
     };
 
     //////////////////
@@ -1296,17 +1360,216 @@ namespace gamescope
         }
     }
 
+    const char *CWaylandBackend::ChooseTextMime( const std::vector<std::string> &mimes )
+    {
+        static const char *kPriority[] = {
+            "text/plain;charset=utf-8",
+            "text/plain",
+            "UTF8_STRING",
+            "STRING",
+            "TEXT",
+        };
+        for ( const char *pWant : kPriority )
+        {
+            for ( const std::string &sHave : mimes )
+            {
+                if ( sHave == pWant )
+                    return pWant;
+            }
+        }
+        return nullptr;
+    }
+
+    void CWaylandBackend::ImportSelectionFd( int nReadFd, GamescopeSelection eSelection )
+    {
+        std::thread( [ this, nReadFd, eSelection ]()
+        {
+            std::string sContents;
+            char buf[ 4096 ];
+            ssize_t nRead = 0;
+            bool bOverflow = false;
+            while ( ( nRead = read( nReadFd, buf, sizeof( buf ) ) ) > 0 )
+            {
+                if ( sContents.size() + (size_t)nRead > kMaxClipboardBytes )
+                {
+                    bOverflow = true;
+                    break;
+                }
+                sContents.append( buf, (size_t)nRead );
+            }
+            close( nReadFd );
+
+            if ( bOverflow )
+            {
+                xdg_log.infof( "Ignoring host clipboard selection larger than %zu bytes", kMaxClipboardBytes );
+                return;
+            }
+
+            {
+                // Also serializes concurrent reader threads (CLIPBOARD and PRIMARY can both
+                // be in flight at once) so they don't race each other writing to the shared
+                // gamescope_set_selection sink.
+                std::scoped_lock lock{ m_LastOutboundMutex };
+                const std::string &sLast = ( eSelection == GAMESCOPE_SELECTION_PRIMARY )
+                    ? m_sLastOutboundPrimary : m_sLastOutboundClipboard;
+                if ( sContents == sLast )
+                    return; // Host is echoing back what we just pushed up; ignore.
+
+                gamescope_set_selection( sContents, eSelection );
+            }
+        } ).detach();
+    }
+
+    void CWaylandBackend::Wayland_DataDevice_DataOffer( struct wl_data_device *pDevice, struct wl_data_offer *pOffer )
+    {
+        // Replace any previous un-consumed offer.
+        if ( m_pHostDataOffer )
+            wl_data_offer_destroy( m_pHostDataOffer );
+
+        m_pHostDataOffer = pOffer;
+        m_HostDataOfferMimes.clear();
+        wl_data_offer_add_listener( pOffer, &s_DataOfferListener, this );
+    }
+
+    void CWaylandBackend::Wayland_DataOffer_Offer( struct wl_data_offer *pOffer, const char *pMime )
+    {
+        if ( pOffer == m_pHostDataOffer && pMime )
+            m_HostDataOfferMimes.emplace_back( pMime );
+    }
+
+    void CWaylandBackend::Wayland_DataDevice_Selection( struct wl_data_device *pDevice, struct wl_data_offer *pOffer )
+    {
+        if ( !pOffer )
+        {
+            // Selection cleared by host: drop the pending offer, leave guest selection intact.
+            if ( m_pHostDataOffer )
+            {
+                wl_data_offer_destroy( m_pHostDataOffer );
+                m_pHostDataOffer = nullptr;
+                m_HostDataOfferMimes.clear();
+            }
+            return;
+        }
+
+        const char *pMime = ChooseTextMime( m_HostDataOfferMimes );
+        if ( !pMime )
+        {
+            // No text mime we can use; discard.
+            wl_data_offer_destroy( pOffer );
+            m_pHostDataOffer = nullptr;
+            m_HostDataOfferMimes.clear();
+            return;
+        }
+
+        int fds[2];
+        if ( pipe2( fds, O_CLOEXEC ) != 0 )
+        {
+            wl_data_offer_destroy( pOffer );
+            m_pHostDataOffer = nullptr;
+            m_HostDataOfferMimes.clear();
+            return;
+        }
+
+        wl_data_offer_receive( pOffer, pMime, fds[1] );
+        close( fds[1] );
+        wl_display_flush( m_pDisplay );
+
+        ImportSelectionFd( fds[0], GAMESCOPE_SELECTION_CLIPBOARD );
+
+        wl_data_offer_destroy( pOffer );
+        m_pHostDataOffer = nullptr;
+        m_HostDataOfferMimes.clear();
+    }
+
+    void CWaylandBackend::Wayland_PrimarySelectionDevice_DataOffer( struct zwp_primary_selection_device_v1 *pDevice, struct zwp_primary_selection_offer_v1 *pOffer )
+    {
+        if ( m_pHostPrimaryOffer )
+            zwp_primary_selection_offer_v1_destroy( m_pHostPrimaryOffer );
+
+        m_pHostPrimaryOffer = pOffer;
+        m_HostPrimaryOfferMimes.clear();
+        zwp_primary_selection_offer_v1_add_listener( pOffer, &s_PrimarySelectionOfferListener, this );
+    }
+
+    void CWaylandBackend::Wayland_PrimarySelectionOffer_Offer( struct zwp_primary_selection_offer_v1 *pOffer, const char *pMime )
+    {
+        if ( pOffer == m_pHostPrimaryOffer && pMime )
+            m_HostPrimaryOfferMimes.emplace_back( pMime );
+    }
+
+    void CWaylandBackend::Wayland_PrimarySelectionDevice_Selection( struct zwp_primary_selection_device_v1 *pDevice, struct zwp_primary_selection_offer_v1 *pOffer )
+    {
+        if ( !pOffer )
+        {
+            // Selection cleared by host: drop the pending offer, leave guest selection intact.
+            if ( m_pHostPrimaryOffer )
+            {
+                zwp_primary_selection_offer_v1_destroy( m_pHostPrimaryOffer );
+                m_pHostPrimaryOffer = nullptr;
+                m_HostPrimaryOfferMimes.clear();
+            }
+            return;
+        }
+
+        const char *pMime = ChooseTextMime( m_HostPrimaryOfferMimes );
+        if ( !pMime )
+        {
+            // No text mime we can use; discard.
+            zwp_primary_selection_offer_v1_destroy( pOffer );
+            m_pHostPrimaryOffer = nullptr;
+            m_HostPrimaryOfferMimes.clear();
+            return;
+        }
+
+        int fds[2];
+        if ( pipe2( fds, O_CLOEXEC ) != 0 )
+        {
+            zwp_primary_selection_offer_v1_destroy( pOffer );
+            m_pHostPrimaryOffer = nullptr;
+            m_HostPrimaryOfferMimes.clear();
+            return;
+        }
+
+        zwp_primary_selection_offer_v1_receive( pOffer, pMime, fds[1] );
+        close( fds[1] );
+        wl_display_flush( m_pDisplay );
+
+        ImportSelectionFd( fds[0], GAMESCOPE_SELECTION_PRIMARY );
+
+        zwp_primary_selection_offer_v1_destroy( pOffer );
+        m_pHostPrimaryOffer = nullptr;
+        m_HostPrimaryOfferMimes.clear();
+    }
+
+    void CWaylandBackend::InitClipboardDevices()
+    {
+        if ( !m_pSeat )
+            return;
+
+        if ( m_pDataDeviceManager && !m_pDataDevice )
+        {
+            m_pDataDevice = wl_data_device_manager_get_data_device( m_pDataDeviceManager, m_pSeat );
+            wl_data_device_add_listener( m_pDataDevice, &s_DataDeviceListener, this );
+        }
+
+        if ( m_pPrimarySelectionDeviceManager && !m_pPrimarySelectionDevice )
+        {
+            m_pPrimarySelectionDevice = zwp_primary_selection_device_manager_v1_get_device( m_pPrimarySelectionDeviceManager, m_pSeat );
+            zwp_primary_selection_device_v1_add_listener( m_pPrimarySelectionDevice, &s_PrimarySelectionDeviceListener, this );
+        }
+    }
+
     void CWaylandConnector::SetSelection( std::shared_ptr<std::string> szContents, GamescopeSelection eSelection )
     {
-        if ( m_pBackend->m_pDataDeviceManager && !m_pBackend->m_pDataDevice )
-            m_pBackend->m_pDataDevice = wl_data_device_manager_get_data_device( m_pBackend->m_pDataDeviceManager, m_pBackend->m_pSeat );
-
-        if ( m_pBackend->m_pPrimarySelectionDeviceManager && !m_pBackend->m_pPrimarySelectionDevice )
-            m_pBackend->m_pPrimarySelectionDevice = zwp_primary_selection_device_manager_v1_get_device( m_pBackend->m_pPrimarySelectionDeviceManager, m_pBackend->m_pSeat );
+        m_pBackend->InitClipboardDevices();
 
         if ( eSelection == GAMESCOPE_SELECTION_CLIPBOARD && m_pBackend->m_pDataDevice )
         {
             m_pBackend->m_pClipboard = szContents;
+            {
+                std::scoped_lock lock{ m_pBackend->m_LastOutboundMutex };
+                m_pBackend->m_sLastOutboundClipboard = szContents ? *szContents : std::string{};
+            }
             wl_data_source *source = wl_data_device_manager_create_data_source( m_pBackend->m_pDataDeviceManager );
             wl_data_source_add_listener( source, &m_pBackend->s_DataSourceListener, m_pBackend );
             wl_data_source_offer( source, "text/plain" );
@@ -1319,6 +1582,10 @@ namespace gamescope
         else if ( eSelection == GAMESCOPE_SELECTION_PRIMARY && m_pBackend->m_pPrimarySelectionDevice )
         {
             m_pBackend->m_pPrimarySelection = szContents;
+            {
+                std::scoped_lock lock{ m_pBackend->m_LastOutboundMutex };
+                m_pBackend->m_sLastOutboundPrimary = szContents ? *szContents : std::string{};
+            }
             zwp_primary_selection_source_v1 *source = zwp_primary_selection_device_manager_v1_create_source( m_pBackend->m_pPrimarySelectionDeviceManager );
             zwp_primary_selection_source_v1_add_listener( source, &m_pBackend->s_PrimarySelectionSourceListener, m_pBackend );
             zwp_primary_selection_source_v1_offer( source, "text/plain" );
@@ -2008,6 +2275,8 @@ namespace gamescope
 
         // Grab stuff from any extra bindings/listeners we set up, eg. format/modifiers.
         wl_display_roundtrip( m_pDisplay );
+
+        InitClipboardDevices();
 
         wl_registry_destroy( pRegistry );
         pRegistry = nullptr;
