@@ -227,7 +227,14 @@ void xwayland_surface_commit(struct wlr_surface *wlr_surface) {
 		if ( !wlserver_xdg_surface_info->bDoneConfigure )
 		{
 			if ( wlserver_xdg_surface_info->xdg_surface )
+			{
+				if ( wlserver_xdg_surface_info->xdg_surface->toplevel )
+				{
+					wlr_xdg_toplevel_set_size( wlserver_xdg_surface_info->xdg_surface->toplevel, g_nNestedWidth, g_nNestedHeight );
+					wlr_xdg_toplevel_set_fullscreen( wlserver_xdg_surface_info->xdg_surface->toplevel, true );
+				}
 				wlr_xdg_surface_schedule_configure( wlserver_xdg_surface_info->xdg_surface );
+			}
 
 			if ( wlserver_xdg_surface_info->layer_surface )
 				wlr_layer_surface_v1_configure( wlserver_xdg_surface_info->layer_surface, g_nNestedWidth, g_nNestedHeight );
@@ -1895,8 +1902,53 @@ static void waylandy_surface_destroy(struct wl_listener *listener, void *data) {
 	wlserver_surface->xdg_surface = nullptr;
 }
 
+struct wlserver_xdg_toplevel_state_listeners
+{
+	struct wlr_xdg_toplevel *toplevel;
+	struct wl_listener request_fullscreen;
+	struct wl_listener request_maximize;
+	struct wl_listener destroy;
+};
+
+static void xdg_toplevel_send_nested_state( struct wlr_xdg_toplevel *toplevel )
+{
+	wlr_xdg_toplevel_set_size( toplevel, g_nNestedWidth, g_nNestedHeight );
+	wlr_xdg_toplevel_set_fullscreen( toplevel, true );
+}
+
+static void xdg_toplevel_request_fullscreen( struct wl_listener *listener, void *data )
+{
+	wlserver_xdg_toplevel_state_listeners *state = wl_container_of( listener, state, request_fullscreen );
+	xdg_toplevel_send_nested_state( state->toplevel );
+}
+
+static void xdg_toplevel_request_maximize( struct wl_listener *listener, void *data )
+{
+	wlserver_xdg_toplevel_state_listeners *state = wl_container_of( listener, state, request_maximize );
+	xdg_toplevel_send_nested_state( state->toplevel );
+}
+
+static void xdg_toplevel_state_destroy( struct wl_listener *listener, void *data )
+{
+	wlserver_xdg_toplevel_state_listeners *state = wl_container_of( listener, state, destroy );
+	wl_list_remove( &state->request_fullscreen.link );
+	wl_list_remove( &state->request_maximize.link );
+	wl_list_remove( &state->destroy.link );
+	delete state;
+}
+
 void xdg_toplevel_new(struct wl_listener *listener, void *data)
 {
+	struct wlr_xdg_toplevel *toplevel = (struct wlr_xdg_toplevel *)data;
+
+	wlserver_xdg_toplevel_state_listeners *state = new wlserver_xdg_toplevel_state_listeners{};
+	state->toplevel = toplevel;
+	state->request_fullscreen.notify = xdg_toplevel_request_fullscreen;
+	wl_signal_add( &toplevel->events.request_fullscreen, &state->request_fullscreen );
+	state->request_maximize.notify = xdg_toplevel_request_maximize;
+	wl_signal_add( &toplevel->events.request_maximize, &state->request_maximize );
+	state->destroy.notify = xdg_toplevel_state_destroy;
+	wl_signal_add( &toplevel->events.destroy, &state->destroy );
 }
 
 uint32_t get_appid_from_pid( pid_t pid );
