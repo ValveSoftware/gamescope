@@ -3506,9 +3506,8 @@ static bool is_good_override_candidate( steamcompmgr_win_t *override, steamcompm
 	if ( !focus )
 		return false;
 
-	// The pids should probably match for a dropdown to be a good candidate for this window,
-	// unless a non-zero appID says they are the same app (eg. Xalia's highlight overlay).
-	if (override->pid != focus->pid && (focus->appID == 0 || override->appID != focus->appID))
+	// The pids should probably match for a dropdown to be a good candidate for this window.
+	if (override->pid != focus->pid)
 		return false;
 
 	auto rect = override->GetGeometry();
