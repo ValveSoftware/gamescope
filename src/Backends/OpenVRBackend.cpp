@@ -662,6 +662,7 @@ namespace gamescope
 
             // Setup misc. stuff
             g_nOutputRefresh = (int32_t) ConvertHztomHz( roundf( vr::VRSystem()->GetFloatTrackedDeviceProperty( vr::k_unTrackedDeviceIndex_Hmd, vr::Prop_DisplayFrequency_Float ) ) );
+            UpdateFeatures();
 
             m_bRunning = true;
 
@@ -1002,7 +1003,10 @@ namespace gamescope
 
             int32_t nNewRefreshRate = (int32_t) ConvertHztomHz( roundf( vr::VRSystem()->GetFloatTrackedDeviceProperty( vr::k_unTrackedDeviceIndex_Hmd, vr::Prop_DisplayFrequency_Float ) ) );
             if ( g_nOutputRefresh != nNewRefreshRate )
+            {
                 g_nOutputRefresh = nNewRefreshRate;
+                UpdateFeatures();
+            }
 
             PollState();
         }
@@ -1447,6 +1451,16 @@ namespace gamescope
                 wlserver_touchmotion(flTouchMoveX, flTouchMoveY, 0, ++m_uFakeTimestamp, bAlwaysMoveCursor);
                 wlserver_unlock();
             }
+        }
+
+        void UpdateFeatures()
+        {
+            wlserver_lock();
+            for ( const auto &control : wlserver.gamescope_controls )
+            {
+                wlserver_send_gamescope_control( control );
+            }
+            wlserver_unlock();
         }
 
         std::string m_szOverlayKey;
