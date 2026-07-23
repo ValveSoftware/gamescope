@@ -4351,6 +4351,16 @@ determine_and_apply_focus( global_focus_t *pFocus )
 		pFocus->ulVirtualFocusKey,
 		gamescope::cv_backend_virtual_connector_strategy );
 
+	if ( pFocus->overrideWindow != previousLocalFocus.overrideWindow )
+	{
+		if ( pFocus->overrideWindow )
+			focus_log.debugf( "Override pick: %s (%x) override_redirect=%d pid=%d",
+				pFocus->overrideWindow->debug_name(), pFocus->overrideWindow->id(),
+				(int)win_is_override_redirect( pFocus->overrideWindow ), pFocus->overrideWindow->pid );
+		else
+			focus_log.debugf( "Override pick: none" );
+	}
+
 	// A dialog should not blink out while its own popup (eg. a combo box
 	// list or a nested message box) takes the override slot, so keep the
 	// previous override painted beneath the new one. previousLocalFocus is
@@ -4359,7 +4369,11 @@ determine_and_apply_focus( global_focus_t *pFocus )
 	if ( pFocus->overrideWindow && previousLocalFocus.overrideWindow &&
 		 pFocus->overrideWindow != previousLocalFocus.overrideWindow &&
 		 previousLocalFocus.overrideWindow != pFocus->focusWindow )
+	{
 		pFocus->overrideUnderlayWindow = previousLocalFocus.overrideWindow;
+		focus_log.debugf( "Override underlay set: %s (%x)",
+			pFocus->overrideUnderlayWindow->debug_name(), pFocus->overrideUnderlayWindow->id() );
+	}
 
 	if ( pFocus->overrideUnderlayWindow )
 	{
@@ -4368,7 +4382,15 @@ determine_and_apply_focus( global_focus_t *pFocus )
 			 underlay->type != steamcompmgr_win_type_t::XWAYLAND ||
 			 underlay->xwayland().a.map_state != IsViewable ||
 			 !is_good_override_candidate( underlay, pFocus->focusWindow ) )
+		{
+			if ( underlay != pFocus->overrideWindow )
+				focus_log.debugf( "Override underlay dropped: %s (%x) have_override=%d viewable=%d candidate=%d",
+					underlay->debug_name(), underlay->id(),
+					(int)( pFocus->overrideWindow != nullptr ),
+					(int)( underlay->type == steamcompmgr_win_type_t::XWAYLAND && underlay->xwayland().a.map_state == IsViewable ),
+					(int)is_good_override_candidate( underlay, pFocus->focusWindow ) );
 			pFocus->overrideUnderlayWindow = nullptr;
+		}
 	}
 
 	// Pick overlay/notifications from root ctx
