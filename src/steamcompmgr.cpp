@@ -2434,6 +2434,9 @@ static void paint_pipewire()
 	// Paint the windows we have onto the Pipewire stream.
 	paint_window( pFocus->focusWindow, pFocus->focusWindow, &frameInfo, nullptr, 0, 1.0f, pFocus->overrideWindow );
 
+	if ( pFocus->overrideUnderlayWindow && !pFocus->focusWindow->isSteamStreamingClient )
+		paint_window( pFocus->overrideUnderlayWindow, pFocus->focusWindow, &frameInfo, nullptr, PaintWindowFlag::NoFilter, 1.0f, pFocus->overrideUnderlayWindow );
+
 	if ( pFocus->overrideWindow && !pFocus->focusWindow->isSteamStreamingClient )
 		paint_window( pFocus->overrideWindow, pFocus->focusWindow, &frameInfo, nullptr, PaintWindowFlag::NoFilter, 1.0f, pFocus->overrideWindow );
 
@@ -2696,6 +2699,11 @@ paint_all( global_focus_t *pFocus, bool async )
 	// with an offset.
 	// Josh: No override if we're streaming video
 	// as we will have too many layers. Better to be safe than sorry.
+	if ( pFocus->overrideUnderlayWindow && w && !w->isSteamStreamingClient && cv_paint_override_redirect_plane )
+	{
+		paint_window(pFocus->overrideUnderlayWindow, w, &frameInfo, pFocus->cursor, PaintWindowFlag::NoFilter, 1.0f, pFocus->overrideUnderlayWindow);
+	}
+
 	if ( override && w && !w->isSteamStreamingClient && cv_paint_override_redirect_plane )
 	{
 		paint_window(override, w, &frameInfo, pFocus->cursor, PaintWindowFlag::NoFilter, 1.0f, override);
@@ -3031,6 +3039,8 @@ paint_all( global_focus_t *pFocus, bool async )
 				currentOutputHeight = uScreenshotHeight;
 
 				paint_window( pFocus->focusWindow, pFocus->focusWindow, &screenshotFrameInfo, nullptr, 0, 1.0f, pFocus->overrideWindow );
+				if ( pFocus->overrideUnderlayWindow && !pFocus->focusWindow->isSteamStreamingClient )
+					paint_window( pFocus->overrideUnderlayWindow, pFocus->focusWindow, &screenshotFrameInfo, nullptr, PaintWindowFlag::NoFilter, 1.0f, pFocus->overrideUnderlayWindow );
 				if ( pFocus->overrideWindow && !pFocus->focusWindow->isSteamStreamingClient )
 					paint_window( pFocus->overrideWindow, pFocus->focusWindow, &screenshotFrameInfo, nullptr, PaintWindowFlag::NoFilter, 1.0f, pFocus->overrideWindow );
 				if ( !pFocus->focusWindow->isSteamStreamingClient )
@@ -4341,6 +4351,26 @@ determine_and_apply_focus( global_focus_t *pFocus )
 		pFocus->ulVirtualFocusKey,
 		gamescope::cv_backend_virtual_connector_strategy );
 
+	// A dialog should not blink out while its own popup (eg. a combo box
+	// list or a nested message box) takes the override slot, so keep the
+	// previous override painted beneath the new one. previousLocalFocus is
+	// a copy of a swept global focus, so its pointers are live or null.
+	pFocus->overrideUnderlayWindow = previousLocalFocus.overrideUnderlayWindow;
+	if ( pFocus->overrideWindow && previousLocalFocus.overrideWindow &&
+		 pFocus->overrideWindow != previousLocalFocus.overrideWindow &&
+		 previousLocalFocus.overrideWindow != pFocus->focusWindow )
+		pFocus->overrideUnderlayWindow = previousLocalFocus.overrideWindow;
+
+	if ( pFocus->overrideUnderlayWindow )
+	{
+		steamcompmgr_win_t *underlay = pFocus->overrideUnderlayWindow;
+		if ( !pFocus->overrideWindow || underlay == pFocus->overrideWindow ||
+			 underlay->type != steamcompmgr_win_type_t::XWAYLAND ||
+			 underlay->xwayland().a.map_state != IsViewable ||
+			 !is_good_override_candidate( underlay, pFocus->focusWindow ) )
+			pFocus->overrideUnderlayWindow = nullptr;
+	}
+
 	// Pick overlay/notifications from root ctx
 	pFocus->overlayWindow = root_ctx->focus.overlayWindow;
 	pFocus->externalOverlayWindow = root_ctx->focus.externalOverlayWindow;
@@ -4358,7 +4388,8 @@ determine_and_apply_focus( global_focus_t *pFocus )
 
 	pick_decoration_windows( pFocus );
 
-	if ( pFocus->decorationWindows != previousLocalFocus.decorationWindows )
+	if ( pFocus->decorationWindows != previousLocalFocus.decorationWindows ||
+		 pFocus->overrideUnderlayWindow != previousLocalFocus.overrideUnderlayWindow )
 		hasRepaintNonBasePlane = true;
 
 	bool bUseOverlay = gamescope::VirtualConnectorIsSingleOutput() || gamescope::VirtualConnectorKeyIsSteam( pFocus->ulVirtualFocusKey );
@@ -4398,6 +4429,7 @@ determine_and_apply_focus( global_focus_t *pFocus )
 					pFocus->keyboardFocusWindow = queryWindow;
 
 					pFocus->overrideWindow = nullptr;
+					pFocus->overrideUnderlayWindow = nullptr;
 					pFocus->decorationWindows.clear();
 				}
 
@@ -4409,6 +4441,7 @@ determine_and_apply_focus( global_focus_t *pFocus )
 					//pFocus->inputFocusWindow = queryWindow;
 
 					pFocus->overrideWindow = nullptr;
+					pFocus->overrideUnderlayWindow = nullptr;
 					pFocus->decorationWindows.clear();
 				}
 			}
@@ -5515,6 +5548,8 @@ destroy_win(xwayland_ctx_t *ctx, Window id, bool gone, bool fade)
 			pFocus->notificationWindow = nullptr;
 		if (x11_win(pFocus->overrideWindow) == id && gone)
 			pFocus->overrideWindow = nullptr;
+		if (x11_win(pFocus->overrideUnderlayWindow) == id && gone)
+			pFocus->overrideUnderlayWindow = nullptr;
 		if (x11_win(pFocus->fadeWindow) == id && gone)
 			pFocus->fadeWindow = nullptr;
 		if (gone)
@@ -6778,6 +6813,11 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 					pFocus->overrideWindow->xwayland().ctx == server->ctx.get())
 					pFocus->overrideWindow = nullptr;
 
+				if (pFocus->overrideUnderlayWindow &&
+					pFocus->overrideUnderlayWindow->type == steamcompmgr_win_type_t::XWAYLAND &&
+					pFocus->overrideUnderlayWindow->xwayland().ctx == server->ctx.get())
+					pFocus->overrideUnderlayWindow = nullptr;
+
 				std::erase_if(pFocus->decorationWindows, [&](steamcompmgr_win_t *pDecoration)
 				{
 					return pDecoration->type == steamcompmgr_win_type_t::XWAYLAND &&
@@ -7052,7 +7092,7 @@ bool handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint64_t co
 					focusWindow_pid = w->pid;
 				}
 
-				if ( w == pFocus->overrideWindow )
+				if ( w == pFocus->overrideWindow || w == pFocus->overrideUnderlayWindow )
 				{
 					hasRepaintNonBasePlane = true;
 				}
@@ -8301,6 +8341,8 @@ void steamcompmgr_check_xdg(bool vblank, uint64_t vblank_idx)
 				pFocus->notificationWindow = nullptr;
 			if (pFocus->overrideWindow && pFocus->overrideWindow->type == steamcompmgr_win_type_t::XDG)
 				pFocus->overrideWindow = nullptr;
+			if (pFocus->overrideUnderlayWindow && pFocus->overrideUnderlayWindow->type == steamcompmgr_win_type_t::XDG)
+				pFocus->overrideUnderlayWindow = nullptr;
 			if (pFocus->fadeWindow && pFocus->fadeWindow->type == steamcompmgr_win_type_t::XDG)
 				pFocus->fadeWindow = nullptr;
 		}
