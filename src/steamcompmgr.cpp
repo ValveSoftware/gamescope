@@ -1968,6 +1968,9 @@ void MouseCursor::paint(steamcompmgr_win_t *window, steamcompmgr_win_t *fit, str
 	scaledX = scaledX - (m_hotspotX * cursor_scale);
 	scaledY = scaledY - (m_hotspotY * cursor_scale);
 
+	if (frameInfo->layerCount >= k_nMaxLayers)
+		return;
+
 	int curLayer = frameInfo->layerCount++;
 
 	FrameInfo_t::Layer_t *layer = &frameInfo->layers[ curLayer ];
@@ -2028,6 +2031,9 @@ std::array< BaseLayerInfo_t, HELD_COMMIT_COUNT > g_CachedPlanes = {};
 static void
 paint_cached_base_layer(const gamescope::Rc<commit_t>& commit, const BaseLayerInfo_t& base, struct FrameInfo_t *frameInfo, float flOpacityScale, bool bOverrideOpacity )
 {
+	if (frameInfo->layerCount >= k_nMaxLayers)
+		return;
+
 	int curLayer = frameInfo->layerCount++;
 
 	FrameInfo_t::Layer_t *layer = &frameInfo->layers[ curLayer ];
@@ -2105,6 +2111,10 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
 	// to hold on to, so we should not add a layer in that
 	// instance either.
 	if (!w || lastCommit == nullptr)
+		return nullptr;
+
+	// Don't overflow the layer array.
+	if (frameInfo->layerCount >= k_nMaxLayers)
 		return nullptr;
 
 	// Base plane will stay as tex=0 if we don't have contents yet, which will
@@ -2695,7 +2705,7 @@ paint_all( global_focus_t *pFocus, bool async )
 		else if ( !GetBackend()->UsesVulkanSwapchain() && GetBackend()->IsSessionBased() )
 		{
 			auto tex = vulkan_get_hacky_blank_texture();
-			if ( tex != nullptr )
+			if ( tex != nullptr && frameInfo.layerCount < k_nMaxLayers )
 			{
 				// HACK! HACK HACK HACK
 				// To avoid stutter when toggling the overlay on 
@@ -2815,7 +2825,7 @@ paint_all( global_focus_t *pFocus, bool async )
 		}
 	}
 
-	bool bDoMuraCompensation = is_mura_correction_enabled() && frameInfo.layerCount && cv_paint_mura_plane;
+	bool bDoMuraCompensation = is_mura_correction_enabled() && frameInfo.layerCount && frameInfo.layerCount < k_nMaxLayers && cv_paint_mura_plane;
 	if ( bDoMuraCompensation )
 	{
 		auto& MuraCorrectionImage = s_MuraCorrectionImage[GetBackend()->GetScreenType()];
