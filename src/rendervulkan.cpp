@@ -343,6 +343,15 @@ bool CVulkanDevice::selectPhysDev(VkSurfaceKHR surface)
 		bTryComputeOnly = false;
 	}
 
+	// Track whether the currently-selected device is discrete, so that when no
+	// device is explicitly preferred we upgrade from an integrated GPU to a
+	// discrete one. Without this, on hybrid systems (e.g. an AMD iGPU alongside
+	// a discrete NVIDIA/AMD GPU) the headless/standalone path with no surface to
+	// filter against would pick whichever device enumerates first — frequently
+	// the iGPU — and composite on the wrong, slower GPU.
+	const bool bHavePreferredDevice = ( g_preferVendorID != 0 || g_preferDeviceID != 0 );
+	bool bSelectedIsDiscrete = false;
+
 	for (auto cphysDev : physDevs)
 	{
 		VkPhysicalDeviceProperties deviceProperties;
@@ -368,9 +377,16 @@ bool CVulkanDevice::selectPhysDev(VkSurfaceKHR surface)
 
 		if (generalIndex != ~0u || computeOnlyIndex != ~0u)
 		{
-			// Select the device if it's the first one or the preferred one
-			if (!m_physDev ||
-			    (g_preferVendorID == deviceProperties.vendorID && g_preferDeviceID == deviceProperties.deviceID))
+			const bool bIsPreferred = bHavePreferredDevice &&
+			    g_preferVendorID == deviceProperties.vendorID &&
+			    g_preferDeviceID == deviceProperties.deviceID;
+			const bool bIsDiscrete = deviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
+			// Upgrade integrated -> discrete only when the user hasn't pinned a device.
+			const bool bDiscreteUpgrade = !bHavePreferredDevice && m_physDev && !bSelectedIsDiscrete && bIsDiscrete;
+
+			// Select the device if it's the first one, the preferred one, or a
+			// discrete GPU superseding an integrated pick.
+			if (!m_physDev || bIsPreferred || bDiscreteUpgrade)
 			{
 				// if we have a surface, check that the queue family can actually present on it
 				if (surface) {
@@ -395,6 +411,7 @@ bool CVulkanDevice::selectPhysDev(VkSurfaceKHR surface)
 				m_queueFamily = computeOnlyIndex == ~0u ? generalIndex : computeOnlyIndex;
 				m_generalQueueFamily = generalIndex;
 				m_physDev = cphysDev;
+				bSelectedIsDiscrete = bIsDiscrete;
 
 				/* When Intel uses compute-only queue for Gamescope composition, some games
 				 * experience performance loss. Using the general queue alleviates the issue
