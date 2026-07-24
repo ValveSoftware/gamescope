@@ -561,6 +561,9 @@ bool CVulkanDevice::createDevice()
 
 		enabledExtensions.push_back( VK_KHR_PRESENT_ID_EXTENSION_NAME );
 		enabledExtensions.push_back( VK_KHR_PRESENT_WAIT_EXTENSION_NAME );
+
+		if ( supportsHDRMetadata )
+			enabledExtensions.push_back( VK_EXT_HDR_METADATA_EXTENSION_NAME );
 	}
 
 	if ( m_bSupportsModifiers )
@@ -578,9 +581,6 @@ bool CVulkanDevice::createDevice()
 #if 0
 	enabledExtensions.push_back( VK_KHR_MAINTENANCE_5_EXTENSION_NAME );
 #endif
-
-	if ( supportsHDRMetadata )
-		enabledExtensions.push_back( VK_EXT_HDR_METADATA_EXTENSION_NAME );
 
 	for ( auto& extension : GetBackend()->GetDeviceExtensions( physDev() ) )
 		enabledExtensions.push_back( extension );
