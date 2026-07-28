@@ -4008,7 +4008,9 @@ void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win
 
 	if (!ctx->focus.focusWindow->nudged)
 	{
-		XMoveWindow(ctx->dpy, ctx->focus.focusWindow->xwayland().id, 1, 1);
+		Rect rect = ctx->focus.focusWindow->GetGeometry();
+		XMoveWindow(ctx->dpy, ctx->focus.focusWindow->xwayland().id, rect.nX + 1, rect.nY + 1);
+		XMoveWindow(ctx->dpy, ctx->focus.focusWindow->xwayland().id, rect.nX, rect.nY);
 		ctx->focus.focusWindow->nudged = true;
 	}
 
