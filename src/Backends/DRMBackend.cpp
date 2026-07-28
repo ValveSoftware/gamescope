@@ -2891,6 +2891,55 @@ void drm_rollback( struct drm_t *drm )
 	}
 }
 
+/* Unlinks planes a previous DRM master left on CRTCs that no longer have a mode.
+ * liftoff zeroes the CRTC_ID of every plane it isn't using, which drags the dead
+ * CRTC into our next flip and gets us "requesting event but off". */
+static void drm_unlink_foreign_planes( struct drm_t *drm )
+{
+	drmModeAtomicReq *req = drmModeAtomicAlloc();
+	bool bAnyForeign = false;
+
+	const uint32_t uOurCRTCId = drm->pCRTC ? drm->pCRTC->GetObjectId() : 0;
+	for ( std::unique_ptr< gamescope::CDRMPlane > &pPlane : drm->planes )
+	{
+		// Ask the kernel, liftoff moves planes behind our property cache.
+		drmModePlane *pKernelPlane = drmModeGetPlane( drm->fd, pPlane->GetObjectId() );
+		if ( !pKernelPlane )
+			continue;
+
+		const uint32_t uCRTCId = pKernelPlane->crtc_id;
+		drmModeFreePlane( pKernelPlane );
+
+		if ( uCRTCId == 0 || uCRTCId == uOurCRTCId )
+			continue;
+
+		// A CRTC that still has a mode is either disabled by the modeset below, or
+		// would have amdgpu reject us for taking its primary plane away.
+		drmModeCrtc *pKernelCRTC = drmModeGetCrtc( drm->fd, uCRTCId );
+		const bool bHasMode = !pKernelCRTC || pKernelCRTC->mode_valid;
+		drmModeFreeCrtc( pKernelCRTC );
+
+		if ( bHasMode )
+			continue;
+
+		drm_log.debugf( "Unlinking plane %u left on foreign CRTC %u", pPlane->GetObjectId(), uCRTCId );
+
+		bAnyForeign = true;
+		pPlane->GetProperties().FB_ID->SetPendingValue( req, 0, true );
+		pPlane->GetProperties().CRTC_ID->SetPendingValue( req, 0, true );
+	}
+
+	if ( bAnyForeign )
+	{
+		int ret = drmModeAtomicCommit( drm->fd, req, DRM_MODE_ATOMIC_ALLOW_MODESET, nullptr );
+		// -EACCES just means we're VT-switched away, our caller handles that.
+		if ( ret != 0 && ret != -EACCES )
+			drm_log.errorf_errno( "drm_unlink_foreign_planes: commit failed" );
+	}
+
+	drmModeAtomicFree( req );
+}
+
 /* Prepares an atomic commit for the provided scene-graph. Returns 0 on success,
  * negative errno on failure or if the scene-graph can't be presented directly. */
 int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameInfo )
@@ -2991,6 +3040,8 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 	if ( needs_modeset )
 	{
 		flags |= DRM_MODE_ATOMIC_ALLOW_MODESET;
+
+		drm_unlink_foreign_planes( drm );
 
 		// Disable all connectors and CRTCs
 
