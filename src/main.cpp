@@ -1003,8 +1003,11 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
-	// Prevent our clients from connecting to the parent compositor
-	unsetenv("WAYLAND_DISPLAY");
+	// Prevent our clients from connecting to the parent compositor.
+	// Empty rather than unset: wl_display_connect(nullptr) falls back to "wayland-0"
+	// when WAYLAND_DISPLAY is absent, which is the parent on most setups. Empty is
+	// also the only other value the WSI layer still reads as "under gamescope".
+	setenv("WAYLAND_DISPLAY", "", 1);
 
 	// If DRM format modifiers aren't supported, prevent our clients from using
 	// DCC, as this can cause tiling artifacts.

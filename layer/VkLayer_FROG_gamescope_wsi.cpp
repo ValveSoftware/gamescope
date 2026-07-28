@@ -779,8 +779,20 @@ namespace GamescopeWSILayer {
 
       GamescopeWaylandObjects waylandObjects = GamescopeWaylandObjects::get(pCreateInfo->display);
       if (!waylandObjects.valid()) {
-        fprintf(stderr, "[Gamescope WSI] Failed to get Wayland objects\n");
-        return VK_ERROR_SURFACE_LOST_KHR;
+        // ENABLE_GAMESCOPE_WSI is inherited by every descendant, so the app may
+        // legitimately be on another compositor. Let it through untouched.
+        fprintf(stderr, "[Gamescope WSI] Failed to get Wayland objects "
+                        "(wl_compositor: %s, gamescope_swapchain_factory_v2: %s), "
+                        "not a Gamescope compositor\n",
+                waylandObjects.compositor ? "yes" : "no",
+                waylandObjects.gamescopeSwapchainFactory ? "yes" : "no");
+
+        if (waylandObjects.compositor)
+          wl_compositor_destroy(waylandObjects.compositor);
+        if (waylandObjects.gamescopeSwapchainFactory)
+          gamescope_swapchain_factory_v2_destroy(waylandObjects.gamescopeSwapchainFactory);
+
+        return pDispatch->CreateWaylandSurfaceKHR(instance, pCreateInfo, pAllocator, pSurface);
       }
 
       VkResult res = pDispatch->CreateWaylandSurfaceKHR(instance, pCreateInfo, pAllocator, pSurface);
