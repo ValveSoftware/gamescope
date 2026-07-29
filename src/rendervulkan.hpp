@@ -37,7 +37,7 @@ class CVulkanCmdBuffer;
 // 4: External Overlay (Mangoapp, etc)
 // 5: Primary Overlay (Steam Overlay)
 // 6: Cursor
-#define k_nMaxLayers 6
+#define k_nMaxLayers 8
 #define k_nMaxYcbcrMask 16
 #define k_nMaxYcbcrMask_ToPreCompile 3
 

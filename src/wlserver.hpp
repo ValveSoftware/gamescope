@@ -135,6 +135,7 @@ struct wlserver_t {
 	struct wlr_surface *mouse_focus_surface;
 	struct wlr_surface *kb_focus_surface;
 	std::unordered_map<struct wlr_surface *, std::pair<int, int>> current_dropdown_surfaces;
+	bool bound_cursor = true;
 	double mouse_surface_cursorx = 0.0f;
 	double mouse_surface_cursory = 0.0f;
 	bool mouse_constraint_requires_warp = false;
@@ -249,6 +250,7 @@ void wlserver_clear_dropdowns();
 void wlserver_notify_dropdown( struct wlr_surface *wlrsurface, int nX, int nY );
 void wlserver_mousemotion( double x, double y, uint32_t time );
 void wlserver_mousehide();
+void wlserver_enable_cursor_binding( bool bClamp );
 void wlserver_mousewarp( double x, double y, uint32_t time, bool bSynthetic );
 void wlserver_mousebutton( int button, bool press, uint32_t time );
 void wlserver_mousewheel( double x, double y, uint32_t time );

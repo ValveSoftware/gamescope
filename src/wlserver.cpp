@@ -2505,9 +2505,12 @@ static std::pair<int, int> wlserver_get_cursor_bounds()
 
 static void wlserver_clampcursor()
 {
-	auto [nWidth, nHeight] = wlserver_get_cursor_bounds();
-	wlserver.mouse_surface_cursorx = std::clamp( wlserver.mouse_surface_cursorx, 0.0, double( std::max( nWidth - 1, 0 ) ) );
-	wlserver.mouse_surface_cursory = std::clamp( wlserver.mouse_surface_cursory, 0.0, double( std::max( nHeight - 1, 0 ) ) );
+	if ( wlserver.bound_cursor )
+	{
+		auto [nWidth, nHeight] = wlserver_get_cursor_bounds();
+		wlserver.mouse_surface_cursorx = std::clamp( wlserver.mouse_surface_cursorx, 0.0, double( std::max( nWidth - 1, 0 ) ) );
+		wlserver.mouse_surface_cursory = std::clamp( wlserver.mouse_surface_cursory, 0.0, double( std::max( nHeight - 1, 0 ) ) );
+	}
 }
 
 void wlserver_mousefocus( struct wlr_surface *wlrsurface, int x /* = 0 */, int y /* = 0 */ )
@@ -2549,6 +2552,11 @@ void wlserver_clear_dropdowns()
 void wlserver_notify_dropdown( struct wlr_surface *wlrsurface, int nX, int nY )
 {
 	wlserver.current_dropdown_surfaces[wlrsurface] = std::make_pair( nX, nY );
+}
+
+void wlserver_enable_cursor_binding( bool bClamp )
+{
+	wlserver.bound_cursor = bClamp;
 }
 
 void wlserver_mousehide()
@@ -2927,9 +2935,12 @@ void wlserver_touchmotion( double x, double y, int touch_id, uint32_t time, bool
 		tx *= focusedWindowScaleX;
 		ty *= focusedWindowScaleY;
 
-		auto [nWidth, nHeight] = wlserver_get_cursor_bounds();
-		tx = clamp( tx, 0.0, nWidth - 0.1 );
-		ty = clamp( ty, 0.0, nHeight - 0.1 );
+		if ( wlserver.bound_cursor )
+		{
+			auto [nWidth, nHeight] = wlserver_get_cursor_bounds();
+			tx = clamp( tx, 0.0, nWidth - 0.1 );
+			ty = clamp( ty, 0.0, nHeight - 0.1 );
+		}
 
 		double trackpad_dx, trackpad_dy;
 

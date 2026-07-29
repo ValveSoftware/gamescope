@@ -93,6 +93,8 @@ struct xwayland_ctx_t final : public gamescope::IWaitable
 	double accum_x = 0.0;
 	double accum_y = 0.0;
 
+	uint32_t unRaiseSerial = 0;
+
 	bool force_windows_fullscreen = false;
 
 	bool bTouchPointerEmulation = false;

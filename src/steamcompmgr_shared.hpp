@@ -121,6 +121,10 @@ struct steamcompmgr_win_t {
 	bool bIsSteamWebHelperPid = false;
 	bool bIsVRWebHelperPid = false;
 	bool bIsDolphin = false; // File Manager
+	bool bIsVRMonitor = false;
+	bool bIsSteamVRStatus = false;
+	bool bIsVRView = false;
+	uint32_t unRaiseRequested = 0;
 
 	std::string pid_name;
 

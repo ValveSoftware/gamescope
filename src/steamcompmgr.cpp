@@ -2022,6 +2022,7 @@ struct BaseLayerInfo_t
 	float scale[2];
 	float offset[2];
 	float opacity;
+	bool blackBorder;
 	GamescopeUpscaleFilter filter;
 	AlphaBlendingMode_t eAlphaBlendingMode = ALPHA_BLENDING_MODE_PREMULTIPLIED;
 };
@@ -2031,6 +2032,9 @@ std::array< BaseLayerInfo_t, HELD_COMMIT_COUNT > g_CachedPlanes = {};
 static void
 paint_cached_base_layer(const gamescope::Rc<commit_t>& commit, const BaseLayerInfo_t& base, struct FrameInfo_t *frameInfo, float flOpacityScale, bool bOverrideOpacity )
 {
+	if ( frameInfo->layerCount + 1 >= k_nMaxLayers )
+		return;
+
 	int curLayer = frameInfo->layerCount++;
 
 	FrameInfo_t::Layer_t *layer = &frameInfo->layers[ curLayer ];
@@ -2054,7 +2058,7 @@ paint_cached_base_layer(const gamescope::Rc<commit_t>& commit, const BaseLayerIn
 
 	layer->filter = base.filter;
 	layer->eAlphaBlendingMode = base.eAlphaBlendingMode;
-	layer->blackBorder = true;
+	layer->blackBorder = base.blackBorder;
 }
 
 namespace PaintWindowFlag
@@ -2066,6 +2070,7 @@ namespace PaintWindowFlag
 	static const uint32_t NoScale = 1u << 4;
 	static const uint32_t NoFilter = 1u << 5;
 	static const uint32_t CoverageMode = 1u << 6;
+	static const uint32_t NoCenter = 1u << 7;
 }
 using PaintWindowFlags = uint32_t;
 
@@ -2112,6 +2117,9 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
 
 	// Base plane will stay as tex=0 if we don't have contents yet, which will
 	// make us fall back to compositing and use the Vulkan null texture
+
+	if ( frameInfo->layerCount + 1 >= k_nMaxLayers )
+		return nullptr;
 
 	int curLayer = frameInfo->layerCount++;
 
@@ -2170,17 +2178,33 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
 
 	bool offset = ( ( winOffsetX || winOffsetY ) && w != scaleW );
 
+	if ( flags & PaintWindowFlag::NoCenter )
+	{
+		offset = true;
+
+		winOffsetX = w->GetGeometry().nX;
+		winOffsetY = w->GetGeometry().nY;
+	}
+
 	if (sourceWidth != (int32_t)currentOutputWidth || sourceHeight != (int32_t)currentOutputHeight || offset || globalScaleRatio != 1.0f)
 	{
 		calc_scale_factor(currentScaleRatio_x, currentScaleRatio_y, sourceWidth, sourceHeight);
 
-		drawXOffset = ((int)currentOutputWidth - (int)sourceWidth * currentScaleRatio_x) / 2.0f;
-		drawYOffset = ((int)currentOutputHeight - (int)sourceHeight * currentScaleRatio_y) / 2.0f;
-
-		if ( w != scaleW )
+		if ( flags & PaintWindowFlag::NoCenter )
 		{
-			drawXOffset += winOffsetX * currentScaleRatio_x;
-			drawYOffset += winOffsetY * currentScaleRatio_y;
+			drawXOffset = winOffsetX * currentScaleRatio_x;
+			drawYOffset = winOffsetY * currentScaleRatio_y;
+		}
+		else
+		{
+			drawXOffset = ((int)currentOutputWidth - (int)sourceWidth * currentScaleRatio_x) / 2.0f;
+			drawYOffset = ((int)currentOutputHeight - (int)sourceHeight * currentScaleRatio_y) / 2.0f;
+
+			if ( w != scaleW )
+			{
+				drawXOffset += winOffsetX * currentScaleRatio_x;
+				drawYOffset += winOffsetY * currentScaleRatio_y;
+			}
 		}
 
 		calc_scale_factor(baseScaleRatio_x, baseScaleRatio_y, baseWidth, baseHeight);
@@ -2288,6 +2312,7 @@ paint_window(steamcompmgr_win_t *w, steamcompmgr_win_t *scaleW, struct FrameInfo
 		basePlane.offset[1] = layer->offset.y;
 		basePlane.opacity = layer->opacity;
 		basePlane.filter = layer->filter;
+		basePlane.blackBorder = layer->blackBorder;
 		basePlane.eAlphaBlendingMode = layer->eAlphaBlendingMode;
 
 		g_CachedPlanes[ HELD_COMMIT_BASE ] = basePlane;
@@ -2568,12 +2593,72 @@ paint_all( global_focus_t *pFocus, bool async )
 	frameInfo.allowVRR = cv_adaptive_sync;
 	frameInfo.bFadingOut = fadingOut;
 
+	float flOldMaxWindowScale = g_flMaxWindowScale;
+	GamescopeUpscaleScaler eOldUpscaleScaler = g_upscaleScaler;
+	steamcompmgr_win_t *scaleW = w;
+	steamcompmgr_win_t *fit = override;
+	if ( w && w->bIsVRMonitor )
+	{
+		g_flMaxWindowScale = 1.0f;
+		g_upscaleScaler = GamescopeUpscaleScaler::AUTO;
+	}
+
 	// If the window we'd paint as the base layer is the streaming client,
 	// find the video underlay and put it up first in the scenegraph
 	if ( cv_paint_primary_plane )
 	{
 		if ( w )
 		{
+			PaintWindowFlags eExtraFlags = 0;
+
+			if ( !w->bIsVRMonitor )
+			{
+				eExtraFlags	|= PaintWindowFlag::DrawBorders;
+			}
+			else
+			{
+				eExtraFlags |= PaintWindowFlag::NoFilter;
+				eExtraFlags |= PaintWindowFlag::NoCenter;
+
+				static gamescope::Rc<CVulkanTexture> s_pVrSettingsBackdrop = []() -> gamescope::Rc<CVulkanTexture>
+				{
+					const char *pchFilePath = "/home/misyl/.local/share/Steam/steamapps/common/MainSteamVR/resources/webinterface/dashboard/images/settings/background.png";
+					int unWidth, unHeight, unComp;
+					unsigned char *pData = stbi_load( pchFilePath, &unWidth, &unHeight, &unComp, 4 );
+					if ( !pData )
+						return nullptr;
+
+					CVulkanTexture::createFlags texCreateFlags;
+					texCreateFlags.bFlippable = true;
+					texCreateFlags.bSampled = true;
+					gamescope::Rc<CVulkanTexture> pTexture = vulkan_create_texture_from_bits( unWidth, unHeight, unWidth, unHeight, DRM_FORMAT_ABGR8888, texCreateFlags, (void*)pData );
+					free( pData );
+
+					return pTexture;
+				}();
+
+				if ( s_pVrSettingsBackdrop )
+				{
+					int curLayer = frameInfo.layerCount++;
+
+					FrameInfo_t::Layer_t *layer = &frameInfo.layers[ curLayer ];
+
+					float XRatio = (float)g_nOutputWidth / s_pVrSettingsBackdrop->width();
+					float YRatio = (float)g_nOutputHeight / s_pVrSettingsBackdrop->height();
+
+					float flScaleFactor = std::max(XRatio, YRatio);
+
+					layer->scale.x = 1.0f / flScaleFactor;
+					layer->scale.y = 1.0f / flScaleFactor;
+					layer->blackBorder = true;
+					layer->colorspace = GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB;
+					layer->opacity = 1.0f;
+					layer->zpos = g_zposBase;
+					layer->filter = GamescopeUpscaleFilter::LINEAR;
+					layer->tex = s_pVrSettingsBackdrop;
+				}
+			}
+
 			if ( w->isSteamStreamingClient == true )
 			{
 				steamcompmgr_win_t *videow = NULL;
@@ -2587,7 +2672,7 @@ paint_all( global_focus_t *pFocus, bool async )
 						if ( videow->isSteamStreamingClientVideo == true )
 						{
 							// TODO: also check matching AppID so we can have several pairs
-							paint_window(videow, videow, &frameInfo, pFocus->cursor, PaintWindowFlag::BasePlane | PaintWindowFlag::DrawBorders);
+							paint_window(videow, videow, &frameInfo, pFocus->cursor, PaintWindowFlag::BasePlane);
 							bHasVideoUnderlay = true;
 							break;
 						}
@@ -2617,7 +2702,7 @@ paint_all( global_focus_t *pFocus, bool async )
 						: ((currentTime - fadeOutStartTime) / (float)g_FadeOutDuration);
 			
 					paint_cached_base_layer(g_HeldCommits[HELD_COMMIT_FADE], g_CachedPlanes[HELD_COMMIT_FADE], &frameInfo, 1.0f - opacityScale, false);
-					paint_window(w, w, &frameInfo, pFocus->cursor, PaintWindowFlag::BasePlane | PaintWindowFlag::FadeTarget | PaintWindowFlag::DrawBorders, opacityScale, override);
+					paint_window(w, scaleW, &frameInfo, pFocus->cursor, PaintWindowFlag::BasePlane | PaintWindowFlag::FadeTarget | eExtraFlags, opacityScale, fit);
 				}
 				else
 				{
@@ -2631,7 +2716,7 @@ paint_all( global_focus_t *pFocus, bool async )
 						}
 					}
 					// Just draw focused window as normal, be it Steam or the game
-					paint_window(w, w, &frameInfo, pFocus->cursor, PaintWindowFlag::BasePlane | PaintWindowFlag::DrawBorders, 1.0f, override);
+					paint_window(w, scaleW, &frameInfo, pFocus->cursor, PaintWindowFlag::BasePlane | eExtraFlags, 1.0f, fit);
 
 					bool needsScaling = frameInfo.layers[0].scale.x < 0.999f && frameInfo.layers[0].scale.y < 0.999f;
 					frameInfo.useFSRLayer0 = g_upscaleFilter == GamescopeUpscaleFilter::FSR && needsScaling;
@@ -2658,16 +2743,74 @@ paint_all( global_focus_t *pFocus, bool async )
 		}
 	}
 
-	// TODO: We want to paint this at the same scale as the normal window and probably
-	// with an offset.
-	// Josh: No override if we're streaming video
-	// as we will have too many layers. Better to be safe than sorry.
-	if ( override && w && !w->isSteamStreamingClient && cv_paint_override_redirect_plane )
+	if ( w && w->bIsVRMonitor )
 	{
-		paint_window(override, w, &frameInfo, pFocus->cursor, PaintWindowFlag::NoFilter, 1.0f, override);
-		// Don't update touch scaling for frameInfo. We don't ever make it our
-		// wlserver_mousefocus window.
-		//update_touch_scaling( &frameInfo );
+		wlserver_lock();
+		wlserver_enable_cursor_binding( false );
+		wlserver_unlock();
+
+		steamcompmgr_win_t *pVrView = nullptr;
+		std::vector<steamcompmgr_win_t *> pMainWindows;
+		std::vector<steamcompmgr_win_t *> pOverrideWindows;
+
+		// Paint VR View first...
+		for ( steamcompmgr_win_t *other_w = w->xwayland().ctx->list; other_w; other_w = other_w->xwayland().next )
+		{
+			if ( w == other_w )
+				continue;
+
+			if ( !other_w->bIsVRMonitor )
+				continue;
+
+			bool bMappedAndVisible = other_w->xwayland().a.map_state == IsViewable && other_w->xwayland().a.c_class == InputOutput &&
+				(other_w->opacity > TRANSLUCENT || other_w->isSteamStreamingClient );
+
+			if ( !bMappedAndVisible )
+				continue;
+
+			if ( other_w->bIsVRView )
+			{
+				pVrView = other_w;
+			}
+			else if ( !other_w->xwayland().a.override_redirect )
+			{
+				pMainWindows.push_back( other_w );
+			}
+			else
+			{
+				pOverrideWindows.push_back( other_w );
+			}
+		}
+
+		paint_window( pVrView, scaleW, &frameInfo, pFocus->cursor, PaintWindowFlag::NoFilter | PaintWindowFlag::NoCenter, 1.0f, fit );
+		for ( steamcompmgr_win_t *pMainWindow : pMainWindows )
+			paint_window( pMainWindow, scaleW, &frameInfo, pFocus->cursor, PaintWindowFlag::NoFilter | PaintWindowFlag::NoCenter, 1.0f, fit );
+		for ( steamcompmgr_win_t *pOverrideWindow : pOverrideWindows )
+			paint_window( pOverrideWindow, scaleW, &frameInfo, pFocus->cursor, PaintWindowFlag::NoFilter | PaintWindowFlag::NoCenter, 1.0f, fit );
+	}
+	else
+	{
+		wlserver_lock();
+		wlserver_enable_cursor_binding( true );
+		wlserver_unlock();
+
+		// TODO: We want to paint this at the same scale as the normal window and probably
+		// with an offset.
+		// Josh: No override if we're streaming video
+		// as we will have too many layers. Better to be safe than sorry.
+		if ( override && w && !w->isSteamStreamingClient && cv_paint_override_redirect_plane )
+		{
+			paint_window(override, w, &frameInfo, pFocus->cursor, PaintWindowFlag::NoFilter, 1.0f, fit);
+			// Don't update touch scaling for frameInfo. We don't ever make it our
+			// wlserver_mousefocus window.
+			//update_touch_scaling( &frameInfo );
+		}
+	}
+
+	if ( w && w->bIsVRMonitor )
+	{
+		g_flMaxWindowScale = flOldMaxWindowScale;
+		g_upscaleScaler = eOldUpscaleScaler;
 	}
 
 	// If we have any layers that aren't a cursor or overlay, then we have valid contents for presentation.
@@ -2745,7 +2888,7 @@ paint_all( global_focus_t *pFocus, bool async )
 	// Draw cursor if we need to
 	if (input && ShouldDrawCursor() && cv_paint_cursor_plane) {
 		pFocus->cursor->paint(
-			input, w == input ? override : nullptr,
+			input, w == input ? fit : nullptr,
 			&frameInfo);
 	}
 
@@ -3435,6 +3578,15 @@ is_focus_priority_greater( steamcompmgr_win_t *a, steamcompmgr_win_t *b )
 	if ( win_skip_and_not_fullscreen( a ) != win_skip_and_not_fullscreen( b ) )
 		return !win_skip_and_not_fullscreen( a );
 
+	if ( ( a->bIsVRWebHelperPid || b->bIsVRWebHelperPid ) && a->unRaiseRequested != b->unRaiseRequested )
+		return a->unRaiseRequested > b->unRaiseRequested;
+
+	if ( a->bIsSteamVRStatus != b->bIsSteamVRStatus )
+		return a->bIsSteamVRStatus;
+
+	if ( a->bIsVRWebHelperPid != b->bIsVRWebHelperPid )
+		return a->bIsVRWebHelperPid;
+
 	// Prefer normal windows over dialogs
 	// if we are an override redirect/dropdown window.
 	if ( win_maybe_a_dropdown( a ) && win_maybe_a_dropdown( b ) &&
@@ -3785,6 +3937,18 @@ void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win
 			}
 		}
 
+		if ( w->bIsVRView )
+		{
+			uint32_t width = ctx->root_width * 0.5f;
+			uint32_t height = ctx->root_height * 0.9f;
+
+			XResizeWindow(ctx->dpy, w->xwayland().id, width, height );
+
+			XMoveWindow(ctx->dpy, w->xwayland().id,
+				(ctx->root_width * 0.95f) - width,
+				ctx->root_height * 0.05f );
+		}
+
 		if ( gamescope::VirtualConnectorIsSingleOutput() )
 		{
 			if ( w->isOverlay && w->inputFocusMode )
@@ -3975,6 +4139,15 @@ void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win
 		XMoveWindow(ctx->dpy, ctx->focus.focusWindow->xwayland().id, rect.nX + 1, rect.nY + 1);
 		XMoveWindow(ctx->dpy, ctx->focus.focusWindow->xwayland().id, rect.nX, rect.nY);
 		ctx->focus.focusWindow->nudged = true;
+	}
+
+	if ( ctx->focus.focusWindow->bIsSteamVRStatus )
+	{
+		Rect rect = ctx->focus.focusWindow->GetGeometry();
+
+		XMoveWindow(ctx->dpy, ctx->focus.focusWindow->xwayland().id,
+			ctx->root_width * 0.1f,
+			std::max((( (int)ctx->root_height - (int)rect.nHeight ) / 2), 0) );
 	}
 
 	if ( win_has_game_id( w ) )
@@ -4677,6 +4850,12 @@ get_win_title(xwayland_ctx_t *ctx, steamcompmgr_win_t *w, Atom atom)
 		w->title = NULL;
 	}
 	w->utf8_title = is_utf8;
+
+	w->bIsSteamVRStatus = w->title && *w->title == "SteamVR Status";
+	w->bIsVRView = w->title && *w->title == "VR View";
+
+	if ( w->title && *w->title == "About Qt" )
+		w->bIsVRMonitor = false;
 }
 
 static void
@@ -4721,7 +4900,7 @@ handle_desktop_window(steamcompmgr_win_t *w)
 	if ( !w )
 		return;
 
-	if ( win_has_game_id( w ) || w->bIsSteamPid || w->bIsSteamWebHelperPid || w->bIsVRWebHelperPid )
+	if ( win_has_game_id( w ) || w->bIsSteamPid || w->bIsSteamWebHelperPid || w->bIsVRWebHelperPid || w->bIsVRMonitor )
 		return;
 
 	if ( w->type != steamcompmgr_win_type_t::XWAYLAND )
@@ -5139,6 +5318,8 @@ add_win(xwayland_ctx_t *ctx, Window id, Window prev, unsigned long sequence)
 		new_win->bIsVRWebHelperPid = true;
 	if ( pid_name == "dolphin" )
 		new_win->bIsDolphin = true;
+	if ( pid_name == "vrmonitor" )
+		new_win->bIsVRMonitor = true;
 
 	Window transientFor = None;
 	if ( XGetTransientForHint( ctx->dpy, id, &transientFor ) )
@@ -5282,6 +5463,15 @@ static void configure_request(xwayland_ctx_t *ctx, XConfigureRequestEvent *confi
 		.sibling = configureRequest->above,
 		.stack_mode = configureRequest->detail
 	};
+
+	steamcompmgr_win_t *w = find_win( ctx, configureRequest->window );
+	if ( w && ( configureRequest->value_mask & CWStackMode ) && configureRequest->detail == Above )
+	{
+		w->unRaiseRequested = ++ctx->unRaiseSerial;
+
+		focus_log.infof( "Window %x (%s | %s) requested to be raised (w->unRaiseRequested: %u).",
+			(uint32_t)w->xwayland().id, w->pid_name.c_str(), w->title ? w->title->c_str() : "Untitled", w->unRaiseRequested );
+	}
 
 	XConfigureWindow( ctx->dpy, configureRequest->window, configureRequest->value_mask, &changes );
 }
