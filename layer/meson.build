@@ -15,4 +15,5 @@ configure_file(
     configuration : {'family' : host_machine.cpu_family(), 'lib_dir' : out_lib_dir },
     install       : true,
     install_dir   : join_paths(data_dir, 'vulkan', 'implicit_layer.d'),
+    install_tag   : 'runtime'
 )
