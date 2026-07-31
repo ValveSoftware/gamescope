@@ -7679,8 +7679,9 @@ void xwayland_ctx_t::Dispatch()
 			{
 				steamcompmgr_win_t * w = find_win( ctx, ev.xfocus.window );
 
-				// If focus escaped the current desired keyboard focus window, check where it went
-				if ( w && w->xwayland().id == ctx->currentKeyboardFocusWindow )
+				// If focus escaped the current desired keyboard focus window, check where it went.
+				// The desired window may be a preserved subwindow, so also match it directly.
+				if ( w && ( ev.xfocus.window == ctx->currentKeyboardFocusWindow || w->xwayland().id == ctx->currentKeyboardFocusWindow ) )
 				{
 					Window newKeyboardFocus = None;
 					int nRevertMode = 0;
@@ -7691,9 +7692,9 @@ void xwayland_ctx_t::Dispatch()
 
 					if ( kbw )
 					{
-						if ( kbw->xwayland().id == ctx->currentKeyboardFocusWindow )
+						if ( kbw == find_win( ctx, ctx->currentKeyboardFocusWindow ) )
 						{
-							// focus went to a child, this is fine, make note of it in case we need to fix it
+							// focus stayed within the same toplevel, keep track of it
 							ctx->currentKeyboardFocusWindow = newKeyboardFocus;
 						}
 						else
@@ -7701,6 +7702,11 @@ void xwayland_ctx_t::Dispatch()
 							// focus went elsewhere, correct it
 							bSetFocus = true;
 						}
+					}
+					else if ( newKeyboardFocus == None )
+					{
+						// focus dropped to None, take it back
+						bSetFocus = true;
 					}
 				}
 
