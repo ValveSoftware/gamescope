@@ -3983,7 +3983,10 @@ void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win
 
 		if ( !ctx->focus.overrideWindow || ctx->focus.overrideWindow != keyboardFocusWin )
 		{
-			XSetInputFocus(ctx->dpy, keyboardFocusWin->xwayland().id, RevertToNone, CurrentTime);
+			// Retargeting the toplevel would unfocus CEF's browser subwindow.
+			// A subwindow reverts to its parent so it can't strand focus on None.
+			int nRevertMode = keyboardFocusWindow == keyboardFocusWin->xwayland().id ? RevertToNone : RevertToParent;
+			XSetInputFocus(ctx->dpy, keyboardFocusWindow, nRevertMode, CurrentTime);
 
 			// wine >= 10.0 treats _NET_ACTIVE_WINDOW as foreground, so it must track real keyboard focus.
 			Window activeWindow = keyboardFocusWin->xwayland().id;
@@ -7776,7 +7779,9 @@ void xwayland_ctx_t::Dispatch()
 
 	if ( bSetFocus )
 	{
-		XSetInputFocus(ctx->dpy, ctx->currentKeyboardFocusWindow, RevertToNone, CurrentTime);
+		// A subwindow reverts to its parent so it can't strand focus on None.
+		bool bToplevel = find_win( ctx, ctx->currentKeyboardFocusWindow, false ) != nullptr;
+		XSetInputFocus(ctx->dpy, ctx->currentKeyboardFocusWindow, bToplevel ? RevertToNone : RevertToParent, CurrentTime);
 	}
 }
 
