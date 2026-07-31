@@ -147,10 +147,16 @@ namespace gamescope
         uint32_t uFractionalScale;
     };
 
-    inline WaylandPlaneState ClipPlane( const WaylandPlaneState &state )
+    inline std::optional<WaylandPlaneState> ClipPlane( const WaylandPlaneState &state )
     {
         int32_t nClippedDstWidth  = std::min<int32_t>( g_nOutputWidth,  state.nDstWidth  + state.nDestX ) - state.nDestX;
         int32_t nClippedDstHeight = std::min<int32_t>( g_nOutputHeight, state.nDstHeight + state.nDestY ) - state.nDestY;
+
+        // A plane that starts past the edge of the output clips away to nothing.
+        // Viewport source and destination sizes must be positive, so present no buffer at all.
+        if ( nClippedDstWidth <= 0 || nClippedDstHeight <= 0 )
+            return std::nullopt;
+
         double flClippedSrcWidth  = state.flSrcWidth  * ( nClippedDstWidth  / double( state.nDstWidth ) );
         double flClippedSrcHeight = state.flSrcHeight * ( nClippedDstHeight / double( state.nDstHeight ) );
 
