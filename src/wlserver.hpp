@@ -181,7 +181,6 @@ struct wlserver_t {
 	struct wlr_layer_shell_v1 *layer_shell_v1;
 	struct wlr_relative_pointer_manager_v1 *relative_pointer_manager;
 	struct wlr_pointer_constraints_v1 *constraints;
-	struct wl_listener new_xdg_surface;
 	struct wl_listener new_xdg_toplevel;
 	struct wl_listener new_layer_shell_surface;
 	struct wl_listener new_pointer_constraint;
@@ -189,6 +188,9 @@ struct wlserver_t {
 	std::atomic<bool> xdg_dirty;
 	std::mutex xdg_commit_lock;
 	std::vector<ResListEntry_t> xdg_commit_queue;
+
+	std::mutex subsurface_commit_lock;
+	std::vector<ResListEntry_t> subsurface_commit_queue;
 
 	std::vector<wl_resource*> gamescope_controls;
 	std::unordered_map< uint32_t, std::vector<wl_resource*> > app_perf_requests;
@@ -204,6 +206,7 @@ struct wlserver_t {
 extern struct wlserver_t wlserver;
 
 std::vector<ResListEntry_t> wlserver_xdg_commit_queue();
+std::vector<ResListEntry_t> wlserver_subsurface_commit_queue();
 
 struct wlserver_pointer {
 	struct wlr_pointer *wlr;
@@ -289,6 +292,7 @@ void wlserver_destroy_xwayland_server(gamescope_xwayland_server_t *server);
 
 void wlserver_presentation_feedback_presented( struct wlr_surface *surface, std::vector<struct wl_resource*>& presentation_feedbacks, uint64_t last_refresh_nsec, uint64_t refresh_cycle );
 void wlserver_presentation_feedback_discard( struct wlr_surface *surface, std::vector<struct wl_resource*>& presentation_feedbacks );
+void wlserver_presentation_feedbacks_destroy( std::vector<struct wl_resource*>& presentation_feedbacks );
 
 void wlserver_past_present_timing( struct wlr_surface *surface, uint32_t present_id, uint64_t desired_present_time, uint64_t actual_present_time, uint64_t earliest_present_time, uint64_t present_margin );
 void wlserver_refresh_cycle( struct wlr_surface *surface, uint64_t refresh_cycle );
