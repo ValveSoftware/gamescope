@@ -18,6 +18,8 @@ gamescope.config.known_displays.lenovo_legiongo2_oled = {
         force_enabled = false,
         eotf = gamescope.eotf.pq,
         content_driven = true,
+        -- The panel ignores hardware backlight control while in PQ mode.
+        software_backlight = true,
         -- Luminance and colorimetry come from the panel's EDID.
     },
     dynamic_refresh_rates = legiongo2_oled_refresh_rates,
