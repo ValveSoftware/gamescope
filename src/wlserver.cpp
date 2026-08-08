@@ -1905,6 +1905,13 @@ static void waylandy_surface_destroy(struct wl_listener *listener, void *data) {
 
 void xdg_toplevel_new(struct wl_listener *listener, void *data)
 {
+	struct wlr_xdg_toplevel *toplevel = (struct wlr_xdg_toplevel *)data;
+
+	wlserver_wl_surface_info *wlserver_surface = get_wl_surface_info(toplevel->base->surface);
+	if (!wlserver_surface || !wlserver_surface->xdg_surface)
+		return;
+
+	wlserver_surface->xdg_surface->bIsToplevel = true;
 }
 
 uint32_t get_appid_from_pid( pid_t pid );

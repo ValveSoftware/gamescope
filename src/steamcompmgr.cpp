@@ -4100,6 +4100,13 @@ steamcompmgr_xdg_get_possible_focus_windows()
 			continue;
 		}
 
+		// Only mapped toplevels are focus candidates: popups and
+		// not-yet-mapped surfaces must not be reported to Steam.
+		if ( !win->xdg().surface.bIsToplevel || !win->xdg().surface.mapped )
+		{
+			continue;
+		}
+
 		windows.emplace_back( win.get() );
 	}
 	return windows;
@@ -4191,14 +4198,15 @@ determine_and_apply_focus( global_focus_t *pFocus )
 
 	for ( steamcompmgr_win_t *focusable_window : vecPossibleFocusWindows )
 	{
-		if ( focusable_window->type != steamcompmgr_win_type_t::XWAYLAND )
-			continue;
+		const bool bIsXWayland = focusable_window->type == steamcompmgr_win_type_t::XWAYLAND;
 
 		// Exclude windows that are useless (1x1), skip taskbar + pager or override redirect windows
-		// from the reported focusable windows to Steam.
-		if ( win_is_useless( focusable_window ) ||
-			win_skip_and_not_fullscreen( focusable_window ) ||
-			focusable_window->xwayland().a.override_redirect )
+		// from the reported focusable windows to Steam. These are all XWayland concepts, so XDG
+		// windows are reported as-is.
+		if ( bIsXWayland &&
+			( win_is_useless( focusable_window ) ||
+			  win_skip_and_not_fullscreen( focusable_window ) ||
+			  focusable_window->xwayland().a.override_redirect ) )
 			continue;
 
 		unsigned int unAppID = focusable_window->appID;
@@ -4219,7 +4227,7 @@ determine_and_apply_focus( global_focus_t *pFocus )
 		}
 
 		// list of [window, appid, pid] triplets
-		focusable_windows.push_back( focusable_window->xwayland().id );
+		focusable_windows.push_back( focusable_window->id() );
 		focusable_windows.push_back( focusable_window->appID );
 		focusable_windows.push_back( focusable_window->pid );
 	}
