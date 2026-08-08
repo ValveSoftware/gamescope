@@ -66,6 +66,9 @@ struct wlserver_xdg_surface_info
 	struct wl_listener map;
 	struct wl_listener unmap;
 	struct wl_listener destroy;
+	struct wl_listener request_fullscreen;
+	struct wl_listener request_maximize;
+	struct wl_listener toplevel_destroy;
 };
 
 
