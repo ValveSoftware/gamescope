@@ -227,7 +227,23 @@ void xwayland_surface_commit(struct wlr_surface *wlr_surface) {
 		if ( !wlserver_xdg_surface_info->bDoneConfigure )
 		{
 			if ( wlserver_xdg_surface_info->xdg_surface )
-				wlr_xdg_surface_schedule_configure( wlserver_xdg_surface_info->xdg_surface );
+			{
+				struct wlr_xdg_surface *xdg_surface = wlserver_xdg_surface_info->xdg_surface;
+				struct wlr_xdg_toplevel *toplevel = xdg_surface->toplevel;
+
+				if ( toplevel && !toplevel->parent )
+				{
+					// set_size/set_fullscreen schedule the configure themselves.
+					wlr_xdg_toplevel_set_size( toplevel, g_nNestedWidth, g_nNestedHeight );
+					wlr_xdg_toplevel_set_fullscreen( toplevel, true );
+				}
+				else
+				{
+					// Child toplevels (dialogs) and other roles keep their own
+					// size; they still need the initial configure.
+					wlr_xdg_surface_schedule_configure( xdg_surface );
+				}
+			}
 
 			if ( wlserver_xdg_surface_info->layer_surface )
 				wlr_layer_surface_v1_configure( wlserver_xdg_surface_info->layer_surface, g_nNestedWidth, g_nNestedHeight );
@@ -1899,8 +1915,33 @@ static void waylandy_surface_destroy(struct wl_listener *listener, void *data) {
 	wl_list_remove(&info->map.link);
 	wl_list_remove(&info->unmap.link);
 	wl_list_remove(&info->destroy.link);
+	if (info->bIsToplevel)
+	{
+		wl_list_remove(&info->request_fullscreen.link);
+		wl_list_remove(&info->request_maximize.link);
+	}
 
 	wlserver_surface->xdg_surface = nullptr;
+}
+
+static void xdg_toplevel_request_fullscreen(struct wl_listener *listener, void *data)
+{
+	struct wlserver_xdg_surface_info *info =
+		wl_container_of(listener, info, request_fullscreen);
+
+	// The compositor stays authoritative over the fullscreen state, but any
+	// request must still be answered with a configure.
+	if (info->xdg_surface)
+		wlr_xdg_surface_schedule_configure(info->xdg_surface);
+}
+
+static void xdg_toplevel_request_maximize(struct wl_listener *listener, void *data)
+{
+	struct wlserver_xdg_surface_info *info =
+		wl_container_of(listener, info, request_maximize);
+
+	if (info->xdg_surface)
+		wlr_xdg_surface_schedule_configure(info->xdg_surface);
 }
 
 void xdg_toplevel_new(struct wl_listener *listener, void *data)
@@ -1911,7 +1952,13 @@ void xdg_toplevel_new(struct wl_listener *listener, void *data)
 	if (!wlserver_surface || !wlserver_surface->xdg_surface)
 		return;
 
-	wlserver_surface->xdg_surface->bIsToplevel = true;
+	wlserver_xdg_surface_info *info = wlserver_surface->xdg_surface;
+	info->bIsToplevel = true;
+
+	info->request_fullscreen.notify = xdg_toplevel_request_fullscreen;
+	wl_signal_add(&toplevel->events.request_fullscreen, &info->request_fullscreen);
+	info->request_maximize.notify = xdg_toplevel_request_maximize;
+	wl_signal_add(&toplevel->events.request_maximize, &info->request_maximize);
 }
 
 uint32_t get_appid_from_pid( pid_t pid );
@@ -1938,6 +1985,8 @@ wlserver_xdg_surface_info* waylandy_type_surface_new(struct wl_client *client, s
 		pid_t nPid = 0;
 		wl_client_get_credentials( client, &nPid, nullptr, nullptr );
 		window->appID = get_appid_from_pid( nPid );
+		window->pid = nPid;
+
 	}
 	window->_window_types.emplace<steamcompmgr_xdg_win_t>();
 
