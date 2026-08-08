@@ -366,11 +366,6 @@ namespace gamescope
             return m_bJustInittedClient.exchange( false );
         }
 
-        bool ShouldFitWindows() override
-        {
-            return m_pChild->ShouldFitWindows();
-        }
-
         void OnEndFrame() override
         {
             {

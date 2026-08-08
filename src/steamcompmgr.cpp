@@ -2444,7 +2444,7 @@ static void paint_pipewire()
 	currentOutputHeight = uHeight;
 
 	// Paint the windows we have onto the Pipewire stream.
-	steamcompmgr_win_t *fit = GetBackend()->ShouldFitWindows() ? pFocus->overrideWindow : nullptr;
+	steamcompmgr_win_t *fit = pFocus->overrideWindow;
 	paint_window( pFocus->focusWindow, pFocus->focusWindow, &frameInfo, nullptr, 0, 1.0f, fit );
 
 	if ( pFocus->overrideUnderlayWindow && !pFocus->focusWindow->isSteamStreamingClient )
@@ -2596,7 +2596,7 @@ paint_all( global_focus_t *pFocus, bool async )
 	override = pFocus->overrideWindow;
 	input = pFocus->inputFocusWindow;
 	// Decide the fit target once so the window planes and the cursor plane agree.
-	fit = GetBackend()->ShouldFitWindows() ? override : nullptr;
+	fit = override;
 
 	if (++frameCounter == 300)
 	{
