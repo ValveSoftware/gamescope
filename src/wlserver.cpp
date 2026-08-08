@@ -2210,6 +2210,8 @@ void xdg_toplevel_new(struct wl_listener *listener, void *data)
 	if (!surface_info)
 		return;
 
+	surface_info->bIsToplevel = true;
+
 	surface_info->destroy.notify = waylandy_surface_destroy;
 	wl_signal_add(&xdg_surface->events.destroy, &surface_info->destroy);
 
