@@ -14,3 +14,11 @@ test_convar = executable(
 	cpp_args: gamescope_cpp_args,
 )
 test('convar', test_convar)
+
+test_display_selection = executable(
+	'test_display_selection',
+	['test_display_selection.cpp'],
+	include_directories: [srcdir],
+	dependencies: [catch2_dep],
+)
+test('display_selection', test_display_selection)

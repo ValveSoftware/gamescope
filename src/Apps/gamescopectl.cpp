@@ -33,6 +33,15 @@ namespace gamescope
         std::vector<uint32_t> ValidRefreshRates;
     };
 
+    struct GamescopeAvailableDisplayInfo
+    {
+        std::string szConnectorName;
+        std::string szDisplayMake;
+        std::string szDisplayModel;
+        uint32_t uDisplayFlags;
+        std::string szDisplayIdentifier;
+    };
+
     class GamescopeCtl
     {
     public:
@@ -44,6 +53,7 @@ namespace gamescope
 
         std::span<GamescopeFeature> GetFeatures() { return std::span<GamescopeFeature>{ m_Features }; }
         const std::optional<GamescopeActiveDisplayInfo> &GetActiveDisplayInfo() { return m_ActiveDisplayInfo; }
+        std::span<const GamescopeAvailableDisplayInfo> GetAvailableDisplays() { return m_AvailableDisplays; }
     private:
         bool m_bInitControl = false;
         bool m_bInitPrivate = false;
@@ -56,6 +66,7 @@ namespace gamescope
 
         std::vector<GamescopeFeature> m_Features;
         std::optional<GamescopeActiveDisplayInfo> m_ActiveDisplayInfo;
+        std::vector<GamescopeAvailableDisplayInfo> m_AvailableDisplays;
 
         void Wayland_Registry_Global( wl_registry *pRegistry, uint32_t uName, const char *pInterface, uint32_t uVersion );
         static const wl_registry_listener s_RegistryListener;
@@ -63,6 +74,7 @@ namespace gamescope
         void Wayland_GamescopeControl_FeatureSupport( gamescope_control *pGamescopeControl, uint32_t uFeature, uint32_t uVersion, uint32_t uFlags );
         void Wayland_GamescopeControl_ActiveDisplayInfo( gamescope_control *pGamescopeControl, const char *pConnectorName, const char *pDisplayMake, const char *pDisplayModel, uint32_t uDisplayFlags, wl_array *pValidRefreshRatesArray );
         void Wayland_GamescopeControl_ScreenshotTaken( gamescope_control *pGamescopeControl, const char *pPath );
+        void Wayland_GamescopeControl_AvailableDisplayInfo( gamescope_control *pGamescopeControl, const char *pConnectorName, const char *pDisplayMake, const char *pDisplayModel, uint32_t uDisplayFlags, const char *pDisplayIdentifier );
         static const gamescope_control_listener s_GamescopeControlListener;
 
         void Wayland_GamescopePrivate_Log( gamescope_private *pGamescopePrivate, const char *pText );
@@ -122,6 +134,12 @@ namespace gamescope
         if ( args.size() < 1 )
         {
             fprintf( stderr, "No command to execute\n" );
+            return false;
+        }
+
+        if ( args.size() > 2 )
+        {
+            fprintf( stderr, "Too many arguments - quote multi-word values, eg. set_display \"LG ULTRAGEAR ABC123\"\n" );
             return false;
         }
 
@@ -187,12 +205,26 @@ namespace gamescope
         fprintf( stderr, "Screenshot taken to: %s\n", pPath );
     }
 
+    void GamescopeCtl::Wayland_GamescopeControl_AvailableDisplayInfo( gamescope_control *pGamescopeControl, const char *pConnectorName, const char *pDisplayMake, const char *pDisplayModel, uint32_t uDisplayFlags, const char *pDisplayIdentifier )
+    {
+        m_AvailableDisplays.emplace_back( GamescopeAvailableDisplayInfo
+        {
+            .szConnectorName     = pConnectorName,
+            .szDisplayMake       = pDisplayMake,
+            .szDisplayModel      = pDisplayModel,
+            .uDisplayFlags       = uDisplayFlags,
+            .szDisplayIdentifier = pDisplayIdentifier,
+        } );
+    }
+
     const gamescope_control_listener GamescopeCtl::s_GamescopeControlListener =
     {
-        .feature_support       = WAYLAND_USERDATA_TO_THIS( GamescopeCtl, Wayland_GamescopeControl_FeatureSupport ),
-        .active_display_info   = WAYLAND_USERDATA_TO_THIS( GamescopeCtl, Wayland_GamescopeControl_ActiveDisplayInfo ),
-        .screenshot_taken      = WAYLAND_USERDATA_TO_THIS( GamescopeCtl, Wayland_GamescopeControl_ScreenshotTaken ),
-        .app_performance_stats = WAYLAND_NULL(),
+        .feature_support             = WAYLAND_USERDATA_TO_THIS( GamescopeCtl, Wayland_GamescopeControl_FeatureSupport ),
+        .active_display_info         = WAYLAND_USERDATA_TO_THIS( GamescopeCtl, Wayland_GamescopeControl_ActiveDisplayInfo ),
+        .screenshot_taken            = WAYLAND_USERDATA_TO_THIS( GamescopeCtl, Wayland_GamescopeControl_ScreenshotTaken ),
+        .app_performance_stats       = WAYLAND_NULL(),
+        .available_display_info      = WAYLAND_USERDATA_TO_THIS( GamescopeCtl, Wayland_GamescopeControl_AvailableDisplayInfo ),
+        .available_display_info_done = WAYLAND_NULL(),
     };
 
     void GamescopeCtl::Wayland_GamescopePrivate_Log( gamescope_private *pGamescopePrivate, const char *pText )
@@ -231,6 +263,8 @@ namespace gamescope
                 return "Look";
             case GAMESCOPE_CONTROL_FEATURE_PERF_QUERY:
                 return "Performance Query";
+            case GAMESCOPE_CONTROL_FEATURE_DISPLAY_SELECTION:
+                return "Display Selection";
             default:
                 return "Unknown";
         }
@@ -265,6 +299,27 @@ namespace gamescope
                     fprintf( stdout, bLast ? "%u" : "%u, ", uRate );
                 }
                 fprintf( stdout, "\n" );
+            }
+            auto availableDisplays = gamescopeCtl.GetAvailableDisplays();
+            if ( !availableDisplays.empty() )
+            {
+                fprintf( stdout, "  Available Displays:\n" );
+                for ( const GamescopeAvailableDisplayInfo &avail : availableDisplays )
+                {
+                    fprintf( stdout, "  - %s", avail.szConnectorName.c_str() );
+                    std::string szMakeModel = avail.szDisplayMake;
+                    if ( !szMakeModel.empty() && !avail.szDisplayModel.empty() )
+                        szMakeModel += " ";
+                    szMakeModel += avail.szDisplayModel;
+                    if ( !szMakeModel.empty() )
+                        fprintf( stdout, " (%s)", szMakeModel.c_str() );
+                    fprintf( stdout, " - Flags: 0x%x", avail.uDisplayFlags );
+                    if ( !avail.szDisplayIdentifier.empty() )
+                        fprintf( stdout, " - Identifier: \"%s\"", avail.szDisplayIdentifier.c_str() );
+                    if ( avail.uDisplayFlags & GAMESCOPE_CONTROL_DISPLAY_FLAG_CURRENT )
+                        fprintf( stdout, " [current]" );
+                    fprintf( stdout, "\n" );
+                }
             }
             fprintf( stdout, "  Features:\n" );
             for ( const GamescopeFeature &feature : gamescopeCtl.GetFeatures() )
