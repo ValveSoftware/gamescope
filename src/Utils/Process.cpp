@@ -232,6 +232,10 @@ namespace gamescope::Process
         RestoreFdLimit();
         RestoreNice();
         RestoreRealtime();
+
+#if defined(__linux__)
+        prctl( PR_CAP_AMBIENT, PR_CAP_AMBIENT_CLEAR_ALL, 0, 0, 0 );
+#endif
     }
 
     bool CloseFd( int nFd )
