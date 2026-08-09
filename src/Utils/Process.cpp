@@ -274,6 +274,12 @@ namespace gamescope::Process
         RestoreFdLimit();
         RestoreNice();
         RestoreRealtime();
+
+#if defined(__linux__)
+        // We don't want to leak caps to children since some programs, such as bwrap, refuse to start
+        // when they have unexpected capabilities.
+        prctl( PR_CAP_AMBIENT, PR_CAP_AMBIENT_CLEAR_ALL, 0, 0, 0 );
+#endif
     }
 
     bool CloseFd( int nFd )
