@@ -55,12 +55,11 @@
 
 #include "gamescope-control-protocol.h"
 
-static constexpr bool k_bUseCursorPlane = false;
-
 extern int g_nPreferredOutputWidth;
 extern int g_nPreferredOutputHeight;
 
 gamescope::ConVar<bool> cv_drm_single_plane_optimizations( "drm_single_plane_optimizations", true, "Whether or not to enable optimizations for single plane usage." );
+gamescope::ConVar<bool> cv_drm_cursor_plane( "drm_cursor_plane", false, "Scan out the cursor with the DRM cursor plane instead of forcing composition while a cursor is visible. Known driver issues on AMDGPU." );
 
 gamescope::ConVar<bool> cv_drm_debug_disable_shaper_and_3dlut( "drm_debug_disable_shaper_and_3dlut", false, "Shaper + 3DLUT chicken bit. (Force disable/DEFAULT, no logic change)" );
 gamescope::ConVar<bool> cv_drm_debug_disable_degamma_tf( "drm_debug_disable_degamma_tf", false, "Degamma chicken bit. (Forces DEGAMMA_TF to DEFAULT, does not affect other logic)" );
@@ -3605,7 +3604,7 @@ namespace gamescope
 			bNeedsFullComposite |= pFrameInfo->useNISLayer0;
 			bNeedsFullComposite |= pFrameInfo->blurLayer0;
 			bNeedsFullComposite |= bNeedsCompositeFromFilter;
-			bNeedsFullComposite |= !k_bUseCursorPlane && bDrewCursor;
+			bNeedsFullComposite |= !cv_drm_cursor_plane && bDrewCursor;
 			bNeedsFullComposite |= g_bColorSliderInUse;
 			bNeedsFullComposite |= pFrameInfo->bFadingOut;
 			bNeedsFullComposite |= !g_reshade_effect.empty();
@@ -3986,7 +3985,7 @@ namespace gamescope
 
 		virtual glm::uvec2 CursorSurfaceSize( glm::uvec2 uvecSize ) const override
 		{
-			if ( !k_bUseCursorPlane )
+			if ( !cv_drm_cursor_plane )
 				return uvecSize;
 
 			return glm::uvec2{ g_DRM.cursor_width, g_DRM.cursor_height };
