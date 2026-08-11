@@ -22,6 +22,7 @@ protocols = [
 	wl_protocol_dir / 'unstable/primary-selection/primary-selection-unstable-v1.xml',
 	wl_protocol_dir / 'staging/fractional-scale/fractional-scale-v1.xml',
 	wl_protocol_dir / 'staging/linux-drm-syncobj/linux-drm-syncobj-v1.xml',
+	wl_protocol_dir / 'unstable/text-input/text-input-unstable-v3.xml',
 
 	'color-management-v1.xml',
 
