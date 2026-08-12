@@ -8195,8 +8195,29 @@ gamescope::ConVar<bool> cv_shutdown_on_primary_child_death( "shutdown_on_primary
 static LogScope s_LaunchLogScope( "launch" );
 
 static std::vector<uint32_t> s_uRelativeMouseFilteredAppids;
+
+// Games that hide the cursor and constrain the pointer like a relative mouse
+// game, but still want absolute mouse input.
+static constexpr uint32_t k_uRelativeMouseFilterDefaultAppids[] =
+{
+	8400,   // Geometry Wars: Retro Evolved
+	741140, // Baldr Sky
+};
+
+static std::string RelativeMouseFilterDefaults()
+{
+	std::string sAppIds;
+	for ( uint32_t uAppId : k_uRelativeMouseFilterDefaultAppids )
+	{
+		if ( !sAppIds.empty() )
+			sAppIds += ",";
+		sAppIds += std::to_string( uAppId );
+	}
+	return sAppIds;
+}
+
 static gamescope::ConVar<std::string> cv_mouse_relative_filter_appids( "mouse_relative_filter_appids",
-"8400" /* Geometry Wars: Retro Evolved */,
+RelativeMouseFilterDefaults(),
 "Comma separated appids to filter out using relative mouse mode for.",
 []( gamescope::ConVar<std::string> &cvar )
 {
