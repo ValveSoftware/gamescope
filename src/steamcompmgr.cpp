@@ -101,6 +101,9 @@
 
 #include "wlr_begin.hpp"
 #include "wlr/types/wlr_pointer_constraints_v1.h"
+#include "wlr/types/wlr_subcompositor.h"
+#include "wlr/types/wlr_viewporter.h"
+#include "wlr/types/wlr_xdg_shell.h"
 #include "wlr_end.hpp"
 
 #if HAVE_AVIF
@@ -125,6 +128,7 @@ static const int g_nBaseCursorScale = 36;
 LogScope xwm_log("xwm");
 LogScope focus_log("focus");
 LogScope g_WaitableLog("waitable");
+LogScope subsurfaces_log("subsurfaces");
 
 gamescope::ConVar<bool> cv_overlay_unmultiplied_alpha{ "overlay_unmultiplied_alpha", false };
 
@@ -2079,6 +2083,120 @@ wlserver_vk_swapchain_feedback* steamcompmgr_get_base_layer_swapchain_feedback()
 
 gamescope::ConVar<bool> cv_paint_debug_pause_base_plane( "paint_debug_pause_base_plane", false, "Pause updates to the base plane." );
 
+static gamescope::OwningRc<CVulkanTexture> GetSubsurfaceTexture( struct wlr_buffer *buf )
+{
+	if ( !buf )
+		return nullptr;
+	return s_BufferMemos.LookupVulkanTexture( buf );
+}
+
+static void compute_output_scale_and_offset(
+	float &outScaleX, float &outScaleY,
+	float &outOffsetX, float &outOffsetY,
+	int32_t sourceWidth, int32_t sourceHeight,
+	steamcompmgr_win_t *w, steamcompmgr_win_t *scaleW )
+{
+	float ratioX = 1.0f, ratioY = 1.0f;
+	int offsetX = 0, offsetY = 0;
+
+	bool needsScaling = sourceWidth  != (int32_t)currentOutputWidth
+	                 || sourceHeight != (int32_t)currentOutputHeight
+	                 || w->GetGeometry().nX
+	                 || w->GetGeometry().nY
+	                 || globalScaleRatio != 1.0f;
+
+	if ( needsScaling )
+	{
+		calc_scale_factor( ratioX, ratioY, sourceWidth, sourceHeight );
+		offsetX = ( (int)currentOutputWidth  - (int)sourceWidth  * ratioX ) / 2.0f;
+		offsetY = ( (int)currentOutputHeight - (int)sourceHeight * ratioY ) / 2.0f;
+
+		if ( w != scaleW )
+		{
+			offsetX += w->GetGeometry().nX * ratioX;
+			offsetY += w->GetGeometry().nY * ratioY;
+		}
+	}
+
+	outScaleX  = 1.0f / ratioX;
+	outScaleY  = 1.0f / ratioY;
+	outOffsetX = -offsetX;
+	outOffsetY = -offsetY;
+}
+
+static void paint_subsurface_tree( struct wlr_subsurface *sub,
+	int parentX, int parentY,
+	FrameInfo_t::Layer_t *parentLayer, uint32_t zPos,
+	struct FrameInfo_t *frameInfo )
+{
+	if ( !sub || !sub->surface->mapped )
+		return;
+	if ( frameInfo->layerCount >= k_nMaxLayers )
+		return;
+
+	int x = parentX + sub->current.x;
+	int y = parentY + sub->current.y;
+
+	struct wlr_subsurface *child, *tmp;
+
+	wl_list_for_each_safe( child, tmp, &sub->surface->current.subsurfaces_below, current.link )
+		paint_subsurface_tree( child, x, y, parentLayer, zPos, frameInfo );
+
+	VulkanWlrTexture_t *subtex = (VulkanWlrTexture_t *)wlr_surface_get_texture( sub->surface );
+	if ( subtex && subtex->buf )
+	{
+		gamescope::OwningRc<CVulkanTexture> pSubTex = GetSubsurfaceTexture( subtex->buf );
+		if ( pSubTex && frameInfo->layerCount < k_nMaxLayers )
+		{
+			int curLayer = frameInfo->layerCount++;
+			FrameInfo_t::Layer_t *sublayer = &frameInfo->layers[ curLayer ];
+
+			sublayer->tex = pSubTex;
+			sublayer->filter = parentLayer->filter;
+
+			if ( pSubTex->isYcbcr() )
+				sublayer->colorspace = GAMESCOPE_APP_TEXTURE_COLORSPACE_PASSTHRU;
+			else
+				sublayer->colorspace = VkColorSpaceToGamescopeAppTextureColorSpace(
+					pSubTex->format(), VK_COLOR_SPACE_SRGB_NONLINEAR_KHR );
+
+			if ( parentLayer->scale.x != 0.0f && parentLayer->scale.y != 0.0f )
+			{
+				sublayer->scale.x = parentLayer->scale.x;
+				sublayer->scale.y = parentLayer->scale.y;
+				sublayer->offset.x = parentLayer->offset.x - x / parentLayer->scale.x;
+				sublayer->offset.y = parentLayer->offset.y - y / parentLayer->scale.y;
+
+				const struct wlr_surface_state &st = sub->surface->current;
+				int buf_w = st.buffer_width, buf_h = st.buffer_height;
+				if ( st.viewport.has_src && buf_w > 0 && buf_h > 0 )
+				{
+					float sw = (float)st.viewport.src.width;
+					float sh = (float)st.viewport.src.height;
+					sublayer->scale.x  *= sw / (float)buf_w;
+					sublayer->scale.y  *= sh / (float)buf_h;
+					sublayer->offset.x  = (float)st.viewport.src.x + ( sublayer->offset.x * sw / (float)buf_w );
+					sublayer->offset.y  = (float)st.viewport.src.y + ( sublayer->offset.y * sh / (float)buf_h );
+				}
+			}
+
+			sublayer->opacity = 1.0f;
+			sublayer->zpos = zPos;
+			sublayer->blackBorder = false;
+			sublayer->applyColorMgmt = parentLayer->applyColorMgmt;
+			sublayer->ctm = nullptr;
+			sublayer->hdr_metadata_blob = nullptr;
+			sublayer->eAlphaBlendingMode = ALPHA_BLENDING_MODE_PREMULTIPLIED;
+
+			if ( sublayer->colorspace == GAMESCOPE_APP_TEXTURE_COLORSPACE_SCRGB )
+				sublayer->ctm = s_scRGB709To2020Matrix;
+		}
+	}
+
+	wl_list_for_each_safe( child, tmp, &sub->surface->current.subsurfaces_above, current.link )
+		paint_subsurface_tree( child, x, y, parentLayer, zPos, frameInfo );
+}
+
 static FrameInfo_t::Layer_t *
 paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win_t *w, steamcompmgr_win_t *scaleW, struct FrameInfo_t *frameInfo,
 			  MouseCursor *cursor, PaintWindowFlags flags = 0, float flOpacityScale = 1.0f, steamcompmgr_win_t *fit = nullptr )
@@ -2274,7 +2392,63 @@ paint_window(steamcompmgr_win_t *w, steamcompmgr_win_t *scaleW, struct FrameInfo
 		}
 	}
 
+	if ( ( flags & PaintWindowFlag::BasePlane ) && lastCommit )
+	{
+		struct wlr_surface *rootSurface = lastCommit->surf;
+		if ( rootSurface )
+		{
+			FrameInfo_t::Layer_t tempParentLayer = {};
+
+			int32_t sourceWidth, sourceHeight;
+			if ( flags & PaintWindowFlag::NoScale ) {
+				sourceWidth = currentOutputWidth;
+				sourceHeight = currentOutputHeight;
+			} else if ( w == scaleW ) {
+				GamescopeAppTextureColorspace dummyCs;
+				auto tex = lastCommit->GetTexture( GamescopeUpscaleFilter::LINEAR, g_upscaleScaler, dummyCs );
+				sourceWidth = tex->width();
+				sourceHeight = tex->height();
+			} else {
+				sourceWidth = scaleW->GetGeometry().nWidth;
+				sourceHeight = scaleW->GetGeometry().nHeight;
+			}
+			compute_output_scale_and_offset( tempParentLayer.scale.x, tempParentLayer.scale.y,
+				tempParentLayer.offset.x, tempParentLayer.offset.y,
+				sourceWidth, sourceHeight, w, scaleW );
+
+			tempParentLayer.zpos = g_zposBase;
+			tempParentLayer.filter = ( flags & PaintWindowFlag::NoFilter )
+				? GamescopeUpscaleFilter::LINEAR : g_upscaleFilter;
+			tempParentLayer.applyColorMgmt = g_ColorMgmt.pending.enabled;
+
+			wlserver_lock();
+			if ( w->type != steamcompmgr_win_type_t::XDG || rootSurface == w->main_surface() )
+			{
+				struct wlr_subsurface *sub, *tmp;
+				wl_list_for_each_safe( sub, tmp, &rootSurface->current.subsurfaces_below, current.link )
+					paint_subsurface_tree( sub, 0, 0, &tempParentLayer, tempParentLayer.zpos, frameInfo );
+			}
+			wlserver_unlock();
+		}
+	}
+
 	FrameInfo_t::Layer_t *layer = paint_window_commit( lastCommit, w, scaleW, frameInfo, cursor, flags, flOpacityScale, fit );
+
+	if ( layer && ( flags & PaintWindowFlag::BasePlane ) && lastCommit )
+	{
+		struct wlr_surface *rootSurface = lastCommit->surf;
+		if ( rootSurface )
+		{
+			wlserver_lock();
+			if ( w->type != steamcompmgr_win_type_t::XDG || rootSurface == w->main_surface() )
+			{
+				struct wlr_subsurface *sub, *tmp;
+				wl_list_for_each_safe( sub, tmp, &rootSurface->current.subsurfaces_above, current.link )
+					paint_subsurface_tree( sub, 0, 0, layer, g_zposBase + 1, frameInfo );
+			}
+			wlserver_unlock();
+		}
+	}
 
 	if ( layer && ( flags & PaintWindowFlag::BasePlane ) )
 	{
@@ -5831,7 +6005,20 @@ steamcompmgr_flush_frame_done( steamcompmgr_win_t *w )
 
 		if ( main_surface != nullptr )
 		{
-			wlserver_send_frame_done(main_surface, &now);
+			wlr_surface_for_each_surface( main_surface,
+				[](struct wlr_surface *surf, int, int, void *data) {
+					wlserver_send_frame_done(surf, static_cast<const struct timespec *>(data));
+				}, &now );
+
+			wlserver_wl_surface_info *wl_info = get_wl_surface_info( main_surface );
+			if ( wl_info && wl_info->xdg_surface && wl_info->xdg_surface->xdg_surface )
+			{
+				wlr_xdg_surface_for_each_popup_surface(
+					wl_info->xdg_surface->xdg_surface,
+					[](struct wlr_surface *surf, int, int, void *data) {
+						wlserver_send_frame_done(surf, static_cast<const struct timespec *>(data));
+					}, &now );
+			}
 		}
 
 		if ( current_surface != nullptr && main_surface != current_surface )
@@ -7496,6 +7683,92 @@ void check_new_xwayland_res(xwayland_ctx_t *ctx)
 	}
 }
 
+struct SubsurfaceCommit_t {
+	struct wlr_surface *root;
+	struct wlr_buffer *buf;
+	std::shared_ptr<gamescope::CReleaseTimelinePoint> pReleasePoint;
+	std::vector<struct wl_resource*> presentation_feedbacks;
+};
+
+static std::vector<SubsurfaceCommit_t> g_PendingSubsurfaceCommits;
+
+static void check_new_subsurface_res()
+{
+	struct SubsurfacePending_t {
+		ResListEntry_t entry;
+		struct wlr_surface *root;
+	};
+
+	std::vector<SubsurfacePending_t> pendings;
+	{
+		wlserver_lock();
+		std::vector<ResListEntry_t> tmpQueue = wlserver_subsurface_commit_queue();
+		pendings.reserve( tmpQueue.size() );
+		for ( auto& entry : tmpQueue )
+		{
+			struct wlr_surface *root = nullptr;
+			if ( entry.surf )
+				root = wlr_surface_get_root_surface( entry.surf );
+			pendings.push_back( SubsurfacePending_t{ std::move( entry ), root } );
+		}
+		wlserver_unlock();
+	}
+
+	if ( pendings.empty() )
+		return;
+
+	hasRepaint = true;
+
+	for ( auto& pending : pendings )
+	{
+		auto& entry = pending.entry;
+
+		if ( !entry.buf )
+		{
+			subsurfaces_log.errorf( "commit with no buffer" );
+			wlserver_presentation_feedbacks_destroy( entry.presentation_feedbacks );
+			continue;
+		}
+
+		if ( entry.pAcquirePoint && !entry.pAcquirePoint->Wait() )
+			subsurfaces_log.errorf( "acquire point wait failed" );
+
+		if ( !s_BufferMemos.LookupVulkanTexture( entry.buf ) )
+		{
+			struct wlr_dmabuf_attributes dmabuf = {};
+			gamescope::OwningRc<gamescope::IBackendFb> pBackendFb;
+			if ( wlr_buffer_get_dmabuf( entry.buf, &dmabuf ) )
+				pBackendFb = GetBackend()->ImportDmabufToBackend( &dmabuf );
+			if ( entry.pReleasePoint && pBackendFb )
+				pBackendFb->SetReleasePoint( entry.pReleasePoint );
+
+			gamescope::OwningRc<CVulkanTexture> pTex =
+				vulkan_create_texture_from_wlr_buffer( entry.buf, std::move( pBackendFb ) );
+			if ( pTex )
+				s_BufferMemos.MemoizeBuffer( entry.buf, std::move( pTex ) );
+		}
+
+		if ( pending.root )
+		{
+			for ( const auto& xdg_win : g_steamcompmgr_xdg_wins )
+			{
+				if ( xdg_win->xdg().surface.main_surface == pending.root )
+				{
+					xdg_win->receivedDoneCommit = true;
+					break;
+				}
+			}
+		}
+
+		g_PendingSubsurfaceCommits.push_back( SubsurfaceCommit_t{
+			.root = pending.root,
+			.buf = entry.buf,
+			.pReleasePoint = std::move( entry.pReleasePoint ),
+			.presentation_feedbacks = std::move( entry.presentation_feedbacks ),
+		} );
+	}
+}
+
 void check_new_xdg_res()
 {
 	std::vector<ResListEntry_t> tmp_queue = wlserver_xdg_commit_queue();
@@ -8181,6 +8454,8 @@ void steamcompmgr_check_xdg(bool vblank, uint64_t vblank_idx)
 		MakeFocusDirty();
 	}
 
+	check_new_subsurface_res();
+
 	handle_done_commits_xdg( vblank, vblank_idx );
 
 	// When we have observed both a complete commit and a VBlank, we should request a new frame.
@@ -8193,6 +8468,28 @@ void steamcompmgr_check_xdg(bool vblank, uint64_t vblank_idx)
 
 		wlserver_lock();
 		handle_presented_xdg();
+
+		uint64_t nextRefresh = g_SteamCompMgrVBlankTime.schedule.ulTargetVBlank;
+		uint64_t refreshCycle = g_SteamCompMgrAppRefreshCycle;
+		for ( auto& pending : g_PendingSubsurfaceCommits )
+		{
+			if ( !pending.presentation_feedbacks.empty() )
+			{
+				if ( pending.root )
+				{
+					wlserver_presentation_feedback_presented(
+						pending.root, pending.presentation_feedbacks,
+						nextRefresh, refreshCycle );
+				}
+				else
+				{
+					wlserver_presentation_feedbacks_destroy( pending.presentation_feedbacks );
+				}
+			}
+			wlr_buffer_unlock( pending.buf );
+		}
+		g_PendingSubsurfaceCommits.clear();
+
 		wlserver_unlock();
 	}
 
