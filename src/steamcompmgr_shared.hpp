@@ -47,6 +47,7 @@ struct wlserver_xdg_surface_info
 	struct wlr_layer_surface_v1 *layer_surface = nullptr;
 	steamcompmgr_win_t *win = nullptr;
 	bool bDoneConfigure = false;
+	std::atomic<bool> bIsToplevel = { false };
 
 	std::atomic<bool> mapped = { false };
 
@@ -55,6 +56,8 @@ struct wlserver_xdg_surface_info
 	struct wl_listener map;
 	struct wl_listener unmap;
 	struct wl_listener destroy;
+	struct wl_listener request_fullscreen;
+	struct wl_listener request_maximize;
 };
 
 
