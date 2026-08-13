@@ -5576,6 +5576,14 @@ handle_net_wm_state(xwayland_ctx_t *ctx, steamcompmgr_win_t *w, XClientMessageEv
 			xwm_log.debugf("Unhandled NET_WM_STATE property change: %s", XGetAtomName(ctx->dpy, props[i]));
 		}
 	}
+
+	Atom atoms[3];
+	int count = 0;
+	if (w->isFullscreen) atoms[count++] = ctx->atoms.netWMStateFullscreenAtom;
+	if (w->skipTaskbar) atoms[count++] = ctx->atoms.netWMStateSkipTaskbarAtom;
+	if (w->skipPager) atoms[count++] = ctx->atoms.netWMStateSkipPagerAtom;
+	XChangeProperty(ctx->dpy, w->xwayland().id, ctx->atoms.netWMStateAtom,
+			XA_ATOM, 32, PropModeReplace, (unsigned char*)atoms, count);
 }
 
 bool g_bLowLatency = false;
