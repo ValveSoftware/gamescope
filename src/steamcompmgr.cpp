@@ -5970,19 +5970,62 @@ handle_net_wm_state(xwayland_ctx_t *ctx, steamcompmgr_win_t *w, XClientMessageEv
 {
 	uint32_t action = (uint32_t)ev->data.l[0];
 	Atom *props = (Atom *)&ev->data.l[1];
+	bool fullscreenChanged = false;
+	bool skipTaskbarChanged = false;
+	bool skipPagerChanged = false;
 	for (size_t i = 0; i < 2; i++) {
 		if (props[i] == ctx->atoms.netWMStateFullscreenAtom) {
+			bool wasFullscreen = w->isFullscreen;
 			update_net_wm_state(action, &w->isFullscreen);
+			fullscreenChanged |= w->isFullscreen != wasFullscreen;
 			MakeFocusDirty();
 		} else if (props[i] == ctx->atoms.netWMStateSkipTaskbarAtom) {
+			bool wasSkipTaskbar = w->skipTaskbar;
 			update_net_wm_state(action, &w->skipTaskbar);
+			skipTaskbarChanged |= w->skipTaskbar != wasSkipTaskbar;
 			MakeFocusDirty();
 		} else if (props[i] == ctx->atoms.netWMStateSkipPagerAtom) {
+			bool wasSkipPager = w->skipPager;
 			update_net_wm_state(action, &w->skipPager);
+			skipPagerChanged |= w->skipPager != wasSkipPager;
 			MakeFocusDirty();
 		} else if (props[i] != None) {
 			xwm_log.debugf("Unhandled NET_WM_STATE property change: %s", XGetAtomName(ctx->dpy, props[i]));
 		}
+	}
+
+	if (!fullscreenChanged && !skipTaskbarChanged && !skipPagerChanged)
+		return;
+
+	Atom type;
+	int format;
+	unsigned long nitems;
+	unsigned long bytesAfter;
+	unsigned char *data = nullptr;
+	std::vector<Atom> atoms;
+	if (XGetWindowProperty(ctx->dpy, w->xwayland().id, ctx->atoms.netWMStateAtom,
+			0, 2048, false, AnyPropertyType, &type, &format, &nitems, &bytesAfter,
+			&data) == Success && data) {
+		if (type == XA_ATOM)
+			atoms.assign((Atom *)data, (Atom *)data + nitems);
+		XFree(data);
+	}
+
+	std::erase_if(atoms, [&](Atom atom) {
+		return atom == ctx->atoms.netWMStateFullscreenAtom ||
+			   atom == ctx->atoms.netWMStateSkipTaskbarAtom ||
+			   atom == ctx->atoms.netWMStateSkipPagerAtom;
+	});
+
+	if (w->isFullscreen) atoms.push_back(ctx->atoms.netWMStateFullscreenAtom);
+	if (w->skipTaskbar) atoms.push_back(ctx->atoms.netWMStateSkipTaskbarAtom);
+	if (w->skipPager) atoms.push_back(ctx->atoms.netWMStateSkipPagerAtom);
+
+	if (atoms.empty()) {
+		XDeleteProperty(ctx->dpy, w->xwayland().id, ctx->atoms.netWMStateAtom);
+	} else {
+		XChangeProperty(ctx->dpy, w->xwayland().id, ctx->atoms.netWMStateAtom,
+				XA_ATOM, 32, PropModeReplace, (unsigned char*)atoms.data(), atoms.size());
 	}
 }
 
