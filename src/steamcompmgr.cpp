@@ -3916,6 +3916,42 @@ carry_override_underlay( focus_t *pFocus, steamcompmgr_win_t *pPreviousOverride,
 static void
 handle_desktop_window(steamcompmgr_win_t *w);
 
+static void
+resize_window_to_desired_geometry( xwayland_ctx_t *ctx, steamcompmgr_win_t *w )
+{
+	if ( win_has_game_id( w ) )
+	{
+		if ( window_is_fullscreen( w ) || ctx->force_windows_fullscreen )
+		{
+			bool bIsSteam = window_is_steam( w );
+			int fs_width  = ctx->root_width;
+			int fs_height = ctx->root_height;
+			if ( bIsSteam && g_nSteamMaxHeight && ctx->root_height > g_nSteamMaxHeight )
+			{
+				float steam_height_scale = g_nSteamMaxHeight / (float)ctx->root_height;
+				fs_height = g_nSteamMaxHeight;
+				fs_width  = ctx->root_width * steam_height_scale;
+			}
+
+			if ( w->GetGeometry().nWidth != fs_width || w->GetGeometry().nHeight != fs_height || globalScaleRatio != 1.0f )
+				XResizeWindow( ctx->dpy, w->xwayland().id, fs_width, fs_height );
+		}
+		else
+		{
+			if ( w->sizeHintsSpecified &&
+				((unsigned)w->GetGeometry().nWidth != w->requestedWidth ||
+				 (unsigned)w->GetGeometry().nHeight != w->requestedHeight))
+			{
+				XResizeWindow( ctx->dpy, w->xwayland().id, w->requestedWidth, w->requestedHeight );
+			}
+		}
+	}
+	else
+	{
+		handle_desktop_window( w );
+	}
+}
+
 static bool
 pick_primary_focus_and_override(
 	focus_t *out,
@@ -4440,37 +4476,7 @@ void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win
 		w->placed = true;
 	}
 
-	if ( win_has_game_id( w ) )
-	{
-		if ( window_is_fullscreen( ctx->focus.focusWindow ) || ctx->force_windows_fullscreen )
-		{
-			bool bIsSteam = window_is_steam( ctx->focus.focusWindow );
-			int fs_width  = ctx->root_width;
-			int fs_height = ctx->root_height;
-			if ( bIsSteam && g_nSteamMaxHeight && ctx->root_height > g_nSteamMaxHeight )
-			{
-				float steam_height_scale = g_nSteamMaxHeight / (float)ctx->root_height;
-				fs_height = g_nSteamMaxHeight;
-				fs_width  = ctx->root_width * steam_height_scale;
-			}
-
-			if ( w->GetGeometry().nWidth != fs_width || w->GetGeometry().nHeight != fs_height || globalScaleRatio != 1.0f )
-				XResizeWindow(ctx->dpy, ctx->focus.focusWindow->xwayland().id, fs_width, fs_height);
-		}
-		else
-		{
-			if (ctx->focus.focusWindow->sizeHintsSpecified &&
-				((unsigned)ctx->focus.focusWindow->GetGeometry().nWidth != ctx->focus.focusWindow->requestedWidth ||
-				(unsigned)ctx->focus.focusWindow->GetGeometry().nHeight != ctx->focus.focusWindow->requestedHeight))
-			{
-				XResizeWindow(ctx->dpy, ctx->focus.focusWindow->xwayland().id, ctx->focus.focusWindow->requestedWidth, ctx->focus.focusWindow->requestedHeight);
-			}
-		}
-	}
-	else
-	{
-		handle_desktop_window( w );
-	}
+	resize_window_to_desired_geometry( ctx, w );
 
 	Window	    root_return = None, parent_return = None;
 	Window	    *children = NULL;
@@ -5993,6 +5999,9 @@ handle_net_wm_state(xwayland_ctx_t *ctx, steamcompmgr_win_t *w, XClientMessageEv
 			xwm_log.debugf("Unhandled NET_WM_STATE property change: %s", XGetAtomName(ctx->dpy, props[i]));
 		}
 	}
+
+	if (fullscreenChanged)
+		resize_window_to_desired_geometry( ctx, w );
 
 	if (!fullscreenChanged && !skipTaskbarChanged && !skipPagerChanged)
 		return;
