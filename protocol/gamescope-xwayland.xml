@@ -28,7 +28,7 @@
     This is a private Gamescope protocol. Regular Wayland clients must not use
     it.
 
-    This protocol has been superceded by the 'gamescope-swapchain' protocol.
+    This protocol has been superseded by the 'gamescope-swapchain' protocol.
   </description>
 
   <interface name="gamescope_xwayland" version="1">
