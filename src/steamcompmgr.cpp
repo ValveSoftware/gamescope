@@ -874,6 +874,11 @@ struct global_focus_t : public focus_t
 	GamescopeUpscaleFilter eUpscaleFilter = GamescopeUpscaleFilter::LINEAR;
 	GamescopeUpscaleScaler eUpscaleScaler = GamescopeUpscaleScaler::AUTO;
 
+	std::array< gamescope::Rc<commit_t>, HELD_COMMIT_COUNT > HeldCommits;
+	std::array< BaseLayerInfo_t, HELD_COMMIT_COUNT > CachedPlanes = {};
+	unsigned int uFadeOutStartTime = 0;
+	bool bPendingFade = false;
+
 	gamescope::VirtualConnectorKey_t ulVirtualFocusKey = 0;
 	std::shared_ptr<gamescope::IBackendConnector> pVirtualConnector;
 
@@ -965,8 +970,6 @@ unsigned long	damageSequence = 0;
 uint64_t		cursorHideTime = 10'000ul * 1'000'000ul;
 
 bool			gotXError = false;
-
-unsigned int	fadeOutStartTime = 0;
 
 unsigned int 	g_FadeOutDuration = 0;
 
@@ -1300,9 +1303,6 @@ bool steamcompmgr_window_should_refresh_switch( steamcompmgr_win_t *w )
 	return steamcompmgr_window_should_limit_fps( w );
 }
 
-
-std::array<gamescope::Rc<commit_t>, HELD_COMMIT_COUNT> g_HeldCommits;
-bool g_bPendingFade = false;
 
 /* opacity property name; sometime soon I'll write up an EWMH spec for it */
 #define OPACITY_PROP		"_NET_WM_WINDOW_OPACITY"
@@ -2224,8 +2224,6 @@ void MouseCursor::updateCursorFeedback( bool bForce )
 	m_needs_server_flush = true;
 }
 
-std::array< BaseLayerInfo_t, HELD_COMMIT_COUNT > g_CachedPlanes = {};
-
 static void
 paint_cached_base_layer(const gamescope::Rc<commit_t>& commit, const BaseLayerInfo_t& base, struct FrameInfo_t *frameInfo, float flOpacityScale, bool bOverrideOpacity )
 {
@@ -2270,13 +2268,17 @@ using PaintWindowFlags = uint32_t;
 
 wlserver_vk_swapchain_feedback* steamcompmgr_get_base_layer_swapchain_feedback()
 {
-	if ( g_HeldCommits[ HELD_COMMIT_BASE ] == nullptr )
+	global_focus_t *pFocus = GetCurrentFocus();
+	if ( !pFocus )
 		return nullptr;
 
-	if ( !g_HeldCommits[ HELD_COMMIT_BASE ]->feedback )
+	if ( pFocus->HeldCommits[ HELD_COMMIT_BASE ] == nullptr )
 		return nullptr;
 
-	return &(*g_HeldCommits[ HELD_COMMIT_BASE ]->feedback);
+	if ( !pFocus->HeldCommits[ HELD_COMMIT_BASE ]->feedback )
+		return nullptr;
+
+	return &(*pFocus->HeldCommits[ HELD_COMMIT_BASE ]->feedback);
 }
 
 gamescope::ConVar<bool> cv_paint_debug_pause_base_plane( "paint_debug_pause_base_plane", false, "Pause updates to the base plane." );
@@ -2458,18 +2460,18 @@ paint_window(global_focus_t *pFocus, steamcompmgr_win_t *w, steamcompmgr_win_t *
 		{
 			// If we're the base plane and have no valid contents
 			// pick up that buffer we've been holding onto if we have one.
-			if ( g_HeldCommits[ HELD_COMMIT_BASE ] != nullptr )
+			if ( pFocus->HeldCommits[ HELD_COMMIT_BASE ] != nullptr )
 			{
-				paint_cached_base_layer( g_HeldCommits[ HELD_COMMIT_BASE ], g_CachedPlanes[ HELD_COMMIT_BASE ], frameInfo, flOpacityScale, true );
+				paint_cached_base_layer( pFocus->HeldCommits[ HELD_COMMIT_BASE ], pFocus->CachedPlanes[ HELD_COMMIT_BASE ], frameInfo, flOpacityScale, true );
 				return;
 			}
 		}
 		else
 		{
-			if ( g_bPendingFade )
+			if ( pFocus->bPendingFade )
 			{
-				fadeOutStartTime = get_time_in_milliseconds();
-				g_bPendingFade = false;
+				pFocus->uFadeOutStartTime = get_time_in_milliseconds();
+				pFocus->bPendingFade = false;
 			}
 		}
 	}
@@ -2487,9 +2489,9 @@ paint_window(global_focus_t *pFocus, steamcompmgr_win_t *w, steamcompmgr_win_t *
 		basePlane.filter = layer->filter;
 		basePlane.eAlphaBlendingMode = layer->eAlphaBlendingMode;
 
-		g_CachedPlanes[ HELD_COMMIT_BASE ] = basePlane;
+		pFocus->CachedPlanes[ HELD_COMMIT_BASE ] = basePlane;
 		if ( !(flags & PaintWindowFlag::FadeTarget) )
-			g_CachedPlanes[ HELD_COMMIT_FADE ] = basePlane;
+			pFocus->CachedPlanes[ HELD_COMMIT_FADE ] = basePlane;
 
 		g_uCurrentBasePlaneCommitID = lastCommit->commitID;
 		g_uCurrentBasePlaneAppID = lastCommit->appID;
@@ -2499,9 +2501,20 @@ paint_window(global_focus_t *pFocus, steamcompmgr_win_t *w, steamcompmgr_win_t *
 
 bool g_bFirstFrame = true;
 
-static bool is_fading_out()
+static bool is_fading_out( const global_focus_t *pFocus )
 {
-	return fadeOutStartTime || g_bPendingFade;
+	return pFocus->uFadeOutStartTime || pFocus->bPendingFade;
+}
+
+static bool is_any_focus_fading_out()
+{
+	for ( const auto &iter : g_VirtualConnectorFocuses )
+	{
+		if ( is_fading_out( &iter.second ) )
+			return true;
+	}
+
+	return false;
 }
 
 // The laser reads these, so follow the pointer's connector.
@@ -2785,7 +2798,7 @@ paint_all( global_focus_t *pFocus, bool async )
 	steamcompmgr_win_t *fit;
 
 	unsigned int currentTime = get_time_in_milliseconds();
-	bool fadingOut = ( currentTime - fadeOutStartTime < g_FadeOutDuration || g_bPendingFade ) && g_HeldCommits[HELD_COMMIT_FADE] != nullptr;
+	bool fadingOut = ( currentTime - pFocus->uFadeOutStartTime < g_FadeOutDuration || pFocus->bPendingFade ) && pFocus->HeldCommits[HELD_COMMIT_FADE] != nullptr;
 
 	w = pFocus->focusWindow;
 	overlay = pFocus->overlayWindow;
@@ -2866,21 +2879,21 @@ paint_all( global_focus_t *pFocus, bool async )
 			{
 				if ( fadingOut )
 				{
-					float opacityScale = g_bPendingFade
+					float opacityScale = pFocus->bPendingFade
 						? 0.0f
-						: ((currentTime - fadeOutStartTime) / (float)g_FadeOutDuration);
+						: ((currentTime - pFocus->uFadeOutStartTime) / (float)g_FadeOutDuration);
 			
-					paint_cached_base_layer(g_HeldCommits[HELD_COMMIT_FADE], g_CachedPlanes[HELD_COMMIT_FADE], &frameInfo, 1.0f - opacityScale, false);
+					paint_cached_base_layer(pFocus->HeldCommits[HELD_COMMIT_FADE], pFocus->CachedPlanes[HELD_COMMIT_FADE], &frameInfo, 1.0f - opacityScale, false);
 					paint_window(pFocus, w, w, &frameInfo, pFocus->cursor, PaintWindowFlag::BasePlane | PaintWindowFlag::FadeTarget | PaintWindowFlag::DrawBorders, opacityScale, fit);
 				}
 				else
 				{
 					{
-						if ( g_HeldCommits[HELD_COMMIT_FADE] != nullptr )
+						if ( pFocus->HeldCommits[HELD_COMMIT_FADE] != nullptr )
 						{
-							g_HeldCommits[HELD_COMMIT_FADE] = nullptr;
-							g_bPendingFade = false;
-							fadeOutStartTime = 0;
+							pFocus->HeldCommits[HELD_COMMIT_FADE] = nullptr;
+							pFocus->bPendingFade = false;
+							pFocus->uFadeOutStartTime = 0;
 							pFocus->fadeWindow = None;
 						}
 					}
@@ -2897,17 +2910,17 @@ paint_all( global_focus_t *pFocus, bool async )
 		}
 		else
 		{
-			if ( g_HeldCommits[HELD_COMMIT_BASE] != nullptr )
+			if ( pFocus->HeldCommits[HELD_COMMIT_BASE] != nullptr )
 			{
 				float opacityScale = 1.0f;
 				if ( fadingOut )
 				{
-					opacityScale = g_bPendingFade
+					opacityScale = pFocus->bPendingFade
 						? 0.0f
-						: ((currentTime - fadeOutStartTime) / (float)g_FadeOutDuration);
+						: ((currentTime - pFocus->uFadeOutStartTime) / (float)g_FadeOutDuration);
 				}
 
-				paint_cached_base_layer( g_HeldCommits[HELD_COMMIT_BASE], g_CachedPlanes[HELD_COMMIT_BASE], &frameInfo, opacityScale, true );
+				paint_cached_base_layer( pFocus->HeldCommits[HELD_COMMIT_BASE], pFocus->CachedPlanes[HELD_COMMIT_BASE], &frameInfo, opacityScale, true );
 			}
 		}
 	}
@@ -3069,7 +3082,7 @@ paint_all( global_focus_t *pFocus, bool async )
 	}
 
 	g_bFSRActive = frameInfo.useFSRLayer0;
-	if ( const auto& heldCommit = g_HeldCommits[HELD_COMMIT_BASE]; heldCommit && heldCommit->upscaledTexture ) {
+	if ( const auto& heldCommit = pFocus->HeldCommits[HELD_COMMIT_BASE]; heldCommit && heldCommit->upscaledTexture ) {
 		g_bFSRActive = ( heldCommit->upscaledTexture->eFilter == GamescopeUpscaleFilter::FSR );
 	}
 
@@ -5053,20 +5066,20 @@ determine_and_apply_focus( global_focus_t *pFocus )
 
 		if ( g_FadeOutDuration != 0 && !g_bFirstFrame && bDoFade )
 		{
-			if ( g_HeldCommits[ HELD_COMMIT_FADE ] == nullptr )
+			if ( pFocus->HeldCommits[ HELD_COMMIT_FADE ] == nullptr )
 			{
 				pFocus->fadeWindow = previousLocalFocus.focusWindow;
-				g_HeldCommits[ HELD_COMMIT_FADE ] = g_HeldCommits[ HELD_COMMIT_BASE ];
-				g_bPendingFade = true;
+				pFocus->HeldCommits[ HELD_COMMIT_FADE ] = pFocus->HeldCommits[ HELD_COMMIT_BASE ];
+				pFocus->bPendingFade = true;
 			}
 			else
 			{
 				// If we end up fading back to what we were going to fade to, cancel the fade.
 				if ( pFocus->fadeWindow != nullptr && pFocus->focusWindow == pFocus->fadeWindow )
 				{
-					g_HeldCommits[ HELD_COMMIT_FADE ] = nullptr;
-					g_bPendingFade = false;
-					fadeOutStartTime = 0;
+					pFocus->HeldCommits[ HELD_COMMIT_FADE ] = nullptr;
+					pFocus->bPendingFade = false;
+					pFocus->uFadeOutStartTime = 0;
 					pFocus->fadeWindow = nullptr;
 				}
 			}
@@ -5080,7 +5093,7 @@ determine_and_apply_focus( global_focus_t *pFocus )
 			previousLocalFocus.focusWindow != pFocus->focusWindow &&
 			!pFocus->focusWindow->isSteamStreamingClient )
 		{
-			get_window_last_done_commit( pFocus->focusWindow, g_HeldCommits[ HELD_COMMIT_BASE ] );
+			get_window_last_done_commit( pFocus->focusWindow, pFocus->HeldCommits[ HELD_COMMIT_BASE ] );
 		}
 	}
 
@@ -7242,8 +7255,6 @@ steamcompmgr_exit(void)
 		}
 	}
 	g_steamcompmgr_xdg_wins.clear();
-	g_HeldCommits[ HELD_COMMIT_BASE ] = nullptr;
-	g_HeldCommits[ HELD_COMMIT_FADE ] = nullptr;
 
 	for ( auto &lut : g_ColorMgmtLuts ) lut.shutdown();
 	for ( auto &lut : g_ColorMgmtLutsOverride ) lut.shutdown();
@@ -7433,7 +7444,7 @@ bool handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint64_t co
 				if ( w == pFocus->focusWindow && !w->isSteamStreamingClient )
 				{
 					if ( !cv_paint_debug_pause_base_plane )
-						g_HeldCommits[ HELD_COMMIT_BASE ] = w->commit_queue[ j ];
+						pFocus->HeldCommits[ HELD_COMMIT_BASE ] = w->commit_queue[ j ];
 					hasRepaint = true;
 
 					focusWindow_engine = w->engineName;
@@ -7449,7 +7460,7 @@ bool handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint64_t co
 				if ( w->isSteamStreamingClientVideo && pFocus->focusWindow && pFocus->focusWindow->isSteamStreamingClient )
 				{
 					if ( !cv_paint_debug_pause_base_plane )
-						g_HeldCommits[ HELD_COMMIT_BASE ] = w->commit_queue[ j ];
+						pFocus->HeldCommits[ HELD_COMMIT_BASE ] = w->commit_queue[ j ];
 					hasRepaint = true;
 				}
 			}
@@ -9461,11 +9472,12 @@ steamcompmgr_main(int argc, char **argv)
 		{
 			GamescopeAppTextureColorspace current_app_colorspace = GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB;
 			std::shared_ptr<gamescope::BackendBlob> app_hdr_metadata = nullptr;
-			if ( g_HeldCommits[HELD_COMMIT_BASE] != nullptr )
+			global_focus_t *pCurrentFocus = GetCurrentFocus();
+			if ( pCurrentFocus && pCurrentFocus->HeldCommits[HELD_COMMIT_BASE] != nullptr )
 			{
-				current_app_colorspace = g_HeldCommits[HELD_COMMIT_BASE]->colorspace();
-				if (g_HeldCommits[HELD_COMMIT_BASE]->feedback)
-					app_hdr_metadata = g_HeldCommits[HELD_COMMIT_BASE]->feedback->hdr_metadata_blob;
+				current_app_colorspace = pCurrentFocus->HeldCommits[HELD_COMMIT_BASE]->colorspace();
+				if (pCurrentFocus->HeldCommits[HELD_COMMIT_BASE]->feedback)
+					app_hdr_metadata = pCurrentFocus->HeldCommits[HELD_COMMIT_BASE]->feedback->hdr_metadata_blob;
 			}
 
 			bool app_wants_hdr = ColorspaceIsHDR( current_app_colorspace );
@@ -9523,7 +9535,7 @@ steamcompmgr_main(int argc, char **argv)
 
 		// If we're in the middle of a fade, then keep us
 		// as needing a repaint.
-		if ( is_fading_out() )
+		if ( is_any_focus_fading_out() )
 			hasRepaint = true;
 
 		bool bPainted = false;
@@ -9583,12 +9595,12 @@ steamcompmgr_main(int argc, char **argv)
 			// A false vblank value means bShouldPaint will resolve to false below, effectively ignoring this flag and losing any request
 			// to force a repaint. Don't clear g_bForceRepaint unless vblank is true.
 			const bool bForceRepaint = vblank && g_bForceRepaint.exchange(false);
-			const bool bForceSyncFlip = bForceRepaint || is_fading_out();
+			const bool bForceSyncFlip = bForceRepaint || is_fading_out( pPaintFocus );
 
 			// If we are compositing, always force sync flips because we currently wait
 			// for composition to finish before submitting.
 			// If we want to do async + composite, we should set up syncfile stuff and have DRM wait on it.
-			const bool bSurfaceWantsAsync = (g_HeldCommits[HELD_COMMIT_BASE] != nullptr && g_HeldCommits[HELD_COMMIT_BASE]->async);
+			const bool bSurfaceWantsAsync = (pPaintFocus->HeldCommits[HELD_COMMIT_BASE] != nullptr && pPaintFocus->HeldCommits[HELD_COMMIT_BASE]->async);
 			const bool bTearing = cv_tearing_enabled && GetBackend()->SupportsTearing() && bSurfaceWantsAsync;
 
 			enum class FlipType
