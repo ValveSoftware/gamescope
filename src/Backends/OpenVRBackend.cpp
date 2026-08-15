@@ -1059,6 +1059,48 @@ namespace gamescope
             return pPlane;
         }
 
+        COpenVRConnector *GetConnectorByOverlayHandle( vr::VROverlayHandle_t hOverlay )
+        {
+            if ( hOverlay == vr::k_ulOverlayHandleInvalid )
+                return nullptr;
+
+            COpenVRPlane *pPlane = GetPlaneByOverlayHandle( hOverlay );
+            if ( !pPlane )
+                return nullptr;
+
+            return pPlane->GetConnector();
+        }
+
+        void UpdateLaserMouseFocusConnector( COpenVRConnector *pVRLaserMouseConnector )
+        {
+            COpenVRConnector *pTarget = pVRLaserMouseConnector;
+            if ( pTarget == nullptr )
+            {
+                // No active laser mouse, so give mouse to connector with keyboard focus.
+                pTarget = m_pKeyboardFocusConnector.load();
+            }
+
+            if ( !pTarget )
+            {
+                return;
+            }
+
+            if ( pVRLaserMouseConnector )
+            {
+                pVRLaserMouseConnector->m_bUsingVRMouse = true;
+            }
+
+            COpenVRConnector *pOldConnector = m_pMouseFocusConnector.exchange( pTarget );
+
+            if ( pOldConnector != pTarget )
+            {
+                openvr_log.debugf( "Changing mouse focus connector to %p", pTarget );
+
+                MakeFocusDirty();
+                nudge_steamcompmgr();
+            }
+        }
+
         void SetMouseFocus( uint64_t ulFocusOverlay )
         {
             uint64_t oldOverlayHandle = g_FocusedVROverlayMouse.exchange( ulFocusOverlay );
@@ -1068,35 +1110,9 @@ namespace gamescope
 
             openvr_log.debugf( "Changing mouse focus from %lx to %lx", oldOverlayHandle, ulFocusOverlay );
 
-            COpenVRConnector *pInputConnector = nullptr;
-            if ( ulFocusOverlay != vr::k_ulOverlayHandleInvalid )
-            {
-                COpenVRPlane *pInputPlane = GetPlaneByOverlayHandle( ulFocusOverlay );
-                if ( pInputPlane )
-                {
-                    pInputConnector = pInputPlane->GetConnector();
-                }
-            }
-
-            if ( pInputConnector )
-            {
-                pInputConnector->m_bUsingVRMouse = true;
-
-                COpenVRConnector *pOldConnector = m_pMouseFocusConnector.exchange( pInputConnector );
-
-                if ( pOldConnector != pInputConnector )
-                {
-                    openvr_log.debugf( "Changing mouse focus connector to %p", pInputConnector );
-
-                    // We don't do anything with mouse focus that isn't local,
-                    // so only dirty focus if the focus connector changed.
-                    //
-                    // Unlike with Keyboard where we need to focus for forwarders too!
-
-                    MakeFocusDirty();
-                    nudge_steamcompmgr();
-                }
-            }
+            // A null connector here means the laser left, so hand the pointer back to
+            // whatever has input focus instead of leaving it pinned to the old overlay.
+            UpdateLaserMouseFocusConnector( GetConnectorByOverlayHandle( ulFocusOverlay ) );
         }
 
         void SetKeyboardFocus( uint64_t ulFocusOverlay )
@@ -1123,6 +1139,9 @@ namespace gamescope
                 openvr_log.debugf( "Changing keyboard focus connector to %p", pInputConnector );
                 m_pKeyboardFocusConnector.exchange( pInputConnector );
             }
+
+            // Switch cursor to be driven by the real/steaminput mouse, unless there's still a laser mouse pointing at us.
+            UpdateLaserMouseFocusConnector( GetConnectorByOverlayHandle( g_FocusedVROverlayMouse ) );
 
             MakeFocusDirty();
             nudge_steamcompmgr();
@@ -1311,6 +1330,15 @@ namespace gamescope
                         {
                             pConnector->m_bUsingVRMouse = true;
                             SetMouseFocus( hOverlay );
+                        }
+                    }
+                    break;
+
+                case vr::VREvent_FocusLeave:
+                    {
+                        if ( g_FocusedVROverlayMouse == hOverlay )
+                        {
+                            SetMouseFocus( vr::k_ulOverlayHandleInvalid );
                         }
                     }
                     break;
