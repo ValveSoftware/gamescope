@@ -36,7 +36,7 @@ struct commit_t final : public gamescope::RcObject, public gamescope::IWaitable,
 	bool CloseFenceInternal();
 	void SetFence( int nFence, bool bMangoNudge, CommitDoneList_t *pDoneCommits );
 
-	bool ShouldPreemptivelyUpscale();
+	bool ShouldPreemptivelyUpscale( GamescopeUpscaleFilter eFilter, GamescopeUpscaleScaler eScaler );
 
 	struct wlr_buffer *buf = nullptr;
 	gamescope::Rc<CVulkanTexture> vulkanTex;

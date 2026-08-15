@@ -311,9 +311,6 @@ bool g_bGrabbed = false;
 
 float g_mouseSensitivity = 1.0;
 
-GamescopeUpscaleFilter g_upscaleFilter = GamescopeUpscaleFilter::LINEAR;
-GamescopeUpscaleScaler g_upscaleScaler = GamescopeUpscaleScaler::AUTO;
-
 GamescopeUpscaleFilter g_wantedUpscaleFilter = GamescopeUpscaleFilter::LINEAR;
 GamescopeUpscaleScaler g_wantedUpscaleScaler = GamescopeUpscaleScaler::AUTO;
 int g_upscaleFilterSharpness = 2;

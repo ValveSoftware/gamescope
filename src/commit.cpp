@@ -128,9 +128,9 @@ void commit_t::SetFence( int nFence, bool bMangoNudge, CommitDoneList_t *pDoneCo
     m_pDoneCommits = pDoneCommits;
 }
 
-void calc_scale_factor(float &out_scale_x, float &out_scale_y, float sourceWidth, float sourceHeight);
+void calc_scale_factor(GamescopeUpscaleScaler eScaler, float &out_scale_x, float &out_scale_y, float sourceWidth, float sourceHeight);
 
-bool commit_t::ShouldPreemptivelyUpscale()
+bool commit_t::ShouldPreemptivelyUpscale( GamescopeUpscaleFilter eFilter, GamescopeUpscaleScaler eScaler )
 {
     // Don't pre-emptively upscale if we are not a FIFO commit.
     // Don't want to FSR upscale 1000fps content.
@@ -139,7 +139,7 @@ bool commit_t::ShouldPreemptivelyUpscale()
 
     // If we support the upscaling filter in hardware, don't
     // pre-emptively do it via shaders.
-    if ( DoesHardwareSupportUpscaleFilter( g_upscaleFilter ) )
+    if ( DoesHardwareSupportUpscaleFilter( eFilter ) )
         return false;
 
     if ( !vulkanTex )
@@ -149,7 +149,7 @@ bool commit_t::ShouldPreemptivelyUpscale()
     float flScaleY = 1.0f;
     // I wish this function was more programatic with its inputs, but it does do exactly what we want right now...
     // It should also return a std::pair or a glm uvec
-    calc_scale_factor( flScaleX, flScaleY, vulkanTex->width(), vulkanTex->height() );
+    calc_scale_factor( eScaler, flScaleX, flScaleY, vulkanTex->width(), vulkanTex->height() );
 
     return !close_enough( flScaleX, 1.0f ) || !close_enough( flScaleY, 1.0f );
 }

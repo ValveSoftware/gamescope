@@ -871,6 +871,9 @@ struct global_focus_t : public focus_t
 	steamcompmgr_win_t		  	 		*fadeWindow;
 	MouseCursor		*cursor;
 
+	GamescopeUpscaleFilter eUpscaleFilter = GamescopeUpscaleFilter::LINEAR;
+	GamescopeUpscaleScaler eUpscaleScaler = GamescopeUpscaleScaler::AUTO;
+
 	gamescope::VirtualConnectorKey_t ulVirtualFocusKey = 0;
 	std::shared_ptr<gamescope::IBackendConnector> pVirtualConnector;
 
@@ -1717,7 +1720,7 @@ window_is_fullscreen( steamcompmgr_win_t *w )
 	return w && ( window_is_steam( w ) || w->isFullscreen );
 }
 
-void calc_scale_factor_scaler(float &out_scale_x, float &out_scale_y, float sourceWidth, float sourceHeight)
+void calc_scale_factor_scaler(GamescopeUpscaleScaler eScaler, float &out_scale_x, float &out_scale_y, float sourceWidth, float sourceHeight)
 {
 	float XOutputRatio = currentOutputWidth / (float)g_nNestedWidth;
 	float YOutputRatio = currentOutputHeight / (float)g_nNestedHeight;
@@ -1726,14 +1729,14 @@ void calc_scale_factor_scaler(float &out_scale_x, float &out_scale_y, float sour
 	float XRatio = (float)g_nNestedWidth / sourceWidth;
 	float YRatio = (float)g_nNestedHeight / sourceHeight;
 
-	if (g_upscaleScaler == GamescopeUpscaleScaler::STRETCH)
+	if (eScaler == GamescopeUpscaleScaler::STRETCH)
 	{
 		out_scale_x = XRatio * XOutputRatio;
 		out_scale_y = YRatio * YOutputRatio;
 		return;
 	}
 
-	if (g_upscaleScaler != GamescopeUpscaleScaler::FILL)
+	if (eScaler != GamescopeUpscaleScaler::FILL)
 	{
 		out_scale_x = std::min(XRatio, YRatio);
 		out_scale_y = std::min(XRatio, YRatio);
@@ -1744,7 +1747,7 @@ void calc_scale_factor_scaler(float &out_scale_x, float &out_scale_y, float sour
 		out_scale_y = std::max(XRatio, YRatio);
 	}
 
-	if (g_upscaleScaler == GamescopeUpscaleScaler::AUTO)
+	if (eScaler == GamescopeUpscaleScaler::AUTO)
 	{
 		out_scale_x = std::min(g_flMaxWindowScale, out_scale_x);
 		out_scale_y = std::min(g_flMaxWindowScale, out_scale_y);
@@ -1753,7 +1756,7 @@ void calc_scale_factor_scaler(float &out_scale_x, float &out_scale_y, float sour
 	out_scale_x *= outputScaleRatio;
 	out_scale_y *= outputScaleRatio;
 
-	if (g_upscaleScaler == GamescopeUpscaleScaler::INTEGER)
+	if (eScaler == GamescopeUpscaleScaler::INTEGER)
 	{
 		if (out_scale_x > 1.0f)
 		{
@@ -1763,9 +1766,9 @@ void calc_scale_factor_scaler(float &out_scale_x, float &out_scale_y, float sour
 	}
 }
 
-void calc_scale_factor(float &out_scale_x, float &out_scale_y, float sourceWidth, float sourceHeight)
+void calc_scale_factor(GamescopeUpscaleScaler eScaler, float &out_scale_x, float &out_scale_y, float sourceWidth, float sourceHeight)
 {
-	calc_scale_factor_scaler(out_scale_x, out_scale_y, sourceWidth, sourceHeight);
+	calc_scale_factor_scaler(eScaler, out_scale_x, out_scale_y, sourceWidth, sourceHeight);
 
 	out_scale_x *= globalScaleRatio;
 	out_scale_y *= globalScaleRatio;
@@ -2151,7 +2154,7 @@ void MouseCursor::paint(steamcompmgr_win_t *window, steamcompmgr_win_t *fit, str
 	float currentScaleRatio_y = 1.0;
 	int cursorOffsetX, cursorOffsetY;
 
-	calc_scale_factor(currentScaleRatio_x, currentScaleRatio_y, sourceWidth, sourceHeight);
+	calc_scale_factor(frameInfo->eUpscaleScaler, currentScaleRatio_x, currentScaleRatio_y, sourceWidth, sourceHeight);
 
 	cursorOffsetX = (currentOutputWidth - sourceWidth * currentScaleRatio_x) / 2.0f;
 	cursorOffsetY = (currentOutputHeight - sourceHeight * currentScaleRatio_y) / 2.0f;
@@ -2310,9 +2313,9 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
 	if ( !layer )
 		return nullptr;
 
-	layer->filter = ( flags & PaintWindowFlag::NoFilter ) ? GamescopeUpscaleFilter::LINEAR : g_upscaleFilter;
+	layer->filter = ( flags & PaintWindowFlag::NoFilter ) ? GamescopeUpscaleFilter::LINEAR : frameInfo->eUpscaleFilter;
 
-	layer->tex = lastCommit->GetTexture( layer->filter, g_upscaleScaler, layer->colorspace );
+	layer->tex = lastCommit->GetTexture( layer->filter, frameInfo->eUpscaleScaler, layer->colorspace );
 
 	if ( flags & PaintWindowFlag::NoScale )
 	{
@@ -2374,7 +2377,7 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
 
 	if (sourceWidth != (int32_t)currentOutputWidth || sourceHeight != (int32_t)currentOutputHeight || offset || globalScaleRatio != 1.0f)
 	{
-		calc_scale_factor(currentScaleRatio_x, currentScaleRatio_y, sourceWidth, sourceHeight);
+		calc_scale_factor(frameInfo->eUpscaleScaler, currentScaleRatio_x, currentScaleRatio_y, sourceWidth, sourceHeight);
 
 		drawXOffset = ((int)currentOutputWidth - (int)sourceWidth * currentScaleRatio_x) / 2.0f;
 		drawYOffset = ((int)currentOutputHeight - (int)sourceHeight * currentScaleRatio_y) / 2.0f;
@@ -2385,7 +2388,7 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
 			drawYOffset += winOffsetY * currentScaleRatio_y;
 		}
 
-		calc_scale_factor(baseScaleRatio_x, baseScaleRatio_y, baseWidth, baseHeight);
+		calc_scale_factor(frameInfo->eUpscaleScaler, baseScaleRatio_x, baseScaleRatio_y, baseWidth, baseHeight);
 		if ( zoomScaleRatio != 1.0 )
 		{
 			drawXOffset += (((int)baseWidth / 2) - (cursor ? cursor->x() : 0)) * baseScaleRatio_x;
@@ -2545,6 +2548,13 @@ static void paint_pipewire()
 	frameInfo.outputEncodingEOTF   = EOTF_Gamma22;
 	frameInfo.allowVRR             = false;
 	frameInfo.bFadingOut           = false;
+
+	const UpscaleSettings_t upscaleSettings = GetUpscaleSettings(
+		GetCurrentFocus() && window_is_steam( GetCurrentFocus()->focusWindow ),
+		g_wantedUpscaleFilter,
+		g_wantedUpscaleScaler );
+	frameInfo.eUpscaleFilter = upscaleSettings.eFilter;
+	frameInfo.eUpscaleScaler = upscaleSettings.eScaler;
 
 	// Apply screenshot-style color management.
 	for ( uint32_t nInputEOTF = 0; nInputEOTF < EOTF_Count; nInputEOTF++ )
@@ -2809,6 +2819,8 @@ paint_all( global_focus_t *pFocus, bool async )
 	frameInfo.outputEncodingEOTF = g_ColorMgmt.pending.outputEncodingEOTF;
 	frameInfo.allowVRR = cv_adaptive_sync;
 	frameInfo.bFadingOut = fadingOut;
+	frameInfo.eUpscaleFilter = pFocus->eUpscaleFilter;
+	frameInfo.eUpscaleScaler = pFocus->eUpscaleScaler;
 
 	// If the window we'd paint as the base layer is the streaming client,
 	// find the video underlay and put it up first in the scenegraph
@@ -2876,8 +2888,8 @@ paint_all( global_focus_t *pFocus, bool async )
 					paint_window(pFocus, w, w, &frameInfo, pFocus->cursor, PaintWindowFlag::BasePlane | PaintWindowFlag::DrawBorders, 1.0f, fit);
 
 					bool needsScaling = frameInfo.layers.get( 0 ).scale.x < 0.999f && frameInfo.layers.get( 0 ).scale.y < 0.999f;
-					frameInfo.useFSRLayer0 = g_upscaleFilter == GamescopeUpscaleFilter::FSR && needsScaling;
-					frameInfo.useNISLayer0 = g_upscaleFilter == GamescopeUpscaleFilter::NIS && needsScaling;
+					frameInfo.useFSRLayer0 = frameInfo.eUpscaleFilter == GamescopeUpscaleFilter::FSR && needsScaling;
+					frameInfo.useNISLayer0 = frameInfo.eUpscaleFilter == GamescopeUpscaleFilter::NIS && needsScaling;
 				}
 				if ( pFocus == GetCurrentMouseFocus() )
 					update_touch_scaling( &frameInfo );
@@ -3239,6 +3251,8 @@ paint_all( global_focus_t *pFocus, bool async )
 			else if ( bRenderSizeScreenshot )
 			{
 				FrameInfo_t screenshotFrameInfo{};
+				screenshotFrameInfo.eUpscaleFilter = frameInfo.eUpscaleFilter;
+				screenshotFrameInfo.eUpscaleScaler = frameInfo.eUpscaleScaler;
 				screenshotFrameInfo.applyOutputColorMgmt = true;
 				screenshotFrameInfo.outputEncodingEOTF = bHDRScreenshot ? EOTF_PQ : EOTF_Gamma22;
 				for ( uint32_t nInputEOTF = 0; nInputEOTF < EOTF_Count; nInputEOTF++ )
@@ -6705,7 +6719,7 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 	if ( ev->atom == ctx->atoms.gamescopeFSRSharpness || ev->atom == ctx->atoms.gamescopeSharpness )
 	{
 		g_upscaleFilterSharpness = (int)clamp( get_prop( ctx, ctx->root, ev->atom, 2 ), 0u, 20u );
-		if ( g_upscaleFilter == GamescopeUpscaleFilter::FSR || g_upscaleFilter == GamescopeUpscaleFilter::NIS )
+		if ( g_wantedUpscaleFilter == GamescopeUpscaleFilter::FSR || g_wantedUpscaleFilter == GamescopeUpscaleFilter::NIS )
 			hasRepaint = true;
 	}
 	if ( ev->atom == ctx->atoms.gamescopeXWaylandModeControl )
@@ -7840,7 +7854,7 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 								&& !bMangoappSocketDisable;
 
 	bool bValidPreemptiveScale = reslistentry.pAcquirePoint && pCurrentFocus && w == pCurrentFocus->focusWindow && cv_upscale_preemptive;
-	bool bPreemptiveUpscale = bValidPreemptiveScale && newCommit->ShouldPreemptivelyUpscale();
+	bool bPreemptiveUpscale = bValidPreemptiveScale && newCommit->ShouldPreemptivelyUpscale( pCurrentFocus->eUpscaleFilter, pCurrentFocus->eUpscaleScaler );
 
 	bool bKnownReady = false;
 
@@ -7860,9 +7874,11 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 		overscanScaleRatio = 1.0f;
 		zoomScaleRatio = 1.0f;
 		globalScaleRatio = 1.0f;
+		upscaledFrameInfo.eUpscaleFilter = pCurrentFocus->eUpscaleFilter;
+		upscaledFrameInfo.eUpscaleScaler = pCurrentFocus->eUpscaleScaler;
 		paint_window_commit( newCommit, w, w, &upscaledFrameInfo, nullptr );
-		upscaledFrameInfo.useFSRLayer0 = g_upscaleFilter == GamescopeUpscaleFilter::FSR;
-		upscaledFrameInfo.useNISLayer0 = g_upscaleFilter == GamescopeUpscaleFilter::NIS;
+		upscaledFrameInfo.useFSRLayer0 = upscaledFrameInfo.eUpscaleFilter == GamescopeUpscaleFilter::FSR;
+		upscaledFrameInfo.useNISLayer0 = upscaledFrameInfo.eUpscaleFilter == GamescopeUpscaleFilter::NIS;
 		globalScaleRatio = flOldGlobalScale;
 		zoomScaleRatio = flOldZoomScale;
 		overscanScaleRatio = flOldOverscanScale;
@@ -7896,8 +7912,8 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 			newCommit->upscaledTexture = std::optional<UpscaledTexture_t>
 			{
 				std::in_place_t{},
-				g_upscaleFilter,
-				g_upscaleScaler,
+				upscaledFrameInfo.eUpscaleFilter,
+				upscaledFrameInfo.eUpscaleScaler,
 				g_nOutputWidth,
 				g_nOutputHeight,
 				pTempImage->pTexture,
@@ -9503,20 +9519,7 @@ steamcompmgr_main(int argc, char **argv)
 		if ( g_bPendingFocusInfo.exchange( false ) )
 			DumpFocusInfo();
 
-		// XXX(misyl): This is bad! We shouldnt change the upscaler like this at all!!!
-		// We should move this to business logic in paint_window or something!
-		if ( GetCurrentFocus() && window_is_steam( GetCurrentFocus()->focusWindow ) )
-		{
-			g_bSteamIsActiveWindow = true;
-			g_upscaleScaler = GamescopeUpscaleScaler::FIT;
-			g_upscaleFilter = GamescopeUpscaleFilter::LINEAR;
-		}
-		else
-		{
-			g_bSteamIsActiveWindow = false;
-			g_upscaleScaler = g_wantedUpscaleScaler;
-			g_upscaleFilter = g_wantedUpscaleFilter;
-		}
+		g_bSteamIsActiveWindow = GetCurrentFocus() && window_is_steam( GetCurrentFocus()->focusWindow );
 
 		// If we're in the middle of a fade, then keep us
 		// as needing a repaint.
@@ -9536,6 +9539,13 @@ steamcompmgr_main(int argc, char **argv)
 		for ( auto &iter : g_VirtualConnectorFocuses )
 		{
 			global_focus_t *pPaintFocus = &iter.second;
+
+			const UpscaleSettings_t upscaleSettings = GetUpscaleSettings(
+				window_is_steam( pPaintFocus->focusWindow ),
+				g_wantedUpscaleFilter,
+				g_wantedUpscaleScaler );
+			pPaintFocus->eUpscaleFilter = upscaleSettings.eFilter;
+			pPaintFocus->eUpscaleScaler = upscaleSettings.eScaler;
 
 			if ( vblank )
 			{
