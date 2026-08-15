@@ -4634,11 +4634,11 @@ determine_and_apply_focus( global_focus_t *pFocus )
 	gamescope_xwayland_server_t *root_server = wlserver_get_xwayland_server(0);
 	xwayland_ctx_t *root_ctx = root_server->ctx.get();
 	global_focus_t previousLocalFocus = *pFocus;
-	*pFocus = global_focus_t{};
+	// Reset the pick, the rest of the focus belongs to the connector.
+	static_cast<focus_t &>( *pFocus ) = focus_t{};
+	pFocus->keyboardFocusWindow = nullptr;
 	pFocus->focusWindow = previousLocalFocus.focusWindow;
 	pFocus->cursor = root_ctx->cursor.get();
-	pFocus->ulVirtualFocusKey = previousLocalFocus.ulVirtualFocusKey;
-	pFocus->pVirtualConnector = previousLocalFocus.pVirtualConnector;
 	gameFocused = false;
 
 	focus_log.debugf( "Rerolling global focus..." );
@@ -5830,7 +5830,7 @@ destroy_win(xwayland_ctx_t *ctx, Window id, bool gone, bool fade)
 			pFocus->overrideWindow = nullptr;
 		if (x11_win(pFocus->overrideUnderlayWindow) == id)
 			pFocus->overrideUnderlayWindow = nullptr;
-		if (x11_win(pFocus->fadeWindow) == id && gone)
+		if (x11_win(pFocus->fadeWindow) == id)
 			pFocus->fadeWindow = nullptr;
 		std::erase_if(pFocus->decorationWindows, [id](steamcompmgr_win_t *w) { return x11_win(w) == id; });
 	}
