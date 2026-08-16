@@ -296,6 +296,7 @@ gamescope::ConVar<bool> cv_adaptive_sync( "adaptive_sync", false, "Whether or no
 gamescope::ConVar<bool> cv_adaptive_sync_ignore_overlay( "adaptive_sync_ignore_overlay", false, "Whether or not to ignore overlay planes for pushing commits with adaptive sync." );
 gamescope::ConVar<int> cv_adaptive_sync_overlay_cycles( "adaptive_sync_overlay_cycles", 1, "Number of vblank cycles to ignore overlay repaints before forcing a commit with adaptive sync." );
 gamescope::ConVar<int> cv_adaptive_sync_cursor_min_fps( "adaptive_sync_cursor_min_fps", 30, "Content frame rate at or above which cursor repaints coalesce with content frames when adaptive sync is on. 0 = repaint the cursor immediately." );
+gamescope::ConVar<bool> cv_adaptive_sync_idle_hold( "adaptive_sync_idle_hold", true, "Hold the display at its refresh rate while the Steam UI is focused with adaptive sync." );
 
 gamescope::ConVar<bool> cv_upscale_preemptive( "upscale_preemptive", true, "Allow pre-emptive upscaling" );
 gamescope::ConVar<bool> cv_upscale_preemptive_debug_force_sync( "upscale_preemptive_debug_force_sync", false, "Force synchronize pre-emptive upscaling" );
@@ -9130,6 +9131,14 @@ steamcompmgr_main(int argc, char **argv)
 							{
 								bShouldPaint = true;
 							}
+						}
+
+						// Hold the panel at its refresh rate so it can't stretch toward
+						// the minimum and flicker. Games pace the display themselves.
+						if ( !bShouldPaint && bIsVBlankFromTimer && g_bSteamIsActiveWindow &&
+						     cv_adaptive_sync_idle_hold )
+						{
+							bShouldPaint = true;
 						}
 
 						if ( bIsVBlankFromTimer )
