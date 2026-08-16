@@ -301,6 +301,7 @@ gamescope::ConVar<bool> cv_adaptive_sync( "adaptive_sync", false, "Whether or no
 gamescope::ConVar<bool> cv_adaptive_sync_ignore_overlay( "adaptive_sync_ignore_overlay", false, "Whether or not to ignore overlay planes for pushing commits with adaptive sync." );
 gamescope::ConVar<int> cv_adaptive_sync_overlay_cycles( "adaptive_sync_overlay_cycles", 1, "Number of vblank cycles to ignore overlay repaints before forcing a commit with adaptive sync." );
 gamescope::ConVar<bool> cv_adaptive_sync_uncapped( "adaptive_sync_uncapped", true, "Whether or not to allow mailbox/immediate clients to run uncapped with adaptive sync by deferring paints until the display can take a new flip." );
+gamescope::ConVar<int> cv_adaptive_sync_cursor_min_fps( "adaptive_sync_cursor_min_fps", 30, "Content frame rate at or above which cursor repaints coalesce with content frames when adaptive sync is on. 0 = repaint the cursor immediately." );
 
 gamescope::ConVar<bool> cv_upscale_preemptive( "upscale_preemptive", true, "Allow pre-emptive upscaling" );
 gamescope::ConVar<bool> cv_upscale_preemptive_debug_force_sync( "upscale_preemptive_debug_force_sync", false, "Force synchronize pre-emptive upscaling" );
@@ -1115,6 +1116,7 @@ uint32_t		lastPublishedInputCounter;
 
 std::atomic<bool> hasRepaint = false;
 bool			hasRepaintNonBasePlane = false;
+std::atomic<bool> hasCursorRepaint = false;
 
 bool			g_bUpdateForwardedVROverlays = false;
 
@@ -2058,7 +2060,7 @@ void MouseCursor::checkSuspension()
 
 			// We're hiding the cursor, force redraw if we were showing it
 			if (window && !m_imageEmpty ) {
-				hasRepaintNonBasePlane = true;
+				hasCursorRepaint = true;
 				nudge_steamcompmgr();
 			}
 		}
@@ -10735,6 +10737,7 @@ steamcompmgr_main(int argc, char **argv)
 		bool bPainted = false;
 
 		static int nIgnoredOverlayRepaints = 0;
+		static uint64_t s_ulLastContentPaintTime = 0;
 
 		if ( !hasRepaintNonBasePlane )
 			nIgnoredOverlayRepaints = 0;
@@ -10835,13 +10838,13 @@ steamcompmgr_main(int argc, char **argv)
 				{
 					case FlipType::Normal:
 					{
-						bShouldPaint = vblank && ( hasRepaint || hasRepaintNonBasePlane || bForceSyncFlip );
+						bShouldPaint = vblank && ( hasRepaint || hasRepaintNonBasePlane || hasCursorRepaint || bForceSyncFlip );
 						break;
 					}
 
 					case FlipType::Async:
 					{
-						bShouldPaint = hasRepaint;
+						bShouldPaint = hasRepaint || hasCursorRepaint;
 
 						if ( vblank && !bShouldPaint && hasRepaintNonBasePlane )
 							nIgnoredOverlayRepaints++;
@@ -10852,6 +10855,17 @@ steamcompmgr_main(int argc, char **argv)
 					case FlipType::VRR:
 					{
 						bShouldPaint = hasRepaint && bVRRCanFlip;
+
+						// Content at or above adaptive_sync_cursor_min_fps carries the cursor with its own frames.
+						if ( !bShouldPaint && hasCursorRepaint && bVRRCanFlip )
+						{
+							const int nCursorMinFPS = cv_adaptive_sync_cursor_min_fps;
+							if ( nCursorMinFPS <= 0 ||
+							     get_time_in_nanos() - s_ulLastContentPaintTime >= 1'000'000'000ul / uint64_t( nCursorMinFPS ) )
+							{
+								bShouldPaint = true;
+							}
+						}
 
 						if ( bIsVBlankFromTimer )
 						{
@@ -10909,8 +10923,12 @@ steamcompmgr_main(int argc, char **argv)
 		{
 			GetBackend()->OnEndFrame();
 
+			if ( hasRepaint )
+				s_ulLastContentPaintTime = get_time_in_nanos();
+
 			hasRepaint = false;
 			hasRepaintNonBasePlane = false;
+			hasCursorRepaint = false;
 			nIgnoredOverlayRepaints = 0;
 
 			{
