@@ -4575,7 +4575,9 @@ determine_and_apply_focus( global_focus_t *pFocus )
 	{
 		focusedWindow = (unsigned long)pFocus->focusWindow->id();
 		focusedBaseAppId = pFocus->focusWindow->appID;
-		focusedAppId = pFocus->inputFocusWindow->appID;
+		// A focus window does not guarantee an input focus window.
+		if ( pFocus->inputFocusWindow )
+			focusedAppId = pFocus->inputFocusWindow->appID;
 		focused_display = get_win_display_name(pFocus->focusWindow);
 		sdFocusWindow_pid = pFocus->focusWindow->pid;
 	}
