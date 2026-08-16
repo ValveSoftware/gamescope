@@ -3253,6 +3253,17 @@ get_prop(xwayland_ctx_t *ctx, Window win, Atom prop, unsigned int def, bool *fou
 								 &n, &left, &data);
 	if (result == Success && data != NULL)
 	{
+		// A zero-element property still hands back an allocation, so we would read uninitialized memory.
+		if ( n < 1 )
+		{
+			XFree((void *) data);
+			if ( found != nullptr )
+			{
+				*found = false;
+			}
+			return def;
+		}
+
 		unsigned int i;
 		memcpy(&i, data, sizeof(unsigned int));
 		XFree((void *) data);
