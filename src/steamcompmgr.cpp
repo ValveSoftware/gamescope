@@ -1592,14 +1592,17 @@ void MouseCursor::UpdatePosition()
 {
 	wlserver_lock();
 	struct wlr_pointer_constraint_v1 *pConstraint = wlserver.GetCursorConstraint();
-	m_bConstrained = !!pConstraint;
 	if ( pConstraint && pConstraint->current.cursor_hint.enabled )
 	{
+		m_bConstrained = true;
+
 		m_x = pConstraint->current.cursor_hint.x;
 		m_y = pConstraint->current.cursor_hint.y;
 	}
 	else
 	{
+		m_bConstrained = false;
+
 		m_x = wlserver.mouse_surface_cursorx;
 		m_y = wlserver.mouse_surface_cursory;
 	}
