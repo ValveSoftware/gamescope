@@ -886,6 +886,14 @@ namespace gamescope
                 {
                     return TouchClickModes::Passthrough;
                 }
+
+                // HACK HACK(autumna): Steam is not setting the steam touch click mode atom
+                // properly on Steam Frame with our multi-view stuff going on.
+                if ( VirtualConnectorInSteamPerAppState() )
+                {
+                    if ( !VirtualConnectorKeyIsSteam( pMouseConnector->GetVirtualConnectorKey() ) )
+                        return TouchClickModes::Left;
+                }
             }
 
             return CBaseBackend::GetTouchClickMode();
