@@ -6972,22 +6972,18 @@ void handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank, uint64_t vb
 	// very fast loop yes
 	for ( auto& entry : ctx->doneCommits.listCommitsDone )
 	{
-		bool entry_vblank = vblank;
-
-		if ( GetBackend()->GetCurrentConnector() && GetBackend()->GetCurrentConnector()->IsVRRActive() )
+		steamcompmgr_win_t *entry_win = nullptr;
+		for ( steamcompmgr_win_t *w = ctx->list; w; w = w->xwayland().next )
 		{
-			for ( steamcompmgr_win_t *w = ctx->list; w; w = w->xwayland().next )
-			{
-				if (w->seq != entry.winSeq)
-					continue;
+			if (w->seq != entry.winSeq)
+				continue;
 
-				entry_vblank = entry_vblank && steamcompmgr_should_vblank_window( true, vblank_idx, w, now );
-			}
+			entry_win = w;
+			break;
 		}
-		else
-		{
-			entry_vblank = entry_vblank && steamcompmgr_should_vblank_window( true, vblank_idx );
-		}
+
+		// Only pace windows the FPS limiter covers.
+		const bool entry_vblank = vblank && steamcompmgr_should_vblank_window( entry_win, vblank_idx, now );
 
 		if (entry.fifo && (!entry_vblank || fifo_win_seqs.count(entry.winSeq) > 0))
 		{
@@ -7007,16 +7003,10 @@ void handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank, uint64_t vb
 			continue;
 		}
 
-		for ( steamcompmgr_win_t *w = ctx->list; w; w = w->xwayland().next )
+		if ( entry_win && handle_done_commit(entry_win, ctx, entry.commitID, entry.earliestPresentTime, entry.earliestLatchTime) )
 		{
-			if (w->seq != entry.winSeq)
-				continue;
-			if (handle_done_commit(w, ctx, entry.commitID, entry.earliestPresentTime, entry.earliestLatchTime))
-			{
-				if (entry.fifo)
-					fifo_win_seqs.insert(entry.winSeq);
-				break;
-			}
+			if (entry.fifo)
+				fifo_win_seqs.insert(entry.winSeq);
 		}
 	}
 
@@ -7041,12 +7031,23 @@ void handle_done_commits_xdg( bool vblank, uint64_t vblank_idx )
 
 	uint64_t now = get_time_in_nanos();
 
-	vblank = vblank && steamcompmgr_should_vblank_window( true, vblank_idx );
-
 	// very fast loop yes
 	for ( auto& entry : g_steamcompmgr_xdg_done_commits.listCommitsDone )
 	{
-		if (entry.fifo && (!vblank || fifo_win_seqs.count(entry.winSeq) > 0))
+		steamcompmgr_win_t *entry_win = nullptr;
+		for (const auto& xdg_win : g_steamcompmgr_xdg_wins)
+		{
+			if (xdg_win->seq != entry.winSeq)
+				continue;
+
+			entry_win = xdg_win.get();
+			break;
+		}
+
+		// Only pace windows the FPS limiter covers.
+		const bool entry_vblank = vblank && steamcompmgr_should_vblank_window( entry_win, vblank_idx, now );
+
+		if (entry.fifo && (!entry_vblank || fifo_win_seqs.count(entry.winSeq) > 0))
 		{
 			commits_before_their_time.push_back( entry );
 			continue;
@@ -7064,16 +7065,10 @@ void handle_done_commits_xdg( bool vblank, uint64_t vblank_idx )
 			break;
 		}
 
-		for (const auto& xdg_win : g_steamcompmgr_xdg_wins)
+		if ( entry_win && handle_done_commit(entry_win, nullptr, entry.commitID, entry.earliestPresentTime, entry.earliestLatchTime) )
 		{
-			if (xdg_win->seq != entry.winSeq)
-				continue;
-			if (handle_done_commit(xdg_win.get(), nullptr, entry.commitID, entry.earliestPresentTime, entry.earliestLatchTime))
-			{
-				if (entry.fifo)
-					fifo_win_seqs.insert(entry.winSeq);
-				break;
-			}
+			if (entry.fifo)
+				fifo_win_seqs.insert(entry.winSeq);
 		}
 	}
 
