@@ -867,28 +867,24 @@ namespace gamescope
 
         virtual TouchClickMode GetTouchClickMode() override
         {
-            COpenVRConnector *pConnector = static_cast<COpenVRConnector *>( GetCurrentConnector() );
-            if ( cv_vr_trackpad_relative_mouse_mode && pConnector && pConnector->IsRelativeMouse() )
+            COpenVRConnector *pKBConnector = static_cast<COpenVRConnector *>( GetCurrentConnector() );
+            if ( cv_vr_trackpad_relative_mouse_mode && pKBConnector && pKBConnector->IsRelativeMouse() )
             {
                 return TouchClickModes::Trackpad;
             }
 
-            if ( pConnector )
+            COpenVRConnector *pMouseConnector = static_cast<COpenVRConnector *>( GetCurrentMouseConnector() );
+
+            if ( pMouseConnector )
             {
-                if ( pConnector->IsTouchForbidden() )
+                if ( pMouseConnector->IsTouchForbidden() )
                 {
                     return TouchClickModes::Left;
                 }
 
-                if ( VirtualConnectorKeyIsNonSteamWindow( pConnector->GetVirtualConnectorKey() ) )
+                if ( VirtualConnectorKeyIsNonSteamWindow( pMouseConnector->GetVirtualConnectorKey() ) )
                 {
                     return TouchClickModes::Passthrough;
-                }
-
-                if ( VirtualConnectorInSteamPerAppState() )
-                {
-                    if ( !VirtualConnectorKeyIsSteam( pConnector->GetVirtualConnectorKey() ) )
-                        return TouchClickModes::Left;
                 }
             }
 
