@@ -4697,14 +4697,14 @@ determine_and_apply_focus( global_focus_t *pFocus )
 						xwayland_ctx_t *ctx = pFocus->inputFocusWindow->xwayland().ctx;
 						bool bTouchPointerEmulation = gamescope::VirtualConnectorKeyIsNonSteamWindow( pFocus->ulVirtualFocusKey );
 
-						if ( ctx->bTouchPointerEmulation != bTouchPointerEmulation )
+						if ( !ctx->obTouchPointerEmulation || *ctx->obTouchPointerEmulation != bTouchPointerEmulation )
 						{
 							xwm_log.infof( "Changing touch pointer emulation for display %u to %s\n", ctx->xwayland_server->get_index(), bTouchPointerEmulation ? "true" : "false" );
 
 							uint32_t uValue = bTouchPointerEmulation ? 1 : 0;
 							XChangeProperty( ctx->dpy, ctx->root, ctx->atoms.steamosTouchPointerEmulation, XA_CARDINAL, 32, PropModeReplace,
 											(unsigned char *)&uValue, 1 );
-							ctx->bTouchPointerEmulation = bTouchPointerEmulation;
+							ctx->obTouchPointerEmulation = bTouchPointerEmulation;
 						}
 					}
 				}
