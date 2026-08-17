@@ -68,7 +68,7 @@ gamescope::ConVar<bool> cv_vr_use_modifiers( "vr_use_modifiers", true, "Use DMA-
 gamescope::ConVar<bool> cv_vr_transparent_backing( "vr_transparent_backing", false, "Should backing be transparent or not?" );
 gamescope::ConVar<bool> cv_vr_use_window_icons( "vr_use_window_icons", true, "Should we use window icons if they are available?" );
 gamescope::ConVar<bool> cv_vr_trackpad_hide_laser( "vr_trackpad_hide_laser", false, "Hide laser mouse when we are in trackpad mode." );
-gamescope::ConVar<bool> cv_vr_trackpad_relative_mouse_mode( "vr_trackpad_relative_mouse_mode", true, "If we are in relative mouse mode, treat the screen like a big trackpad?" );
+gamescope::ConVar<bool> cv_vr_trackpad_relative_mouse_mode( "vr_trackpad_relative_mouse_mode", false, "If we are in relative mouse mode, treat the screen like a big trackpad?" );
 gamescope::ConVar<float> cv_vr_trackpad_sensitivity( "vr_trackpad_sensitivity", 1500.f, "Sensitivity for VR Trackpad Mode" );
 gamescope::ConVar<uint64_t> cv_vr_trackpad_click_time( "vr_trackpad_click_time", 250'000'000ul, "Time to consider a 'click' vs a 'drag' when using trackpad mode. In nanoseconds." );
 gamescope::ConVar<float> cv_vr_trackpad_click_max_delta( "vr_trackpad_click_max_delta", 0.14f, "Max amount the cursor can move before not clicking." );
