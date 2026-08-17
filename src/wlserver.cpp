@@ -2675,8 +2675,24 @@ static void wlserver_update_cursor_constraint()
 			pixman_box32_t *boxes = pixman_region32_rectangles(pRegion, &nboxes);
 			if ( nboxes )
 			{
-				wlserver.mouse_surface_cursorx = std::clamp<double>( wlserver.mouse_surface_cursorx, boxes[0].x1, boxes[0].x2);
-				wlserver.mouse_surface_cursory = std::clamp<double>( wlserver.mouse_surface_cursory, boxes[0].y1, boxes[0].y2);
+				double flBestDistSqr = DBL_MAX;
+				int nBestBox = 0;
+				for ( int i = 0; i < nboxes; i++ )
+				{
+					double cx = std::clamp<double>( wlserver.mouse_surface_cursorx, boxes[i].x1, boxes[i].x2 );
+					double cy = std::clamp<double>( wlserver.mouse_surface_cursory, boxes[i].y1, boxes[i].y2 );
+					double dx = cx - wlserver.mouse_surface_cursorx;
+					double dy = cy - wlserver.mouse_surface_cursory;
+					double flDistSqr = dx * dx + dy * dy;
+					if ( flDistSqr < flBestDistSqr )
+					{
+						flBestDistSqr = flDistSqr;
+						nBestBox = i;
+					}
+				}
+
+				wlserver.mouse_surface_cursorx = std::clamp<double>( wlserver.mouse_surface_cursorx, boxes[nBestBox].x1, boxes[nBestBox].x2);
+				wlserver.mouse_surface_cursory = std::clamp<double>( wlserver.mouse_surface_cursory, boxes[nBestBox].y1, boxes[nBestBox].y2);
 
 				wlr_seat_pointer_warp( wlserver.wlr.seat, wlserver.mouse_surface_cursorx, wlserver.mouse_surface_cursory );
 			}
@@ -2707,7 +2723,10 @@ static void wlserver_constrain_cursor( struct wlr_pointer_constraint_v1 *pNewCon
 	wlserver.SetMouseConstraint( pNewConstraint );
 
 	if ( !pNewConstraint )
+	{
+		pixman_region32_clear( &wlserver.confine );
 		return;
+	}
 
 	wlserver.mouse_constraint_requires_warp = true;
 
@@ -2721,7 +2740,8 @@ static void handle_pointer_constraint_set_region(struct wl_listener *listener, v
 	GamescopePointerConstraint *pGamescopeConstraint = wl_container_of(listener, pGamescopeConstraint, set_region);
 
 	// If the region has been updated, we might need to warp again next commit.
-	wlserver.mouse_constraint_requires_warp = true;
+	if ( pGamescopeConstraint->pConstraint == wlserver.GetCursorConstraint() )
+		wlserver.mouse_constraint_requires_warp = true;
 }
 
 void handle_constraint_destroy(struct wl_listener *listener, void *data)
@@ -2737,6 +2757,7 @@ void handle_constraint_destroy(struct wl_listener *listener, void *data)
 		wlserver_warp_to_constraint_hint();
 
 		wlserver.SetMouseConstraint( nullptr );
+		pixman_region32_clear( &wlserver.confine );
 	}
 
 	delete pGamescopeConstraint;
