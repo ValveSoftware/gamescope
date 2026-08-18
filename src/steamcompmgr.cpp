@@ -850,13 +850,16 @@ enum HeldCommitTypes_t
 
 struct BaseLayerInfo_t
 {
-	float scale[2];
-	float offset[2];
-	// The window's own transform, which the layer's does not track once upscaled.
+	// The window's own transform, which fits the commit's raw texture. The
+	// pre-emptively upscaled texture is output sized and needs no transform.
 	float windowScale[2] = { 1.0f, 1.0f };
 	float windowOffset[2] = {};
 	float opacity;
 	GamescopeUpscaleFilter filter;
+	// The requested upscale settings, to pick the commit's upscaled texture
+	// back up. The layer filter above may have been downgraded from these.
+	GamescopeUpscaleFilter eUpscaleFilter = GamescopeUpscaleFilter::LINEAR;
+	GamescopeUpscaleScaler eUpscaleScaler = GamescopeUpscaleScaler::AUTO;
 	AlphaBlendingMode_t eAlphaBlendingMode = ALPHA_BLENDING_MODE_PREMULTIPLIED;
 };
 
@@ -2260,16 +2263,29 @@ paint_cached_base_layer(const gamescope::Rc<commit_t>& commit, const BaseLayerIn
 	if ( !layer )
 		return;
 
-	layer->scale.x = base.scale[0];
-	layer->scale.y = base.scale[1];
-	layer->offset.x = base.offset[0];
-	layer->offset.y = base.offset[1];
 	layer->opacity = bOverrideOpacity ? flOpacityScale : base.opacity * flOpacityScale;
 
-	frameInfo->focusedWindowScale = { base.windowScale[0], base.windowScale[1] };
-	frameInfo->focusedWindowOffset = { base.windowOffset[0], base.windowOffset[1] };
+	layer->tex = commit->GetTexture( base.eUpscaleFilter, base.eUpscaleScaler, layer->colorspace );
+	layer->filter = base.filter;
+	if ( layer->tex == commit->vulkanTex )
+	{
+		layer->scale.x = base.windowScale[0];
+		layer->scale.y = base.windowScale[1];
+		layer->offset.x = base.windowOffset[0];
+		layer->offset.y = base.windowOffset[1];
+		frameInfo->focusedWindowScale = { layer->scale.x, layer->scale.y };
+		frameInfo->focusedWindowOffset = { layer->offset.x, layer->offset.y };
+	}
+	else
+	{
+		// The pre-emptively upscaled image covers the output and bakes the
+		// window transform into its pixels, so the pointer mapping keeps it.
+		layer->scale = { 1.0f, 1.0f };
+		layer->offset = { 0.0f, 0.0f };
+		frameInfo->focusedWindowScale = { base.windowScale[0], base.windowScale[1] };
+		frameInfo->focusedWindowOffset = { base.windowOffset[0], base.windowOffset[1] };
+	}
 
-	layer->colorspace = commit->colorspace();
 	layer->hdr_metadata_blob = nullptr;
 	if (commit->feedback)
 	{
@@ -2278,9 +2294,7 @@ paint_cached_base_layer(const gamescope::Rc<commit_t>& commit, const BaseLayerIn
 	layer->ctm = nullptr;
 	if (layer->colorspace == GAMESCOPE_APP_TEXTURE_COLORSPACE_SCRGB)
 		layer->ctm = s_scRGB709To2020Matrix;
-	layer->tex = commit->vulkanTex;
 
-	layer->filter = base.filter;
 	layer->eAlphaBlendingMode = base.eAlphaBlendingMode;
 	layer->blackBorder = true;
 }
@@ -2538,16 +2552,14 @@ paint_window(global_focus_t *pFocus, steamcompmgr_win_t *w, steamcompmgr_win_t *
 	if ( layer && ( flags & PaintWindowFlag::BasePlane ) )
 	{
 		BaseLayerInfo_t basePlane = {};
-		basePlane.scale[0] = layer->scale.x;
-		basePlane.scale[1] = layer->scale.y;
-		basePlane.offset[0] = layer->offset.x;
-		basePlane.offset[1] = layer->offset.y;
 		basePlane.windowScale[0] = frameInfo->focusedWindowScale.x;
 		basePlane.windowScale[1] = frameInfo->focusedWindowScale.y;
 		basePlane.windowOffset[0] = frameInfo->focusedWindowOffset.x;
 		basePlane.windowOffset[1] = frameInfo->focusedWindowOffset.y;
 		basePlane.opacity = layer->opacity;
 		basePlane.filter = layer->filter;
+		basePlane.eUpscaleFilter = frameInfo->eUpscaleFilter;
+		basePlane.eUpscaleScaler = frameInfo->eUpscaleScaler;
 		basePlane.eAlphaBlendingMode = layer->eAlphaBlendingMode;
 
 		pFocus->CachedPlanes[ HELD_COMMIT_BASE ] = basePlane;
