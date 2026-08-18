@@ -295,6 +295,7 @@ gamescope::ConVar<int> cv_adaptive_sync_overlay_cycles( "adaptive_sync_overlay_c
 
 gamescope::ConVar<bool> cv_upscale_preemptive( "upscale_preemptive", true, "Allow pre-emptive upscaling" );
 gamescope::ConVar<bool> cv_upscale_preemptive_debug_force_sync( "upscale_preemptive_debug_force_sync", false, "Force synchronize pre-emptive upscaling" );
+gamescope::ConVar<bool> cv_hack_remap_sharp_to_fsr( "hack_remap_sharp_to_fsr", true, "HACK: treat unknown scaling filter 5 as FSR" );
 
 uint64_t g_SteamCompMgrLimitedAppRefreshCycle = 16'666'666;
 uint64_t g_SteamCompMgrAppRefreshCycle = 16'666'666;
@@ -6942,6 +6943,16 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 	if ( ev->atom == ctx->atoms.gamescopeNewScalingFilter )
 	{
 		uint32_t uScalingFilter = get_prop( ctx, ctx->root, ctx->atoms.gamescopeNewScalingFilter, 0 );
+
+		// HACK: Steam Frame's Sharp option sends 5, which no filter enum
+		// defines. Remap it so the option does something while the wire
+		// mismatch is sorted out with Steam.
+		if ( cv_hack_remap_sharp_to_fsr && uScalingFilter == 5 )
+		{
+			xwm_log.infof( "HACK: remapping scaling filter 5 to FSR" );
+			uScalingFilter = uint32_t( GamescopeUpscaleFilter::FSR );
+		}
+
 		if ( uScalingFilter > uint32_t( GamescopeUpscaleFilter::PIXEL ) )
 			xwm_log.errorf( "Unknown scaling filter %u, keeping %u", uScalingFilter, uint32_t( g_wantedUpscaleFilter ) );
 		else if ( g_wantedUpscaleFilter != GamescopeUpscaleFilter( uScalingFilter ) )
