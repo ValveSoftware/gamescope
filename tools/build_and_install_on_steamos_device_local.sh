@@ -16,4 +16,6 @@ steamvr stop
 
 envsudo meson install --skip-subprojects --tags runtime -C build.local
 
+envsudo setcap 'cap_sys_nice=eip' /usr/bin/gamescope
+
 steamvr start
