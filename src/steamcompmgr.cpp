@@ -6812,19 +6812,23 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 	}
 	if ( ev->atom == ctx->atoms.gamescopeNewScalingFilter )
 	{
-		GamescopeUpscaleFilter nScalingFilter = ( GamescopeUpscaleFilter ) get_prop( ctx, ctx->root, ctx->atoms.gamescopeNewScalingFilter, 0 );
-		if (g_wantedUpscaleFilter != nScalingFilter)
+		uint32_t uScalingFilter = get_prop( ctx, ctx->root, ctx->atoms.gamescopeNewScalingFilter, 0 );
+		if ( uScalingFilter > uint32_t( GamescopeUpscaleFilter::PIXEL ) )
+			xwm_log.errorf( "Unknown scaling filter %u, keeping %u", uScalingFilter, uint32_t( g_wantedUpscaleFilter ) );
+		else if ( g_wantedUpscaleFilter != GamescopeUpscaleFilter( uScalingFilter ) )
 		{
-			g_wantedUpscaleFilter = nScalingFilter;
+			g_wantedUpscaleFilter = GamescopeUpscaleFilter( uScalingFilter );
 			hasRepaint = true;
 		}
 	}
 	if ( ev->atom == ctx->atoms.gamescopeNewScalingScaler )
 	{
-		GamescopeUpscaleScaler nScalingScaler = ( GamescopeUpscaleScaler ) get_prop( ctx, ctx->root, ctx->atoms.gamescopeNewScalingScaler, 0 );
-		if (g_wantedUpscaleScaler != nScalingScaler)
+		uint32_t uScalingScaler = get_prop( ctx, ctx->root, ctx->atoms.gamescopeNewScalingScaler, 0 );
+		if ( uScalingScaler > uint32_t( GamescopeUpscaleScaler::STRETCH ) )
+			xwm_log.errorf( "Unknown scaling scaler %u, keeping %u", uScalingScaler, uint32_t( g_wantedUpscaleScaler ) );
+		else if ( g_wantedUpscaleScaler != GamescopeUpscaleScaler( uScalingScaler ) )
 		{
-			g_wantedUpscaleScaler = nScalingScaler;
+			g_wantedUpscaleScaler = GamescopeUpscaleScaler( uScalingScaler );
 			hasRepaint = true;
 		}
 	}
