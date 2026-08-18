@@ -4659,7 +4659,7 @@ get_size_hints(xwayland_ctx_t *ctx, steamcompmgr_win_t *w)
 		w->sizeHintsSpecified = false;
 
 		// Below block checks for a pattern that matches old SDL fullscreen applications;
-		// SDL creates a fullscreen overrride-redirect window and reparents the game
+		// SDL creates a fullscreen override-redirect window and reparents the game
 		// window under it, centered. We get rid of the modeswitch and also want that
 		// black border gone.
 		if (w->xwayland().a.override_redirect)
@@ -4676,7 +4676,7 @@ get_size_hints(xwayland_ctx_t *ctx, steamcompmgr_win_t *w)
 
 				XGetWindowAttributes(ctx->dpy, children[0], &attribs);
 
-				// If we have a unique children that isn't override-reidrect that is
+				// If we have a unique children that isn't override-redirect that is
 				// contained inside this fullscreen window, it's probably it.
 				if (attribs.override_redirect == false &&
 					attribs.width <= w->GetGeometry().nWidth &&
