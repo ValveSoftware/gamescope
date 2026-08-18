@@ -296,6 +296,11 @@ struct FrameInfo_t
 	bool applyOutputColorMgmt; // drm only
 	EOTF outputEncodingEOTF;
 
+	// Maps output space onto the focused window's own space for absolute input.
+	// Not the base layer's transform, whose texture may already be upscaled.
+	vec2_t focusedWindowScale = { 1.0f, 1.0f };
+	vec2_t focusedWindowOffset = { 0.0f, 0.0f };
+
 	struct Layer_t
 	{
 		gamescope::Rc<CVulkanTexture> tex;

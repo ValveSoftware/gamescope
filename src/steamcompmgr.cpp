@@ -852,6 +852,9 @@ struct BaseLayerInfo_t
 {
 	float scale[2];
 	float offset[2];
+	// The window's own transform, which the layer's does not track once upscaled.
+	float windowScale[2] = { 1.0f, 1.0f };
+	float windowOffset[2] = {};
 	float opacity;
 	GamescopeUpscaleFilter filter;
 	AlphaBlendingMode_t eAlphaBlendingMode = ALPHA_BLENDING_MODE_PREMULTIPLIED;
@@ -2263,6 +2266,9 @@ paint_cached_base_layer(const gamescope::Rc<commit_t>& commit, const BaseLayerIn
 	layer->offset.y = base.offset[1];
 	layer->opacity = bOverrideOpacity ? flOpacityScale : base.opacity * flOpacityScale;
 
+	frameInfo->focusedWindowScale = { base.windowScale[0], base.windowScale[1] };
+	frameInfo->focusedWindowOffset = { base.windowOffset[0], base.windowOffset[1] };
+
 	layer->colorspace = commit->colorspace();
 	layer->hdr_metadata_blob = nullptr;
 	if (commit->feedback)
@@ -2347,8 +2353,8 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
 
 	if ( flags & PaintWindowFlag::NoScale )
 	{
-		sourceWidth = currentOutputWidth;
-		sourceHeight = currentOutputHeight;
+		sourceWidth = baseWidth = currentOutputWidth;
+		sourceHeight = baseHeight = currentOutputHeight;
 	}
 	else
 	{
@@ -2403,6 +2409,29 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
 
 	bool offset = ( ( winOffsetX || winOffsetY ) && w != scaleW );
 
+	// A pre-emptively upscaled commit draws from an output sized texture, so the
+	// window's own transform comes from the commit dimensions rather than those.
+	int baseXOffset = 0, baseYOffset = 0;
+	if (baseWidth != (int32_t)currentOutputWidth || baseHeight != (int32_t)currentOutputHeight || offset || globalScaleRatio != 1.0f)
+	{
+		calc_scale_factor(frameInfo->eUpscaleScaler, baseScaleRatio_x, baseScaleRatio_y, baseWidth, baseHeight);
+
+		baseXOffset = ((int)currentOutputWidth - (int)baseWidth * baseScaleRatio_x) / 2.0f;
+		baseYOffset = ((int)currentOutputHeight - (int)baseHeight * baseScaleRatio_y) / 2.0f;
+
+		if ( w != scaleW )
+		{
+			baseXOffset += winOffsetX * baseScaleRatio_x;
+			baseYOffset += winOffsetY * baseScaleRatio_y;
+		}
+
+		if ( zoomScaleRatio != 1.0 )
+		{
+			baseXOffset += (((int)baseWidth / 2) - (cursor ? cursor->x() : 0)) * baseScaleRatio_x;
+			baseYOffset += (((int)baseHeight / 2) - (cursor ? cursor->y() : 0)) * baseScaleRatio_y;
+		}
+	}
+
 	if (sourceWidth != (int32_t)currentOutputWidth || sourceHeight != (int32_t)currentOutputHeight || offset || globalScaleRatio != 1.0f)
 	{
 		calc_scale_factor(frameInfo->eUpscaleScaler, currentScaleRatio_x, currentScaleRatio_y, sourceWidth, sourceHeight);
@@ -2416,7 +2445,6 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
 			drawYOffset += winOffsetY * currentScaleRatio_y;
 		}
 
-		calc_scale_factor(frameInfo->eUpscaleScaler, baseScaleRatio_x, baseScaleRatio_y, baseWidth, baseHeight);
 		if ( zoomScaleRatio != 1.0 )
 		{
 			drawXOffset += (((int)baseWidth / 2) - (cursor ? cursor->x() : 0)) * baseScaleRatio_x;
@@ -2431,6 +2459,9 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
 
 	layer->offset.x = -drawXOffset;
 	layer->offset.y = -drawYOffset;
+
+	frameInfo->focusedWindowScale = { 1.0f / baseScaleRatio_x, 1.0f / baseScaleRatio_y };
+	frameInfo->focusedWindowOffset = { float( -baseXOffset ), float( -baseYOffset ) };
 
 	layer->blackBorder = flags & PaintWindowFlag::DrawBorders;
 
@@ -2511,6 +2542,10 @@ paint_window(global_focus_t *pFocus, steamcompmgr_win_t *w, steamcompmgr_win_t *
 		basePlane.scale[1] = layer->scale.y;
 		basePlane.offset[0] = layer->offset.x;
 		basePlane.offset[1] = layer->offset.y;
+		basePlane.windowScale[0] = frameInfo->focusedWindowScale.x;
+		basePlane.windowScale[1] = frameInfo->focusedWindowScale.y;
+		basePlane.windowOffset[0] = frameInfo->focusedWindowOffset.x;
+		basePlane.windowOffset[1] = frameInfo->focusedWindowOffset.y;
 		basePlane.opacity = layer->opacity;
 		basePlane.filter = layer->filter;
 		basePlane.eAlphaBlendingMode = layer->eAlphaBlendingMode;
@@ -2549,10 +2584,10 @@ static void update_touch_scaling( const struct FrameInfo_t *frameInfo )
 	if ( !frameInfo->layers.count() )
 		return;
 
-	focusedWindowScaleX = frameInfo->layers.get( frameInfo->layers.count() - 1 ).scale.x;
-	focusedWindowScaleY = frameInfo->layers.get( frameInfo->layers.count() - 1 ).scale.y;
-	focusedWindowOffsetX = frameInfo->layers.get( frameInfo->layers.count() - 1 ).offset.x;
-	focusedWindowOffsetY = frameInfo->layers.get( frameInfo->layers.count() - 1 ).offset.y;
+	focusedWindowScaleX = frameInfo->focusedWindowScale.x;
+	focusedWindowScaleY = frameInfo->focusedWindowScale.y;
+	focusedWindowOffsetX = frameInfo->focusedWindowOffset.x;
+	focusedWindowOffsetY = frameInfo->focusedWindowOffset.y;
 }
 
 #if HAVE_PIPEWIRE
