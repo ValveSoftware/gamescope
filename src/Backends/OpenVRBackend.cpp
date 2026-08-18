@@ -396,6 +396,7 @@ namespace gamescope
         bool ConsumeNudgeToVisible() { return std::exchange( m_bNudgeToVisible, false ); }
         bool IsRelativeMouse() const { return m_bRelativeMouse; }
         void UpdateCursorOverride( const FrameInfo_t::Layer_t *pCursorLayer );
+        gamescope::Rc<CVulkanTexture> GetCompositeTarget();
 
         // Thread safe.
         bool IsVisible() const
@@ -436,6 +437,11 @@ namespace gamescope
         bool m_bWasVisible = false; // Event thread only
         std::atomic<bool> m_bOverlayShown = { false };
         std::atomic<bool> m_bSceneAppVisible = { false };
+
+        // Composite targets, a shared rotation would recycle an image another connector still shows. Steamcompmgr thread only.
+        std::vector<gamescope::OwningRc<CVulkanTexture>> m_pCompositeImages;
+        uint32_t m_uNextCompositeImage = 0;
+        bool m_bWarnedCompositeExhaustion = false;
 
         bool m_bForbidTouchMode = false;
     };
@@ -1676,6 +1682,54 @@ namespace gamescope
         }
     }
 
+    gamescope::Rc<CVulkanTexture> COpenVRConnector::GetCompositeTarget()
+    {
+        if ( m_pCompositeImages.size() )
+        {
+            if ( m_pCompositeImages[0]->width() != g_nOutputWidth ||
+                 m_pCompositeImages[0]->height() != g_nOutputHeight ||
+                 m_pCompositeImages[0]->drmFormat() != g_output.uOutputFormat )
+            {
+                m_pCompositeImages.clear();
+                m_uNextCompositeImage = 0;
+            }
+        }
+
+        // Round robin so a slot rests as long as possible, SteamVR can still be sampling a freed one.
+        for ( size_t i = 0; i < m_pCompositeImages.size(); i++ )
+        {
+            gamescope::OwningRc<CVulkanTexture> &pImage =
+                m_pCompositeImages[ ( m_uNextCompositeImage + i ) % m_pCompositeImages.size() ];
+            if ( !pImage->IsInUse() )
+            {
+                m_uNextCompositeImage = ( m_uNextCompositeImage + i + 1 ) % m_pCompositeImages.size();
+                return pImage;
+            }
+        }
+
+        // The target, the plane's queued and visible pair, and one resting.
+        if ( m_pCompositeImages.size() < 4 )
+        {
+            gamescope::OwningRc<CVulkanTexture> pTexture = new CVulkanTexture();
+
+            CVulkanTexture::createFlags imageFlags;
+            imageFlags.bFlippable = true;
+            imageFlags.bStorage = true;
+            imageFlags.bSampled = true;
+
+            if ( !pTexture->BInit( g_nOutputWidth, g_nOutputHeight, 1u, g_output.uOutputFormat, imageFlags ) )
+                return nullptr;
+
+            m_pCompositeImages.push_back( std::move( pTexture ) );
+            return m_pCompositeImages.back();
+        }
+
+        // Every image is still referenced, the shared images at least keep the frame.
+        if ( !std::exchange( m_bWarnedCompositeExhaustion, true ) )
+            openvr_log.warnf( "No composite image free, using the shared output images" );
+        return nullptr;
+    }
+
     int COpenVRConnector::Present( const FrameInfo_t *pFrameInfo, bool bAsync )
     {
         bool bNeedsFullComposite = false;
@@ -1710,6 +1764,9 @@ namespace gamescope
 
         if ( !bNeedsFullComposite )
         {
+            m_pCompositeImages.clear();
+            m_uNextCompositeImage = 0;
+
             bool bNeedsBacking = true;
             if ( pFrameInfo->layers.count() >= 1 )
             {
@@ -1764,7 +1821,8 @@ namespace gamescope
             }
             UpdateCursorOverride( pCursorLayer );
 
-            std::optional oCompositeResult = vulkan_composite( &trimmedFrameInfo, nullptr, false );
+            gamescope::Rc<CVulkanTexture> pCompositeTarget = GetCompositeTarget();
+            std::optional oCompositeResult = vulkan_composite( &trimmedFrameInfo, nullptr, false, pCompositeTarget );
             if ( !oCompositeResult )
             {
                 openvr_log.errorf( "vulkan_composite failed" );
@@ -1779,7 +1837,7 @@ namespace gamescope
             compositeLayer.opacity = 1.0;
             compositeLayer.zpos = g_zposBase;
 
-            compositeLayer.tex = vulkan_get_last_output_image( false, false );
+            compositeLayer.tex = pCompositeTarget != nullptr ? pCompositeTarget : vulkan_get_last_output_image( false, false );
             compositeLayer.applyColorMgmt = false;
 
             compositeLayer.filter = GamescopeUpscaleFilter::NEAREST;
