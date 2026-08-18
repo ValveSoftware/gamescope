@@ -860,6 +860,10 @@ struct BaseLayerInfo_t
 	// back up. The layer filter above may have been downgraded from these.
 	GamescopeUpscaleFilter eUpscaleFilter = GamescopeUpscaleFilter::LINEAR;
 	GamescopeUpscaleScaler eUpscaleScaler = GamescopeUpscaleScaler::AUTO;
+	// The output size the transform was computed for, so a replay after a mode
+	// change recomputes rather than applying a stale mapping.
+	uint32_t uOutputWidth = 0;
+	uint32_t uOutputHeight = 0;
 	AlphaBlendingMode_t eAlphaBlendingMode = ALPHA_BLENDING_MODE_PREMULTIPLIED;
 };
 
@@ -2269,10 +2273,24 @@ paint_cached_base_layer(const gamescope::Rc<commit_t>& commit, const BaseLayerIn
 	layer->filter = base.filter;
 	if ( layer->tex == commit->vulkanTex )
 	{
-		layer->scale.x = base.windowScale[0];
-		layer->scale.y = base.windowScale[1];
-		layer->offset.x = base.windowOffset[0];
-		layer->offset.y = base.windowOffset[1];
+		if ( base.uOutputWidth == currentOutputWidth && base.uOutputHeight == currentOutputHeight )
+		{
+			layer->scale.x = base.windowScale[0];
+			layer->scale.y = base.windowScale[1];
+			layer->offset.x = base.windowOffset[0];
+			layer->offset.y = base.windowOffset[1];
+		}
+		else
+		{
+			// The output changed size since this transform was cached, so refit
+			// the texture to it rather than replaying the stale mapping.
+			float flScaleX = 1.0f, flScaleY = 1.0f;
+			calc_scale_factor( base.eUpscaleScaler, flScaleX, flScaleY, layer->tex->width(), layer->tex->height() );
+			layer->scale.x = 1.0f / flScaleX;
+			layer->scale.y = 1.0f / flScaleY;
+			layer->offset.x = -( ( (int)currentOutputWidth - (int)layer->tex->width() * flScaleX ) / 2.0f );
+			layer->offset.y = -( ( (int)currentOutputHeight - (int)layer->tex->height() * flScaleY ) / 2.0f );
+		}
 		frameInfo->focusedWindowScale = { layer->scale.x, layer->scale.y };
 		frameInfo->focusedWindowOffset = { layer->offset.x, layer->offset.y };
 	}
@@ -2560,6 +2578,8 @@ paint_window(global_focus_t *pFocus, steamcompmgr_win_t *w, steamcompmgr_win_t *
 		basePlane.filter = layer->filter;
 		basePlane.eUpscaleFilter = frameInfo->eUpscaleFilter;
 		basePlane.eUpscaleScaler = frameInfo->eUpscaleScaler;
+		basePlane.uOutputWidth = currentOutputWidth;
+		basePlane.uOutputHeight = currentOutputHeight;
 		basePlane.eAlphaBlendingMode = layer->eAlphaBlendingMode;
 
 		pFocus->CachedPlanes[ HELD_COMMIT_BASE ] = basePlane;
