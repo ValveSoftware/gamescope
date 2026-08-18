@@ -337,6 +337,10 @@ create_color_mgmt_luts(const gamescope_color_mgmt_t& newColorMgmt, gamescope_col
 		if (!outColorMgmtLuts[nInputEOTF].vk_lut3d)
 			outColorMgmtLuts[nInputEOTF].vk_lut3d = vulkan_create_3d_lut(s_nLutEdgeSize3d, s_nLutEdgeSize3d, s_nLutEdgeSize3d);
 
+		// FIXME: an override bypasses the backlight LUT gain below, so with a
+		// calibration LUT loaded, SDR content stays at full brightness while
+		// HDR content dims. Night mode and looks are already bypassed the
+		// same way.
 		if ( g_ColorMgmtLutsOverride[nInputEOTF].HasLuts() )
 		{
 			memcpy(g_ColorMgmtLuts[nInputEOTF].lut1d, g_ColorMgmtLutsOverride[nInputEOTF].lut1d, sizeof(g_ColorMgmtLutsOverride[nInputEOTF].lut1d));
@@ -422,6 +426,9 @@ create_color_mgmt_luts(const gamescope_color_mgmt_t& newColorMgmt, gamescope_col
 				buildPQColorimetry( &inputColorimetry, &colorMapping, displayColorimetry );
 			}
 
+			// Software backlight dim, only ever != 1 on PQ outputs.
+			flGain *= newColorMgmt.flBacklightLutGain;
+
 			calcColorTransform<s_nLutEdgeSize3d>( &g_tmpLut1d, s_nLutSize1d, &g_tmpLut3d, inputColorimetry, inputEOTF,
 				outputEncodingColorimetry, newColorMgmt.outputEncodingEOTF,
 				newColorMgmt.outputVirtualWhite, newColorMgmt.chromaticAdaptationMode,
@@ -459,12 +466,167 @@ bool g_bVRRInUse_CachedValue = false;
 bool g_bSupportsHDR_CachedValue = false;
 bool g_bForceHDR10OutputDebug = false;
 gamescope::ConVar<bool> cv_hdr_enabled{ "hdr_enabled", false, "Whether or not HDR is enabled if it is available." };
+gamescope::ConVar<bool> cv_hdr_content_driven{ "hdr_content_driven", false, "Only drive a panel in HDR while an HDR app is running." };
 bool g_bHDRItmEnable = false;
 int g_nCurrentRefreshRate_CachedValue = 0;
+
+gamescope::ConVar<bool> cv_hdr_software_backlight{ "hdr_software_backlight", false, "Follow the panel backlight in software while the output is in PQ, regardless of the display script." };
+
+static bool BacklightDimEnabled()
+{
+	gamescope::IBackendConnector *pConn = GetBackend()->GetCurrentConnector();
+	return cv_hdr_software_backlight || ( pConn && pConn->GetHDRInfo().bSoftwareBacklight );
+}
+
+// Watches the panel backlight over sysfs. The kernel raises EPOLLPRI on
+// actual_brightness for every change, so Steam's slider is followed without
+// polling. steamcompmgr thread only.
+class CBacklightWatcher final : public gamescope::IWaitable
+{
+public:
+	~CBacklightWatcher()
+	{
+		if ( m_nFD >= 0 )
+			close( m_nFD );
+	}
+
+	bool Init()
+	{
+		// Prefer the internal panel's device if there are several, and pick
+		// the lowest name so the choice is stable across boots.
+		std::string sDevice;
+		std::error_code ec;
+		for ( const auto &entry : std::filesystem::directory_iterator( "/sys/class/backlight", ec ) )
+		{
+			std::string sName = entry.path().filename().string();
+			bool bPreferred = sName.starts_with( "amdgpu_bl" );
+			bool bHavePreferred = sDevice.starts_with( "amdgpu_bl" );
+			if ( sDevice.empty() || ( bPreferred && !bHavePreferred ) || ( bPreferred == bHavePreferred && sName < sDevice ) )
+				sDevice = sName;
+		}
+
+		if ( sDevice.empty() )
+			return false;
+
+		std::string sBase = "/sys/class/backlight/" + sDevice;
+		m_nMaxBrightness = ReadSysfsInt( ( sBase + "/max_brightness" ).c_str() );
+		if ( m_nMaxBrightness <= 0 )
+			return false;
+
+		m_nFD = open( ( sBase + "/actual_brightness" ).c_str(), O_RDONLY | O_CLOEXEC );
+		if ( m_nFD < 0 )
+			return false;
+
+		m_flFactor = ReadFactor();
+		// The first read may have failed and closed the fd.
+		if ( !IsValid() )
+			return false;
+
+		xwm_log.debugf( "Software backlight: watching %s, max brightness %d", sDevice.c_str(), m_nMaxBrightness );
+		return true;
+	}
+
+	int GetFD() final { return m_nFD; }
+	void OnPollPri() final
+	{
+		float flFactor = ReadFactor();
+		if ( flFactor == m_flFactor )
+			return;
+
+		m_flFactor = flFactor;
+
+		if ( BacklightDimEnabled() )
+			hasRepaint = true;
+	}
+
+	// kernfs never raises EPOLLHUP today, but if it ever does, drop the fd
+	// rather than aborting or spinning on the level-triggered event.
+	void OnPollHangUp() final
+	{
+		Disable();
+	}
+
+	bool IsValid() const { return m_nFD >= 0; }
+	float GetFactor() const { return m_flFactor; }
+
+private:
+	// Closing also removes the fd from the epoll set. Repaint so a dim
+	// currently on screen gets restored to unity gain.
+	void Disable()
+	{
+		if ( m_nFD < 0 )
+			return;
+
+		close( m_nFD );
+		m_nFD = -1;
+		hasRepaint = true;
+	}
+
+	static int ReadSysfsInt( const char *pszPath )
+	{
+		FILE *pFile = fopen( pszPath, "r" );
+		if ( !pFile )
+			return -1;
+
+		int nValue = -1;
+		if ( fscanf( pFile, "%d", &nValue ) != 1 )
+			nValue = -1;
+		fclose( pFile );
+		return nValue;
+	}
+
+	// Reads actual_brightness, which also consumes the pending poll event.
+	float ReadFactor()
+	{
+		char szBuf[32];
+		lseek( m_nFD, 0, SEEK_SET );
+		ssize_t nRead = read( m_nFD, szBuf, sizeof( szBuf ) - 1 );
+		if ( nRead <= 0 )
+		{
+			if ( nRead < 0 && errno == EINTR )
+				return m_flFactor;
+
+			// A dead node reports EPOLLERR forever, drop it before it spins us.
+			Disable();
+			return m_flFactor;
+		}
+		szBuf[nRead] = '\0';
+
+		return std::clamp( (float)strtol( szBuf, nullptr, 10 ) / (float)m_nMaxBrightness, 0.0f, 1.0f );
+	}
+
+	int m_nFD = -1;
+	int m_nMaxBrightness = -1;
+	float m_flFactor = 1.0f;
+};
+
+static CBacklightWatcher g_BacklightWatcher;
+
+static void UpdateBacklightDim()
+{
+	float flGain = 1.0f;
+
+	// Gate on the HDR state for the frame being built, not the possibly
+	// stale pending output EOTF, so HDR transitions never mis-dim a frame.
+	gamescope::IBackendConnector *pConn = GetBackend()->GetCurrentConnector();
+	if ( BacklightDimEnabled() &&
+	     g_ColorMgmt.pending.enabled &&
+	     g_bOutputHDREnabled &&
+	     pConn && pConn->GetHDRInfo().IsHDR10() &&
+	     g_BacklightWatcher.IsValid() )
+	{
+		// Never dim fully to black.
+		flGain = std::clamp( g_BacklightWatcher.GetFactor(), 0.01f, 1.0f );
+	}
+
+	g_ColorMgmt.pending.flBacklightLutGain = flGain;
+}
 
 static void
 update_color_mgmt()
 {
+	UpdateBacklightDim();
+
 	if ( !GetBackend()->GetCurrentConnector() )
 		return;
 
@@ -894,6 +1056,7 @@ uint32_t		currentOutputWidth, currentOutputHeight;
 int 			currentOutputRefresh;
 uint32_t		currentOutputRotation = 0;
 bool			currentHDROutput = false;
+bool			currentHDRCapable = false;
 bool			currentHDRForce = false;
 
 std::vector< uint32_t > vecFocuscontrolAppIDs;
@@ -8472,6 +8635,9 @@ steamcompmgr_main(int argc, char **argv)
 	g_SteamCompMgrWaiter.AddWaitable( &g_FPSLimitVRRTimer );
 	GetVBlankTimer().ArmNextVBlank( true );
 
+	if ( g_BacklightWatcher.Init() )
+		g_SteamCompMgrWaiter.AddWaitable( &g_BacklightWatcher, EPOLLPRI );
+
 	{
 		gamescope_xwayland_server_t *pServer = NULL;
 		for (size_t i = 0; (pServer = wlserver_get_xwayland_server(i)); i++)
@@ -8729,7 +8895,37 @@ steamcompmgr_main(int argc, char **argv)
 
 		g_uCompositeDebug = cv_composite_debug;
 
-		g_bOutputHDREnabled = (g_bSupportsHDR_CachedValue || g_bForceHDR10OutputDebug) && cv_hdr_enabled;
+		// Capability is advertised to clients regardless of the live "active"
+		// state below, so games can request HDR while the panel is idling in SDR.
+		const bool bOutputHDRCapable = (g_bSupportsHDR_CachedValue || g_bForceHDR10OutputDebug) && cv_hdr_enabled;
+
+		{
+			gamescope::IBackendConnector *pConn = GetBackend()->GetCurrentConnector();
+			const bool bContentDriven = bOutputHDRCapable && !g_bForceHDR10OutputDebug &&
+				( cv_hdr_content_driven ||
+				  ( pConn && pConn->GetHDRInfo().bContentDrivenHDR ) );
+
+			bool bActive = bOutputHDRCapable;
+			if ( bContentDriven )
+			{
+				// Track any live window, not just the focused one, so browsing the
+				// Steam UI over a running HDR game does not bounce the panel through
+				// a modeset on every focus change.
+				bActive = false;
+				for ( steamcompmgr_win_t *pWin : GetGlobalPossibleFocusWindows() )
+				{
+					commit_t *pCommit = get_window_last_done_commit_peek( pWin );
+					if ( pCommit && ColorspaceIsHDR( pCommit->colorspace() ) )
+					{
+						bActive = true;
+						break;
+					}
+				}
+			}
+			if ( bActive != g_bOutputHDREnabled )
+				xwm_log.infof( "HDR output %s%s", bActive ? "enabled" : "disabled", bContentDriven ? " (hdr_content_driven)" : "" );
+			g_bOutputHDREnabled = bActive;
+		}
 
 		// Pick our width/height for this potential frame, regardless of how it might change later
 		// At some point we might even add proper locking so we get real updates atomically instead
@@ -8739,6 +8935,7 @@ steamcompmgr_main(int argc, char **argv)
 			 currentOutputRefresh != g_nOutputRefresh ||
 			 currentOutputRotation != g_uOutputRotation ||
 			 currentHDROutput != g_bOutputHDREnabled ||
+			 currentHDRCapable != bOutputHDRCapable ||
 			 currentHDRForce != g_bForceHDRSupportDebug )
 		{
 			if ( g_nXWaylandCount > 1 )
@@ -8768,7 +8965,7 @@ steamcompmgr_main(int argc, char **argv)
 				gamescope_xwayland_server_t *server = NULL;
 				for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
 				{
-					uint32_t hdr_value = ( g_bOutputHDREnabled || g_bForceHDRSupportDebug ) ? 1 : 0;
+					uint32_t hdr_value = ( bOutputHDRCapable || g_bForceHDRSupportDebug ) ? 1 : 0;
 					XChangeProperty(server->ctx->dpy, server->ctx->root, server->ctx->atoms.gamescopeHDROutputFeedback, XA_CARDINAL, 32, PropModeReplace,
 						(unsigned char *)&hdr_value, 1 );
 
@@ -8790,6 +8987,7 @@ steamcompmgr_main(int argc, char **argv)
 			currentOutputRefresh = g_nOutputRefresh;
 			currentOutputRotation = g_uOutputRotation;
 			currentHDROutput = g_bOutputHDREnabled;
+			currentHDRCapable = bOutputHDRCapable;
 			currentHDRForce = g_bForceHDRSupportDebug;
 
 #if HAVE_PIPEWIRE
