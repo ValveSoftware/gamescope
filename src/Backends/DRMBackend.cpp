@@ -32,6 +32,7 @@
 #include "color_helpers.h"
 #include "Utils/Defer.h"
 #include "Utils/Parsers.h"
+#include "Utils/String.h"
 #include "drm_include.h"
 #include "edid.h"
 #include "gamescope_shared.h"

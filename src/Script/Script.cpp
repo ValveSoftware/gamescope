@@ -3,6 +3,7 @@
 #include "color_helpers.h"
 #include "../log.hpp"
 #include "Utils/DirHelpers.h"
+#include "Utils/String.h"
 
 #include <filesystem>
 #include <algorithm>

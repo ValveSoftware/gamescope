@@ -1,9 +1,9 @@
 #include "Process.h"
-#include "../convar.h"
 #include "../log.hpp"
 #include "../Utils/Algorithm.h"
 #include "../Utils/Defer.h"
 #include "../Utils/Parsers.h"
+#include "../Utils/String.h"
 
 #include <algorithm>
 #include <array>

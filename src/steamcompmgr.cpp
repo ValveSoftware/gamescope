@@ -99,6 +99,7 @@
 #include "Utils/Algorithm.h"
 #include "Utils/Parsers.h"
 #include "Utils/Process.h"
+#include "Utils/String.h"
 
 #include "wlr_begin.hpp"
 #include "wlr/types/wlr_pointer_constraints_v1.h"
