@@ -23,6 +23,9 @@ void steamcompmgr_main(int argc, char **argv);
 
 #include <mutex>
 #include <vector>
+#include <memory>
+#include <string>
+#include <unordered_map>
 
 #include <X11/extensions/Xfixes.h>
 
@@ -136,7 +139,25 @@ extern uint64_t g_lastWinSeq;
 void nudge_steamcompmgr( void );
 void force_repaint( void );
 
-extern void mangoapp_update( uint64_t visible_frametime, uint64_t app_frametime_ns, uint64_t latency_ns );
+// Per-connector stat snapshot for typed mangoapp streams.
+struct MangoappSnapshot_t
+{
+	pid_t nPid = 0;
+	bool bFSRActive = false;
+	uint8_t uFSRSharpness = 0;
+	std::shared_ptr<std::string> pEngineName;
+	bool bSteamFocused = false;
+	bool bAppWantsHDR = false;
+	uint32_t uOutputWidth = 0;
+	uint32_t uOutputHeight = 0;
+	int nOutputRefreshmHz = 0;
+};
+
+static constexpr uint32_t k_uMangoappLegacyMsgType = 1;
+
+extern void mangoapp_update( uint64_t visible_frametime, uint64_t app_frametime_ns, uint64_t latency_ns, uint32_t uMsgType = k_uMangoappLegacyMsgType );
+extern void mangoapp_nudge_app_frame( uint32_t uMsgType, uint64_t ulNow );
+extern void mangoapp_set_connector_snapshots( std::unordered_map<uint32_t, MangoappSnapshot_t> snapshots );
 struct wlr_surface *steamcompmgr_get_server_input_surface( size_t idx );
 wlserver_vk_swapchain_feedback* steamcompmgr_get_base_layer_swapchain_feedback();
 
