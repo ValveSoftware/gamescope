@@ -109,6 +109,7 @@ struct xwayland_ctx_t final : public gamescope::IWaitable
 		Atom gameAtom;
 		Atom overlayAtom;
 		Atom externalOverlayAtom;
+		Atom mangoappMsgTypeAtom;
 		Atom gamesRunningAtom;
 		Atom screenZoomAtom;
 		Atom screenScaleAtom;
