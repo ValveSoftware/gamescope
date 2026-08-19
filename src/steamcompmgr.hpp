@@ -154,10 +154,22 @@ struct MangoappSnapshot_t
 };
 
 static constexpr uint32_t k_uMangoappLegacyMsgType = 1;
+// mangohudctl posts control messages here.
+static constexpr uint32_t k_uMangoappControlMsgType = 2;
+// Per-connector streams allocate upward from here, in stream/control pairs.
+static constexpr uint32_t k_uMangoappFirstConnectorMsgType = 100;
+
+// mangoapp derives the same type, so both sides must agree on it.
+static constexpr uint32_t MangoappControlMsgType( uint32_t uMsgType )
+{
+	return uMsgType + 1;
+}
+static_assert( MangoappControlMsgType( k_uMangoappLegacyMsgType ) == k_uMangoappControlMsgType );
 
 extern void mangoapp_update( uint64_t visible_frametime, uint64_t app_frametime_ns, uint64_t latency_ns, uint32_t uMsgType = k_uMangoappLegacyMsgType );
 extern void mangoapp_nudge_app_frame( uint32_t uMsgType, uint64_t ulNow );
 extern void mangoapp_set_connector_snapshots( std::unordered_map<uint32_t, MangoappSnapshot_t> snapshots );
+extern void mangoapp_drop_stream( uint32_t uMsgType );
 struct wlr_surface *steamcompmgr_get_server_input_surface( size_t idx );
 wlserver_vk_swapchain_feedback* steamcompmgr_get_base_layer_swapchain_feedback();
 

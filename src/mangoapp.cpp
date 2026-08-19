@@ -47,6 +47,37 @@ void init_mangoapp(){
     inited = true;
 }
 
+static std::mutex s_FrameTimeMutex;
+static std::unordered_map<uint32_t, uint64_t> s_LastFrameTimes;
+
+// A queue message, mtype first, sized past any control message mangoapp defines.
+struct MangoappRawMsg_t
+{
+    long mtype;
+    uint8_t data[1016];
+};
+
+// The queue outlives gamescope and types start over every run, so leave nothing behind.
+void mangoapp_drop_stream( uint32_t uMsgType )
+{
+    if (!inited)
+        init_mangoapp();
+
+    {
+        // Ahead of the drain, so commits finishing later find nothing to send.
+        std::unique_lock lock( s_SnapshotMutex );
+        s_ConnectorSnapshots.erase( uMsgType );
+    }
+
+    MangoappRawMsg_t rawMsg;
+    for (uint32_t uType : { uMsgType, MangoappControlMsgType(uMsgType) })
+        while (msgrcv(msgid, &rawMsg, sizeof(rawMsg.data), uType, IPC_NOWAIT | MSG_NOERROR) >= 0)
+            ;
+
+    std::unique_lock lock( s_FrameTimeMutex );
+    s_LastFrameTimes.erase( uMsgType );
+}
+
 void mangoapp_set_connector_snapshots( std::unordered_map<uint32_t, MangoappSnapshot_t> snapshots )
 {
     std::unique_lock lock( s_SnapshotMutex );
@@ -103,9 +134,6 @@ void mangoapp_update( uint64_t visible_frametime, uint64_t app_frametime_ns, uin
 
 void mangoapp_nudge_app_frame( uint32_t uMsgType, uint64_t ulNow )
 {
-    static std::mutex s_FrameTimeMutex;
-    static std::unordered_map<uint32_t, uint64_t> s_LastFrameTimes;
-
     uint64_t frametime;
     {
         std::unique_lock lock( s_FrameTimeMutex );
