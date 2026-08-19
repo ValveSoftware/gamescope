@@ -824,12 +824,7 @@ public:
 	void wait(uint64_t sequence, bool reset = true);
 	void waitIdle(bool reset = true);
 	void garbageCollect();
-	inline VkDescriptorSet descriptorSet()
-	{
-		VkDescriptorSet ret = m_descriptorSets[m_currentDescriptorSet];
-		m_currentDescriptorSet = (m_currentDescriptorSet + 1) % m_descriptorSets.size();
-		return ret;
-	}
+	VkDescriptorSet descriptorSet( CVulkanCmdBuffer *pCmdBuffer );
 
 	std::shared_ptr<VulkanTimelineSemaphore_t> CreateTimelineSemaphore( uint64_t ulStartingPoint, bool bShared = false );
 	std::shared_ptr<VulkanTimelineSemaphore_t> ImportTimelineSemaphore( gamescope::CTimeline *pTimeline );
@@ -928,10 +923,9 @@ protected:
 
 	static constexpr uint32_t k_uMaxConcurrentSubmits = 8;
 
-	// currently just one set, no need to double buffer because we
-	// vkQueueWaitIdle after each submit.
-	// should be moved to the output if we are going to support multiple outputs
+	// Round robin, each set stamped with the last submission that reads it.
 	std::array<VkDescriptorSet, k_uMaxConcurrentSubmits * 3> m_descriptorSets;
+	std::array<uint64_t, k_uMaxConcurrentSubmits * 3> m_descriptorSetSeqNos{};
 	uint32_t m_currentDescriptorSet = 0;
 
 	VkBuffer m_uploadBuffer;
@@ -1012,6 +1006,9 @@ public:
 	const std::vector<VulkanTimelinePoint_t> &GetExternalDependencies() const { return m_ExternalDependencies; }
 	const std::vector<VulkanTimelinePoint_t> &GetExternalSignals() const { return m_ExternalSignals; }
 
+	void AddDescriptorSet( uint32_t uIndex ) { m_usedDescriptorSets.push_back( uIndex ); }
+	const std::vector<uint32_t> &GetUsedDescriptorSets() const { return m_usedDescriptorSets; }
+
 private:
 	VkCommandBuffer m_cmdBuffer;
 	CVulkanDevice *m_device;
@@ -1021,6 +1018,7 @@ private:
 
 	// Per Use State
 	std::vector<gamescope::Rc<CVulkanTexture>> m_textureRefs;
+	std::vector<uint32_t> m_usedDescriptorSets;
 	std::unordered_map<CVulkanTexture *, TextureState> m_textureState;
 
 	// Draw State
