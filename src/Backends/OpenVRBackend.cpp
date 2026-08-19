@@ -2133,10 +2133,12 @@ namespace gamescope
             m_sDashboardOverlayKey = sOverlayKey;
             openvr_log.debugf( "Creating new dashboard overlay: %s", m_sDashboardOverlayKey.c_str() );
 
-            vr::VROverlay()->CreateDashboardOverlay(
+            vr::EVROverlayError err = vr::VROverlay()->CreateDashboardOverlay(
                 sOverlayKey.c_str(),
                 m_pBackend->GetOverlayName(),
                 &m_hOverlay, &m_hOverlayThumbnail );
+            if ( err != vr::VROverlayError_None )
+                openvr_log.errorf( "Failed to create dashboard overlay %s: %s", sOverlayKey.c_str(), vr::VROverlay()->GetOverlayErrorNameFromEnum( err ) );
 
             vr::VROverlay()->SetOverlayFlag( m_hOverlay, vr::VROverlayFlags_EnableControlBar,		  m_pBackend->ShouldEnableControlBar() || bExplicitNonSteam );
             vr::VROverlay()->SetOverlayFlag( m_hOverlay, vr::VROverlayFlags_EnableControlBarKeyboard, m_pBackend->ShouldEnableControlBarKeyboard() || bExplicitNonSteam );
@@ -2162,7 +2164,9 @@ namespace gamescope
         else
         {
             std::string szSubviewName = sOverlayKey + std::string(".layer") + std::to_string( m_uSortOrder );
-            vr::VROverlay()->CreateSubviewOverlay( pParent->GetOverlay(), szSubviewName.c_str(), "Gamescope Layer", &m_hOverlay );
+            vr::EVROverlayError err = vr::VROverlay()->CreateSubviewOverlay( pParent->GetOverlay(), szSubviewName.c_str(), "Gamescope Layer", &m_hOverlay );
+            if ( err != vr::VROverlayError_None )
+                openvr_log.errorf( "Failed to create subview overlay %s: %s", szSubviewName.c_str(), vr::VROverlay()->GetOverlayErrorNameFromEnum( err ) );
         }
 
         vr::VROverlay()->SetOverlayFlag( m_hOverlay, vr::VROverlayFlags_EnableClickStabilization, m_pBackend->ShouldEnableClickStabilization() );
