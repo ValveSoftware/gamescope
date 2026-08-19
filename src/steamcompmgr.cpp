@@ -876,6 +876,7 @@ struct global_focus_t : public focus_t
 	// Cleanup for the previous pre-emptive upscale, kept a frame behind.
 	std::optional<uint64_t> oLastPreemptiveUpscaleSeqNo;
 	std::vector<TempUpscaleImage_t> UpscaleImages;
+	uint32_t uNextUpscaleImage = 0;
 
 	std::array< gamescope::Rc<commit_t>, HELD_COMMIT_COUNT > HeldCommits;
 	std::array< BaseLayerInfo_t, HELD_COMMIT_COUNT > CachedPlanes = {};
@@ -7737,6 +7738,7 @@ void force_repaint( void )
 static void ClearUpscaleImages( global_focus_t *pFocus )
 {
 	pFocus->UpscaleImages.clear();
+	pFocus->uNextUpscaleImage = 0;
 }
 
 static TempUpscaleImage_t *GetTempUpscaleImage( global_focus_t *pFocus, uint32_t uWidth, uint32_t uHeight, uint32_t uDrmFormat )
@@ -7750,13 +7752,20 @@ static TempUpscaleImage_t *GetTempUpscaleImage( global_focus_t *pFocus, uint32_t
 			 pFocus->UpscaleImages[0].pTexture->drmFormat() != uDrmFormat )
 		{
 			pFocus->UpscaleImages.clear();
+			pFocus->uNextUpscaleImage = 0;
 		}
 	}
 
-	for ( TempUpscaleImage_t &image : pFocus->UpscaleImages )
+	// Round robin so a slot rests as long as possible, SteamVR can still be sampling a freed one.
+	for ( size_t i = 0; i < pFocus->UpscaleImages.size(); i++ )
 	{
+		size_t uIndex = ( pFocus->uNextUpscaleImage + i ) % pFocus->UpscaleImages.size();
+		TempUpscaleImage_t &image = pFocus->UpscaleImages[ uIndex ];
 		if ( !image.pTexture->IsInUse() )
+		{
+			pFocus->uNextUpscaleImage = ( uIndex + 1 ) % pFocus->UpscaleImages.size();
 			return &image;
+		}
 	}
 
 	if ( pFocus->UpscaleImages.size() > 8 )
