@@ -170,6 +170,7 @@ extern void mangoapp_update( uint64_t visible_frametime, uint64_t app_frametime_
 extern void mangoapp_nudge_app_frame( uint32_t uMsgType, uint64_t ulNow );
 extern void mangoapp_set_connector_snapshots( std::unordered_map<uint32_t, MangoappSnapshot_t> snapshots );
 extern void mangoapp_drop_stream( uint32_t uMsgType );
+extern uint32_t mangoapp_relay_control( const std::vector<uint32_t> &msgTypes );
 struct wlr_surface *steamcompmgr_get_server_input_surface( size_t idx );
 wlserver_vk_swapchain_feedback* steamcompmgr_get_base_layer_swapchain_feedback();
 

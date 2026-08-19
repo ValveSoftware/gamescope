@@ -9204,6 +9204,42 @@ static void publish_mangoapp_connector_snapshots()
 	}
 }
 
+// mangohudctl posts one control message for every instance to act on.
+static void relay_mangoapp_control()
+{
+	if ( !GetBackend()->UsesVirtualConnectors() || s_MangoappInstances.empty() )
+		return;
+
+	// An untagged mangoapp reads the control type itself, so leave the queue alone.
+	if ( has_legacy_mangoapp_reader() )
+		return;
+
+	// One tag is enough to know these instances read a control type at all.
+	bool bAnyTagged = false;
+	for ( auto &iter : g_VirtualConnectorFocuses )
+	{
+		if ( iter.second.externalOverlayWindow && iter.second.externalOverlayWindow->uMangoappMsgType )
+		{
+			bAnyTagged = true;
+			break;
+		}
+	}
+	if ( !bAnyTagged )
+		return;
+
+	// Every spawned instance, one still starting finds the message when it reads.
+	std::vector<uint32_t> msgTypes;
+	msgTypes.reserve( s_MangoappInstances.size() );
+	for ( const auto &iter : s_MangoappInstances )
+		msgTypes.push_back( iter.second.uMsgType );
+
+	uint32_t uHeldBack = mangoapp_relay_control( msgTypes );
+	static bool s_bLoggedHeldBack = false;
+	if ( uHeldBack && !s_bLoggedHeldBack )
+		xwm_log.warnf( "Holding back %u mangoapp control message(s), the queue is full", uHeldBack );
+	s_bLoggedHeldBack = uHeldBack != 0;
+}
+
 void
 steamcompmgr_main(int argc, char **argv)
 {
@@ -10054,6 +10090,7 @@ steamcompmgr_main(int argc, char **argv)
 
 		publish_mangoapp_snapshot();
 		publish_mangoapp_connector_snapshots();
+		relay_mangoapp_control();
 
 		if ( bIsVBlankFromTimer )
 		{

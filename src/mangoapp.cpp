@@ -1,10 +1,12 @@
 #include <sys/ipc.h>
 #include <unistd.h>
 #include <sys/msg.h>
+#include <algorithm>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include "steamcompmgr.hpp"
 #include "refresh_rate.h"
@@ -82,6 +84,65 @@ void mangoapp_set_connector_snapshots( std::unordered_map<uint32_t, MangoappSnap
 {
     std::unique_lock lock( s_SnapshotMutex );
     s_ConnectorSnapshots = std::move( snapshots );
+}
+
+// Sends that did not fit, finished in order before the next message. Steamcompmgr thread only.
+struct MangoappPendingControl_t
+{
+    uint32_t uMsgType;
+    size_t size;
+    MangoappRawMsg_t msg;
+};
+static std::vector<MangoappPendingControl_t> s_PendingControl;
+
+// System V hands each message to one reader, so fan it out to every instance.
+// Returns how many sends are still waiting for room.
+uint32_t mangoapp_relay_control( const std::vector<uint32_t> &msgTypes )
+{
+    if (msgTypes.empty())
+        return 0;
+
+    if (!inited)
+        init_mangoapp();
+
+    // Finish the last fan-out first, so no instance sees commands out of order.
+    while (!s_PendingControl.empty())
+    {
+        const MangoappPendingControl_t &pending = s_PendingControl.front();
+        bool bConnectorGone = std::find(msgTypes.begin(), msgTypes.end(), pending.uMsgType) == msgTypes.end();
+        if (!bConnectorGone && msgsnd(msgid, &pending.msg, pending.size, IPC_NOWAIT) < 0)
+            return (uint32_t) s_PendingControl.size();
+        s_PendingControl.erase(s_PendingControl.begin());
+    }
+
+    uint32_t uDeferred = 0;
+    MangoappRawMsg_t rawMsg;
+    for (;;)
+    {
+        ssize_t size = msgrcv(msgid, &rawMsg, sizeof(rawMsg.data), k_uMangoappControlMsgType, IPC_NOWAIT | MSG_NOERROR);
+        if (size < 0)
+            break;
+
+        // Truncated, so fanning it out would hand every instance a corrupt message.
+        if (size == ssize_t(sizeof(rawMsg.data)))
+            continue;
+
+        // A type nobody reads yet holds the message until that instance starts.
+        for (uint32_t uMsgType : msgTypes)
+        {
+            rawMsg.mtype = MangoappControlMsgType(uMsgType);
+            // Once one send does not fit, hold the rest rather than deliver them ahead of it.
+            if (uDeferred || msgsnd(msgid, &rawMsg, size, IPC_NOWAIT) < 0)
+            {
+                s_PendingControl.push_back( MangoappPendingControl_t{ uMsgType, size_t(size), rawMsg } );
+                uDeferred++;
+            }
+        }
+
+        if (uDeferred)
+            break;
+    }
+    return uDeferred;
 }
 
 void mangoapp_update( uint64_t visible_frametime, uint64_t app_frametime_ns, uint64_t latency_ns, uint32_t uMsgType ) {
