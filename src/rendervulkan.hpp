@@ -142,6 +142,7 @@ public:
 			bExportable = false;
 			bOutputImage = false;
 			bColorAttachment = false;
+			bReadback = false;
 			imageType = VK_IMAGE_TYPE_2D;
 		}
 
@@ -155,6 +156,9 @@ public:
 		bool bExportable : 1;
 		bool bOutputImage : 1;
 		bool bColorAttachment : 1;
+		// Device-local image with a host-visible readback buffer. mappedData()
+		// and the plane offsets/pitches describe the buffer.
+		bool bReadback : 1;
 		VkImageType imageType;
 	};
 
@@ -191,6 +195,9 @@ public:
 	inline uint32_t lumaRowPitch() const { return m_lumaPitch; }
 	inline uint32_t chromaOffset() const { return m_chromaOffset; }
 	inline uint32_t chromaRowPitch() const { return m_chromaPitch; }
+
+	inline bool isReadback() const { return m_vkReadbackBuffer != VK_NULL_HANDLE; }
+	inline VkBuffer readbackBuffer() const { return m_vkReadbackBuffer; }
 
 	inline EStreamColorspace streamColorspace() const { return m_streamColorspace; }
 	inline void setStreamColorspace(EStreamColorspace colorspace) { m_streamColorspace = colorspace; }
@@ -232,6 +239,9 @@ private:
 
 	uint32_t m_unRowPitch = 0;
 	VkDeviceSize m_size = 0;
+
+	VkBuffer m_vkReadbackBuffer = VK_NULL_HANDLE;
+	VkDeviceMemory m_vkReadbackMemory = VK_NULL_HANDLE;
 
 	uint32_t m_lumaOffset = 0;
 	uint32_t m_lumaPitch = 0;
@@ -413,7 +423,8 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 void vulkan_wait( uint64_t ulSeqNo, bool bReset );
 gamescope::Rc<CVulkanTexture> vulkan_get_last_output_image( bool partial, bool defer );
 gamescope::Rc<CVulkanTexture> vulkan_acquire_screenshot_texture(uint32_t width, uint32_t height, bool exportable, uint32_t drmFormat, EStreamColorspace colorspace = k_EStreamColorspace_Unknown);
-gamescope::Rc<CVulkanTexture> vulkan_acquire_capture_texture(uint32_t width, uint32_t height, bool exportable, uint32_t drmFormat, EStreamColorspace colorspace = k_EStreamColorspace_Unknown);
+gamescope::Rc<CVulkanTexture> vulkan_acquire_capture_texture(uint32_t width, uint32_t height, bool exportable, uint32_t drmFormat, EStreamColorspace colorspace = k_EStreamColorspace_Unknown, bool bDeviceLocal = false);
+bool vulkan_capture_prefers_readback(void);
 uint32_t vulkan_get_rgb10_capture_format( void );
 
 void vulkan_present_to_window( void );
@@ -685,6 +696,7 @@ static inline uint32_t div_roundup(uint32_t x, uint32_t y)
 	VK_FUNC(CmdBindPipeline) \
 	VK_FUNC(CmdClearColorImage) \
 	VK_FUNC(CmdCopyBufferToImage) \
+	VK_FUNC(CmdCopyImageToBuffer) \
 	VK_FUNC(CmdCopyImage) \
 	VK_FUNC(CmdDispatch) \
 	VK_FUNC(CmdDraw) \
@@ -808,6 +820,7 @@ public:
 	inline bool hasDrmPrimaryDevId() {return m_bHasDrmPrimaryDevId;}
 	inline dev_t primaryDevId() {return m_drmPrimaryDevId;}
 	inline bool supportsFp16() {return m_bSupportsFp16;}
+	inline uint32_t vendorID() {return m_vendorID;}
 	inline std::vector<VkExtensionProperties>& supportedExtensions() {return m_supportedExts;}
 
 	inline std::pair<void *, uint32_t> uploadBufferData(uint32_t size)
@@ -865,6 +878,7 @@ protected:
 
 	uint32_t m_queueFamily = -1;
 	uint32_t m_generalQueueFamily = -1;
+	uint32_t m_vendorID = 0;
 
 	int m_drmRendererFd = -1;
 	dev_t m_drmPrimaryDevId = 0;
@@ -950,6 +964,7 @@ public:
 	void bindPipeline(VkPipeline pipeline);
 	void dispatch(uint32_t x, uint32_t y = 1, uint32_t z = 1);
 	void copyImage(gamescope::Rc<CVulkanTexture> src, gamescope::Rc<CVulkanTexture> dst);
+	void copyImageToReadback(gamescope::Rc<CVulkanTexture> src);
 	void copyBufferToImage(VkBuffer buffer, VkDeviceSize offset, uint32_t stride, gamescope::Rc<CVulkanTexture> dst);
 
 
