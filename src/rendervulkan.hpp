@@ -290,6 +290,8 @@ struct FrameInfo_t
 	gamescope::Rc<CVulkanTexture> lut3D[EOTF_Count];
 
 	bool allowVRR;
+	// Content identical to the previous present, eg. an adaptive sync idle hold.
+	bool bRepeatFrame;
 	bool applyOutputColorMgmt; // drm only
 	EOTF outputEncodingEOTF;
 
