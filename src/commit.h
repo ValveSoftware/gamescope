@@ -34,7 +34,7 @@ struct commit_t final : public gamescope::RcObject, public gamescope::IWaitable,
 
 	// Returns true if we had a fence that was closed.
 	bool CloseFenceInternal();
-	void SetFence( int nFence, bool bMangoNudge, CommitDoneList_t *pDoneCommits );
+	void SetFence( int nFence, bool bMangoNudge, uint32_t uMangoMsgType, CommitDoneList_t *pDoneCommits );
 
 	bool ShouldPreemptivelyUpscale( GamescopeUpscaleFilter eFilter, GamescopeUpscaleScaler eScaler );
 
@@ -79,5 +79,7 @@ struct commit_t final : public gamescope::RcObject, public gamescope::IWaitable,
 	std::mutex m_WaitableCommitStateMutex;
 	int m_nCommitFence = -1;
 	bool m_bMangoNudge = false;
+	// Typed mangoapp stream to nudge, 0 for none, never the legacy type.
+	uint32_t m_uMangoMsgType = 0;
 	CommitDoneList_t *m_pDoneCommits = nullptr; // I hate this
 };

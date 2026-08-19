@@ -69,14 +69,6 @@ void commit_t::Signal()
     uint64_t now = get_time_in_nanos();
     present_time = now;
 
-    uint64_t frametime;
-    if ( m_bMangoNudge )
-    {
-        static uint64_t lastFrameTime = now;
-        frametime = now - lastFrameTime;
-        lastFrameTime = now;
-    }
-
     // TODO: Move this so it's called in the main loop.
     // Instead of looping over all the windows like before.
     // When we get the new IWaitable stuff in there.
@@ -91,7 +83,9 @@ void commit_t::Signal()
     }
 
     if ( m_bMangoNudge )
-        mangoapp_update( uint64_t(~0ull), frametime, uint64_t(~0ull) );
+        mangoapp_nudge_app_frame( k_uMangoappLegacyMsgType, now );
+    if ( m_uMangoMsgType != 0 )
+        mangoapp_nudge_app_frame( m_uMangoMsgType, now );
 }
 
 void commit_t::OnPollHangUp()
@@ -118,13 +112,14 @@ bool commit_t::CloseFenceInternal()
     return true;
 }
 
-void commit_t::SetFence( int nFence, bool bMangoNudge, CommitDoneList_t *pDoneCommits )
+void commit_t::SetFence( int nFence, bool bMangoNudge, uint32_t uMangoMsgType, CommitDoneList_t *pDoneCommits )
 {
     std::unique_lock lock( m_WaitableCommitStateMutex );
     CloseFenceInternal();
 
     m_nCommitFence = nFence;
     m_bMangoNudge = bMangoNudge;
+    m_uMangoMsgType = uMangoMsgType;
     m_pDoneCommits = pDoneCommits;
 }
 
