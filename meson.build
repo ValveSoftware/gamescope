@@ -50,10 +50,23 @@ dep_x11 = dependency('x11')
 dep_wayland = dependency('wayland-client')
 vulkan_dep = dependency('vulkan')
 
-glm_proj = subproject('glm')
-glm_dep = glm_proj.get_variable('glm_dep')
-stb_proj = subproject('stb')
-stb_dep = stb_proj.get_variable('stb_dep')
+glm_include_dir = get_option('glm_include_dir')
+if glm_include_dir != ''
+  glm_inc = include_directories(glm_include_dir)
+  glm_dep = declare_dependency(include_directories : glm_inc)
+else
+  glm_proj = subproject('glm')
+  glm_dep = glm_proj.get_variable('glm_dep')
+endif
+
+stb_include_dir = get_option('stb_include_dir')
+if stb_include_dir != ''
+  stb_inc = include_directories(stb_include_dir)
+  stb_dep = declare_dependency(include_directories : stb_inc)
+else
+  stb_proj = subproject('stb')
+  stb_dep = stb_proj.get_variable('stb_dep')
+endif
 
 if get_option('enable_openvr_support')
   openvr_dep = dependency('openvr', version: '>= 2.7', required : false)

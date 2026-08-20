@@ -9,3 +9,5 @@ option('enable_gamescope_wsi_layer', type : 'boolean', value : true, description
 option('enable_openvr_support',      type : 'boolean', value : true, description: 'OpenVR Integrations')
 option('enable_tests',               type : 'boolean', value : true, description: 'Build unit tests')
 option('benchmark', type: 'feature', description: 'Benchmark tools')
+option('glm_include_dir',            type : 'string',  value : '', description: 'Custom path to override GLM headers')
+option('stb_include_dir',            type : 'string',  value : '', description: 'Custom path to override STB headers')
