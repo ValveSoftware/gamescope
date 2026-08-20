@@ -1813,6 +1813,11 @@ gamescope_xwayland_server_t::gamescope_xwayland_server_t(wl_display *display, in
 		.force_xrandr_emulation = true,
 	};
 	xwayland_server = wlr_xwayland_server_create(display, &xwayland_options);
+	if (!xwayland_server)
+	{
+		wl_log.errorf("Failed to create Xwayland server");
+		abort();
+	}
 	wl_signal_add(&xwayland_server->events.ready, &xwayland_ready_listener);
 
 	output = wlr_headless_add_output(wlserver.wlr.headless_backend, 1280, 720);
