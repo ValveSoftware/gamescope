@@ -3032,13 +3032,13 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 			needs_modeset = true;
 	}
 
+	// Defer the async flip flag until liftoff has built the request.
+	bool bWantsAsyncFlip = !bSleep && ( async || g_bForceAsyncFlips );
+
 	if ( !bSleep )
 	{
 		if ( drm->pCRTC != nullptr )
 			flags |= DRM_MODE_PAGE_FLIP_EVENT;
-
-		if ( async || g_bForceAsyncFlips )
-			flags |= DRM_MODE_PAGE_FLIP_ASYNC;
 	}
 
 	bool bForceInRequest = needs_modeset;
@@ -3168,6 +3168,18 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 		ret = drm_prepare_liftoff( drm, frameInfo, needs_modeset );
 	} else {
 		ret = 0;
+	}
+
+	// An async flip may only change FB_ID, so probe the built request and tear
+	// only if the kernel accepts it as a pure flip. A frame that needs a modeset
+	// fails the probe and stays synchronous, as ALLOW_MODESET is not set here.
+	if ( ret == 0 && bWantsAsyncFlip && drm->pCRTC != nullptr && drm->req != nullptr )
+	{
+		uint32_t uAsyncProbeFlags = DRM_MODE_ATOMIC_TEST_ONLY | DRM_MODE_PAGE_FLIP_ASYNC;
+		if ( drmModeAtomicCommit( drm->fd, drm->req, uAsyncProbeFlags, nullptr ) == 0 )
+			drm->flags |= DRM_MODE_PAGE_FLIP_ASYNC;
+		else
+			drm_log.debugf( "async flip rejected, committing synchronously" );
 	}
 
 	if ( ret != 0 ) {
