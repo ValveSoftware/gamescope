@@ -400,8 +400,6 @@ namespace gamescope
 
         virtual bool NewlyInitted() = 0;
 
-        virtual bool ShouldFitWindows() = 0;
-
         virtual void OnEndFrame() = 0;
 
         static IBackend *Get();
@@ -438,8 +436,6 @@ namespace gamescope
         virtual void ForwardFramebuffer( std::shared_ptr<IBackendPlane> &pPlane, IBackendFb *pFramebuffer, const void *pData ) override {}
 
         virtual bool NewlyInitted() override { return false; }
-
-        virtual bool ShouldFitWindows() override { return true; }
 
         virtual void OnEndFrame() override {}
     };

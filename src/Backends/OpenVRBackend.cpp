@@ -986,11 +986,6 @@ namespace gamescope
             }
         }
 
-        bool ShouldFitWindows() override
-        {
-            return false;
-        }
-
         vr::IVRIPCResourceManagerClient *GetIPCResourceManager()
         {
             return m_pIPCResourceManager;

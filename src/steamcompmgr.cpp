@@ -2098,9 +2098,6 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
 	float baseScaleRatio_x = 1.0;
 	float baseScaleRatio_y = 1.0;
 
-	if ( !GetBackend()->ShouldFitWindows() )
-		fit = nullptr;
-
 	// Exit out if we have no window or
 	// no commit.
 	//
@@ -2416,10 +2413,11 @@ static void paint_pipewire()
 	currentOutputHeight = uHeight;
 
 	// Paint the windows we have onto the Pipewire stream.
-	paint_window( pFocus->focusWindow, pFocus->focusWindow, &frameInfo, nullptr, 0, 1.0f, pFocus->overrideWindow );
+	steamcompmgr_win_t *fit = pFocus->overrideWindow;
+	paint_window( pFocus->focusWindow, pFocus->focusWindow, &frameInfo, nullptr, 0, 1.0f, fit );
 
 	if ( pFocus->overrideWindow && !pFocus->focusWindow->isSteamStreamingClient )
-		paint_window( pFocus->overrideWindow, pFocus->focusWindow, &frameInfo, nullptr, PaintWindowFlag::NoFilter, 1.0f, pFocus->overrideWindow );
+		paint_window( pFocus->overrideWindow, pFocus->focusWindow, &frameInfo, nullptr, PaintWindowFlag::NoFilter, 1.0f, fit );
 
 	if ( !ulFocusAppId && pFocus->overlayWindow && pFocus->overlayWindow->opacity )
 	{
@@ -2536,6 +2534,7 @@ paint_all( global_focus_t *pFocus, bool async )
 	steamcompmgr_win_t	*notification;
 	steamcompmgr_win_t	*override;
 	steamcompmgr_win_t *input;
+	steamcompmgr_win_t *fit;
 
 	unsigned int currentTime = get_time_in_milliseconds();
 	bool fadingOut = ( currentTime - fadeOutStartTime < g_FadeOutDuration || g_bPendingFade ) && g_HeldCommits[HELD_COMMIT_FADE] != nullptr;
@@ -2546,6 +2545,8 @@ paint_all( global_focus_t *pFocus, bool async )
 	notification = pFocus->notificationWindow;
 	override = pFocus->overrideWindow;
 	input = pFocus->inputFocusWindow;
+	// Decide the fit target once so the window planes and the cursor plane agree.
+	fit = override;
 
 	if (++frameCounter == 300)
 	{
@@ -2620,7 +2621,7 @@ paint_all( global_focus_t *pFocus, bool async )
 						: ((currentTime - fadeOutStartTime) / (float)g_FadeOutDuration);
 			
 					paint_cached_base_layer(g_HeldCommits[HELD_COMMIT_FADE], g_CachedPlanes[HELD_COMMIT_FADE], &frameInfo, 1.0f - opacityScale, false);
-					paint_window(w, w, &frameInfo, pFocus->cursor, PaintWindowFlag::BasePlane | PaintWindowFlag::FadeTarget | PaintWindowFlag::DrawBorders, opacityScale, override);
+					paint_window(w, w, &frameInfo, pFocus->cursor, PaintWindowFlag::BasePlane | PaintWindowFlag::FadeTarget | PaintWindowFlag::DrawBorders, opacityScale, fit);
 				}
 				else
 				{
@@ -2634,7 +2635,7 @@ paint_all( global_focus_t *pFocus, bool async )
 						}
 					}
 					// Just draw focused window as normal, be it Steam or the game
-					paint_window(w, w, &frameInfo, pFocus->cursor, PaintWindowFlag::BasePlane | PaintWindowFlag::DrawBorders, 1.0f, override);
+					paint_window(w, w, &frameInfo, pFocus->cursor, PaintWindowFlag::BasePlane | PaintWindowFlag::DrawBorders, 1.0f, fit);
 
 					bool needsScaling = frameInfo.layers[0].scale.x < 0.999f && frameInfo.layers[0].scale.y < 0.999f;
 					frameInfo.useFSRLayer0 = g_upscaleFilter == GamescopeUpscaleFilter::FSR && needsScaling;
@@ -2667,7 +2668,7 @@ paint_all( global_focus_t *pFocus, bool async )
 	// as we will have too many layers. Better to be safe than sorry.
 	if ( override && w && !w->isSteamStreamingClient && cv_paint_override_redirect_plane )
 	{
-		paint_window(override, w, &frameInfo, pFocus->cursor, PaintWindowFlag::NoFilter, 1.0f, override);
+		paint_window(override, w, &frameInfo, pFocus->cursor, PaintWindowFlag::NoFilter, 1.0f, fit);
 		// Don't update touch scaling for frameInfo. We don't ever make it our
 		// wlserver_mousefocus window.
 		//update_touch_scaling( &frameInfo );
@@ -2748,7 +2749,7 @@ paint_all( global_focus_t *pFocus, bool async )
 	// Draw cursor if we need to
 	if (input && ShouldDrawCursor() && cv_paint_cursor_plane) {
 		pFocus->cursor->paint(
-			input, w == input ? override : nullptr,
+			input, w == input ? fit : nullptr,
 			&frameInfo);
 	}
 
