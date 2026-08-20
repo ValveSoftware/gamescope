@@ -7133,6 +7133,17 @@ steamcompmgr_exit(void)
 [[noreturn]] static int
 handle_io_error(Display *dpy)
 {
+	// A group-wide interrupt reaches Xwayland at the same moment it reaches us, so give
+	// an in-flight shutdown up to 100ms to announce itself before calling this fatal.
+	for ( int i = 0; g_bRun && i < 20; i++ )
+		sleep_for_nanos( 5'000'000ul );
+
+	if ( !g_bRun )
+	{
+		xwm_log.infof("X11 I/O error while shutting down, exiting.");
+		_exit(0);
+	}
+
 	xwm_log.errorf("X11 I/O error! This is fatal. Aborting...");
 	abort();
 }
