@@ -694,6 +694,7 @@ namespace gamescope
 
         void SetCursorImage( std::shared_ptr<INestedHints::CursorInfo> info );
         void SetRelativeMouseMode( wl_surface *pSurface, bool bRelative );
+        void ReArmForcedPointerLock();
         void UpdateCursor();
 
         friend CWaylandConnector;
@@ -837,6 +838,8 @@ namespace gamescope
         wl_touch *m_pTouch = nullptr;
         zwp_locked_pointer_v1 *m_pLockedPointer = nullptr;
 		bool m_bPointerLocked = false;
+		// Set when the host compositor deactivates our constraint, so we know to re-arm it.
+		bool m_bPointerUnlockedByHost = false;
         wl_surface *m_pLockedSurface = nullptr;
         zwp_relative_pointer_v1 *m_pRelativePointer = nullptr;
 
@@ -2419,7 +2422,8 @@ namespace gamescope
         if ( !m_pPointer )
             return;
 
-        if ( !!bRelative != !!m_pLockedPointer || ( pSurface != m_pLockedSurface && bRelative ) )
+        if ( !!bRelative != !!m_pLockedPointer || ( pSurface != m_pLockedSurface && bRelative ) ||
+             ( bRelative && m_bPointerUnlockedByHost ) )
         {
             if ( m_pLockedPointer )
             {
@@ -2443,12 +2447,24 @@ namespace gamescope
 				m_pRelativePointer = zwp_relative_pointer_manager_v1_get_relative_pointer( m_pRelativePointerManager, m_pPointer );
 
 				m_pLockedSurface = pSurface;
+				m_bPointerUnlockedByHost = false;
 			}
 
             m_InputThread.SetRelativePointer( bRelative );
 
             UpdateCursor();
         }
+    }
+
+    // With --force-grab-cursor the pointer lock is only ever armed once, from
+    // CWaylandConnector::Init(), because steamcompmgr's per-frame call to
+    // SetRelativeMouseMode is gated behind !g_bForceRelativeMouse. Re-arm it when
+    // focus returns, so the constraint survives the host dropping it while we
+    // were unfocused.
+    void CWaylandBackend::ReArmForcedPointerLock()
+    {
+        if ( g_bForceRelativeMouse && m_bPointerUnlockedByHost && m_pLockedSurface )
+            SetRelativeMouseMode( m_pLockedSurface, true );
     }
 
     void CWaylandBackend::UpdateCursor()
@@ -2662,6 +2678,8 @@ namespace gamescope
         m_uPointerEnterSerial = uSerial;
         m_bMouseEntered = true;
 
+        ReArmForcedPointerLock();
+
         UpdateCursor();
     }
     void CWaylandBackend::Wayland_Pointer_Leave( wl_pointer *pPointer, uint32_t uSerial, wl_surface *pSurface )
@@ -2681,6 +2699,8 @@ namespace gamescope
 
         m_uKeyboardEnterSerial = uSerial;
         m_bKeyboardEntered = true;
+
+        ReArmForcedPointerLock();
 
         UpdateCursor();
     }
@@ -2702,6 +2722,7 @@ namespace gamescope
 	void CWaylandBackend::Wayland_LockedPointer_Unlocked( zwp_locked_pointer_v1 *pLockedPointer )
 	{
 		m_bPointerLocked = false;
+		m_bPointerUnlockedByHost = true;
 		UpdateCursor();
 	}
 
