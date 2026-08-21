@@ -21,6 +21,10 @@ const int filter_nearest = 1;
 const int filter_fsr = 2;
 const int filter_nis = 3;
 const int filter_pixel = 4;
+const int filter_subpixel_rgb = 5;
+const int filter_subpixel_oled = 6;
+const int filter_subpixel_vbgr = 7;
+const int filter_subpixel_qdoled = 8;
 const int filter_from_view = 255;
 
 const int EOTF_Gamma22 = 0;
