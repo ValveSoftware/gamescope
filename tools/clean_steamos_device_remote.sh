@@ -21,4 +21,4 @@ else
 fi
 
 echo "Removing $STEAMOS_CLEAN_PATH from $STEAMOS_DEVICE_IP..."
-envsshpass ssh -t "steamos@$STEAMOS_DEVICE_IP" "rm -rf '$STEAMOS_CLEAN_PATH'"
+envsshpass ssh -t "steamos@$STEAMOS_DEVICE_IP" "rm -rf $(envquote "$STEAMOS_CLEAN_PATH")"
