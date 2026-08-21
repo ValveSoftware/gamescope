@@ -1059,9 +1059,25 @@ window_is_vr_scene_app( steamcompmgr_win_t *w )
 
 bool g_bChangeDynamicRefreshBasedOnGameOpenRatherThanActive = false;
 
+// Windows the limiter never covers. The streaming client video window
+// carries the remote game, so the cap still applies to it.
+static bool
+window_is_limiter_exempt( steamcompmgr_win_t *w )
+{
+	if ( !w )
+		return true;
+
+	if ( w->isSteamStreamingClientVideo )
+		return false;
+
+	// Under -vrgamepadui the Steam UI panels carry a VR overlay target instead of the Steam appid.
+	return window_is_steam( w ) || w->oulTargetVROverlay.has_value() ||
+		w->isOverlay || w->isExternalOverlay || window_is_vr_scene_app( w );
+}
+
 bool steamcompmgr_window_should_limit_fps( steamcompmgr_win_t *w )
 {
-	return w && !window_is_steam( w ) && !window_is_vr_scene_app( w ) && !w->isOverlay && !w->isExternalOverlay;
+	return !window_is_limiter_exempt( w );
 }
 
 static bool
