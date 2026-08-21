@@ -45,6 +45,7 @@ namespace gamescope
         int GetRefresh() const;
         uint64_t GetLastVBlank() const;
         uint64_t GetNextVBlank( uint64_t ulOffset ) const;
+        bool IsVRRFlipReady() const;
 
         VBlankScheduleTime CalcNextWakeupTime( bool bPreemptive );
         void Reschedule();
@@ -64,6 +65,7 @@ namespace gamescope
         void OnPollIn() final;
     private:
         void VBlankDebugSpew( uint64_t ulOffset, uint64_t ulDrawTime, uint64_t ulRedZone );
+        uint64_t VRRWakeupOffset() const;
 
         uint64_t m_ulTargetVBlank = 0;
         std::atomic<uint64_t> m_ulLastVBlank = { 0 };
@@ -96,6 +98,10 @@ namespace gamescope
         // 3ms by default to get the ball rolling.
         // This is calculated by steamcompmgr/drm and fed-back to the vblank timer.
         std::atomic<uint64_t> m_ulLastDrawTime = { kStartingVBlankDrawTime };
+        // When the steamcompmgr loop last woke up.
+        uint64_t m_ulLastWakeupTime = 0;
+        // Rolling max of wakeup -> flip queued, feeding the VRR wakeup offset.
+        std::atomic<uint64_t> m_ulVRRRollingMaxSubmitTime = { kStartingVBlankDrawTime };
 
         //////////////////////////////////
         // VBlank timing tuneables below!
