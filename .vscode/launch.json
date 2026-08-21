@@ -31,7 +31,7 @@
             "name": "Attach to Gamescope (Remote)",
             "type": "cppdbg",
             "request": "attach",
-            "program": "/home/steamos/gamescope_local/build.local/src/gamescope",
+            "program": "/home/steamos/gamescope_local/${workspaceFolderBasename}/build.local/src/gamescope",
             "processId": "${input:gamescope_pid}",
             "pipeTransport": {
                 "debuggerPath": "/usr/bin/gdb",
@@ -46,7 +46,7 @@
                 "pipeCwd": "${workspaceFolder}"
             },
             "sourceFileMap": {
-                "/home/steamos/gamescope_local": "${workspaceFolder}"
+                "/home/steamos/gamescope_local/${workspaceFolderBasename}": "${workspaceFolder}"
             },
             "MIMode": "gdb",
             "setupCommands": [
