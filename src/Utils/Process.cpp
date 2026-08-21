@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstring>
 
 #include <errno.h>
 #include <pthread.h>
@@ -98,6 +99,42 @@ namespace gamescope::Process
         }
 
         return nPids;
+    }
+
+    bool IsProcessRunning( const char *pszComm )
+    {
+        DIR *pProcDir = opendir( "/proc" );
+        if ( !pProcDir )
+            return false;
+        defer( closedir( pProcDir ) );
+
+        struct dirent *pEntry;
+        while ( ( pEntry = readdir( pProcDir ) ) )
+        {
+            if ( pEntry->d_type != DT_DIR )
+                continue;
+
+            if ( !IsDigit( pEntry->d_name[0] ) )
+                continue;
+
+            char szPath[ PATH_MAX ];
+            snprintf( szPath, sizeof( szPath ), "/proc/%s/comm", pEntry->d_name );
+
+            FILE *pCommFile = fopen( szPath, "r" );
+            if ( !pCommFile )
+                continue;
+            defer( fclose( pCommFile ) );
+
+            char szComm[ 32 ] = {};
+            if ( !fgets( szComm, sizeof( szComm ), pCommFile ) )
+                continue;
+            szComm[ strcspn( szComm, "\n" ) ] = '\0';
+
+            if ( !strcmp( szComm, pszComm ) )
+                return true;
+        }
+
+        return false;
     }
 
     void KillProcessTree( std::vector<pid_t> nPids, int nSignal )

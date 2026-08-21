@@ -8,7 +8,7 @@ endforeach
 
 test_convar = executable(
 	'test_convar',
-	unittest_src + ['test_convar.cpp'],
+	unittest_src + ['test_convar.cpp', 'test_vrclient_detect.cpp'],
 	include_directories: [srcdir, sol2_include],
 	dependencies: [catch2_dep, luajit_dep, cap_dep, drm_dep, glm_dep, wlroots_dep],
 	cpp_args: gamescope_cpp_args,

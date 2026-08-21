@@ -300,6 +300,10 @@ void wlserver_shutdown();
 
 void wlserver_send_gamescope_control( wl_resource *control );
 
+void wlserver_set_frame_limiter_state( uint32_t uState );
+uint32_t wlserver_get_frame_limiter_state( void );
+void wlserver_flush_frame_limiter_state( void );
+
 bool wlsession_active();
 
 void wlserver_fake_mouse_pos( double x, double y );

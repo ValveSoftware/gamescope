@@ -21,6 +21,7 @@
 #include "WaylandServer/LinuxDrmSyncobj.h"
 #include "WaylandServer/Reshade.h"
 #include "WaylandServer/GamescopeActionBinding.h"
+#include "WaylandServer/GamescopeLimiter.h"
 
 #include "wlr_begin.hpp"
 #include <wlr/backend.h>
@@ -1066,14 +1067,40 @@ static void create_gamescope_swapchain_factory_v2( void )
 	wl_global_create( wlserver.display, &gamescope_swapchain_factory_v2_interface, version, NULL, gamescope_swapchain_factory_v2_bind );
 }
 
+////////////////////////
+// gamescope_limiter
+////////////////////////
 
+// Written from the steamcompmgr thread, sent from under the wlserver lock.
+static std::atomic<uint32_t> s_uFrameLimiterState = { 0 };
+static std::atomic<bool> s_bFrameLimiterStateDirty = { false };
 
+void wlserver_set_frame_limiter_state( uint32_t uState )
+{
+	if ( s_uFrameLimiterState.exchange( uState ) != uState )
+		s_bFrameLimiterStateDirty = true;
+}
 
+uint32_t wlserver_get_frame_limiter_state( void )
+{
+	return s_uFrameLimiterState;
+}
 
+void wlserver_flush_frame_limiter_state( void )
+{
+	using gamescope::WaylandServer::CGamescopeLimiter;
 
+	if ( !s_bFrameLimiterStateDirty.exchange( false ) )
+		return;
 
-
-
+	wlserver_lock();
+	uint32_t uState = s_uFrameLimiterState;
+	for ( CGamescopeLimiter *pLimiter : CGamescopeLimiter::GetLimiters() )
+	{
+		pLimiter->SendState( uState );
+	}
+	wlserver_unlock();
+}
 
 
 
@@ -2047,6 +2074,8 @@ bool wlserver_init( void ) {
 	create_gamescope_xwayland();
 
 	create_gamescope_swapchain_factory_v2();
+
+	new gamescope::WaylandServer::CGamescopeLimiterProtocol( wlserver.display );
 
 #if HAVE_PIPEWIRE
 	create_gamescope_pipewire();

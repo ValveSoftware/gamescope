@@ -18,4 +18,7 @@ namespace gamescope::WaylandServer
     class CGamescopeActionBindingManager;
     using CGamescopeActionBindingProtocol = CWaylandProtocol<CGamescopeActionBindingManager>;
 
+    class CGamescopeLimiter;
+    using CGamescopeLimiterProtocol = CWaylandProtocol<CGamescopeLimiter>;
+
 }

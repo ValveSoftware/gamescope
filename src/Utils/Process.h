@@ -11,6 +11,9 @@ namespace gamescope::Process
     void BecomeSubreaper();
     void SetDeathSignal( int nSignal );
 
+    // Matches against comm, which the kernel truncates to 15 chars.
+    bool IsProcessRunning( const char *pszComm );
+
     void KillAllChildren( pid_t nParentPid, int nSignal );
     void KillProcess( pid_t nPid, int nSignal );
 

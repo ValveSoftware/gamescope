@@ -5,11 +5,17 @@
 #include "xcb_helpers.hpp"
 #include "vulkan_operators.hpp"
 #include "gamescope-swapchain-client-protocol.h"
+#include "gamescope-limiter-client-protocol.h"
 #include "../src/color_helpers.h"
 #include "../src/layer_defines.h"
 
+#include <atomic>
+#include <cerrno>
 #include <charconv>
 #include <cstdio>
+#include <cstring>
+#include <memory>
+#include <utility>
 #include <vector>
 #include <algorithm>
 #include <functional>
@@ -319,11 +325,29 @@ namespace GamescopeWSILayer {
     return flags;
   }
 
-  // TODO: Maybe move to Wayland event or something.
-  // This just utilizes the same code as the Mesa path used
-  // for without the layer or GL though. Need to keep it around anyway.
+  // Frame limiter state received over the gamescope_limiter protocol.
+  // Owned by the surfaces holding copies of GamescopeWaylandObjects.
+  struct GamescopeLimiterState {
+    ~GamescopeLimiterState() {
+      if (proxy)
+        gamescope_limiter_destroy(proxy);
+    }
+
+    gamescope_limiter *proxy = nullptr;
+    std::atomic<uint32_t> state = { 0 };
+  };
+
+  static constexpr gamescope_limiter_listener s_limiterListener = {
+    .state = [](void *data, gamescope_limiter *limiter, uint32_t frameLimitState) {
+      reinterpret_cast<GamescopeLimiterState *>(data)->state = frameLimitState;
+    },
+  };
+
+  // Legacy fallback for compositors without gamescope_limiter. The Mesa DRI3
+  // path on SteamOS uses the same file. It may not be visible inside app
+  // containers.
   static std::mutex gamescopeSwapchainLimiterFDMutex;
-  static uint32_t gamescopeFrameLimiterOverride() {
+  static uint32_t gamescopeFrameLimiterFileOverride() {
     const char *path = getenv("GAMESCOPE_LIMITER_FILE");
     if (!path)
         return 0;
@@ -333,9 +357,13 @@ namespace GamescopeWSILayer {
       std::unique_lock lock(gamescopeSwapchainLimiterFDMutex);
 
       static int s_limiterFD = -1;
+      static bool s_warnedOpenFailure = false;
 
-      if (s_limiterFD < 0)
+      if (s_limiterFD < 0) {
         s_limiterFD = open(path, O_RDONLY);
+        if (s_limiterFD < 0 && !std::exchange(s_warnedOpenFailure, true))
+          fprintf(stderr, "[Gamescope WSI] Could not open GAMESCOPE_LIMITER_FILE (%s): %s\n", path, strerror(errno));
+      }
 
       fd = s_limiterFD;
     }
@@ -348,13 +376,10 @@ namespace GamescopeWSILayer {
     return overrideValue;
   }
 
-  static bool gamescopeIsForcingFifo() {
-    return gamescopeFrameLimiterOverride() == 1;
-  }
-
   struct GamescopeWaylandObjects {
     wl_compositor* compositor;
     gamescope_swapchain_factory_v2* gamescopeSwapchainFactory;
+    std::shared_ptr<GamescopeLimiterState> limiterState;
 
     static GamescopeWaylandObjects get(wl_display *display) {
       wl_registry *registry = wl_display_get_registry(display);
@@ -385,11 +410,24 @@ namespace GamescopeWSILayer {
       } else if (interface == "gamescope_swapchain_factory_v2"sv) {
         objects->gamescopeSwapchainFactory = reinterpret_cast<gamescope_swapchain_factory_v2 *>(
           wl_registry_bind(registry, name, &gamescope_swapchain_factory_v2_interface, version));
+      } else if (interface == "gamescope_limiter"sv) {
+        objects->limiterState = std::make_shared<GamescopeLimiterState>();
+        // Cap at our version, binding higher is a fatal protocol error.
+        objects->limiterState->proxy = reinterpret_cast<gamescope_limiter *>(
+          wl_registry_bind(registry, name, &gamescope_limiter_interface, std::min(version, uint32_t(gamescope_limiter_interface.version))));
+        gamescope_limiter_add_listener(objects->limiterState->proxy, &s_limiterListener, objects->limiterState.get());
       }
     },
     .global_remove = [](void* data, wl_registry* registry, uint32_t name) {
     },
   };
+
+  static bool gamescopeIsForcingFifo(const GamescopeWaylandObjects& waylandObjects) {
+    if (waylandObjects.limiterState)
+      return waylandObjects.limiterState->state == 1;
+
+    return gamescopeFrameLimiterFileOverride() == 1;
+  }
 
   struct GamescopeInstanceData {
     wl_display* display;
@@ -906,7 +944,7 @@ namespace GamescopeWSILayer {
         return pDispatch->GetPhysicalDeviceSurfaceCapabilities2KHR(physicalDevice, pSurfaceInfo, pSurfaceCapabilities);
 
       // Incomplete writes here, do not return VK_INCOMPLETE.
-      if (gamescopeIsForcingFifo() && gamescopeSurface->frameLimiterAware()) {
+      if (gamescopeIsForcingFifo(gamescopeSurface->waylandObjects) && gamescopeSurface->frameLimiterAware()) {
         const auto *pPresentMode = vkroots::FindInChain<VkSurfacePresentModeEXT>(pSurfaceInfo);
         const std::array<VkPresentModeKHR, 1> s_SingleMode = {{
           pPresentMode ? pPresentMode->presentMode : VK_PRESENT_MODE_FIFO_KHR,
@@ -964,7 +1002,7 @@ namespace GamescopeWSILayer {
       }};
 
       if (auto state = GamescopeSurface::get(surface)) {
-        if (gamescopeIsForcingFifo() && state->frameLimiterAware())
+        if (gamescopeIsForcingFifo(state->waylandObjects) && state->frameLimiterAware())
           return vkroots::helpers::array(s_FifoPresentModes, pPresentModeCount, pPresentModes);
       }
 
@@ -1280,7 +1318,7 @@ namespace GamescopeWSILayer {
           .surface             = pCreateInfo->surface, // Always the Wayland side surface.
           .isWayland           = gamescopeSurface->isWayland(),
           .isBypassingXWayland = canBypass,
-          .forceFifo           = gamescopeIsForcingFifo(), // Were we forcing fifo when this swapchain was made?
+          .forceFifo           = gamescopeIsForcingFifo(gamescopeSurface->waylandObjects), // Were we forcing fifo when this swapchain was made?
           .presentMode         = pCreateInfo->presentMode, // The new present mode.
           .extent              = pCreateInfo->imageExtent,
           .serverId            = serverId,
@@ -1350,8 +1388,6 @@ namespace GamescopeWSILayer {
             VkQueue                    queue,
       const VkPresentInfoKHR*          pPresentInfo) {
       VkPresentInfoKHR presentInfo = *pPresentInfo;
-
-      bool forceFifo = gamescopeIsForcingFifo();
 
       auto pPresentTimes = vkroots::FindInChain<const VkPresentTimesInfoGOOGLE>(&presentInfo);
 
@@ -1430,6 +1466,17 @@ namespace GamescopeWSILayer {
           s_warned = true;
         }
       }
+
+      // After the pump, so the state reflects events received this frame.
+      bool forceFifo = [&]() {
+        for (uint32_t i = 0; i < presentInfo.swapchainCount; i++) {
+          if (auto gamescopeSwapchain = GamescopeSwapchain::get(presentInfo.pSwapchains[i])) {
+            if (auto gamescopeSurface = GamescopeSurface::get(gamescopeSwapchain->surface))
+              return gamescopeIsForcingFifo(gamescopeSurface->waylandObjects);
+          }
+        }
+        return false;
+      }();
 
       for (uint32_t i = 0; i < presentInfo.swapchainCount; i++) {
         if (auto gamescopeSwapchain = GamescopeSwapchain::get(presentInfo.pSwapchains[i])) {

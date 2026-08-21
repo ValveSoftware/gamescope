@@ -52,6 +52,7 @@
 #include <queue>
 #include <filesystem>
 #include <variant>
+#include <unordered_map>
 #include <unordered_set>
 
 #include <assert.h>
@@ -96,6 +97,7 @@
 #include "commit.h"
 #include "reshade_effect_manager.hpp"
 #include "BufferMemo.h"
+#include "vrclient_detect.h"
 #include "Utils/Process.h"
 #include "Utils/Algorithm.h"
 
@@ -1057,11 +1059,184 @@ window_is_vr_scene_app( steamcompmgr_win_t *w )
 	return w && w->appID && w->appID == g_unCurrentVRSceneAppId.load( std::memory_order_relaxed );
 }
 
+// Windows the limiter never covers. The streaming client video window
+// carries the remote game, so the cap still applies to it.
+static bool
+window_is_limiter_exempt( steamcompmgr_win_t *w )
+{
+	if ( !w )
+		return true;
+
+	if ( w->isSteamStreamingClientVideo )
+		return false;
+
+	// Under -vrgamepadui the Steam UI panels carry a VR overlay target instead of the Steam appid.
+	return window_is_steam( w ) || w->oulTargetVROverlay.has_value() ||
+		w->isOverlay || w->isExternalOverlay || window_is_vr_scene_app( w );
+}
+
+gamescope::ConVar<bool> cv_limiter_vr_exempt( "limiter_vr_exempt", true, "Exempt VR app windows from the fps limiter during VR sessions." );
+
+// Poller thread <-> steamcompmgr shared state. Leaked so shutdown never
+// races the detached thread.
+struct VRSessionPollState_t
+{
+	std::mutex mutex;
+	bool bEnabled = false;
+	bool bLimiterActive = false;
+	std::vector<pid_t> vecWantPids;
+	bool bSessionActive = false;
+	std::unordered_set<pid_t> setVRClientPids;
+};
+static VRSessionPollState_t *s_pVRSessionPollState = nullptr;
+
+// Only touched on the steamcompmgr thread, so safe under wlserver_lock.
+static bool s_bVRSessionActive = false;
+static std::unordered_set<pid_t> s_setVRClientPids;
+
+// The probes block on /proc, so they live on their own thread. A VR
+// session is "a vrserver process exists".
+static void
+vr_session_poll_thread( VRSessionPollState_t *pState )
+{
+	pthread_setname_np( pthread_self(), "gamescope-vrmon" );
+
+	struct VRClientEntry_t
+	{
+		bool bMapped = false;
+		uint64_t ulLastCheckTime = 0;
+	};
+	std::unordered_map<pid_t, VRClientEntry_t> cache;
+	bool bSessionActive = false;
+	uint64_t ulLastSessionCheckTime = 0;
+
+	bool bEnabled = true;
+
+	for ( ;; )
+	{
+		std::this_thread::sleep_for( std::chrono::seconds( bEnabled ? 1 : 5 ) );
+
+		bool bLimiterActive;
+		std::vector<pid_t> vecWantPids;
+		{
+			std::scoped_lock lock{ pState->mutex };
+			bEnabled = pState->bEnabled;
+			bLimiterActive = pState->bLimiterActive;
+			vecWantPids = pState->vecWantPids;
+		}
+
+		// No candidate windows makes the session state unobservable, skip scanning.
+		if ( !bEnabled || vecWantPids.empty() )
+		{
+			bSessionActive = false;
+			ulLastSessionCheckTime = 0;
+			cache.clear();
+		}
+		else
+		{
+			uint64_t now = get_time_in_nanos();
+
+			// Back off when nothing needs a prompt answer.
+			uint64_t ulSessionRecheckInterval = ( bSessionActive || bLimiterActive )
+				? 5'000'000'000ul
+				: 30'000'000'000ul;
+			if ( !ulLastSessionCheckTime || now - ulLastSessionCheckTime >= ulSessionRecheckInterval )
+			{
+				ulLastSessionCheckTime = now;
+				bSessionActive = gamescope::Process::IsProcessRunning( "vrserver" );
+			}
+
+			if ( bSessionActive )
+			{
+				// Re-validates in both directions, vrclient can unload.
+				static constexpr uint64_t k_ulVRClientRecheckInterval = 2'000'000'000ul;
+				for ( pid_t pid : vecWantPids )
+				{
+					VRClientEntry_t &entry = cache[ pid ];
+					if ( !entry.ulLastCheckTime || now - entry.ulLastCheckTime >= k_ulVRClientRecheckInterval )
+					{
+						entry.ulLastCheckTime = now;
+						entry.bMapped = gamescope::ProcessHasVRClientMapped( pid );
+					}
+				}
+
+				std::erase_if( cache, [&]( const auto &entry )
+				{
+					return std::find( vecWantPids.begin(), vecWantPids.end(), entry.first ) == vecWantPids.end();
+				});
+			}
+			else
+			{
+				cache.clear();
+			}
+		}
+
+		std::unordered_set<pid_t> setVRClientPids;
+		for ( const auto &entry : cache )
+		{
+			if ( entry.second.bMapped )
+				setVRClientPids.insert( entry.first );
+		}
+
+		std::scoped_lock lock{ pState->mutex };
+		pState->bSessionActive = bSessionActive;
+		if ( pState->setVRClientPids != setVRClientPids )
+			pState->setVRClientPids = std::move( setVRClientPids );
+	}
+}
+
+// Hands the poller the pids worth probing and mirrors its results.
+static void
+steamcompmgr_update_vr_session_state()
+{
+	if ( GetBackend()->UsesVirtualConnectors() )
+		return;
+
+	if ( !s_pVRSessionPollState )
+	{
+		s_pVRSessionPollState = new VRSessionPollState_t;
+		std::thread( vr_session_poll_thread, s_pVRSessionPollState ).detach();
+	}
+
+	static std::vector<pid_t> vecWantPids;
+	vecWantPids.clear();
+	gamescope_xwayland_server_t *server = NULL;
+	for ( size_t i = 0; ( server = wlserver_get_xwayland_server( i ) ); i++ )
+	{
+		for ( steamcompmgr_win_t *w = server->ctx->list; w; w = w->xwayland().next )
+		{
+			if ( w->pid <= 0 || window_is_limiter_exempt( w ) )
+				continue;
+
+			if ( std::find( vecWantPids.begin(), vecWantPids.end(), w->pid ) == vecWantPids.end() )
+				vecWantPids.push_back( w->pid );
+		}
+	}
+
+	std::scoped_lock lock{ s_pVRSessionPollState->mutex };
+	s_pVRSessionPollState->bEnabled = cv_limiter_vr_exempt;
+	s_pVRSessionPollState->bLimiterActive = g_nSteamCompMgrTargetFPS != 0;
+	s_pVRSessionPollState->vecWantPids = vecWantPids;
+	s_bVRSessionActive = s_pVRSessionPollState->bSessionActive;
+	if ( s_setVRClientPids != s_pVRSessionPollState->setVRClientPids )
+		s_setVRClientPids = s_pVRSessionPollState->setVRClientPids;
+}
+
+// Limiting a VR app's flat companion presents throttles its VR render loop.
+// Residual: a flat game that probed for VR keeps vrclient mapped and slips
+// the limiter while a session runs.
+static bool
+window_is_vr_app( steamcompmgr_win_t *w )
+{
+	return window_is_vr_scene_app( w ) ||
+		( w && cv_limiter_vr_exempt && s_bVRSessionActive && s_setVRClientPids.count( w->pid ) > 0 );
+}
+
 bool g_bChangeDynamicRefreshBasedOnGameOpenRatherThanActive = false;
 
 bool steamcompmgr_window_should_limit_fps( steamcompmgr_win_t *w )
 {
-	return w && !window_is_steam( w ) && !window_is_vr_scene_app( w ) && !w->isOverlay && !w->isExternalOverlay;
+	return !window_is_limiter_exempt( w ) && !window_is_vr_app( w );
 }
 
 static bool
@@ -1411,6 +1586,9 @@ import_commit (
 	commit->desired_present_time = desired_present_time;
 	if (window_is_vr_scene_app( w )) {
 		commit->async = true;
+		commit->fifo = false;
+	} else if (window_is_vr_app( w )) {
+		// Heuristic match keeps vblank-aligned flips, no async tearing.
 		commit->fifo = false;
 	}
 
@@ -5760,10 +5938,14 @@ T bit_cast(const J& src) {
 static void
 update_runtime_info()
 {
+	uint32_t limiter_enabled = g_nSteamCompMgrTargetFPS != 0 ? 1 : 0;
+
+	// The file is a legacy fallback for clients without gamescope_limiter.
+	wlserver_set_frame_limiter_state( limiter_enabled );
+
 	if ( g_nRuntimeInfoFd < 0 )
 		return;
 
-	uint32_t limiter_enabled = g_nSteamCompMgrTargetFPS != 0 ? 1 : 0;
 	pwrite( g_nRuntimeInfoFd, &limiter_enabled, sizeof( limiter_enabled ), 0 );
 }
 
@@ -5771,10 +5953,9 @@ static void
 init_runtime_info()
 {
 	const char *path = getenv( "GAMESCOPE_LIMITER_FILE" );
-	if ( !path )
-		return;
+	if ( path )
+		g_nRuntimeInfoFd = open( path, O_CREAT | O_RDWR , 0644 );
 
-	g_nRuntimeInfoFd = open( path, O_CREAT | O_RDWR , 0644 );
 	update_runtime_info();
 }
 
@@ -6956,22 +7137,18 @@ void handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank, uint64_t vb
 	// very fast loop yes
 	for ( auto& entry : ctx->doneCommits.listCommitsDone )
 	{
-		bool entry_vblank = vblank;
-
-		if ( GetBackend()->GetCurrentConnector() && GetBackend()->GetCurrentConnector()->IsVRRActive() )
+		steamcompmgr_win_t *entry_win = nullptr;
+		for ( steamcompmgr_win_t *w = ctx->list; w; w = w->xwayland().next )
 		{
-			for ( steamcompmgr_win_t *w = ctx->list; w; w = w->xwayland().next )
-			{
-				if (w->seq != entry.winSeq)
-					continue;
+			if (w->seq != entry.winSeq)
+				continue;
 
-				entry_vblank = entry_vblank && steamcompmgr_should_vblank_window( true, vblank_idx, w, now );
-			}
+			entry_win = w;
+			break;
 		}
-		else
-		{
-			entry_vblank = entry_vblank && steamcompmgr_should_vblank_window( true, vblank_idx );
-		}
+
+		// Only pace windows the FPS limiter covers.
+		const bool entry_vblank = vblank && steamcompmgr_should_vblank_window( entry_win, vblank_idx, now );
 
 		if (entry.fifo && (!entry_vblank || fifo_win_seqs.count(entry.winSeq) > 0))
 		{
@@ -6991,16 +7168,10 @@ void handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank, uint64_t vb
 			continue;
 		}
 
-		for ( steamcompmgr_win_t *w = ctx->list; w; w = w->xwayland().next )
+		if ( entry_win && handle_done_commit(entry_win, ctx, entry.commitID, entry.earliestPresentTime, entry.earliestLatchTime) )
 		{
-			if (w->seq != entry.winSeq)
-				continue;
-			if (handle_done_commit(w, ctx, entry.commitID, entry.earliestPresentTime, entry.earliestLatchTime))
-			{
-				if (entry.fifo)
-					fifo_win_seqs.insert(entry.winSeq);
-				break;
-			}
+			if (entry.fifo)
+				fifo_win_seqs.insert(entry.winSeq);
 		}
 	}
 
@@ -7025,12 +7196,23 @@ void handle_done_commits_xdg( bool vblank, uint64_t vblank_idx )
 
 	uint64_t now = get_time_in_nanos();
 
-	vblank = vblank && steamcompmgr_should_vblank_window( true, vblank_idx );
-
 	// very fast loop yes
 	for ( auto& entry : g_steamcompmgr_xdg_done_commits.listCommitsDone )
 	{
-		if (entry.fifo && (!vblank || fifo_win_seqs.count(entry.winSeq) > 0))
+		steamcompmgr_win_t *entry_win = nullptr;
+		for (const auto& xdg_win : g_steamcompmgr_xdg_wins)
+		{
+			if (xdg_win->seq != entry.winSeq)
+				continue;
+
+			entry_win = xdg_win.get();
+			break;
+		}
+
+		// Only pace windows the FPS limiter covers.
+		const bool entry_vblank = vblank && steamcompmgr_should_vblank_window( entry_win, vblank_idx, now );
+
+		if (entry.fifo && (!entry_vblank || fifo_win_seqs.count(entry.winSeq) > 0))
 		{
 			commits_before_their_time.push_back( entry );
 			continue;
@@ -7048,16 +7230,10 @@ void handle_done_commits_xdg( bool vblank, uint64_t vblank_idx )
 			break;
 		}
 
-		for (const auto& xdg_win : g_steamcompmgr_xdg_wins)
+		if ( entry_win && handle_done_commit(entry_win, nullptr, entry.commitID, entry.earliestPresentTime, entry.earliestLatchTime) )
 		{
-			if (xdg_win->seq != entry.winSeq)
-				continue;
-			if (handle_done_commit(xdg_win.get(), nullptr, entry.commitID, entry.earliestPresentTime, entry.earliestLatchTime))
-			{
-				if (entry.fifo)
-					fifo_win_seqs.insert(entry.winSeq);
-				break;
-			}
+			if (entry.fifo)
+				fifo_win_seqs.insert(entry.winSeq);
 		}
 	}
 
@@ -7853,6 +8029,7 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 
 	ctx->atoms.gamescopeXWaylandModeControl = XInternAtom( ctx->dpy, "GAMESCOPE_XWAYLAND_MODE_CONTROL", false );
 	ctx->atoms.gamescopeFPSLimit = XInternAtom( ctx->dpy, "GAMESCOPE_FPS_LIMIT", false );
+	ctx->atoms.gamescopeLimiterFeedback = XInternAtom( ctx->dpy, "GAMESCOPE_LIMITER_FEEDBACK", false );
 	ctx->atoms.gamescopeDynamicRefresh[gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_DYNAMIC_REFRESH", false );
 	ctx->atoms.gamescopeDynamicRefresh[gamescope::GAMESCOPE_SCREEN_TYPE_EXTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_DYNAMIC_REFRESH_EXTERNAL", false );
 	ctx->atoms.gamescopeLowLatency = XInternAtom( ctx->dpy, "GAMESCOPE_LOW_LATENCY", false );
@@ -7961,6 +8138,9 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 
 	uint32_t unVROverlayForwardingSupported = GetBackend()->SupportsVROverlayForwarding() ? 3 : 0;
 	XChangeProperty(ctx->dpy, ctx->root, ctx->atoms.gamescopeVROverlayForwarding, XA_CARDINAL, 32, PropModeReplace, (unsigned char *)&unVROverlayForwardingSupported, 1 );
+
+	uint32_t uLimiterFeedback = wlserver_get_frame_limiter_state();
+	XChangeProperty(ctx->dpy, ctx->root, ctx->atoms.gamescopeLimiterFeedback, XA_CARDINAL, 32, PropModeReplace, (unsigned char *)&uLimiterFeedback, 1 );
 
 	XGrabServer(ctx->dpy);
 
@@ -8077,6 +8257,34 @@ void update_vrr_atoms(xwayland_ctx_t *root_ctx, bool force, bool* needs_flush = 
 			(unsigned char *)&enabled_value, 1 );
 		if (needs_flush)
 			*needs_flush = true;
+	}
+}
+
+static uint32_t g_uLimiterFeedback_CachedValue = 0;
+
+void update_limiter_atoms(xwayland_ctx_t *root_ctx, bool force, bool* needs_flush = nullptr)
+{
+	uint32_t uLimiterFeedback = wlserver_get_frame_limiter_state();
+	if ( uLimiterFeedback == g_uLimiterFeedback_CachedValue && !force )
+		return;
+
+	g_uLimiterFeedback_CachedValue = uLimiterFeedback;
+
+	gamescope_xwayland_server_t *server = NULL;
+	for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
+	{
+		XChangeProperty(server->ctx->dpy, server->ctx->root, server->ctx->atoms.gamescopeLimiterFeedback, XA_CARDINAL, 32, PropModeReplace,
+			(unsigned char *)&uLimiterFeedback, 1 );
+
+		if (server->ctx.get() == root_ctx)
+		{
+			if (needs_flush)
+				*needs_flush = true;
+		}
+		else
+		{
+			XFlush(server->ctx->dpy);
+		}
 	}
 }
 
@@ -8486,6 +8694,7 @@ steamcompmgr_main(int argc, char **argv)
 	}
 
 	update_vrr_atoms(root_ctx, true);
+	update_limiter_atoms(root_ctx, true);
 	update_mode_atoms(root_ctx);
 	XFlush(root_ctx->dpy);
 
@@ -8807,6 +9016,8 @@ steamcompmgr_main(int argc, char **argv)
 		{
 			{
 				uint64_t now = get_time_in_nanos();
+
+				steamcompmgr_update_vr_session_state();
 
 				gamescope_xwayland_server_t *server = NULL;
 				for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
@@ -9185,6 +9396,10 @@ steamcompmgr_main(int argc, char **argv)
 		}
 
 		update_vrr_atoms(root_ctx, false, &flush_root);
+
+		wlserver_flush_frame_limiter_state();
+
+		update_limiter_atoms(root_ctx, false, &flush_root);
 
 		if (GetCurrentFocus() && GetCurrentFocus()->cursor)
 		{
