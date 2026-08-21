@@ -159,5 +159,31 @@
                 "panel": "dedicated"
             }
         },
+        {
+            "label": "Remove this source copy from a SteamOS Device (remote)",
+            "type": "shell",
+            "command": "./tools/clean_steamos_device_remote.sh tree '${input:device_ip}' '${input:device_password}'",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated"
+            }
+        },
+        {
+            "label": "Remove all source copies from a SteamOS Device (remote)",
+            "type": "shell",
+            "command": "./tools/clean_steamos_device_remote.sh all '${input:device_ip}' '${input:device_password}'",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated"
+            }
+        },
     ]
 }
