@@ -16,4 +16,8 @@ export script=$(readlink -f -- "$0")
 # Get to the script
 pushd "$(dirname -- "$script")" > /dev/null
 
+export STEAMOS_SOURCE_NAME="$(basename -- "$(readlink -f -- ..)")"
+export STEAMOS_DEVICE_ROOT="/home/steamos/gamescope_local"
+export STEAMOS_DEVICE_PATH="$STEAMOS_DEVICE_ROOT/$STEAMOS_SOURCE_NAME"
+
 source ./steamos_password_helpers.sh
