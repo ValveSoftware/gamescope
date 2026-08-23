@@ -3068,7 +3068,7 @@ void wlserver_touchdown( double x, double y, int touch_id, uint32_t time, gamesc
 
 			uint32_t button = TouchClickModeToLinuxButton( eMode );
 
-			if ( button != 0 && eMode < WLSERVER_BUTTON_COUNT )
+			if ( button != 0 && eMode < WLSERVER_BUTTON_COUNT && !wlserver.button_held[ eMode ] )
 			{
 				wlr_seat_pointer_notify_button( wlserver.wlr.seat, time, button, WL_POINTER_BUTTON_STATE_PRESSED );
 				wlr_seat_pointer_notify_frame( wlserver.wlr.seat );
