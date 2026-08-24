@@ -3334,16 +3334,19 @@ static bool vulkan_make_backend_output_images( VulkanOutput_t *pOutput,
 	const CVulkanTexture::createFlags &outputImageflags,
 	uint32_t uWidth, uint32_t uHeight )
 {
-	// Partial-composition overlay images alias the primary image's memory,
-	// which GBM cannot do.
-	if ( pOutput->uOutputFormatOverlay != VK_FORMAT_UNDEFINED && !kDisablePartialComposition )
-		return false;
+	const bool bHasOverlay = pOutput->uOutputFormatOverlay != VK_FORMAT_UNDEFINED && !kDisablePartialComposition;
 
+	// Overlay images alias the primary buffer with a different format, so the
+	// modifier must be valid for both.
 	std::vector<uint64_t> modifiers;
 	for ( uint64_t ulModifier : GetBackend()->GetSupportedModifiers( pOutput->uOutputFormat ) )
 	{
-		if ( ulModifier != DRM_FORMAT_MOD_INVALID )
-			modifiers.push_back( ulModifier );
+		if ( ulModifier == DRM_FORMAT_MOD_INVALID )
+			continue;
+		if ( bHasOverlay &&
+		     !gamescope::Algorithm::Contains( GetBackend()->GetSupportedModifiers( pOutput->uOutputFormatOverlay ), ulModifier ) )
+			continue;
+		modifiers.push_back( ulModifier );
 	}
 	if ( modifiers.empty() )
 		return false;
@@ -3359,6 +3362,16 @@ static bool vulkan_make_backend_output_images( VulkanOutput_t *pOutput,
 		bool bSuccess = pOutput->outputImages[i]->BInit(
 			uWidth, uHeight, 1u, pOutput->uOutputFormat,
 			outputImageflags, &dmabuf );
+
+		if ( bSuccess && bHasOverlay )
+		{
+			wlr_dmabuf_attributes overlayDmabuf = dmabuf;
+			overlayDmabuf.format = pOutput->uOutputFormatOverlay;
+			pOutput->outputImagesPartialOverlay[i] = new CVulkanTexture();
+			bSuccess = pOutput->outputImagesPartialOverlay[i]->BInit(
+				uWidth, uHeight, 1u, pOutput->uOutputFormatOverlay,
+				outputImageflags, &overlayDmabuf );
+		}
 
 		wlr_dmabuf_attributes_finish( &dmabuf );
 		if ( !bSuccess )
