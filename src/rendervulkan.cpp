@@ -2516,28 +2516,10 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 
 		m_dmabuf = dmabuf;
 	}
-	else if ( pDMA != nullptr && flags.bFlippable == true )
-	{
-		// Backend-allocated scanout image: clone the dmabuf for ImportDmabufToBackend.
-		m_dmabuf = *pDMA;
-		m_dmabuf.n_planes = 0;
-		for ( int i = 0; i < pDMA->n_planes; i++ )
-		{
-			m_dmabuf.fd[i] = dup( pDMA->fd[i] );
-			if ( m_dmabuf.fd[i] < 0 )
-			{
-				vk_log.errorf_errno( "dup failed" );
-				return false;
-			}
-			m_dmabuf.n_planes = i + 1;
-		}
-	}
 
-	if ( flags.bFlippable == true )
+	if ( flags.bFlippable == true && m_pBackendFb == nullptr )
 	{
 		m_pBackendFb = GetBackend()->ImportDmabufToBackend( &m_dmabuf );
-		if ( pDMA != nullptr && m_pBackendFb == nullptr )
-			return false;
 	}
 
 	// Imported output images stay identity-swizzled: they are storage images.
@@ -3358,19 +3340,29 @@ static bool vulkan_make_backend_output_images( VulkanOutput_t *pOutput,
 			uWidth, uHeight, pOutput->uOutputFormat, modifiers, &dmabuf ) )
 			return false;
 
-		pOutput->outputImages[i] = new CVulkanTexture();
-		bool bSuccess = pOutput->outputImages[i]->BInit(
-			uWidth, uHeight, 1u, pOutput->uOutputFormat,
-			outputImageflags, &dmabuf );
+		gamescope::OwningRc<gamescope::IBackendFb> pFb = GetBackend()->ImportDmabufToBackend( &dmabuf );
+		bool bSuccess = pFb != nullptr;
+		if ( bSuccess )
+		{
+			pOutput->outputImages[i] = new CVulkanTexture();
+			bSuccess = pOutput->outputImages[i]->BInit(
+				uWidth, uHeight, 1u, pOutput->uOutputFormat,
+				outputImageflags, &dmabuf, 0, 0, nullptr, std::move( pFb ) );
+		}
 
 		if ( bSuccess && bHasOverlay )
 		{
 			wlr_dmabuf_attributes overlayDmabuf = dmabuf;
 			overlayDmabuf.format = pOutput->uOutputFormatOverlay;
-			pOutput->outputImagesPartialOverlay[i] = new CVulkanTexture();
-			bSuccess = pOutput->outputImagesPartialOverlay[i]->BInit(
-				uWidth, uHeight, 1u, pOutput->uOutputFormatOverlay,
-				outputImageflags, &overlayDmabuf );
+			gamescope::OwningRc<gamescope::IBackendFb> pOverlayFb = GetBackend()->ImportDmabufToBackend( &overlayDmabuf );
+			bSuccess = pOverlayFb != nullptr;
+			if ( bSuccess )
+			{
+				pOutput->outputImagesPartialOverlay[i] = new CVulkanTexture();
+				bSuccess = pOutput->outputImagesPartialOverlay[i]->BInit(
+					uWidth, uHeight, 1u, pOutput->uOutputFormatOverlay,
+					outputImageflags, &overlayDmabuf, 0, 0, nullptr, std::move( pOverlayFb ) );
+			}
 		}
 
 		wlr_dmabuf_attributes_finish( &dmabuf );
