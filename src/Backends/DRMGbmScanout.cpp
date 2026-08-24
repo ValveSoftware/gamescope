@@ -15,7 +15,7 @@ namespace gamescope
 {
 	static LogScope gbm_log( "gbm_scanout" );
 
-	bool DrmDeviceIsNvidia( int nDrmFd )
+	static bool IsNvidiaDrm( int nDrmFd )
 	{
 		bool bIsNvidia = false;
 		if ( drmVersion *pVersion = drmGetVersion( nDrmFd ) )
@@ -31,26 +31,29 @@ namespace gamescope
 		Shutdown();
 	}
 
-#if HAVE_GBM
-
 	bool CGbmScanoutAllocator::Init( int nDrmFd )
 	{
+		if ( !IsNvidiaDrm( nDrmFd ) )
+			return false;
+#if HAVE_GBM
 		m_pGbmDevice = gbm_create_device( nDrmFd );
 		if ( !m_pGbmDevice )
-		{
 			gbm_log.errorf( "Failed to create GBM device; Vulkan scanout allocation will be used." );
-			return false;
-		}
-		return true;
+#else
+		gbm_log.errorf( "Gamescope was built without GBM support; Vulkan scanout allocation will be used on NVIDIA." );
+#endif
+		return m_pGbmDevice != nullptr;
 	}
 
 	void CGbmScanoutAllocator::Shutdown()
 	{
+#if HAVE_GBM
 		if ( m_pGbmDevice )
 		{
 			gbm_device_destroy( m_pGbmDevice );
 			m_pGbmDevice = nullptr;
 		}
+#endif
 	}
 
 	bool CGbmScanoutAllocator::CreateScanoutDmabuf( uint32_t uWidth, uint32_t uHeight, uint32_t uDrmFormat,
@@ -58,6 +61,7 @@ namespace gamescope
 	                                                wlr_dmabuf_attributes *pDmaBuf )
 	{
 		*pDmaBuf = {};
+#if HAVE_GBM
 		if ( !m_pGbmDevice || ulModifiers.empty() )
 			return false;
 
@@ -105,27 +109,8 @@ namespace gamescope
 		}
 
 		return true;
-	}
-
-#else // !HAVE_GBM
-
-	bool CGbmScanoutAllocator::Init( int )
-	{
-		gbm_log.errorf( "Gamescope was built without GBM support; Vulkan scanout allocation will be used." );
+#else
 		return false;
-	}
-
-	void CGbmScanoutAllocator::Shutdown()
-	{
-	}
-
-	bool CGbmScanoutAllocator::CreateScanoutDmabuf( uint32_t, uint32_t, uint32_t,
-	                                                std::span<const uint64_t>,
-	                                                wlr_dmabuf_attributes *pDmaBuf )
-	{
-		*pDmaBuf = {};
-		return false;
-	}
-
 #endif
+	}
 }

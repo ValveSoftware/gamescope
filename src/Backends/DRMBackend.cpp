@@ -1459,10 +1459,8 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 
 	drm->needs_modeset = true;
 
-	// Always opened on NVIDIA (a gbm_device is free until allocated from) so
-	// drm_nvidia_gbm_scanout can be toggled at runtime.
-	if ( gamescope::DrmDeviceIsNvidia( drm->fd ) )
-		drm->gbmAllocator.Init( drm->fd );
+	// Opened regardless of drm_nvidia_gbm_scanout so it can be toggled at runtime.
+	drm->gbmAllocator.Init( drm->fd );
 
 	return true;
 }

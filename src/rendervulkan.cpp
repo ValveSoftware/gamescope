@@ -2518,9 +2518,7 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 	}
 	else if ( pDMA != nullptr && flags.bFlippable == true )
 	{
-		// Backend-allocated scanout image: clone the imported dmabuf so the
-		// backend can make an FB from it. (Client imports are never flippable,
-		// they only set bSampled.)
+		// Backend-allocated scanout image: clone the dmabuf for ImportDmabufToBackend.
 		m_dmabuf = *pDMA;
 		m_dmabuf.n_planes = 0;
 		for ( int i = 0; i < pDMA->n_planes; i++ )
@@ -2542,10 +2540,7 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 			return false;
 	}
 
-	// Imported client buffers with an X-format need alpha forced to 1 when
-	// sampled. Imported output images must keep the identity swizzle: they are
-	// storage images (swizzles are incompatible, see the assert below) and
-	// scanout ignores their alpha anyway.
+	// Imported output images stay identity-swizzled: they are storage images.
 	bool bHasAlpha = ( pDMA && !flags.bOutputImage ) ? DRMFormatHasAlpha( pDMA->format ) : true;
 
 	if (!bHasAlpha )
@@ -3335,33 +3330,24 @@ bool vulkan_remake_swapchain( void )
 	return bRet;
 }
 
-static std::vector<uint64_t> vulkan_get_backend_scanout_modifiers( VulkanOutput_t *pOutput )
-{
-	std::vector<uint64_t> modifiers;
-	const bool bHasOverlay = pOutput->uOutputFormatOverlay != VK_FORMAT_UNDEFINED && !kDisablePartialComposition;
-
-	for ( uint64_t ulModifier : GetBackend()->GetSupportedModifiers( pOutput->uOutputFormat ) )
-	{
-		if ( ulModifier == DRM_FORMAT_MOD_INVALID )
-			continue;
-		if ( bHasOverlay &&
-		     !gamescope::Algorithm::Contains( GetBackend()->GetSupportedModifiers( pOutput->uOutputFormatOverlay ), ulModifier ) )
-			continue;
-		modifiers.push_back( ulModifier );
-	}
-
-	return modifiers;
-}
-
 static bool vulkan_make_backend_output_images( VulkanOutput_t *pOutput,
 	const CVulkanTexture::createFlags &outputImageflags,
 	uint32_t uWidth, uint32_t uHeight )
 {
-	const std::vector<uint64_t> modifiers = vulkan_get_backend_scanout_modifiers( pOutput );
+	// Partial-composition overlay images alias the primary image's memory,
+	// which GBM cannot do.
+	if ( pOutput->uOutputFormatOverlay != VK_FORMAT_UNDEFINED && !kDisablePartialComposition )
+		return false;
+
+	std::vector<uint64_t> modifiers;
+	for ( uint64_t ulModifier : GetBackend()->GetSupportedModifiers( pOutput->uOutputFormat ) )
+	{
+		if ( ulModifier != DRM_FORMAT_MOD_INVALID )
+			modifiers.push_back( ulModifier );
+	}
 	if ( modifiers.empty() )
 		return false;
 
-	const bool bHasOverlay = pOutput->uOutputFormatOverlay != VK_FORMAT_UNDEFINED && !kDisablePartialComposition;
 	for ( size_t i = 0; i < pOutput->outputImages.size(); i++ )
 	{
 		wlr_dmabuf_attributes dmabuf = {};
@@ -3373,20 +3359,6 @@ static bool vulkan_make_backend_output_images( VulkanOutput_t *pOutput,
 		bool bSuccess = pOutput->outputImages[i]->BInit(
 			uWidth, uHeight, 1u, pOutput->uOutputFormat,
 			outputImageflags, &dmabuf );
-
-		// Unlike the Vulkan-allocated path (which aliases the primary image's
-		// memory via pExistingImageToReuseMemory), overlay images get their own
-		// backend allocation: GBM cannot alias memory that way, and overlay
-		// planes need their own flippable dmabuf anyway.
-		if ( bSuccess && bHasOverlay )
-		{
-			wlr_dmabuf_attributes overlayDmabuf = dmabuf;
-			overlayDmabuf.format = pOutput->uOutputFormatOverlay;
-			pOutput->outputImagesPartialOverlay[i] = new CVulkanTexture();
-			bSuccess = pOutput->outputImagesPartialOverlay[i]->BInit(
-				uWidth, uHeight, 1u, pOutput->uOutputFormatOverlay,
-				outputImageflags, &overlayDmabuf );
-		}
 
 		wlr_dmabuf_attributes_finish( &dmabuf );
 		if ( !bSuccess )
@@ -3421,20 +3393,12 @@ static bool vulkan_make_output_images( VulkanOutput_t *pOutput )
 	if ( g_uOutputRotation & 1u )
 		std::swap( uOutputWidth, uOutputHeight );
 
-	// Backends with scanout placement constraints (e.g. NVIDIA physical
-	// contiguity) allocate the scanout buffers themselves; Vulkan imports them.
 	bool bBackendAllocated = false;
 	if ( GetBackend()->UsesBackendAllocatedScanout() )
 	{
 		bBackendAllocated = vulkan_make_backend_output_images( pOutput, outputImageflags, uOutputWidth, uOutputHeight );
 		if ( !bBackendAllocated )
-		{
 			vk_log.errorf( "Failed to create backend-allocated scanout buffers, falling back to Vulkan allocation." );
-			for ( auto &pImage : pOutput->outputImages )
-				pImage = nullptr;
-			for ( auto &pImage : pOutput->outputImagesPartialOverlay )
-				pImage = nullptr;
-		}
 	}
 
 	if ( !bBackendAllocated )
