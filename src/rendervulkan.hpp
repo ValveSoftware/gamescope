@@ -211,6 +211,7 @@ private:
 	bool m_bInitialized = false;
 	bool m_bExternal = false;
 	bool m_bOutputImage = false;
+	bool m_bOwnsImage = false;
 
 	uint32_t m_drmFormat = DRM_FORMAT_INVALID;
 
@@ -769,6 +770,7 @@ static inline uint32_t div_roundup(uint32_t x, uint32_t y)
 	VK_FUNC(GetImageMemoryRequirements) \
 	VK_FUNC(GetImageSubresourceLayout) \
 	VK_FUNC(GetMemoryFdKHR) \
+	VK_FUNC(GetMemoryFdPropertiesKHR) \
 	VK_FUNC(GetSemaphoreCounterValue) \
 	VK_FUNC(GetSwapchainImagesKHR) \
 	VK_FUNC(MapMemory) \

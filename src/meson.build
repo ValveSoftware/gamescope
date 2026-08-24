@@ -11,6 +11,7 @@ dep_xmu = dependency('xmu')
 dep_xi = dependency('xi')
 
 drm_dep = dependency('libdrm', version: '>= 2.4.113', required: get_option('drm_backend'))
+gbm_dep = dependency('gbm', version: '>= 21.3', required: false)
 eis_dep = dependency('libeis-1.0', required : get_option('input_emulation'))
 
 wayland_server = dependency('wayland-server', version: '>=1.21')
@@ -130,6 +131,7 @@ libinput_dep = dependency('libinput', required: true)
 gamescope_cpp_args = []
 if drm_dep.found()
   src += 'Backends/DRMBackend.cpp'
+  src += 'Backends/DRMGbmScanout.cpp'
   src += 'modegen.cpp'
   required_wlroots_features += 'libinput_backend'
   liftoff_dep = dependency(
@@ -147,6 +149,7 @@ if sdl2_dep.found()
 endif
 
 gamescope_cpp_args += '-DHAVE_DRM=@0@'.format(drm_dep.found().to_int())
+gamescope_cpp_args += '-DHAVE_GBM=@0@'.format((drm_dep.found() and gbm_dep.found()).to_int())
 gamescope_cpp_args += '-DHAVE_SDL2=@0@'.format(sdl2_dep.found().to_int())
 gamescope_cpp_args += '-DHAVE_AVIF=@0@'.format(avif_dep.found().to_int())
 gamescope_cpp_args += '-DHAVE_LIBCAP=@0@'.format(cap_dep.found().to_int())
@@ -194,7 +197,7 @@ gamescope_version = configure_file(
     include_directories : [reshade_include, sol2_include],
     dependencies: [
       dep_wayland, dep_x11, dep_xdamage, dep_xcomposite, dep_xrender, dep_xext, dep_xfixes,
-      dep_xxf86vm, dep_xres, glm_dep, drm_dep, wayland_server,
+      dep_xxf86vm, dep_xres, glm_dep, drm_dep, gbm_dep, wayland_server,
       xkbcommon, thread_dep, sdl2_dep, wlroots_dep,
       vulkan_dep, liftoff_dep, dep_xtst, dep_xmu, cap_dep, epoll_dep, pipewire_dep, librt_dep,
       stb_dep, displayinfo_dep, openvr_dep, dep_xcursor, avif_dep, dep_xi,
