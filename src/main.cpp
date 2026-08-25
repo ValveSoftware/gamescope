@@ -747,6 +747,11 @@ int main(int argc, char **argv)
 				break;
 			case 'r':
 				g_nNestedRefresh = gamescope::ConvertHztomHz( parse_integer( optarg, "nested-refresh" ) );
+				if ( g_nNestedRefresh < 0 )
+				{
+					fprintf( stderr, "gamescope: invalid value for --nested-refresh, must be >= 0\n" );
+					exit(1);
+				}
 				break;
 			case 'W':
 				g_nPreferredOutputWidth = parse_integer( optarg, "output-width" );
