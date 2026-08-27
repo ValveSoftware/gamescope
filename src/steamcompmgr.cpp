@@ -3294,15 +3294,6 @@ win_maybe_a_dropdown( steamcompmgr_win_t *w )
 	if ( w->type != steamcompmgr_win_type_t::XWAYLAND )
 		return false;
 
-	// Josh:
-	// Right now we don't get enough info from Wine
-	// about the true nature of windows to distringuish
-	// something like the Fallout 4 Options menu from the
-	// Warframe language dropdown. Until we get more stuff
-	// exposed for that, there is this workaround to let that work.
-	if ( w->appID == 230410 && w->maybe_a_dropdown && w->xwayland().transientFor && ( w->skipPager || w->skipTaskbar ) )
-		return !win_is_useless( w );
-
 	// Work around Antichamber splash screen until we hook up
 	// the Proton window style deduction.
 	if ( w->appID == 219890 )
