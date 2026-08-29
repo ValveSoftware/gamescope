@@ -395,6 +395,7 @@ namespace gamescope
 
         bool ConsumeNudgeToVisible() { return std::exchange( m_bNudgeToVisible, false ); }
         bool IsRelativeMouse() const { return m_bRelativeMouse; }
+        void UpdateCursorOverride( const FrameInfo_t::Layer_t *pCursorLayer );
 
         // Thread safe.
         bool IsVisible() const
@@ -1653,6 +1654,28 @@ namespace gamescope
         return "Virtual Display";
     }
 
+    // A physical mouse moves SteamVR's own pointer, the laser draws itself.
+    void COpenVRConnector::UpdateCursorOverride( const FrameInfo_t::Layer_t *pCursorLayer )
+    {
+        bool bUsingPhysicalMouse = m_pBackend->GetCurrentMouseConnector() == this && !m_bUsingVRMouse;
+        if ( pCursorLayer && bUsingPhysicalMouse && !IsRelativeMouse() )
+        {
+            vr::HmdVector2_t vMousePos =
+            {
+                static_cast<float>( -pCursorLayer->offset.x ),
+                static_cast<float>( static_cast<float>( g_nOutputHeight ) + pCursorLayer->offset.y ),
+            };
+
+            vr::VROverlay()->SetOverlayCursorPositionOverride( GetPrimaryPlane()->GetOverlay(), &vMousePos );
+            m_bCurrentlyOverridingPosition = true;
+        }
+        else if ( m_bCurrentlyOverridingPosition )
+        {
+            vr::VROverlay()->ClearOverlayCursorPositionOverride( GetPrimaryPlane()->GetOverlay() );
+            m_bCurrentlyOverridingPosition = false;
+        }
+    }
+
     int COpenVRConnector::Present( const FrameInfo_t *pFrameInfo, bool bAsync )
     {
         bool bNeedsFullComposite = false;
@@ -1712,49 +1735,36 @@ namespace gamescope
                     } );
             }
 
-            bool bShouldHideCursor = true;
-
+            const FrameInfo_t::Layer_t *pCursorLayer = nullptr;
             for ( int i = 0; i < 8 && uCurrentPlane < 8; i++ )
             {
                 const FrameInfo_t::Layer_t *pLayer = i < pFrameInfo->layers.count() ? &pFrameInfo->layers.get( i ) : nullptr;
                 if ( pLayer && pLayer->zpos == g_zposCursor )
                 {
-                    bool bUsingPhysicalMouse = m_pBackend->GetCurrentMouseConnector() == this && !m_bUsingVRMouse;
-
-                    bool bShowCursor = !IsRelativeMouse();
-
-                    if (bUsingPhysicalMouse && bShowCursor)
-                    {
-                        vr::HmdVector2_t vMousePos =
-                        {
-                            static_cast<float>( -pLayer->offset.x ),
-                            static_cast<float>( static_cast<float>( g_nOutputHeight ) + pLayer->offset.y ),
-                        };
-
-                        vr::VROverlay()->SetOverlayCursorPositionOverride( GetPrimaryPlane()->GetOverlay(), &vMousePos );
-                        m_bCurrentlyOverridingPosition = true;
-
-                        bShouldHideCursor = false;
-                    }
-
-                    pLayer = nullptr; // Handled here.
+                    pCursorLayer = pLayer;
+                    pLayer = nullptr; // Handled by the override.
                 }
                 m_Planes[uCurrentPlane++].Present( pLayer );
             }
-
-            if ( bShouldHideCursor )
-            {
-                if ( m_bCurrentlyOverridingPosition )
-                {
-                    vr::VROverlay()->ClearOverlayCursorPositionOverride( GetPrimaryPlane()->GetOverlay() );
-
-                    m_bCurrentlyOverridingPosition = false;
-                }
-            }
+            UpdateCursorOverride( pCursorLayer );
         }
         else
         {
-            std::optional oCompositeResult = vulkan_composite( (FrameInfo_t *)pFrameInfo, nullptr, false );
+            // SteamVR draws the pointer, so compositing the layer too would paint a second one.
+            FrameInfo_t trimmedFrameInfo = *pFrameInfo;
+            trimmedFrameInfo.layers.truncate( 0 );
+            const FrameInfo_t::Layer_t *pCursorLayer = nullptr;
+            for ( int i = 0; i < pFrameInfo->layers.count(); i++ )
+            {
+                const FrameInfo_t::Layer_t &layer = pFrameInfo->layers.get( i );
+                if ( layer.zpos == g_zposCursor )
+                    pCursorLayer = &layer;
+                else if ( FrameInfo_t::Layer_t *pDst = trimmedFrameInfo.layers.push() )
+                    *pDst = layer;
+            }
+            UpdateCursorOverride( pCursorLayer );
+
+            std::optional oCompositeResult = vulkan_composite( &trimmedFrameInfo, nullptr, false );
             if ( !oCompositeResult )
             {
                 openvr_log.errorf( "vulkan_composite failed" );
