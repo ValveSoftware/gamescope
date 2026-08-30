@@ -2438,11 +2438,53 @@ namespace gamescope
 			const di_edid_chromaticity_coords *pChroma = di_edid_get_chromaticity_coords( pEdid );
 			if ( pChroma && pChroma->red_x != 0.0f )
 			{
+				di_edid_chromaticity_coords ChromaFix;
+
+				memcpy(&ChromaFix, pChroma, sizeof(di_edid_chromaticity_coords));
+
 				drm_log.infof( "[colorimetry]: EDID with colorimetry detected. Using it" );
+
+				// Check if the color chormaticity is valid: abs(standard 709 - value from EDID) not g.t. certain delta.
+				if (abs(ChromaFix.red_x - displaycolorimetry_709.primaries.r.x) > 0.08f ||
+					abs(ChromaFix.red_y - displaycolorimetry_709.primaries.r.y) > 0.06f)
+				{
+					drm_log.infof( "[colorimetry]: r %f %f -> %f %f", ChromaFix.red_x, ChromaFix.red_y,
+						displaycolorimetry_709.primaries.r.x, displaycolorimetry_709.primaries.r.y);
+					ChromaFix.red_x = displaycolorimetry_709.primaries.r.x;
+					ChromaFix.red_y = displaycolorimetry_709.primaries.r.y;
+				}
+
+				if (abs(ChromaFix.green_x - displaycolorimetry_709.primaries.g.x) > 0.10f ||
+					abs(ChromaFix.green_y - displaycolorimetry_709.primaries.g.y) > 0.14f)
+				{
+					drm_log.infof( "[colorimetry]: g %f %f -> %f %f", ChromaFix.green_x, ChromaFix.green_y,
+						displaycolorimetry_709.primaries.g.x, displaycolorimetry_709.primaries.g.y);
+					ChromaFix.green_x = displaycolorimetry_709.primaries.g.x;
+					ChromaFix.green_y = displaycolorimetry_709.primaries.g.y;
+				}
+
+				if (abs(ChromaFix.blue_x - displaycolorimetry_709.primaries.b.x) > 0.04f ||
+					abs(ChromaFix.blue_y - displaycolorimetry_709.primaries.b.y) > 0.05f)
+				{
+					drm_log.infof( "[colorimetry]: b %f %f -> %f %f", ChromaFix.blue_x, ChromaFix.blue_y,
+						displaycolorimetry_709.primaries.b.x, displaycolorimetry_709.primaries.b.y);
+					ChromaFix.blue_x = displaycolorimetry_709.primaries.b.x;
+					ChromaFix.blue_y = displaycolorimetry_709.primaries.b.y;
+				}
+
+				if (abs(ChromaFix.white_x - displaycolorimetry_709.white.x) > 0.06f ||
+					abs(ChromaFix.white_y - displaycolorimetry_709.white.y) > 0.07f)
+				{
+					drm_log.infof( "[colorimetry]: w %f %f -> %f %f", ChromaFix.white_x, ChromaFix.white_y,
+						displaycolorimetry_709.white.x, displaycolorimetry_709.white.y);
+					ChromaFix.white_x = displaycolorimetry_709.white.x;
+					ChromaFix.white_y = displaycolorimetry_709.white.y;
+				}
+
 				m_Mutable.DisplayColorimetry = displaycolorimetry_t
 				{
-					.primaries = { { pChroma->red_x, pChroma->red_y }, { pChroma->green_x, pChroma->green_y }, { pChroma->blue_x, pChroma->blue_y } },
-					.white = { pChroma->white_x, pChroma->white_y },
+					.primaries = { { ChromaFix.red_x, ChromaFix.red_y }, { ChromaFix.green_x, ChromaFix.green_y }, { ChromaFix.blue_x, ChromaFix.blue_y } },
+					.white = { ChromaFix.white_x, ChromaFix.white_y },
 				};
 			}
 			else
@@ -2456,6 +2498,7 @@ namespace gamescope
 		drm_log.infof( "[colorimetry]: g %f %f", m_Mutable.DisplayColorimetry.primaries.g.x, m_Mutable.DisplayColorimetry.primaries.g.y );
 		drm_log.infof( "[colorimetry]: b %f %f", m_Mutable.DisplayColorimetry.primaries.b.x, m_Mutable.DisplayColorimetry.primaries.b.y );
 		drm_log.infof( "[colorimetry]: w %f %f", m_Mutable.DisplayColorimetry.white.x, m_Mutable.DisplayColorimetry.white.y );
+
 
 		/////////////////////
 		// Parse HDR stuff.
