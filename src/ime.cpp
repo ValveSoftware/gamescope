@@ -218,7 +218,11 @@ static struct xkb_keymap *generate_keymap(struct wlserver_input_method *ime)
 		"\n"
 		"xkb_types \"(unnamed)\" { include \"complete\" };\n"
 		"\n"
-		"xkb_compatibility \"(unnamed)\" { include \"complete\" };\n"
+		"xkb_compatibility \"(unnamed)\" {\n"
+		"	include \"complete\"\n"
+		// libxkbcommon 1.12+ serializes only matched interprets, Xwayland needs at least one
+		"	interpret Any+AnyOfOrNone(all) { action= NoAction(); };\n"
+		"};\n"
 		"\n"
 		"xkb_symbols \"(unnamed)\" {\n"
 	);
