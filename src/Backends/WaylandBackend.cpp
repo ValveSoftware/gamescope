@@ -3060,6 +3060,7 @@ namespace gamescope
 	}
 	void CWaylandInputThread::Wayland_Pointer_Motion( wl_pointer *pPointer, uint32_t uTime, wl_fixed_t fSurfaceX, wl_fixed_t fSurfaceY )
 	{
+		// Ignore any pointer events for which the `enter` event surface didn't pass `IsGamescopeToplevel` (libdecor frame)
 		if ( !m_bMouseEntered )
 			return;
 
@@ -3094,6 +3095,9 @@ namespace gamescope
     }
     void CWaylandInputThread::Wayland_Pointer_Button( wl_pointer *pPointer, uint32_t uSerial, uint32_t uTime, uint32_t uButton, uint32_t uState )
     {
+        // Ignore any pointer events for which the `enter` event surface didn't pass `IsGamescopeToplevel` (libdecor frame)
+        if ( !m_bMouseEntered )
+            return;
         // Don't do any motion/movement stuff if we don't have kb focus
         if ( !cv_wayland_mouse_warp_without_keyboard_focus && !m_bKeyboardEntered )
             return;
@@ -3104,19 +3108,35 @@ namespace gamescope
     }
     void CWaylandInputThread::Wayland_Pointer_Axis( wl_pointer *pPointer, uint32_t uTime, uint32_t uAxis, wl_fixed_t fValue )
     {
+        // Ignore any pointer events for which the `enter` event surface didn't pass `IsGamescopeToplevel` (libdecor frame)
+        if ( !m_bMouseEntered )
+            return;
     }
     void CWaylandInputThread::Wayland_Pointer_Axis_Source( wl_pointer *pPointer, uint32_t uAxisSource )
     {
+        // Ignore any pointer events for which the `enter` event surface didn't pass `IsGamescopeToplevel` (libdecor frame)
+        if ( !m_bMouseEntered )
+            return;
+
         m_uAxisSource = uAxisSource;
     }
     void CWaylandInputThread::Wayland_Pointer_Axis_Stop( wl_pointer *pPointer, uint32_t uTime, uint32_t uAxis )
     {
+        // Ignore any pointer events for which the `enter` event surface didn't pass `IsGamescopeToplevel` (libdecor frame)
+        if ( !m_bMouseEntered )
+            return;
     }
     void CWaylandInputThread::Wayland_Pointer_Axis_Discrete( wl_pointer *pPointer, uint32_t uAxis, int32_t nDiscrete )
     {
+        // Ignore any pointer events for which the `enter` event surface didn't pass `IsGamescopeToplevel` (libdecor frame)
+        if ( !m_bMouseEntered )
+            return;
     }
     void CWaylandInputThread::Wayland_Pointer_Axis_Value120( wl_pointer *pPointer, uint32_t uAxis, int32_t nValue120 )
     {
+        // Ignore any pointer events for which the `enter` event surface didn't pass `IsGamescopeToplevel` (libdecor frame)
+        if ( !m_bMouseEntered )
+            return;
         if ( !cv_wayland_mouse_warp_without_keyboard_focus && !m_bKeyboardEntered )
             return;
 
