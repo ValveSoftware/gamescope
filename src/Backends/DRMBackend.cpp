@@ -61,6 +61,7 @@ extern int g_nPreferredOutputWidth;
 extern int g_nPreferredOutputHeight;
 
 gamescope::ConVar<bool> cv_drm_single_plane_optimizations( "drm_single_plane_optimizations", true, "Whether or not to enable optimizations for single plane usage." );
+gamescope::ConVar<bool> cv_drm_reuse_last_composite( "drm_reuse_last_composite", true, "Present the last composited image again for repeated frames instead of compositing an identical one." );
 gamescope::ConVar<bool> cv_drm_cursor_plane( "drm_cursor_plane", false, "Scan out the cursor with the DRM cursor plane instead of forcing composition while a cursor is visible. Known driver issues on AMDGPU." );
 
 gamescope::ConVar<bool> cv_drm_debug_disable_shaper_and_3dlut( "drm_debug_disable_shaper_and_3dlut", false, "Shaper + 3DLUT chicken bit. (Force disable/DEFAULT, no logic change)" );
@@ -3750,40 +3751,49 @@ namespace gamescope
 			// in time so we don't lose layers.
 			bool bDefer = !bNeedsFullComposite && ( !m_bWasCompositing || m_bWasPartialCompositing );
 
-			// If doing a partial composition then remove the baseplane
-			// from our frameinfo to composite.
-			if ( !bNeedsFullComposite )
-			{
-				for ( int i = 1; i < compositeFrameInfo.layers.count(); i++ )
-					compositeFrameInfo.layers.get( i - 1 ) = compositeFrameInfo.layers.get( i );
-				compositeFrameInfo.layers.pop();
+			// Skipping the composite leaves the output ring in place, so the
+			// last composited image is still the one scanning out.
+			const bool bReuseLastComposite = cv_drm_reuse_last_composite &&
+				pFrameInfo->bRepeatFrame && bNeedsFullComposite &&
+				m_bWasCompositing && !m_bWasPartialCompositing;
 
-				// When doing partial composition, apply the shaper + 3D LUT stuff
-				// at scanout.
-				for ( uint32_t nEOTF = 0; nEOTF < EOTF_Count; nEOTF++ ) {
-					compositeFrameInfo.shaperLut[ nEOTF ] = nullptr;
-					compositeFrameInfo.lut3D[ nEOTF ] = nullptr;
+			if ( !bReuseLastComposite )
+			{
+				// If doing a partial composition then remove the baseplane
+				// from our frameinfo to composite.
+				if ( !bNeedsFullComposite )
+				{
+					for ( int i = 1; i < compositeFrameInfo.layers.count(); i++ )
+						compositeFrameInfo.layers.get( i - 1 ) = compositeFrameInfo.layers.get( i );
+					compositeFrameInfo.layers.pop();
+
+					// When doing partial composition, apply the shaper + 3D LUT stuff
+					// at scanout.
+					for ( uint32_t nEOTF = 0; nEOTF < EOTF_Count; nEOTF++ ) {
+						compositeFrameInfo.shaperLut[ nEOTF ] = nullptr;
+						compositeFrameInfo.lut3D[ nEOTF ] = nullptr;
+					}
 				}
+
+				// If using composite debug markers, make sure we mark them as partial
+				// so we know!
+				if ( bDefer && !!( g_uCompositeDebug & CompositeDebugFlag::Markers ) )
+					g_uCompositeDebug |= CompositeDebugFlag::Markers_Partial;
+
+				std::optional oCompositeResult = vulkan_composite( &compositeFrameInfo, nullptr, !bNeedsFullComposite );
+
+				m_bWasCompositing = true;
+
+				g_uCompositeDebug &= ~CompositeDebugFlag::Markers_Partial;
+
+				if ( !oCompositeResult )
+				{
+					xwm_log.errorf("vulkan_composite failed");
+					return -EINVAL;
+				}
+
+				vulkan_wait( *oCompositeResult, true );
 			}
-
-			// If using composite debug markers, make sure we mark them as partial
-			// so we know!
-			if ( bDefer && !!( g_uCompositeDebug & CompositeDebugFlag::Markers ) )
-				g_uCompositeDebug |= CompositeDebugFlag::Markers_Partial;
-
-			std::optional oCompositeResult = vulkan_composite( &compositeFrameInfo, nullptr, !bNeedsFullComposite );
-
-			m_bWasCompositing = true;
-
-			g_uCompositeDebug &= ~CompositeDebugFlag::Markers_Partial;
-
-			if ( !oCompositeResult )
-			{
-				xwm_log.errorf("vulkan_composite failed");
-				return -EINVAL;
-			}
-
-			vulkan_wait( *oCompositeResult, true );
 
 			FrameInfo_t presentCompFrameInfo = {};
 			presentCompFrameInfo.allowVRR = pFrameInfo->allowVRR;
