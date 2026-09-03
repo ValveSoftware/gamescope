@@ -15,7 +15,7 @@ Scripts ending in `.lua` are executed recursively in alphabetical order from the
  - `/etc/gamescope`
  - `$XDG_CONFIG_DIR/gamescope`
 
-You can develop easily without overriding your installation by setting `script_use_local_scripts` which will eliminate `/usr/share/gamescope` and `/etc/gamescope` from being read, and instead read from `../config` of where Gamescope is run instead of those.
+You can develop easily without overriding your installation by setting `script_use_local_scripts` which will eliminate `/usr/share/gamescope` and `/etc/gamescope` from being read, and instead read from `../scripts` of where Gamescope is run instead of those.
 
 When errors are encountered, it will simply output that to the terminal. There is no visual indicator of this currently.
 
