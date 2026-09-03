@@ -111,6 +111,7 @@ struct drm_t {
 	uint64_t cursor_width, cursor_height;
 	bool allow_modifiers;
 	struct wlr_drm_format_set formats;
+	struct wlr_drm_format_set formats_async;
 
 	std::vector< std::unique_ptr< gamescope::CDRMPlane > > planes;
 	std::vector< std::unique_ptr< gamescope::CDRMCRTC > > crtcs;
@@ -121,6 +122,7 @@ struct drm_t {
 	gamescope::CDRMConnector *pConnector;
 
 	struct wlr_drm_format_set primary_formats;
+	struct wlr_drm_format_set primary_formats_async;
 
 	drmModeAtomicReq *req;
 	uint32_t flags;
@@ -302,6 +304,7 @@ namespace gamescope
 
 			std::optional<CDRMAtomicProperty> type; // Immutable
 			std::optional<CDRMAtomicProperty> IN_FORMATS; // Immutable
+			std::optional<CDRMAtomicProperty> IN_FORMATS_ASYNC; // Immutable
 
 			std::optional<CDRMAtomicProperty> FB_ID;
 			std::optional<CDRMAtomicProperty> IN_FENCE_FD;
@@ -661,7 +664,7 @@ static gamescope::CDRMCRTC *find_crtc_for_connector( struct drm_t *drm, gamescop
 	return nullptr;
 }
 
-static bool get_plane_formats( struct drm_t *drm, gamescope::CDRMPlane *pPlane, struct wlr_drm_format_set *pFormatSet )
+static bool get_plane_formats( struct drm_t *drm, gamescope::CDRMPlane *pPlane, struct wlr_drm_format_set *pFormatSet, bool bAsync )
 {
 	for ( uint32_t i = 0; i < pPlane->GetModePlane()->count_formats; i++ )
 	{
@@ -669,14 +672,22 @@ static bool get_plane_formats( struct drm_t *drm, gamescope::CDRMPlane *pPlane, 
 		wlr_drm_format_set_add( pFormatSet, uFormat, DRM_FORMAT_MOD_INVALID );
 	}
 
-	if ( pPlane->GetProperties().IN_FORMATS )
+	const std::optional<gamescope::CDRMAtomicProperty> *pInFormats = &pPlane->GetProperties().IN_FORMATS;
+	const char *pszInFormatsName = "IN_FORMATS";
+	if ( bAsync && pPlane->GetProperties().IN_FORMATS_ASYNC )
 	{
-		const uint64_t ulBlobId = pPlane->GetProperties().IN_FORMATS->GetCurrentValue();
+		pInFormats = &pPlane->GetProperties().IN_FORMATS_ASYNC;
+		pszInFormatsName = "IN_FORMATS_ASYNC";
+	}
+
+	if ( *pInFormats )
+	{
+		const uint64_t ulBlobId = ( *pInFormats )->GetCurrentValue();
 
 		drmModePropertyBlobRes *pBlob = drmModeGetPropertyBlob( drm->fd, ulBlobId );
 		if ( !pBlob )
 		{
-			drm_log.errorf_errno("drmModeGetPropertyBlob(IN_FORMATS) failed");
+			drm_log.errorf_errno("drmModeGetPropertyBlob(%s) failed", pszInFormatsName);
 			return false;
 		}
 		defer( drmModeFreePropertyBlob( pBlob ) );
@@ -718,6 +729,14 @@ static uint32_t pick_plane_format( const struct wlr_drm_format_set *formats, uin
 		}
 	}
 	return result;
+}
+
+static uint32_t pick_preferred_plane_format( const struct wlr_drm_format_set *pPreferredFormats, const struct wlr_drm_format_set *pFallbackFormats, uint32_t Xformat, uint32_t Aformat )
+{
+	uint32_t fmt = pick_plane_format( pPreferredFormats, Xformat, Aformat );
+	if ( fmt == DRM_FORMAT_INVALID && pFallbackFormats != pPreferredFormats )
+		fmt = pick_plane_format( pFallbackFormats, Xformat, Aformat );
+	return fmt;
 }
 
 /* Pick a primary plane that can be connected to the chosen CRTC. */
@@ -1364,7 +1383,10 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 	// Fetch formats which can be scanned out
 	for ( std::unique_ptr< gamescope::CDRMPlane > &pPlane : drm->planes )
 	{
-		if ( !get_plane_formats( drm, pPlane.get(), &drm->formats ) )
+		if ( !get_plane_formats( drm, pPlane.get(), &drm->formats, false ) )
+			return false;
+
+		if ( !get_plane_formats( drm, pPlane.get(), &drm->formats_async, true ) )
 			return false;
 	}
 
@@ -1378,7 +1400,12 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 		return false;
 	}
 
-	if ( !get_plane_formats( drm, drm->pPrimaryPlane, &drm->primary_formats ) )
+	if ( !get_plane_formats( drm, drm->pPrimaryPlane, &drm->primary_formats, false ) )
+	{
+		return false;
+	}
+
+	if ( !get_plane_formats( drm, drm->pPrimaryPlane, &drm->primary_formats_async, true ) )
 	{
 		return false;
 	}
@@ -1392,11 +1419,15 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 	// 2. When compositing HDR content as a fallback when we undock, it avoids introducing
 	// a bunch of horrible banding when going to G2.2 curve.
 	// It ensures that we can dither that.
-	g_nDRMFormat = pick_plane_format(&drm->primary_formats, DRM_FORMAT_XRGB2101010, DRM_FORMAT_ARGB2101010);
+	const wlr_drm_format_set *pPrimaryPreferredFormats = &drm->primary_formats;
+	if ( g_bSupportsAsyncFlips && drm->primary_formats_async.len > 0 )
+		pPrimaryPreferredFormats = &drm->primary_formats_async;
+
+	g_nDRMFormat = pick_preferred_plane_format( pPrimaryPreferredFormats, &drm->primary_formats, DRM_FORMAT_XRGB2101010, DRM_FORMAT_ARGB2101010 );
 	if ( g_nDRMFormat == DRM_FORMAT_INVALID ) {
-		g_nDRMFormat = pick_plane_format(&drm->primary_formats, DRM_FORMAT_XBGR2101010, DRM_FORMAT_ABGR2101010);
+		g_nDRMFormat = pick_preferred_plane_format( pPrimaryPreferredFormats, &drm->primary_formats, DRM_FORMAT_XBGR2101010, DRM_FORMAT_ABGR2101010 );
 		if ( g_nDRMFormat == DRM_FORMAT_INVALID ) {
-			g_nDRMFormat = pick_plane_format(&drm->primary_formats, DRM_FORMAT_XRGB8888, DRM_FORMAT_ARGB8888);
+			g_nDRMFormat = pick_preferred_plane_format( pPrimaryPreferredFormats, &drm->primary_formats, DRM_FORMAT_XRGB8888, DRM_FORMAT_ARGB8888 );
 			if ( g_nDRMFormat == DRM_FORMAT_INVALID ) {
 				drm_log.errorf("Primary plane doesn't support any formats >= 8888");
 				return false;
@@ -1405,12 +1436,16 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 	}
 
 	if (have_overlay_planes(drm)) {
+		const wlr_drm_format_set *pOverlayPreferredFormats = &drm->formats;
+		if ( g_bSupportsAsyncFlips && drm->formats_async.len > 0 )
+			pOverlayPreferredFormats = &drm->formats_async;
+
 		// ARGB8888 is the Xformat and AFormat here in this function as we want transparent overlay
-		g_nDRMFormatOverlay = pick_plane_format(&drm->formats, DRM_FORMAT_ARGB2101010, DRM_FORMAT_ARGB2101010);
+		g_nDRMFormatOverlay = pick_preferred_plane_format( pOverlayPreferredFormats, &drm->formats, DRM_FORMAT_ARGB2101010, DRM_FORMAT_ARGB2101010 );
 		if ( g_nDRMFormatOverlay == DRM_FORMAT_INVALID ) {
-			g_nDRMFormatOverlay = pick_plane_format(&drm->formats, DRM_FORMAT_ABGR2101010, DRM_FORMAT_ABGR2101010);
+			g_nDRMFormatOverlay = pick_preferred_plane_format( pOverlayPreferredFormats, &drm->formats, DRM_FORMAT_ABGR2101010, DRM_FORMAT_ABGR2101010 );
 			if ( g_nDRMFormatOverlay == DRM_FORMAT_INVALID ) {
-				g_nDRMFormatOverlay = pick_plane_format(&drm->formats, DRM_FORMAT_ARGB8888, DRM_FORMAT_ARGB8888);
+				g_nDRMFormatOverlay = pick_preferred_plane_format( pOverlayPreferredFormats, &drm->formats, DRM_FORMAT_ARGB8888, DRM_FORMAT_ARGB8888 );
 				if ( g_nDRMFormatOverlay == DRM_FORMAT_INVALID ) {
 					drm_log.errorf("Overlay plane doesn't support any formats >= 8888");
 					return false;
@@ -1593,7 +1628,9 @@ void finish_drm(struct drm_t *drm)
 	free(drm->device_name);
 
 	wlr_drm_format_set_finish( &drm->formats );
+	wlr_drm_format_set_finish( &drm->formats_async );
 	wlr_drm_format_set_finish( &drm->primary_formats );
+	wlr_drm_format_set_finish( &drm->primary_formats_async );
 	drm->m_FbIdsInRequest.clear();
 	{
 		std::unique_lock lock( drm->m_QueuedFbIdsMutex );
@@ -1635,9 +1672,12 @@ gamescope::OwningRc<gamescope::IBackendFb> drm_fbid_from_dmabuf( struct drm_t *d
 	gamescope::OwningRc<gamescope::IBackendFb> pBackendFb;
 	uint32_t fb_id = 0;
 
-	if ( !wlr_drm_format_set_has( &drm->formats, dma_buf->format, dma_buf->modifier ) )
+	const bool bAsync = drm->flags & DRM_MODE_PAGE_FLIP_ASYNC;
+	const wlr_drm_format_set *pFormatSet = bAsync ? &drm->formats_async : &drm->formats;
+
+	if ( !wlr_drm_format_set_has( pFormatSet, dma_buf->format, dma_buf->modifier ) )
 	{
-		drm_log.errorf( "Cannot import FB to DRM: format 0x%" PRIX32 " and modifier 0x%" PRIX64 " not supported for scan-out", dma_buf->format, dma_buf->modifier );
+		drm_log.errorf( "Cannot import FB to DRM: format 0x%" PRIX32 " and modifier 0x%" PRIX64 " not supported for %s scan-out", dma_buf->format, dma_buf->modifier, bAsync ? "async" : "sync" );
 		return nullptr;
 	}
 
@@ -2095,6 +2135,7 @@ namespace gamescope
 		{
 			m_Props.type                  = CDRMAtomicProperty::Instantiate( "type",                  this, *rawProperties );
 			m_Props.IN_FORMATS            = CDRMAtomicProperty::Instantiate( "IN_FORMATS",            this, *rawProperties );
+			m_Props.IN_FORMATS_ASYNC      = CDRMAtomicProperty::Instantiate( "IN_FORMATS_ASYNC",      this, *rawProperties );
 
 			m_Props.FB_ID                    = CDRMAtomicProperty::Instantiate( "FB_ID",                    this, *rawProperties );
 			m_Props.IN_FENCE_FD              = CDRMAtomicProperty::Instantiate( "IN_FENCE_FD",              this, *rawProperties );
@@ -3956,7 +3997,13 @@ namespace gamescope
 		}
 		virtual std::span<const uint64_t> GetSupportedModifiers( uint32_t uDrmFormat ) const override
 		{
-			const wlr_drm_format *pFormat = wlr_drm_format_set_get( &g_DRM.formats, uDrmFormat );
+			const wlr_drm_format_set *pFormatSet = &g_DRM.formats;
+			if ( g_bSupportsAsyncFlips && g_DRM.formats_async.len > 0 )
+				pFormatSet = &g_DRM.formats_async;
+
+			const wlr_drm_format *pFormat = wlr_drm_format_set_get( pFormatSet, uDrmFormat );
+			if ( !pFormat && pFormatSet != &g_DRM.formats )
+				pFormat = wlr_drm_format_set_get( &g_DRM.formats, uDrmFormat );
 			if ( !pFormat )
 				return std::span<const uint64_t>{};
 
