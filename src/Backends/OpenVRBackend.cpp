@@ -1973,7 +1973,7 @@ namespace gamescope
         UpdateEdid();
         m_pBackend->HackUpdatePatchedEdid();
 
-        if ( g_bForceRelativeMouse )
+        if ( g_forceRelativeMouse == ForceRelativeMouseMode::FORCE_ON )
             this->SetRelativeMouseMode( true );
         
         {
