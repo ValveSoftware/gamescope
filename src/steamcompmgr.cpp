@@ -456,6 +456,7 @@ create_color_mgmt_luts(const gamescope_color_mgmt_t& newColorMgmt, gamescope_col
 }
 
 gamescope::ConVar<bool> cv_tearing_enabled{ "tearing_enabled", false, "Whether or not tearing is enabled." };
+gamescope::ConVar<bool> cv_tearing_ignore_overlay{ "tearing_ignore_overlay", true, "Whether or not to keep tearing while an overlay plane is visible." };
 int g_nSteamMaxHeight = 0;
 bool g_bVRRCapable_CachedValue = false;
 bool g_bVRRInUse_CachedValue = false;
@@ -10120,9 +10121,6 @@ steamcompmgr_main(int argc, char **argv)
 		if ( !hasRepaintNonBasePlane )
 			nIgnoredOverlayRepaints = 0;
 
-		if ( cv_adaptive_sync_ignore_overlay )
-			nIgnoredOverlayRepaints = 0;
-
 		for ( auto &iter : g_VirtualConnectorFocuses )
 		{
 			global_focus_t *pPaintFocus = &iter.second;
@@ -10159,8 +10157,6 @@ steamcompmgr_main(int argc, char **argv)
 				pPaintFocus->GetNestedHints()->SetRelativeMouseMode( bRelativeMouseMode );
 			}
 
-			// HACK: Disable tearing if we have an overlay to avoid stutters right now
-			// TODO: Fix properly.
 			const bool bHasOverlay = ( pPaintFocus->overlayWindow && pPaintFocus->overlayWindow->opacity ) ||
 									( pPaintFocus->externalOverlayWindow && pPaintFocus->externalOverlayWindow->opacity ) ||
 									( pPaintFocus->overrideWindow  && pPaintFocus->focusWindow && !pPaintFocus->focusWindow->isSteamStreamingClient && pPaintFocus->overrideWindow->opacity );
@@ -10197,7 +10193,7 @@ steamcompmgr_main(int argc, char **argv)
 
 				if ( nIgnoredOverlayRepaints )
 					eFlipType = FlipType::Normal;
-				if ( bHasOverlay ) // Don't tear if the Steam or perf overlay is up atm.
+				if ( bHasOverlay && !cv_tearing_ignore_overlay ) // Escape hatch to stop tearing while the Steam or perf overlay is up.
 					eFlipType = FlipType::Normal;
 				if ( GetVBlankTimer().WasCompositing() )
 					eFlipType = FlipType::Normal;
@@ -10236,7 +10232,7 @@ steamcompmgr_main(int argc, char **argv)
 						{
 							if ( hasRepaintNonBasePlane )
 							{
-								if ( nIgnoredOverlayRepaints >= cv_adaptive_sync_overlay_cycles )
+								if ( !cv_adaptive_sync_ignore_overlay && nIgnoredOverlayRepaints >= cv_adaptive_sync_overlay_cycles )
 								{
 									// If we hit vblank and we previously punted on drawing an overlay
 									// we should go ahead and draw now.
