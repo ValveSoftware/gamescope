@@ -55,6 +55,8 @@
 #include "libdisplay-info/cta.h"
 #include "wlr_end.hpp"
 
+#include "DRMGbmScanout.h"
+
 #include "gamescope-control-protocol.h"
 
 extern int g_nPreferredOutputWidth;
@@ -75,6 +77,12 @@ gamescope::ConVar<bool> cv_drm_debug_disable_explicit_sync( "drm_debug_disable_e
 gamescope::ConVar<bool> cv_drm_debug_disable_in_fence_fd( "drm_debug_disable_in_fence_fd", false, "Force disable IN_FENCE_FD being set to avoid over-synchronization on the DRM backend." );
 
 gamescope::ConVar<bool> cv_drm_allow_dynamic_modes_for_external_display( "drm_allow_dynamic_modes_for_external_display", false, "Allow dynamic mode/refresh rate switching for external displays." );
+
+gamescope::ConVar<bool> cv_drm_nvidia_gbm_scanout( "drm_nvidia_gbm_scanout", false,
+	"On NVIDIA, allocate scanout buffers with GBM to guarantee the physically-contiguous "
+	"memory the display engine requires, and always composite (client buffers have no such "
+	"guarantee). Composition forcing applies immediately when toggled at runtime; the "
+	"scanout buffers themselves switch at the next output remake." );
 
 int HackyDRMPresent( const FrameInfo_t *pFrameInfo, bool bAsync );
 
@@ -111,6 +119,7 @@ struct drm_t {
 	uint64_t cursor_width, cursor_height;
 	bool allow_modifiers;
 	struct wlr_drm_format_set formats;
+	gamescope::CGbmScanoutAllocator gbmAllocator;
 
 	std::vector< std::unique_ptr< gamescope::CDRMPlane > > planes;
 	std::vector< std::unique_ptr< gamescope::CDRMCRTC > > crtcs;
@@ -1452,6 +1461,9 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 
 	drm->needs_modeset = true;
 
+	// Opened regardless of drm_nvidia_gbm_scanout so it can be toggled at runtime.
+	drm->gbmAllocator.Init( drm->fd );
+
 	return true;
 }
 
@@ -1610,6 +1622,7 @@ void finish_drm(struct drm_t *drm)
 	drm->crtcs.clear();
 	drm->connectors.clear();
 
+	drm->gbmAllocator.Shutdown();
 
 	// Signal the page-flip handler thread to exit and join it so it won't be
 	// using the DRM fd while we clean it up. Closing the pipe write end
@@ -3666,6 +3679,8 @@ namespace gamescope
 
 			bool bNeedsFullComposite = false;
 			bNeedsFullComposite |= cv_composite_force;
+			// Backend-allocated scanout: client buffers can't be flipped directly, always composite.
+			bNeedsFullComposite |= UsesBackendAllocatedScanout();
 			bNeedsFullComposite |= bWasFirstFrame;
 			bNeedsFullComposite |= pFrameInfo->useFSRLayer0;
 			bNeedsFullComposite |= pFrameInfo->useNISLayer0;
@@ -3967,6 +3982,18 @@ namespace gamescope
 		virtual OwningRc<IBackendFb> ImportDmabufToBackend( wlr_dmabuf_attributes *pDmaBuf ) override
 		{
 			return drm_fbid_from_dmabuf( &g_DRM, pDmaBuf );
+		}
+
+		virtual bool UsesBackendAllocatedScanout() const override
+		{
+			return g_DRM.gbmAllocator.IsAvailable() && cv_drm_nvidia_gbm_scanout;
+		}
+
+		virtual bool CreateScanoutDmabuf( uint32_t uWidth, uint32_t uHeight, uint32_t uDrmFormat,
+		                                  std::span<const uint64_t> ulModifiers,
+		                                  wlr_dmabuf_attributes *pDmaBuf ) override
+		{
+			return g_DRM.gbmAllocator.CreateScanoutDmabuf( uWidth, uHeight, uDrmFormat, ulModifiers, pDmaBuf );
 		}
 
 		virtual bool UsesModifiers() const override

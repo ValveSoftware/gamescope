@@ -2077,7 +2077,7 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 		usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 	}
 
-	if ( flags.bFlippable == true )
+	if ( flags.bFlippable == true && pDMA == nullptr )
 	{
 		flags.bExportable = true;
 	}
@@ -2292,6 +2292,7 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 		vk_errorf( res, "vkCreateImage failed" );
 		return false;
 	}
+	m_bOwnsImage = true;
 	
 	VkMemoryRequirements memRequirements;
 	g_device.vk.GetImageMemoryRequirements(g_device.device(), m_vkImage, &memRequirements);
@@ -2354,6 +2355,31 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 				vk_log.errorf_errno( "dup failed" );
 				return false;
 			}
+
+			VkMemoryFdPropertiesKHR fdProperties = {
+				.sType = VK_STRUCTURE_TYPE_MEMORY_FD_PROPERTIES_KHR,
+			};
+			res = g_device.vk.GetMemoryFdPropertiesKHR(
+				g_device.device(), VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT,
+				fd, &fdProperties );
+			if ( res != VK_SUCCESS )
+			{
+				vk_errorf( res, "vkGetMemoryFdPropertiesKHR failed" );
+				close( fd );
+				return false;
+			}
+
+			const uint32_t uMemoryTypeBits = memRequirements.memoryTypeBits & fdProperties.memoryTypeBits;
+			int32_t nMemoryType = g_device.findMemoryType( properties, uMemoryTypeBits );
+			if ( nMemoryType < 0 )
+				nMemoryType = g_device.findMemoryType( 0, uMemoryTypeBits );
+			if ( nMemoryType < 0 )
+			{
+				vk_log.errorf( "No compatible Vulkan memory type for scanout DMA-BUF import" );
+				close( fd );
+				return false;
+			}
+			allocInfo.memoryTypeIndex = uint32_t( nMemoryType );
 
 			// Memory already provided by pDMA
 			importMemoryInfo = {
@@ -2520,12 +2546,13 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 		m_dmabuf = dmabuf;
 	}
 
-	if ( flags.bFlippable == true )
+	if ( flags.bFlippable == true && m_pBackendFb == nullptr )
 	{
 		m_pBackendFb = GetBackend()->ImportDmabufToBackend( &m_dmabuf );
 	}
 
-	bool bHasAlpha = pDMA ? DRMFormatHasAlpha( pDMA->format ) : true;
+	// Imported output images stay identity-swizzled: they are storage images.
+	bool bHasAlpha = ( pDMA && !flags.bOutputImage ) ? DRMFormatHasAlpha( pDMA->format ) : true;
 
 	if (!bHasAlpha )
 	{
@@ -2739,14 +2766,15 @@ CVulkanTexture::~CVulkanTexture( void )
 	if ( m_pBackendFb != nullptr )
 		m_pBackendFb = nullptr;
 
+	if ( m_vkImage != VK_NULL_HANDLE && m_bOwnsImage )
+	{
+		g_device.vk.DestroyImage( g_device.device(), m_vkImage, nullptr );
+		m_vkImage = VK_NULL_HANDLE;
+		m_bOwnsImage = false;
+	}
+
 	if ( m_vkImageMemory != VK_NULL_HANDLE )
 	{
-		if ( m_vkImage != VK_NULL_HANDLE )
-		{
-			g_device.vk.DestroyImage( g_device.device(), m_vkImage, nullptr );
-			m_vkImage = VK_NULL_HANDLE;
-		}
-
 		g_device.vk.FreeMemory( g_device.device(), m_vkImageMemory, nullptr );
 		m_vkImageMemory = VK_NULL_HANDLE;
 	}
@@ -3313,6 +3341,67 @@ bool vulkan_remake_swapchain( void )
 	return bRet;
 }
 
+static bool vulkan_make_backend_output_images( VulkanOutput_t *pOutput,
+	const CVulkanTexture::createFlags &outputImageflags,
+	uint32_t uWidth, uint32_t uHeight )
+{
+	const bool bHasOverlay = pOutput->uOutputFormatOverlay != VK_FORMAT_UNDEFINED && !kDisablePartialComposition;
+
+	// Overlay images alias the primary buffer with a different format, so the
+	// modifier must be valid for both.
+	std::vector<uint64_t> modifiers;
+	for ( uint64_t ulModifier : GetBackend()->GetSupportedModifiers( pOutput->uOutputFormat ) )
+	{
+		if ( ulModifier == DRM_FORMAT_MOD_INVALID )
+			continue;
+		if ( bHasOverlay &&
+		     !gamescope::Algorithm::Contains( GetBackend()->GetSupportedModifiers( pOutput->uOutputFormatOverlay ), ulModifier ) )
+			continue;
+		modifiers.push_back( ulModifier );
+	}
+	if ( modifiers.empty() )
+		return false;
+
+	for ( size_t i = 0; i < pOutput->outputImages.size(); i++ )
+	{
+		wlr_dmabuf_attributes dmabuf = {};
+		if ( !GetBackend()->CreateScanoutDmabuf(
+			uWidth, uHeight, pOutput->uOutputFormat, modifiers, &dmabuf ) )
+			return false;
+
+		gamescope::OwningRc<gamescope::IBackendFb> pFb = GetBackend()->ImportDmabufToBackend( &dmabuf );
+		bool bSuccess = pFb != nullptr;
+		if ( bSuccess )
+		{
+			pOutput->outputImages[i] = new CVulkanTexture();
+			bSuccess = pOutput->outputImages[i]->BInit(
+				uWidth, uHeight, 1u, pOutput->uOutputFormat,
+				outputImageflags, &dmabuf, 0, 0, nullptr, std::move( pFb ) );
+		}
+
+		if ( bSuccess && bHasOverlay )
+		{
+			wlr_dmabuf_attributes overlayDmabuf = dmabuf;
+			overlayDmabuf.format = pOutput->uOutputFormatOverlay;
+			gamescope::OwningRc<gamescope::IBackendFb> pOverlayFb = GetBackend()->ImportDmabufToBackend( &overlayDmabuf );
+			bSuccess = pOverlayFb != nullptr;
+			if ( bSuccess )
+			{
+				pOutput->outputImagesPartialOverlay[i] = new CVulkanTexture();
+				bSuccess = pOutput->outputImagesPartialOverlay[i]->BInit(
+					uWidth, uHeight, 1u, pOutput->uOutputFormatOverlay,
+					outputImageflags, &overlayDmabuf, 0, 0, nullptr, std::move( pOverlayFb ) );
+			}
+		}
+
+		wlr_dmabuf_attributes_finish( &dmabuf );
+		if ( !bSuccess )
+			return false;
+	}
+
+	return true;
+}
+
 static bool vulkan_make_output_images( VulkanOutput_t *pOutput )
 {
 	CVulkanTexture::createFlags outputImageflags;
@@ -3325,12 +3414,10 @@ static bool vulkan_make_output_images( VulkanOutput_t *pOutput )
 	pOutput->outputImages.resize(3); // extra image for partial composition.
 	pOutput->outputImagesPartialOverlay.resize(3);
 
-	pOutput->outputImages[0] = nullptr;
-	pOutput->outputImages[1] = nullptr;
-	pOutput->outputImages[2] = nullptr;
-	pOutput->outputImagesPartialOverlay[0] = nullptr;
-	pOutput->outputImagesPartialOverlay[1] = nullptr;
-	pOutput->outputImagesPartialOverlay[2] = nullptr;
+	for ( auto &pImage : pOutput->outputImages )
+		pImage = nullptr;
+	for ( auto &pImage : pOutput->outputImagesPartialOverlay )
+		pImage = nullptr;
 
 	uint32_t uDRMFormat = pOutput->uOutputFormat;
 
@@ -3340,61 +3427,44 @@ static bool vulkan_make_output_images( VulkanOutput_t *pOutput )
 	if ( g_uOutputRotation & 1u )
 		std::swap( uOutputWidth, uOutputHeight );
 
-	pOutput->outputImages[0] = new CVulkanTexture();
-	bool bSuccess = pOutput->outputImages[0]->BInit( uOutputWidth, uOutputHeight, 1u, uDRMFormat, outputImageflags );
-	if ( bSuccess != true )
+	bool bBackendAllocated = false;
+	if ( GetBackend()->UsesBackendAllocatedScanout() )
 	{
-		vk_log.errorf( "failed to allocate buffer for KMS" );
-		return false;
+		bBackendAllocated = vulkan_make_backend_output_images( pOutput, outputImageflags, uOutputWidth, uOutputHeight );
+		if ( !bBackendAllocated )
+			vk_log.errorf( "Failed to create backend-allocated scanout buffers, falling back to Vulkan allocation." );
 	}
 
-	pOutput->outputImages[1] = new CVulkanTexture();
-	bSuccess = pOutput->outputImages[1]->BInit( uOutputWidth, uOutputHeight, 1u, uDRMFormat, outputImageflags );
-	if ( bSuccess != true )
+	if ( !bBackendAllocated )
 	{
-		vk_log.errorf( "failed to allocate buffer for KMS" );
-		return false;
-	}
+		for ( size_t i = 0; i < pOutput->outputImages.size(); i++ )
+		{
+			pOutput->outputImages[i] = new CVulkanTexture();
+			if ( !pOutput->outputImages[i]->BInit( uOutputWidth, uOutputHeight, 1u, uDRMFormat, outputImageflags ) )
+			{
+				vk_log.errorf( "failed to allocate buffer for KMS" );
+				return false;
+			}
+		}
 
-	pOutput->outputImages[2] = new CVulkanTexture();
-	bSuccess = pOutput->outputImages[2]->BInit( uOutputWidth, uOutputHeight, 1u, uDRMFormat, outputImageflags );
-	if ( bSuccess != true )
-	{
-		vk_log.errorf( "failed to allocate buffer for KMS" );
-		return false;
+		if ( pOutput->uOutputFormatOverlay != VK_FORMAT_UNDEFINED && !kDisablePartialComposition )
+		{
+			uint32_t uPartialDRMFormat = pOutput->uOutputFormatOverlay;
+
+			for ( size_t i = 0; i < pOutput->outputImagesPartialOverlay.size(); i++ )
+			{
+				pOutput->outputImagesPartialOverlay[i] = new CVulkanTexture();
+				if ( !pOutput->outputImagesPartialOverlay[i]->BInit( uOutputWidth, uOutputHeight, 1u, uPartialDRMFormat, outputImageflags, nullptr, 0, 0, pOutput->outputImages[i].get() ) )
+				{
+					vk_log.errorf( "failed to allocate buffer for KMS" );
+					return false;
+				}
+			}
+		}
 	}
 
 	// Oh no.
 	pOutput->temporaryHackyBlankImage = vulkan_create_debug_blank_texture();
-
-	if ( pOutput->uOutputFormatOverlay != VK_FORMAT_UNDEFINED && !kDisablePartialComposition )
-	{
-		uint32_t uPartialDRMFormat = pOutput->uOutputFormatOverlay;
-
-		pOutput->outputImagesPartialOverlay[0] = new CVulkanTexture();
-		bool bSuccess = pOutput->outputImagesPartialOverlay[0]->BInit( uOutputWidth, uOutputHeight, 1u, uPartialDRMFormat, outputImageflags, nullptr, 0, 0, pOutput->outputImages[0].get() );
-		if ( bSuccess != true )
-		{
-			vk_log.errorf( "failed to allocate buffer for KMS" );
-			return false;
-		}
-
-		pOutput->outputImagesPartialOverlay[1] = new CVulkanTexture();
-		bSuccess = pOutput->outputImagesPartialOverlay[1]->BInit( uOutputWidth, uOutputHeight, 1u, uPartialDRMFormat, outputImageflags, nullptr, 0, 0, pOutput->outputImages[1].get() );
-		if ( bSuccess != true )
-		{
-			vk_log.errorf( "failed to allocate buffer for KMS" );
-			return false;
-		}
-
-		pOutput->outputImagesPartialOverlay[2] = new CVulkanTexture();
-		bSuccess = pOutput->outputImagesPartialOverlay[2]->BInit( uOutputWidth, uOutputHeight, 1u, uPartialDRMFormat, outputImageflags, nullptr, 0, 0, pOutput->outputImages[2].get() );
-		if ( bSuccess != true )
-		{
-			vk_log.errorf( "failed to allocate buffer for KMS" );
-			return false;
-		}
-	}
 
 	return true;
 }
