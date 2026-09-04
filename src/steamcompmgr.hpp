@@ -1,3 +1,5 @@
+#pragma once
+
 #include <stdint.h>
 
 #include "wlr_begin.hpp"
