@@ -192,6 +192,16 @@ namespace gamescope
 
             return nullptr;
 		}
+		virtual IBackendConnector *GetCurrentGamepadConnector() override
+		{
+            {
+                std::shared_lock lock{ m_mutInit };
+                if ( m_bInittedChild )
+                    return m_pChild->GetCurrentGamepadConnector();
+            }
+
+            return nullptr;
+		}
 
 		virtual IBackendConnector *GetConnector( GamescopeScreenType eScreenType ) override
 		{

@@ -965,9 +965,15 @@ void MakeFocusDirty()
 	s_ulFocusSerial++;
 }
 
-static inline uint64_t GetFocusSerial()
+uint64_t GetFocusSerial()
 {
 	return s_ulFocusSerial;
+}
+
+static std::atomic<uint64_t> s_ulAppliedFocusSerial = 0ul;
+uint64_t GetAppliedFocusSerial()
+{
+	return s_ulAppliedFocusSerial;
 }
 
 bool focus_t::IsDirty()
@@ -1073,6 +1079,34 @@ global_focus_t *GetCurrentMouseFocus()
 		return &iter->second;
 
 	return GetCurrentFocus();
+}
+
+global_focus_t *GetCurrentGamepadFocus()
+{
+	uint64_t ulKey = GetBackend()->GetCurrentGamepadConnector() ? GetBackend()->GetCurrentGamepadConnector()->GetVirtualConnectorKey() : 0;
+
+	auto iter = g_VirtualConnectorFocuses.find( ulKey );
+	if ( iter != g_VirtualConnectorFocuses.end() )
+		return &iter->second;
+
+	return GetCurrentFocus();
+}
+
+// A held laser press waits on this, so flush the X focus before publishing it.
+// The focuses record what they applied, a serial bumped mid-pass is not claimed.
+static void publish_applied_focus_serial()
+{
+	uint64_t ulApplied = GetFocusSerial();
+	for ( auto &iter : g_VirtualConnectorFocuses )
+		ulApplied = std::min( ulApplied, iter.second.ulCurrentFocusSerial );
+
+	if ( ulApplied == s_ulAppliedFocusSerial )
+		return;
+
+	gamescope_xwayland_server_t *server = NULL;
+	for ( size_t i = 0; ( server = wlserver_get_xwayland_server( i ) ); i++ )
+		XFlush( server->ctx->dpy );
+	s_ulAppliedFocusSerial = ulApplied;
 }
 
 // The focus whose focusWindow is w, ignoring the other window roles.
@@ -4450,6 +4484,8 @@ static void set_wm_state( xwayland_ctx_t *ctx, Window win, uint32_t state )
 
 void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win_t* > &vecPossibleFocusWindows )
 {
+	// A bump during the pass has to leave the focus dirty.
+	uint64_t ulFocusSerial = GetFocusSerial();
 	xwayland_ctx_t *ctx = this;
 
 	steamcompmgr_win_t *inputFocus = NULL;
@@ -4665,6 +4701,15 @@ void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win
 			ctx->cursor->hide();
 		}
 
+		// Both sides of an X focus move get a repaint from Wine.
+		if ( ctx->currentKeyboardFocusWindow != keyboardFocusWindow )
+		{
+			uint64_t ulNow = get_time_in_nanos();
+			if ( steamcompmgr_win_t *pOld = find_win( ctx, ctx->currentKeyboardFocusWindow ) )
+				pOld->last_focus_change_time = ulNow;
+			keyboardFocusWin->last_focus_change_time = ulNow;
+		}
+
 		ctx->focus.inputFocusWindow = inputFocus;
 		ctx->focus.inputFocusMode = inputFocus->inputFocusMode;
 		ctx->currentKeyboardFocusWindow = keyboardFocusWindow;
@@ -4765,7 +4810,7 @@ void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win
 
 	XFree(children);
 
-	ctx->focus.ulCurrentFocusSerial = GetFocusSerial();
+	ctx->focus.ulCurrentFocusSerial = ulFocusSerial;
 }
 
 wlr_surface *win_surface(steamcompmgr_win_t *window)
@@ -4909,6 +4954,8 @@ DumpFocusInfo()
 static void
 determine_and_apply_focus( global_focus_t *pFocus )
 {
+	// A bump during the pass has to leave the focus dirty.
+	uint64_t ulFocusSerial = GetFocusSerial();
 	gamescope_xwayland_server_t *root_server = wlserver_get_xwayland_server(0);
 	xwayland_ctx_t *root_ctx = root_server->ctx.get();
 	global_focus_t previousLocalFocus = *pFocus;
@@ -5288,17 +5335,20 @@ determine_and_apply_focus( global_focus_t *pFocus )
 		focused_keyboard_display = get_win_display_name(pFocus->keyboardFocusWindow);
 	}
 
+	// Steam routes the controller by the focused app, so it follows the gamepad focus.
+	if ( steamMode && pFocus == GetCurrentGamepadFocus() )
+	{
+		XChangeProperty( root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeFocusedAppAtom, XA_CARDINAL, 32, PropModeReplace,
+						(unsigned char *)&focusedAppId, focusedAppId != 0 ? 1 : 0 );
+
+		XChangeProperty( root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeFocusedAppGfxAtom, XA_CARDINAL, 32, PropModeReplace,
+						(unsigned char *)&focusedBaseAppId, focusedBaseAppId != 0 ? 1 : 0 );
+
+		XFlush( root_ctx->dpy );
+	}
+
 	if ( pFocus == GetCurrentFocus() )
 	{
-		if ( steamMode )
-		{
-			XChangeProperty( root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeFocusedAppAtom, XA_CARDINAL, 32, PropModeReplace,
-							(unsigned char *)&focusedAppId, focusedAppId != 0 ? 1 : 0 );
-
-			XChangeProperty( root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeFocusedAppGfxAtom, XA_CARDINAL, 32, PropModeReplace,
-							(unsigned char *)&focusedBaseAppId, focusedBaseAppId != 0 ? 1 : 0 );
-		}
-
 		XChangeProperty( root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeFocusedWindowAtom, XA_CARDINAL, 32, PropModeReplace,
 						(unsigned char *)&focusedWindow, focusedWindow != 0 ? 1 : 0 );
 
@@ -5383,7 +5433,7 @@ determine_and_apply_focus( global_focus_t *pFocus )
 		wlserver_unlock();
 	}
 
-	pFocus->ulCurrentFocusSerial = GetFocusSerial();
+	pFocus->ulCurrentFocusSerial = ulFocusSerial;
 }
 
 static void
@@ -6341,6 +6391,8 @@ handle_system_tray_opcode(xwayland_ctx_t *ctx, XClientMessageEvent *ev)
 	}
 }
 
+gamescope::ConVar<bool> cv_virtual_connector_refuse_iconify( "virtual_connector_refuse_iconify", true, "Put a window shown on its own virtual connector straight back to normal state when it asks to be iconified." );
+
 /* See http://tronche.com/gui/x/icccm/sec-4.html#s-4.1.4 */
 static void
 handle_wm_change_state(xwayland_ctx_t *ctx, steamcompmgr_win_t *w, XClientMessageEvent *ev)
@@ -6348,6 +6400,15 @@ handle_wm_change_state(xwayland_ctx_t *ctx, steamcompmgr_win_t *w, XClientMessag
 	long state = ev->data.l[0];
 
 	if (state == ICCCM_ICONIC_STATE) {
+		// FIXME: Wine minimizes an exclusive-fullscreen game that loses foreground, and on its own
+		// virtual connector it stays on screen regardless. A game per Xwayland is the real fix, this flashes black once.
+		if ( cv_virtual_connector_refuse_iconify && !gamescope::VirtualConnectorIsSingleOutput() && GetFocusForWindow( w ) )
+		{
+			xwm_log.debugf("Refusing WM_CHANGE_STATE to ICONIC for window 0x%lx on its own virtual connector", w->xwayland().id);
+			set_wm_state( ctx, w->xwayland().id, ICCCM_NORMAL_STATE );
+			return;
+		}
+
 		xwm_log.debugf("Faking WM_CHANGE_STATE to ICONIC for window 0x%lx", w->xwayland().id);
 		set_wm_state( ctx, w->xwayland().id, ICCCM_ICONIC_STATE );
 	} else {
@@ -8083,6 +8144,7 @@ static TempUpscaleImage_t *GetTempUpscaleImage( global_focus_t *pFocus, uint32_t
 }
 
 gamescope::ConVar<bool> cv_surface_update_force_only_current_surface( "surface_update_force_only_current_surface", false, "Force updates to apply only to the current surface, ignoring commits for other surfaces." );
+gamescope::ConVar<uint64_t> cv_surface_update_focus_repaint_time( "surface_update_focus_repaint_time", 500'000'000ul, "Ignore commits for a window's other surfaces this long after its X focus changes, Wine repaints the window then. 0 disables. In nanoseconds." );
 
 void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, ResListEntry_t& reslistentry)
 {
@@ -8120,15 +8182,22 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 	bool bHasDamage = ( reslistentry.surf->buffer_damage.extents.x2 - reslistentry.surf->buffer_damage.extents.x1 ) > 2 &&
 					  ( reslistentry.surf->buffer_damage.extents.y2 - reslistentry.surf->buffer_damage.extents.y1 ) > 2;
 
+	// Wine repaints the X window when its foreground state changes, so for a while
+	// after a focus move an X commit beside the override surface is that, not content.
+	uint64_t ulNow = get_time_in_nanos();
+	bool bFocusRepaint = w->override_surface() && cv_surface_update_focus_repaint_time &&
+		ulNow - w->last_focus_change_time < cv_surface_update_focus_repaint_time;
+
 	// If we have an override surface, make sure this commit is for the current surface
 	// or if the commit is probably bogus.
-	bool bOnlyCurrentSurface = w->bHasHadNonSRGBColorSpace || bPossiblyBogus || !bHasDamage || cv_surface_update_force_only_current_surface;
+	bool bOnlyCurrentSurface = w->bHasHadNonSRGBColorSpace || bPossiblyBogus || !bHasDamage || bFocusRepaint || cv_surface_update_force_only_current_surface;
 
 	bool for_current_surface = !w->override_surface() || w->current_surface() == reslistentry.surf;
 
 	if ( !for_current_surface )
 	{
-		xwm_log.debugf( "Got commit not for current surface." );
+		xwm_log.debugf( "Got commit not for current surface, %s it, focus changed %.1f ms ago.",
+			bOnlyCurrentSurface ? "dropping" : "showing", ( ulNow - w->last_focus_change_time ) / 1'000'000.0 );
 	}
 
 	if ( bOnlyCurrentSurface && !for_current_surface )
@@ -10274,6 +10343,8 @@ steamcompmgr_main(int argc, char **argv)
 				hasRepaint = true;
 			}
 		}
+
+		publish_applied_focus_serial();
 
 		if ( g_bPendingFocusInfo.exchange( false ) )
 			DumpFocusInfo();
