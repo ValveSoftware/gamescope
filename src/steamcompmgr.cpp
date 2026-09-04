@@ -7273,6 +7273,14 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 			g_flHDRItmTargetNits = 10000.f;
 		hasRepaint = true;
 	}
+	if ( ev->atom == ctx->atoms.gamescopeKeyboardLayout )
+	{
+		std::string sLayout = get_string_prop( ctx, ctx->root, ctx->atoms.gamescopeKeyboardLayout );
+
+		wlserver_lock();
+		wlserver_set_keyboard_layout( sLayout.c_str() );
+		wlserver_unlock();
+	}
 	if ( ev->atom == ctx->atoms.gamescopeColorLookPQ )
 	{
 		std::string path = get_string_prop( ctx, ctx->root, ctx->atoms.gamescopeColorLookPQ );
@@ -8754,6 +8762,7 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 
 	ctx->atoms.gamescopeXWaylandModeControl = XInternAtom( ctx->dpy, "GAMESCOPE_XWAYLAND_MODE_CONTROL", false );
 	ctx->atoms.gamescopeFPSLimit = XInternAtom( ctx->dpy, "GAMESCOPE_FPS_LIMIT", false );
+	ctx->atoms.gamescopeKeyboardLayout = XInternAtom( ctx->dpy, "GAMESCOPE_KEYBOARD_LAYOUT", false );
 	ctx->atoms.gamescopeLimiterFeedback = XInternAtom( ctx->dpy, "GAMESCOPE_LIMITER_FEEDBACK", false );
 	ctx->atoms.gamescopeDynamicRefresh[gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_DYNAMIC_REFRESH", false );
 	ctx->atoms.gamescopeDynamicRefresh[gamescope::GAMESCOPE_SCREEN_TYPE_EXTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_DYNAMIC_REFRESH_EXTERNAL", false );

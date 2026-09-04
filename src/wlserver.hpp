@@ -263,6 +263,7 @@ bool wlserver_is_lock_held(void);
 
 void wlserver_keyboardfocus( struct wlr_surface *surface, bool bConstrain = true );
 void wlserver_key( uint32_t key, bool press, uint32_t time );
+void wlserver_set_keyboard_layout( const char *pszLayout );
 
 void wlserver_mousefocus( struct wlr_surface *wlrsurface, int x = 0, int y = 0 );
 void wlserver_clear_dropdowns();

@@ -472,6 +472,24 @@ static void wlserver_handle_touch_motion(struct wl_listener *listener, void *dat
 	wlserver_touchmotion( event->x, event->y, event->touch_id, event->time_msec, false, touch->connector );
 }
 
+struct wlserver_keyboard {
+	struct wlr_keyboard *wlr;
+
+	struct wl_listener destroy;
+};
+
+// The keyboards in wlserver.keyboard_group, kept so a layout change can reach them.
+static std::vector<struct wlserver_keyboard *> s_Keyboards;
+
+static void wlserver_handle_keyboard_destroy(struct wl_listener *listener, void *data)
+{
+	struct wlserver_keyboard *keyboard = wl_container_of( listener, keyboard, destroy );
+
+	std::erase( s_Keyboards, keyboard );
+	wl_list_remove( &keyboard->destroy.link );
+	free( keyboard );
+}
+
 static void wlserver_handle_pointer_destroy(struct wl_listener *listener, void *data)
 {
 	struct wlserver_pointer *pointer = wl_container_of( listener, pointer, destroy );
@@ -509,6 +527,12 @@ static void wlserver_new_input(struct wl_listener *listener, void *data)
 				wl_log.errorf("failed to add physical keyboard %s", device->name);
 				break;
 			}
+
+			struct wlserver_keyboard *pKeyboard = (struct wlserver_keyboard *) calloc( 1, sizeof( struct wlserver_keyboard ) );
+			pKeyboard->wlr = keyboard;
+			pKeyboard->destroy.notify = wlserver_handle_keyboard_destroy;
+			wl_signal_add( &device->events.destroy, &pKeyboard->destroy );
+			s_Keyboards.push_back( pKeyboard );
 			// Sync the state of the modifiers and the state of the LEDs
 			struct wlr_keyboard_modifiers mods = wlserver.keyboard_group->keyboard.modifiers;
 			if (mods.depressed != keyboard->modifiers.depressed ||
@@ -2044,6 +2068,73 @@ static gamescope::CAsyncWaiter g_LibEisWaiter( "gamescope-eis" );
 static std::unique_ptr<gamescope::GamescopeInputServer> g_InputServer;
 #endif
 
+static void wlserver_update_keymap();
+
+// Steam pushes the user's keyboard layout in here, as nothing in the session
+// exports it to us. See GAMESCOPE_KEYBOARD_LAYOUT in steamcompmgr.
+static gamescope::ConVar<std::string> cv_xkb_layout( "xkb_layout", "",
+	"XKB layout used for physical keyboards, eg. \"es\". Empty follows XKB_DEFAULT_LAYOUT.",
+	[]( gamescope::ConVar<std::string> & ) { wlserver_update_keymap(); } );
+
+static void wlserver_set_keyboard_keymap( struct wlr_keyboard *pKeyboard, struct xkb_keymap *pKeymap )
+{
+	if ( wlr_keyboard_keymaps_match( pKeyboard->keymap, pKeymap ) )
+		return;
+
+	// A keymap that fails to apply is left alone, wlroots keeps the old one.
+	if ( !wlr_keyboard_set_keymap( pKeyboard, pKeymap ) )
+		wl_log.errorf( "Failed to set the keymap on keyboard %s", pKeyboard->base.name ? pKeyboard->base.name : "(unnamed)" );
+}
+
+static void wlserver_update_keymap()
+{
+	// The layout can be set from the environment before the keyboard group exists.
+	if ( !wlserver.keyboard_group )
+		return;
+
+	struct xkb_rule_names rules = { 0 };
+	rules.rules = getenv("XKB_DEFAULT_RULES");
+	rules.model = getenv("XKB_DEFAULT_MODEL");
+	rules.layout = getenv("XKB_DEFAULT_LAYOUT");
+	rules.variant = getenv("XKB_DEFAULT_VARIANT");
+	rules.options = getenv("XKB_DEFAULT_OPTIONS");
+	if ( !cv_xkb_layout.Get().empty() )
+	{
+		// The variant from the environment belongs to the layout it shipped with.
+		rules.layout = cv_xkb_layout.Get().c_str();
+		rules.variant = nullptr;
+	}
+
+	struct xkb_context *context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+	struct xkb_keymap *keymap = xkb_keymap_new_from_names(context, &rules, XKB_KEYMAP_COMPILE_NO_FLAGS);
+
+	if ( keymap )
+	{
+		// A keyboard left on the old keymap keeps feeding its own modifier masks into
+		// the group, so AltGr would still arrive as the layout it joined with. Each one
+		// is checked on its own, so a keyboard we failed to update is retried next time.
+		wlserver_set_keyboard_keymap( &wlserver.keyboard_group->keyboard, keymap );
+		for ( struct wlserver_keyboard *pKeyboard : s_Keyboards )
+			wlserver_set_keyboard_keymap( pKeyboard->wlr, keymap );
+	}
+	else
+	{
+		// Unsetting the keymap would leave the group without an xkb_state to translate keys with.
+		wl_log.errorf( "Failed to compile keymap for layout \"%s\", keeping the current layout",
+			rules.layout ? rules.layout : "" );
+	}
+
+	xkb_keymap_unref( keymap );
+	xkb_context_unref( context );
+}
+
+void wlserver_set_keyboard_layout( const char *pszLayout )
+{
+	assert( wlserver_is_lock_held() );
+
+	cv_xkb_layout = std::string{ pszLayout };
+}
+
 bool wlserver_init( void ) {
 	assert( wlserver.display != nullptr );
 
@@ -2076,18 +2167,10 @@ bool wlserver_init( void ) {
 
 	// Create a keyboard group to keep all externally connected keyboards
 	// in sync (one single layout and a shared state)
-	struct xkb_context *context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
-	struct xkb_rule_names rules = { 0 };
-	rules.rules = getenv("XKB_DEFAULT_RULES");
-	rules.model = getenv("XKB_DEFAULT_MODEL");
-	rules.layout = getenv("XKB_DEFAULT_LAYOUT");
-	rules.variant = getenv("XKB_DEFAULT_VARIANT");
-	rules.options = getenv("XKB_DEFAULT_OPTIONS");
-	struct xkb_keymap *keymap = xkb_keymap_new_from_names(context, &rules, XKB_KEYMAP_COMPILE_NO_FLAGS);
 	wlserver.keyboard_group = wlr_keyboard_group_create();
 	struct wlr_keyboard *keyboard = &wlserver.keyboard_group->keyboard;
 	wlr_keyboard_set_repeat_info(keyboard, 25, 600);
-	wlr_keyboard_set_keymap(keyboard, keymap);
+	wlserver_update_keymap();
 	wlserver.keyboard_group_modifiers.notify = wlserver_handle_modifiers;
 	wl_signal_add(&keyboard->events.modifiers, &wlserver.keyboard_group_modifiers);
 	wlserver.keyboard_group_key.notify = wlserver_handle_key;
