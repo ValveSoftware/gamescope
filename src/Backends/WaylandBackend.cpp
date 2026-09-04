@@ -1556,7 +1556,7 @@ namespace gamescope
                     default:
                     case GAMESCOPE_APP_TEXTURE_COLORSPACE_PASSTHRU:
                         frog_color_managed_surface_set_known_container_color_volume( m_pFrogColorManagedSurface, FROG_COLOR_MANAGED_SURFACE_PRIMARIES_UNDEFINED );
-                        frog_color_managed_surface_set_known_container_color_volume( m_pFrogColorManagedSurface, FROG_COLOR_MANAGED_SURFACE_TRANSFER_FUNCTION_UNDEFINED );
+                        frog_color_managed_surface_set_known_transfer_function( m_pFrogColorManagedSurface, FROG_COLOR_MANAGED_SURFACE_TRANSFER_FUNCTION_UNDEFINED );
                         break;
                     case GAMESCOPE_APP_TEXTURE_COLORSPACE_LINEAR:
                     case GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB:
