@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <unordered_set>
 #include <pipewire/pipewire.h>
 #include <spa/param/video/format-utils.h>
 
@@ -11,6 +12,9 @@ struct pipewire_state {
 	struct pw_loop *loop;
 	struct pw_context *context;
 	struct pw_core *core;
+	struct pw_registry *registry;
+	struct spa_hook registry_listener;
+	std::unordered_set<uint32_t> consumer_links;
 	bool running;
 
 	struct pw_stream *stream;
