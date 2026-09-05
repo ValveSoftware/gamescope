@@ -1001,14 +1001,6 @@ struct BaseLayerInfo_t
 	AlphaBlendingMode_t eAlphaBlendingMode = ALPHA_BLENDING_MODE_PREMULTIPLIED;
 };
 
-struct TempUpscaleImage_t
-{
-	gamescope::OwningRc<CVulkanTexture> pTexture;
-	// Timeline of upscale -> release, to be used as acquire for the commit.
-	std::shared_ptr<gamescope::CTimeline> pReleaseTimeline;
-	uint64_t ulLastPoint = 0ul;
-};
-
 struct global_focus_t : public focus_t
 {
 	steamcompmgr_win_t	  	 		*keyboardFocusWindow;
@@ -1020,8 +1012,8 @@ struct global_focus_t : public focus_t
 	int nUpscaleSharpness = 0;
 	// Cleanup for the previous pre-emptive upscale, kept a frame behind.
 	std::optional<uint64_t> oLastPreemptiveUpscaleSeqNo;
-	std::vector<TempUpscaleImage_t> UpscaleImages;
-	uint32_t uNextUpscaleImage = 0;
+	std::vector<PooledImage_t> UpscaleImages;
+	size_t uNextUpscaleImage = 0;
 
 	std::array< gamescope::Rc<commit_t>, HELD_COMMIT_COUNT > HeldCommits;
 	std::array< BaseLayerInfo_t, HELD_COMMIT_COUNT > CachedPlanes = {};
@@ -8236,53 +8228,181 @@ static void ClearUpscaleImages( global_focus_t *pFocus )
 	pFocus->uNextUpscaleImage = 0;
 }
 
-static TempUpscaleImage_t *GetTempUpscaleImage( global_focus_t *pFocus, uint32_t uWidth, uint32_t uHeight, uint32_t uDrmFormat )
+static constexpr size_t k_uMaxPooledImages = 8;
+
+static PooledImage_t *GetPooledImage( std::vector<PooledImage_t> &images, size_t &uNextImage, uint32_t uWidth, uint32_t uHeight, uint32_t uDrmFormat, const CVulkanTexture::createFlags &imageFlags, const char *pszName )
 {
-	if ( pFocus->UpscaleImages.size() )
+	if ( images.size() )
 	{
 		// Mixing and matching sizes to only do the min required would be nice
 		// but massively complicates caching.
-		if ( pFocus->UpscaleImages[0].pTexture->width() != uWidth ||
-			 pFocus->UpscaleImages[0].pTexture->height() != uHeight ||
-			 pFocus->UpscaleImages[0].pTexture->drmFormat() != uDrmFormat )
+		if ( images[0].pTexture->width() != uWidth ||
+			 images[0].pTexture->height() != uHeight ||
+			 images[0].pTexture->drmFormat() != uDrmFormat )
 		{
-			pFocus->UpscaleImages.clear();
-			pFocus->uNextUpscaleImage = 0;
+			images.clear();
+			uNextImage = 0;
 		}
 	}
 
 	// Round robin so a slot rests as long as possible, SteamVR can still be sampling a freed one.
-	for ( size_t i = 0; i < pFocus->UpscaleImages.size(); i++ )
+	for ( size_t i = 0; i < images.size(); i++ )
 	{
-		size_t uIndex = ( pFocus->uNextUpscaleImage + i ) % pFocus->UpscaleImages.size();
-		TempUpscaleImage_t &image = pFocus->UpscaleImages[ uIndex ];
+		size_t uIndex = ( uNextImage + i ) % images.size();
+		PooledImage_t &image = images[ uIndex ];
 		if ( !image.pTexture->IsInUse() )
 		{
-			pFocus->uNextUpscaleImage = ( uIndex + 1 ) % pFocus->UpscaleImages.size();
+			uNextImage = ( uIndex + 1 ) % images.size();
 			return &image;
 		}
 	}
 
-	if ( pFocus->UpscaleImages.size() > 8 )
+	if ( images.size() >= k_uMaxPooledImages )
 	{
-		xwm_log.warnf( "No upscale images free!\n" );
-		return {};
+		xwm_log.warnf( "No %s images free!", pszName );
+		return nullptr;
 	}
-
-	gamescope::OwningRc<CVulkanTexture> pTexture = new CVulkanTexture();
 
 	std::shared_ptr<gamescope::CTimeline> pTimeline = gamescope::CTimeline::Create();
 	if ( !pTimeline )
 		return nullptr;
 
+	gamescope::OwningRc<CVulkanTexture> pTexture = new CVulkanTexture();
+	if ( !pTexture->BInit( uWidth, uHeight, 1, uDrmFormat, imageFlags ) )
+		return nullptr;
+
+	return &images.emplace_back( std::move( pTexture ), std::move( pTimeline ) );
+}
+
+static PooledImage_t *GetTempUpscaleImage( global_focus_t *pFocus, uint32_t uWidth, uint32_t uHeight, uint32_t uDrmFormat )
+{
 	CVulkanTexture::createFlags imageFlags;
 	imageFlags.bSampled = true;
 	imageFlags.bStorage = true;
 	imageFlags.bFlippable = true;
-	pTexture->BInit( g_nOutputWidth, g_nOutputHeight, 1, uDrmFormat, imageFlags );
-	TempUpscaleImage_t &image = pFocus->UpscaleImages.emplace_back( std::move( pTexture ), std::move( pTimeline ) );
+	return GetPooledImage( pFocus->UpscaleImages, pFocus->uNextUpscaleImage, uWidth, uHeight, uDrmFormat, imageFlags, "upscale" );
+}
 
-	return &image;
+static PooledImage_t *GetOverrideBlitImage( steamcompmgr_win_t *w, CVulkanTexture *pLike )
+{
+	CVulkanTexture::createFlags imageFlags;
+	imageFlags.bSampled = true;
+	imageFlags.bTransferSrc = true;
+	imageFlags.bTransferDst = true;
+	imageFlags.bFlippable = !GetBackend()->UsesModifiers() || GetBackend()->SupportsFormat( pLike->drmFormat() );
+	return GetPooledImage( w->overrideBlitImages, w->uNextOverrideBlitImage, pLike->width(), pLike->height(), pLike->drmFormat(), imageFlags, "override blit" );
+}
+
+static std::optional<VulkanTimelinePoint_t> GetBufferWait( PooledImage_t &image, const std::shared_ptr<gamescope::CAcquireTimelinePoint> &pAcquirePoint, struct wlr_buffer *pBuffer )
+{
+	if ( pAcquirePoint )
+		return VulkanTimelinePoint_t{ pAcquirePoint->GetTimeline()->ToVkSemaphore(), pAcquirePoint->GetPoint() };
+
+	struct wlr_dmabuf_attributes dmabuf = {0};
+	if ( !wlr_buffer_get_dmabuf( pBuffer, &dmabuf ) )
+		return VulkanTimelinePoint_t{};
+
+	const uint64_t ulPoint = ++image.ulLastPoint;
+	if ( !image.pReleaseTimeline->ImportDmabufFences( dmabuf.fd[0], ulPoint ) )
+		return std::nullopt;
+
+	return VulkanTimelinePoint_t{ image.pReleaseTimeline->ToVkSemaphore(), ulPoint };
+}
+
+static gamescope::Rc<commit_t> NewestOverrideFrame( steamcompmgr_win_t *w )
+{
+	for ( auto it = w->commit_queue.rbegin(); it != w->commit_queue.rend(); ++it )
+	{
+		if ( (*it)->bOverrideContent )
+			return *it;
+	}
+	return nullptr;
+}
+
+static void AppendPendingDamage( std::vector<pixman_box32_t> &pendingDamage, const std::vector<pixman_box32_t> &damage )
+{
+	pendingDamage.insert( pendingDamage.end(), damage.begin(), damage.end() );
+	if ( pendingDamage.size() < 256 )
+		return;
+
+	pixman_region32_t region;
+	pixman_region32_init_rects( &region, pendingDamage.data(), int( pendingDamage.size() ) );
+	int nRects = 0;
+	const pixman_box32_t *pRects = pixman_region32_rectangles( &region, &nRects );
+	pendingDamage.assign( pRects, pRects + nRects );
+	pixman_region32_fini( &region );
+}
+
+static std::optional<uint64_t> MergeBlitsOverOverride( steamcompmgr_win_t *w, commit_t *pCommit, commit_t *pBase, const ResListEntry_t &entry )
+{
+	if ( entry.damage.empty() )
+		return std::nullopt;
+
+	std::vector<pixman_box32_t> &pendingDamage = w->overrideBlitPendingDamage;
+	AppendPendingDamage( pendingDamage, entry.damage );
+
+	gamescope::Rc<CVulkanTexture> pBlits = pCommit->vulkanTex;
+	if ( pBlits->format() != pBase->vulkanTex->format() || !pBlits->transferSrc() || !pBase->vulkanTex->transferSrc() )
+		return std::nullopt;
+
+	// The layer only bypasses a child within 2px of its toplevel.
+	if ( std::abs( int32_t( pBlits->width() ) - int32_t( pBase->vulkanTex->width() ) ) > 2 ||
+		 std::abs( int32_t( pBlits->height() ) - int32_t( pBase->vulkanTex->height() ) ) > 2 )
+		return std::nullopt;
+
+	PooledImage_t *pImage = GetOverrideBlitImage( w, pBase->vulkanTex.get() );
+	if ( !pImage )
+		return std::nullopt;
+
+	std::optional<VulkanTimelinePoint_t> oBaseWait = GetBufferWait( *pImage, pBase->pAcquirePoint, pBase->buf );
+	std::optional<VulkanTimelinePoint_t> oBlitWait = GetBufferWait( *pImage, entry.pAcquirePoint, entry.buf );
+	if ( !oBaseWait || !oBlitWait )
+		return std::nullopt;
+
+	gamescope::Rc<CVulkanTexture> pTarget = pImage->pTexture;
+	std::unique_ptr<CVulkanCmdBuffer> pCmdBuffer = g_device.commandBuffer();
+	if ( oBaseWait->pTimelineSemaphore )
+		pCmdBuffer->AddDependency( oBaseWait->pTimelineSemaphore, oBaseWait->ulPoint );
+	if ( oBlitWait->pTimelineSemaphore )
+		pCmdBuffer->AddDependency( oBlitWait->pTimelineSemaphore, oBlitWait->ulPoint );
+
+	pCmdBuffer->copyImage( pBase->vulkanTex, pTarget );
+
+	pixman_region32_t damage;
+	pixman_region32_init_rects( &damage, pendingDamage.data(), int( pendingDamage.size() ) );
+	pixman_region32_intersect_rect( &damage, &damage, 0, 0, std::min( pBlits->width(), pTarget->width() ), std::min( pBlits->height(), pTarget->height() ) );
+	pendingDamage.clear();
+
+	int nRects = 0;
+	const pixman_box32_t *pRects = pixman_region32_rectangles( &damage, &nRects );
+	std::vector<VkImageCopy> regions;
+	regions.reserve( nRects );
+	for ( int i = 0; i < nRects; i++ )
+	{
+		const pixman_box32_t &box = pRects[i];
+		regions.push_back( VkImageCopy
+		{
+			.srcSubresource = { .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .layerCount = 1 },
+			.srcOffset = { box.x1, box.y1, 0 },
+			.dstSubresource = { .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .layerCount = 1 },
+			.dstOffset = { box.x1, box.y1, 0 },
+			.extent = { uint32_t( box.x2 - box.x1 ), uint32_t( box.y2 - box.y1 ), 1 },
+		} );
+	}
+	pixman_region32_fini( &damage );
+	if ( !regions.empty() )
+		pCmdBuffer->copyImageRegions( pBlits, pTarget, regions );
+
+	const uint64_t ulPoint = ++pImage->ulLastPoint;
+	pCmdBuffer->AddSignal( pImage->pReleaseTimeline->ToVkSemaphore(), ulPoint );
+	if ( entry.pReleasePoint )
+		pCmdBuffer->AddReleasePoint( entry.pReleasePoint );
+	const uint64_t ulSeqNo = g_device.submit( std::move( pCmdBuffer ) );
+
+	pCommit->vulkanTex = std::move( pTarget );
+	pCommit->bOverrideContent = true;
+	pCommit->pAcquirePoint = std::make_shared<gamescope::CAcquireTimelinePoint>( pImage->pReleaseTimeline, ulPoint );
+	return ulSeqNo;
 }
 
 gamescope::ConVar<bool> cv_surface_update_force_only_current_surface( "surface_update_force_only_current_surface", false, "Force updates to apply only to the current surface, ignoring commits for other surfaces." );
@@ -8328,6 +8448,13 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 	bool bOnlyCurrentSurface = w->bHasHadNonSRGBColorSpace || bPossiblyBogus || !bHasDamage || cv_surface_update_force_only_current_surface;
 
 	bool for_current_surface = !w->override_surface() || w->current_surface() == reslistentry.surf;
+
+	if ( !w->override_surface() )
+	{
+		w->overrideBlitImages.clear();
+		w->uNextOverrideBlitImage = 0;
+		w->overrideBlitPendingDamage.clear();
+	}
 
 	if ( !for_current_surface )
 	{
@@ -8382,6 +8509,16 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 		return;
 	}
 
+	newCommit->bOverrideContent = reslistentry.surf == w->override_surface();
+	newCommit->pAcquirePoint = reslistentry.pAcquirePoint;
+	if ( newCommit->bOverrideContent )
+		w->overrideBlitPendingDamage.clear();
+
+	std::optional<uint64_t> oTextureSeqNo;
+	if ( gamescope::Rc<commit_t> pBase = for_current_surface ? nullptr : NewestOverrideFrame( w ) )
+		oTextureSeqNo = MergeBlitsOverOverride( w, newCommit.get(), pBase.get(), reslistentry );
+	const bool bMerged = oTextureSeqNo.has_value();
+
 	int fence = -1;
 	global_focus_t *pCurrentFocus = GetCurrentFocus();
 
@@ -8420,7 +8557,7 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 			uMangoMsgType = pMangoFocus->externalOverlayWindow->uMangoappMsgType;
 	}
 
-	bool bValidPreemptiveScale = reslistentry.pAcquirePoint && pUpscaleFocus && cv_upscale_preemptive;
+	bool bValidPreemptiveScale = newCommit->pAcquirePoint && pUpscaleFocus && cv_upscale_preemptive;
 	bool bPreemptiveUpscale = bValidPreemptiveScale && newCommit->ShouldPreemptivelyUpscale( pUpscaleFocus->eUpscaleFilter, pUpscaleFocus->eUpscaleScaler );
 
 	bool bKnownReady = false;
@@ -8453,14 +8590,14 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 		zoomScaleRatio = flOldZoomScale;
 		overscanScaleRatio = flOldOverscanScale;
 
-		TempUpscaleImage_t *pTempImage = GetTempUpscaleImage( pUpscaleFocus, g_nOutputWidth, g_nOutputHeight, g_output.uOutputFormat );
+		PooledImage_t *pTempImage = GetTempUpscaleImage( pUpscaleFocus, g_nOutputWidth, g_nOutputHeight, g_output.uOutputFormat );
 		if ( pTempImage )
 		{
 			const uint64_t ulNextReleasePoint = ++pTempImage->ulLastPoint;
 
 			std::unique_ptr<CVulkanCmdBuffer> pCommandBuffer = g_device.commandBuffer();
 			
-			pCommandBuffer->AddDependency( reslistentry.pAcquirePoint->GetTimeline()->ToVkSemaphore(), reslistentry.pAcquirePoint->GetPoint() );
+			pCommandBuffer->AddDependency( newCommit->pAcquirePoint->GetTimeline()->ToVkSemaphore(), newCommit->pAcquirePoint->GetPoint() );
 			pCommandBuffer->AddSignal( pTempImage->pReleaseTimeline->ToVkSemaphore(), ulNextReleasePoint );
 
 			if ( pUpscaleFocus->oLastPreemptiveUpscaleSeqNo )
@@ -8476,6 +8613,7 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 			}
 
 			pUpscaleFocus->oLastPreemptiveUpscaleSeqNo = seqNo;
+			oTextureSeqNo = seqNo;
 
 			newCommit->upscaledTexture = std::optional<UpscaledTexture_t>
 			{
@@ -8506,13 +8644,13 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 			ClearUpscaleImages( pUpscaleFocus );
 		}
 
-		if ( reslistentry.pAcquirePoint )
+		if ( newCommit->pAcquirePoint )
 		{
-			eventFd = reslistentry.pAcquirePoint->CreateEventFd();
+			eventFd = newCommit->pAcquirePoint->CreateEventFd();
 		}
 	}
 
-	if ( gamescope::IBackendFb *pBackendFb = newCommit->vulkanTex->GetBackendFb() )
+	if ( gamescope::IBackendFb *pBackendFb = bMerged ? nullptr : newCommit->vulkanTex->GetBackendFb() )
 	{
 		if ( reslistentry.pReleasePoint )
 			pBackendFb->SetReleasePoint( reslistentry.pReleasePoint );
@@ -8524,6 +8662,11 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 	{
 		fence = eventFd.first;
 		bKnownReady = eventFd.second;
+	}
+	else if ( oTextureSeqNo )
+	{
+		vulkan_wait( *oTextureSeqNo, true );
+		bKnownReady = true;
 	}
 	else
 	{

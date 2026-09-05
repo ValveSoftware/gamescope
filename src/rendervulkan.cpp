@@ -1549,6 +1549,11 @@ void CVulkanCmdBuffer::AddSignal( std::shared_ptr<VulkanTimelineSemaphore_t> pTi
 	m_ExternalSignals.emplace_back( std::move( pTimelineSemaphore ), ulPoint );
 }
 
+void CVulkanCmdBuffer::AddReleasePoint( std::shared_ptr<gamescope::CReleaseTimelinePoint> pReleasePoint )
+{
+	m_releasePoints.emplace_back( std::move( pReleasePoint ) );
+}
+
 void CVulkanDevice::wait(uint64_t sequence, bool reset)
 {
 	if (m_submissionSeqNo == sequence)
@@ -1603,6 +1608,7 @@ void CVulkanCmdBuffer::reset()
 {
 	vk_check( m_device->vk.ResetCommandBuffer(m_cmdBuffer, 0) );
 	m_textureRefs.clear();
+	m_releasePoints.clear();
 	m_usedDescriptorSets.clear();
 	m_textureState.clear();
 
