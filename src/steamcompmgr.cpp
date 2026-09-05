@@ -8320,8 +8320,8 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 	bool bPossiblyBogus = reslistentry.buf->width <= 2 || reslistentry.buf->height <= 2;
 
 	// If the buffer has no damage, always prefer our override surface.
-	bool bHasDamage = ( reslistentry.surf->buffer_damage.extents.x2 - reslistentry.surf->buffer_damage.extents.x1 ) > 2 &&
-					  ( reslistentry.surf->buffer_damage.extents.y2 - reslistentry.surf->buffer_damage.extents.y1 ) > 2;
+	bool bHasDamage = ( reslistentry.damageExtents.x2 - reslistentry.damageExtents.x1 ) > 2 &&
+					  ( reslistentry.damageExtents.y2 - reslistentry.damageExtents.y1 ) > 2;
 
 	// If we have an override surface, make sure this commit is for the current surface
 	// or if the commit is probably bogus.

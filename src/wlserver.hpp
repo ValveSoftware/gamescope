@@ -50,6 +50,8 @@ struct ResListEntry_t {
 	uint64_t desired_present_time;
 	std::shared_ptr<gamescope::CAcquireTimelinePoint> pAcquirePoint;
 	std::shared_ptr<gamescope::CReleaseTimelinePoint> pReleasePoint;
+	pixman_box32_t damageExtents;
+	std::vector<pixman_box32_t> damage;
 };
 
 struct wlserver_content_override;
