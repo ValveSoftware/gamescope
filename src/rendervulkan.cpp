@@ -1853,9 +1853,6 @@ void CVulkanCmdBuffer::copyImage(gamescope::Rc<CVulkanTexture> src, gamescope::R
 {
 	assert(src->width() == dst->width());
 	assert(src->height() == dst->height());
-	prepareSrcImage(src.get());
-	prepareDestImage(dst.get());
-	insertBarrier();
 
 	VkImageCopy region = {
 		.srcSubresource = {
@@ -1873,7 +1870,17 @@ void CVulkanCmdBuffer::copyImage(gamescope::Rc<CVulkanTexture> src, gamescope::R
 		},
 	};
 
-	m_device->vk.CmdCopyImage(m_cmdBuffer, src->vkImage(), VK_IMAGE_LAYOUT_GENERAL, dst->vkImage(), VK_IMAGE_LAYOUT_GENERAL, 1, &region);
+	copyImageRegions(std::move(src), std::move(dst), std::span<const VkImageCopy>(&region, 1));
+}
+
+void CVulkanCmdBuffer::copyImageRegions(gamescope::Rc<CVulkanTexture> src, gamescope::Rc<CVulkanTexture> dst, std::span<const VkImageCopy> regions)
+{
+	assert(src->format() == dst->format());
+	prepareSrcImage(src.get());
+	prepareDestImage(dst.get());
+	insertBarrier();
+
+	m_device->vk.CmdCopyImage(m_cmdBuffer, src->vkImage(), VK_IMAGE_LAYOUT_GENERAL, dst->vkImage(), VK_IMAGE_LAYOUT_GENERAL, uint32_t(regions.size()), regions.data());
 
 	markDirty(dst.get());
 	m_textureRefs.emplace_back(std::move(src));
@@ -2191,6 +2198,12 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 		};
 
 		res = getModifierProps( &imageInfo, pDMA->modifier, &externalImageProperties );
+		if ( res == VK_ERROR_FORMAT_NOT_SUPPORTED && flags.bTransferSrc )
+		{
+			flags.bTransferSrc = false;
+			imageInfo.usage &= ~VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+			res = getModifierProps( &imageInfo, pDMA->modifier, &externalImageProperties );
+		}
 		if ( res != VK_SUCCESS && res != VK_ERROR_FORMAT_NOT_SUPPORTED ) {
 			vk_errorf( res, "getModifierProps failed" );
 			return false;
@@ -2240,25 +2253,40 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 			numPossibleModifiers = modifiers.size();
 		}
 
-		for ( size_t i = 0; i < numPossibleModifiers; i++ )
+		auto CollectModifiers = [&]() -> bool
 		{
-			uint64_t modifier = possibleModifiers[i];
+			modifiers.clear();
+			for ( size_t i = 0; i < numPossibleModifiers; i++ )
+			{
+				uint64_t modifier = possibleModifiers[i];
 
-			VkExternalImageFormatProperties externalFormatProps = {
-				.sType = VK_STRUCTURE_TYPE_EXTERNAL_IMAGE_FORMAT_PROPERTIES,
-			};
-			res = getModifierProps( &imageInfo, modifier, &externalFormatProps );
-			if ( res == VK_ERROR_FORMAT_NOT_SUPPORTED )
-				continue;
-			else if ( res != VK_SUCCESS ) {
-				vk_errorf( res, "getModifierProps failed" );
-				return false;
+				VkExternalImageFormatProperties externalFormatProps = {
+					.sType = VK_STRUCTURE_TYPE_EXTERNAL_IMAGE_FORMAT_PROPERTIES,
+				};
+				res = getModifierProps( &imageInfo, modifier, &externalFormatProps );
+				if ( res == VK_ERROR_FORMAT_NOT_SUPPORTED )
+					continue;
+				else if ( res != VK_SUCCESS ) {
+					vk_errorf( res, "getModifierProps failed" );
+					return false;
+				}
+
+				if ( !( externalFormatProps.externalMemoryProperties.externalMemoryFeatures & VK_EXTERNAL_MEMORY_FEATURE_EXPORTABLE_BIT ) )
+					continue;
+
+				modifiers.push_back( modifier );
 			}
+			return true;
+		};
 
-			if ( !( externalFormatProps.externalMemoryProperties.externalMemoryFeatures & VK_EXTERNAL_MEMORY_FEATURE_EXPORTABLE_BIT ) )
-				continue;
-
-			modifiers.push_back( modifier );
+		if ( !CollectModifiers() )
+			return false;
+		if ( modifiers.empty() && flags.bTransferSrc )
+		{
+			flags.bTransferSrc = false;
+			imageInfo.usage &= ~VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+			if ( !CollectModifiers() )
+				return false;
 		}
 
 		assert( modifiers.size() > 0 );
@@ -2278,6 +2306,20 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 
 		imageInfo.tiling = tiling = VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT;
 	}
+
+	if ( flags.bTransferSrc && tiling != VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT )
+	{
+		VkFormatProperties formatProps = {};
+		g_device.vk.GetPhysicalDeviceFormatProperties( g_device.physDev(), imageInfo.format, &formatProps );
+		const VkFormatFeatureFlags tilingFeatures = tiling == VK_IMAGE_TILING_LINEAR ? formatProps.linearTilingFeatures : formatProps.optimalTilingFeatures;
+		if ( !( tilingFeatures & VK_FORMAT_FEATURE_TRANSFER_SRC_BIT ) )
+		{
+			flags.bTransferSrc = false;
+			imageInfo.usage &= ~VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+		}
+	}
+
+	m_bTransferSrc = flags.bTransferSrc;
 
 	if ( flags.bFlippable == true && tiling != VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT )
 	{
@@ -3679,6 +3721,7 @@ gamescope::OwningRc<CVulkanTexture> vulkan_create_texture_from_dmabuf( struct wl
 
 	CVulkanTexture::createFlags texCreateFlags;
 	texCreateFlags.bSampled = true;
+	texCreateFlags.bTransferSrc = true;
 
 	//fprintf(stderr, "pDMA->width: %d pDMA->height: %d pDMA->format: 0x%x pDMA->modifier: 0x%lx pDMA->n_planes: %d\n",
 	//	pDMA->width, pDMA->height, pDMA->format, pDMA->modifier, pDMA->n_planes);
@@ -4811,6 +4854,7 @@ gamescope::OwningRc<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struc
 	gamescope::OwningRc<CVulkanTexture> pTex = new CVulkanTexture();
 	CVulkanTexture::createFlags texCreateFlags;
 	texCreateFlags.bSampled = true;
+	texCreateFlags.bTransferSrc = true;
 	texCreateFlags.bTransferDst = true;
 	texCreateFlags.bFlippable = true;
 	if ( pTex->BInit( width, height, 1u, drmFormat, texCreateFlags, nullptr, 0, 0, nullptr, pBackendFb ) == false )
