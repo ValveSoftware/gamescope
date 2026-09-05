@@ -2702,6 +2702,20 @@ namespace gamescope
 	void CWaylandBackend::Wayland_LockedPointer_Unlocked( zwp_locked_pointer_v1 *pLockedPointer )
 	{
 		m_bPointerLocked = false;
+
+		// The host deactivated our persistent constraint, typically because we
+		// lost focus. Some compositors (Mutter, Hyprland) never reactivate it, and
+		// SetRelativeMouseMode is a no-op while m_pLockedPointer is alive, so the
+		// pointer would stay free for good. Recreate the constraint while relative
+		// mode is still wanted; the new one stays pending until the host is willing
+		// to lock the pointer for us again.
+		if ( pLockedPointer == m_pLockedPointer && m_pLockedSurface )
+		{
+			zwp_locked_pointer_v1_destroy( m_pLockedPointer );
+			m_pLockedPointer = zwp_pointer_constraints_v1_lock_pointer( m_pPointerConstraints, m_pLockedSurface, m_pPointer, nullptr, ZWP_POINTER_CONSTRAINTS_V1_LIFETIME_PERSISTENT );
+			zwp_locked_pointer_v1_add_listener( m_pLockedPointer, &s_LockedPointerListener, this );
+		}
+
 		UpdateCursor();
 	}
 
