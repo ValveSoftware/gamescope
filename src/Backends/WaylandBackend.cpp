@@ -712,6 +712,9 @@ namespace gamescope
         wp_presentation *GetPresentation() const { return m_pPresentation; }
         frog_color_management_factory_v1 *GetFrogColorManagementFactory() const { return m_pFrogColorMgmtFactory; }
         wp_color_manager_v1 *GetWPColorManager() const { return m_pWPColorManager; }
+        bool SupportsWPSCRGB() const { return m_WPColorManagerFeatures.bSupportsSCRGB; }
+        bool SupportsWPSaturationScale() const { return m_WPColorManagerFeatures.bSupportsSaturationScale; }
+        bool SupportsWPMasteringMetadata() const { return m_WPColorManagerFeatures.bSupportsMasteringMetadata; }
         wp_image_description_v1 *GetWPImageDescription( GamescopeAppTextureColorspace eColorspace ) const { return m_pWPImageDescriptions[ (uint32_t)eColorspace ]; }
         wp_fractional_scale_manager_v1 *GetFractionalScaleManager() const { return m_pFractionalScaleManager; }
         xdg_toplevel_icon_manager_v1 *GetToplevelIconManager() const { return m_pToplevelIconManager; }
@@ -824,7 +827,13 @@ namespace gamescope
             std::vector<wp_color_manager_v1_render_intent> eRenderIntents;
             std::vector<wp_color_manager_v1_feature> eFeatures;
 
-            bool bSupportsGamescopeColorManagement = false; // Has everything we want and need?
+            bool bSupportsGamescopeColorManagement = false; // Can we drive HDR10 through wp_color_manager_v1?
+
+            // Optional extras. Each guards only the request that needs it, so a
+            // compositor advertising a partial feature set still gets HDR10.
+            bool bSupportsSCRGB = false;             // create_windows_scrgb
+            bool bSupportsSaturationScale = false;   // explicit set_primaries
+            bool bSupportsMasteringMetadata = false; // set_mastering_display_primaries
         } m_WPColorManagerFeatures;
 
         std::unordered_map<wl_output *, WaylandOutputInfo> m_pOutputs;
@@ -1485,7 +1494,7 @@ namespace gamescope
                         m_pCurrentImageDescription = nullptr;
                     }
 
-                    if ( oState->eColorspace == GAMESCOPE_APP_TEXTURE_COLORSPACE_SCRGB )
+                    if ( oState->eColorspace == GAMESCOPE_APP_TEXTURE_COLORSPACE_SCRGB && m_pBackend->SupportsWPSCRGB() )
                     {
                         m_pCurrentImageDescription = wp_color_manager_v1_create_windows_scrgb( m_pBackend->GetWPColorManager() );
                     }
@@ -1493,7 +1502,7 @@ namespace gamescope
                     {
                         wp_image_description_creator_params_v1 *pParams = wp_color_manager_v1_create_parametric_creator( m_pBackend->GetWPColorManager() );
 
-                        if ( close_enough( flScale, 1.0f ) )
+                        if ( close_enough( flScale, 1.0f ) || !m_pBackend->SupportsWPSaturationScale() )
                         {
                             wp_image_description_creator_params_v1_set_primaries_named( pParams, WP_COLOR_MANAGER_V1_PRIMARIES_BT2020 );
                         }
@@ -1510,7 +1519,7 @@ namespace gamescope
                                 (int32_t)(0.3290 * 1'000'000.0) );
                         }
                         wp_image_description_creator_params_v1_set_tf_named( pParams, WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_ST2084_PQ );
-                        if ( m_ColorState->pHDRMetadata )
+                        if ( m_ColorState->pHDRMetadata && m_pBackend->SupportsWPMasteringMetadata() )
                         {
                             const hdr_metadata_infoframe *pInfoframe = &m_ColorState->pHDRMetadata->View<hdr_output_metadata>().hdmi_metadata_type1;
 
@@ -2020,20 +2029,21 @@ namespace gamescope
 
         if ( m_pWPColorManager )
         {
-            m_WPColorManagerFeatures.bSupportsGamescopeColorManagement = [this]() -> bool
+            auto HasFeature = [this]( wp_color_manager_v1_feature eFeature ) -> bool
             {
-                // Features
-                if ( !Algorithm::Contains( m_WPColorManagerFeatures.eFeatures, WP_COLOR_MANAGER_V1_FEATURE_PARAMETRIC ) )
-                    return false;
-                if ( !Algorithm::Contains( m_WPColorManagerFeatures.eFeatures, WP_COLOR_MANAGER_V1_FEATURE_SET_PRIMARIES ) )
-                    return false;
-                if ( !Algorithm::Contains( m_WPColorManagerFeatures.eFeatures, WP_COLOR_MANAGER_V1_FEATURE_SET_MASTERING_DISPLAY_PRIMARIES ) )
-                    return false;
-                if ( !Algorithm::Contains( m_WPColorManagerFeatures.eFeatures, WP_COLOR_MANAGER_V1_FEATURE_EXTENDED_TARGET_VOLUME ) )
-                    return false;
-                if ( !Algorithm::Contains( m_WPColorManagerFeatures.eFeatures, WP_COLOR_MANAGER_V1_FEATURE_SET_LUMINANCES ) )
-                    return false;
-                if ( !Algorithm::Contains( m_WPColorManagerFeatures.eFeatures, WP_COLOR_MANAGER_V1_FEATURE_WINDOWS_SCRGB ) )
+                return Algorithm::Contains( m_WPColorManagerFeatures.eFeatures, eFeature );
+            };
+
+            m_WPColorManagerFeatures.bSupportsSCRGB             = HasFeature( WP_COLOR_MANAGER_V1_FEATURE_WINDOWS_SCRGB );
+            m_WPColorManagerFeatures.bSupportsSaturationScale   = HasFeature( WP_COLOR_MANAGER_V1_FEATURE_SET_PRIMARIES );
+            m_WPColorManagerFeatures.bSupportsMasteringMetadata = HasFeature( WP_COLOR_MANAGER_V1_FEATURE_SET_MASTERING_DISPLAY_PRIMARIES );
+
+            m_WPColorManagerFeatures.bSupportsGamescopeColorManagement = [&]() -> bool
+            {
+                // HDR10 needs a parametric creator, the named BT2020 primaries and the
+                // named ST2084 PQ transfer function. Named primaries and transfer
+                // functions are advertised on their own events and have no feature bit.
+                if ( !HasFeature( WP_COLOR_MANAGER_V1_FEATURE_PARAMETRIC ) )
                     return false;
 
                 // Transfer Functions
@@ -2049,6 +2059,13 @@ namespace gamescope
                 return true;
             }();
 
+            xdg_log.infof( "wp_color_manager_v1: host advertised %zu features -> hdr10=%s scrgb=%s saturation_scale=%s mastering_metadata=%s",
+                m_WPColorManagerFeatures.eFeatures.size(),
+                m_WPColorManagerFeatures.bSupportsGamescopeColorManagement ? "yes" : "no",
+                m_WPColorManagerFeatures.bSupportsSCRGB ? "yes" : "no",
+                m_WPColorManagerFeatures.bSupportsSaturationScale ? "yes" : "no",
+                m_WPColorManagerFeatures.bSupportsMasteringMetadata ? "yes" : "no" );
+
             if ( m_WPColorManagerFeatures.bSupportsGamescopeColorManagement )
             {
                 // HDR10.
@@ -2060,6 +2077,7 @@ namespace gamescope
                 }
 
                 // scRGB
+                if ( m_WPColorManagerFeatures.bSupportsSCRGB )
                 {
                     m_pWPImageDescriptions[ GAMESCOPE_APP_TEXTURE_COLORSPACE_SCRGB ] = wp_color_manager_v1_create_windows_scrgb( m_pWPColorManager );
                 }
