@@ -145,6 +145,7 @@ struct steamcompmgr_win_t {
 
 	uint64_t last_commit_first_latch_time = 0;
 	uint64_t last_commit_present_time = 0;
+	uint64_t last_focus_change_time = 0;
 
 	bool hasHwndStyle = false;
 	uint32_t hwndStyle = 0;

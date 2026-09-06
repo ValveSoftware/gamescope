@@ -79,6 +79,13 @@ namespace gamescope
         return VirtualConnectorInSteamPerAppState() && ( ulKey & k_ulNonSteamWindowBit ) == k_ulNonSteamWindowBit;
     }
 
+    // A game or non-Steam window on its own connector, not Steam or its bootstrapper.
+    static inline bool VirtualConnectorKeyIsGame( VirtualConnectorKey_t ulKey )
+    {
+        return VirtualConnectorInSteamPerAppState() && ulKey != 0 &&
+            ulKey != k_ulSteamBootstrapperKey && !VirtualConnectorKeyIsSteam( ulKey );
+    }
+
     static inline std::string_view VirtualConnectorStrategyToString( VirtualConnectorStrategy eStrategy )
     {
         switch ( eStrategy )
@@ -358,6 +365,11 @@ namespace gamescope
 
         virtual IBackendConnector *GetCurrentConnector() = 0;
         virtual IBackendConnector *GetCurrentMouseConnector()
+        {
+            return this->GetCurrentConnector();
+        }
+        // The connector Steam routes the controller to.
+        virtual IBackendConnector *GetCurrentGamepadConnector()
         {
             return this->GetCurrentConnector();
         }

@@ -139,6 +139,9 @@ extern uint64_t g_lastWinSeq;
 
 void nudge_steamcompmgr( void );
 void MakeFocusDirty();
+uint64_t GetFocusSerial();
+// The newest focus serial steamcompmgr has applied and flushed to X.
+uint64_t GetAppliedFocusSerial();
 void force_repaint( void );
 
 // Per-connector stat snapshot for typed mangoapp streams.
