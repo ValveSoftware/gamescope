@@ -35,6 +35,7 @@
 #include <primary-selection-unstable-v1-client-protocol.h>
 #include <fractional-scale-v1-client-protocol.h>
 #include <xdg-toplevel-icon-v1-client-protocol.h>
+#include <idle-inhibit-unstable-v1-client-protocol.h>
 #include "wlr_end.hpp"
 
 #include "drm_include.h"
@@ -43,6 +44,7 @@
 
 extern int g_nPreferredOutputWidth;
 extern int g_nPreferredOutputHeight;
+extern bool g_bNestedWaylandInhibitIdle;
 extern bool g_bForceHDR10OutputDebug;
 extern bool g_bBorderlessOutputWindow;
 extern gamescope::ConVar<bool> cv_adaptive_sync;
@@ -294,6 +296,7 @@ namespace gamescope
         wp_color_management_surface_feedback_v1 *m_pWPColorManagedSurfaceFeedback = nullptr;
         wp_fractional_scale_v1 *m_pFractionalScale = nullptr;
         wl_subsurface *m_pSubsurface = nullptr;
+        zwp_idle_inhibitor_v1 *m_pIdleInhibitor = nullptr;
         libdecor_frame *m_pFrame = nullptr;
         libdecor_window_state m_eWindowState = LIBDECOR_WINDOW_STATE_NONE;
         std::vector<wl_output *> m_pOutputs;
@@ -715,6 +718,7 @@ namespace gamescope
         wp_image_description_v1 *GetWPImageDescription( GamescopeAppTextureColorspace eColorspace ) const { return m_pWPImageDescriptions[ (uint32_t)eColorspace ]; }
         wp_fractional_scale_manager_v1 *GetFractionalScaleManager() const { return m_pFractionalScaleManager; }
         xdg_toplevel_icon_manager_v1 *GetToplevelIconManager() const { return m_pToplevelIconManager; }
+        zwp_idle_inhibit_manager_v1 *GetIdleInhibitManager() const { return m_pIdleInhibitManager; }
         libdecor *GetLibDecor() const { return m_pLibDecor; }
 
         void UpdateFullscreenState();
@@ -805,6 +809,7 @@ namespace gamescope
         zwp_relative_pointer_manager_v1 *m_pRelativePointerManager = nullptr;
         wp_fractional_scale_manager_v1 *m_pFractionalScaleManager = nullptr;
         xdg_toplevel_icon_manager_v1 *m_pToplevelIconManager = nullptr;
+        zwp_idle_inhibit_manager_v1 *m_pIdleInhibitManager = nullptr;
 
         // TODO: Restructure and remove the need for this.
         std::atomic<CWaylandConnector *> m_pFocusConnector;
@@ -1373,6 +1378,8 @@ namespace gamescope
             wp_viewport_destroy( m_pViewport );
         if ( m_pSurface )
             wl_surface_destroy( m_pSurface );
+        if ( m_pIdleInhibitor )
+            zwp_idle_inhibitor_v1_destroy( m_pIdleInhibitor );
     }
 
     bool CWaylandPlane::Init( CWaylandPlane *pParent, CWaylandPlane *pSiblingBelow )
@@ -1428,6 +1435,11 @@ namespace gamescope
             wl_subsurface_set_sync( m_pSubsurface );
 			// Allow pParent to receive input while covered by subsurface planes
 			wl_surface_set_input_region( m_pSurface, m_pBackend->GetEmptyRegion() );
+        }
+
+        if( !pParent && m_pBackend->GetIdleInhibitManager() && g_bNestedWaylandInhibitIdle )
+        {
+            m_pIdleInhibitor = zwp_idle_inhibit_manager_v1_create_inhibitor( m_pBackend->GetIdleInhibitManager(), m_pSurface );
         }
 
         wl_surface_commit( m_pSurface );
@@ -2573,6 +2585,10 @@ namespace gamescope
         else if ( !strcmp( pInterface, zwp_primary_selection_device_manager_v1_interface.name ) )
         {
             m_pPrimarySelectionDeviceManager = (zwp_primary_selection_device_manager_v1 *)wl_registry_bind( pRegistry, uName, &zwp_primary_selection_device_manager_v1_interface, 1u );
+        }
+        else if ( !strcmp( pInterface, zwp_idle_inhibit_manager_v1_interface.name) )
+        {
+            m_pIdleInhibitManager = (zwp_idle_inhibit_manager_v1 *)wl_registry_bind( pRegistry, uName, &zwp_idle_inhibit_manager_v1_interface, 1u );
         }
     }
 
