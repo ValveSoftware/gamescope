@@ -8103,7 +8103,7 @@ void handle_done_commits_xdg( bool vblank, uint64_t vblank_idx )
 		if ( entry.desiredPresentTime > next_refresh_time )
 		{
 			commits_before_their_time.push_back( entry );
-			break;
+			continue;
 		}
 
 		if ( entry_win && handle_done_commit(entry_win, nullptr, entry.commitID, entry.earliestPresentTime, entry.earliestLatchTime) )
