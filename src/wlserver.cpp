@@ -669,6 +669,8 @@ static void handle_wl_surface_destroy( struct wl_listener *l, void *data )
 		{
 			ResListEntry_t pending = std::move( *it );
 
+			wlserver_presentation_feedback_discard( pending.presentation_feedbacks );
+
 			// We owned the buffer lock, so unlock it here.
 			wlr_buffer_unlock(pending.buf);
 			it = g_PendingCommits.erase(it);
@@ -679,12 +681,7 @@ static void handle_wl_surface_destroy( struct wl_listener *l, void *data )
 		}
 	}
 
-	for (auto& feedback : surf->pending_presentation_feedbacks)
-	{
-		wp_presentation_feedback_send_discarded(feedback);
-		wl_resource_destroy(feedback);
-	}
-	surf->pending_presentation_feedbacks.clear();
+	wlserver_presentation_feedback_discard( surf->pending_presentation_feedbacks );
 
 	if ( surf->pSyncobjSurface )
 	{
@@ -1562,17 +1559,25 @@ static void presentation_time_destroy( struct wl_client *client, struct wl_resou
 	wl_resource_destroy( resource );
 }
 
+static void presentation_feedback_handle_resource_destroy( struct wl_resource *resource )
+{
+	auto *owner = static_cast<wlserver_presentation_feedback_ref *>( wl_resource_get_user_data( resource ) );
+	(*owner)->resource = nullptr;
+	delete owner;
+}
+
 static void presentation_time_feedback( struct wl_client *client, struct wl_resource *resource, struct wl_resource *surface_resource, uint32_t id )
 {
 	struct wlr_surface *surface = wlr_surface_from_resource( surface_resource );
 
 	wlserver_wl_surface_info *wl_surface_info = get_wl_surface_info(surface);
 
-	struct wl_resource *presentation_feedback_resource
-		= wl_resource_create( client, &wp_presentation_feedback_interface, wl_resource_get_version( resource ), id );
-	wl_resource_set_implementation( presentation_feedback_resource, NULL, wl_surface_info, NULL );
+	auto feedback = std::make_shared<wlserver_presentation_feedback>();
+	feedback->resource = wl_resource_create( client, &wp_presentation_feedback_interface, wl_resource_get_version( resource ), id );
+	// The resource holds its own reference so the destructor can null a handle no commit cites.
+	wl_resource_set_implementation( feedback->resource, NULL, new wlserver_presentation_feedback_ref( feedback ), presentation_feedback_handle_resource_destroy );
 
-	wl_surface_info->pending_presentation_feedbacks.emplace_back(presentation_feedback_resource);
+	wl_surface_info->pending_presentation_feedbacks.emplace_back( std::move( feedback ) );
 }
 
 static const struct wp_presentation_interface presentation_time_impl = {
@@ -1594,13 +1599,8 @@ static void create_presentation_time( void )
 	wl_global_create( wlserver.display, &wp_presentation_interface, version, NULL, presentation_time_bind );
 }
 
-void wlserver_presentation_feedback_presented( struct wlr_surface *surface, std::vector<struct wl_resource*>& presentation_feedbacks, uint64_t last_refresh_nsec, uint64_t refresh_cycle )
+void wlserver_presentation_feedback_presented( std::vector<wlserver_presentation_feedback_ref>& presentation_feedbacks, uint64_t last_refresh_nsec, uint64_t refresh_cycle, uint64_t sequence )
 {
-	wlserver_wl_surface_info *wl_surface_info = get_wl_surface_info(surface);
-
-	if ( !wl_surface_info )
-		return;
-
 	uint32_t flags = 0;
 
 	// Don't know when we want to send this.
@@ -1618,42 +1618,40 @@ void wlserver_presentation_feedback_presented( struct wlr_surface *surface, std:
 	// Not useful for an app to know.
 	flags |= WP_PRESENTATION_FEEDBACK_KIND_ZERO_COPY;
 
-	wl_surface_info->sequence++;
-
 	for (auto& feedback : presentation_feedbacks)
 	{
+		if ( !feedback->resource )
+			continue;
+
 		timespec last_refresh_ts;
 		last_refresh_ts.tv_sec = time_t(last_refresh_nsec / 1'000'000'000ul);
 		last_refresh_ts.tv_nsec = long(last_refresh_nsec % 1'000'000'000ul);
 
 		wp_presentation_feedback_send_presented(
-			feedback,
+			feedback->resource,
 			last_refresh_ts.tv_sec >> 32,
 			last_refresh_ts.tv_sec & 0xffffffff,
 			last_refresh_ts.tv_nsec,
 			uint32_t(refresh_cycle),
-			wl_surface_info->sequence >> 32,
-			wl_surface_info->sequence & 0xffffffff,
+			sequence >> 32,
+			sequence & 0xffffffff,
 			flags);
-		wl_resource_destroy(feedback);
+		wl_resource_destroy( feedback->resource );
 	}
 
 	presentation_feedbacks.clear();
 }
 
-void wlserver_presentation_feedback_discard( struct wlr_surface *surface, std::vector<struct wl_resource*>& presentation_feedbacks )
+// Takes no surface, the commit may outlive it in a queue nothing drains.
+void wlserver_presentation_feedback_discard( std::vector<wlserver_presentation_feedback_ref>& presentation_feedbacks )
 {
-	wlserver_wl_surface_info *wl_surface_info = get_wl_surface_info(surface);
-
-	if ( !wl_surface_info )
-		return;
-
-	wl_surface_info->sequence++;
-
 	for (auto& feedback : presentation_feedbacks)
 	{
-		wp_presentation_feedback_send_discarded(feedback);
-		wl_resource_destroy(feedback);
+		if ( !feedback->resource )
+			continue;
+
+		wp_presentation_feedback_send_discarded( feedback->resource );
+		wl_resource_destroy( feedback->resource );
 	}
 	presentation_feedbacks.clear();
 }

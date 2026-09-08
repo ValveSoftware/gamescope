@@ -1816,7 +1816,7 @@ import_commit (
 	struct wlr_buffer *buf,
 	bool async,
 	std::shared_ptr<wlserver_vk_swapchain_feedback> swapchain_feedback,
-	std::vector<struct wl_resource*> presentation_feedbacks,
+	std::vector<wlserver_presentation_feedback_ref> presentation_feedbacks,
 	std::optional<uint32_t> present_id,
 	uint64_t desired_present_time,
 	bool fifo )
@@ -8167,10 +8167,10 @@ void handle_presented_for_window( steamcompmgr_win_t* w )
 			if (!lastCommit->presentation_feedbacks.empty())
 			{
 				wlserver_presentation_feedback_presented(
-					lastCommit->surf,
 					lastCommit->presentation_feedbacks,
 					next_refresh_time,
-					refresh_cycle);
+					refresh_cycle,
+					++w->presentation_sequence);
 			}
 
 			if (lastCommit->present_id)
@@ -8423,17 +8423,9 @@ void update_wayland_res(const std::shared_ptr<CommitDoneList_t> &doneCommits, st
 	if ( w == nullptr )
 	{
 		wlserver_lock();
+		wlserver_presentation_feedback_discard( reslistentry.presentation_feedbacks );
 		wlr_buffer_unlock( buf );
 		wlserver_unlock();
-
-		// Make sure to send the discarded event if we hit this
-		// to ensure forward progress.
-		if (!reslistentry.presentation_feedbacks.empty())
-		{
-			wlserver_presentation_feedback_discard( reslistentry.surf, reslistentry.presentation_feedbacks );
-			// presentation_feedbacks cleared by wlserver_presentation_feedback_discard
-		}
-
 		xwm_log.errorf( "waylandres but no win" );
 		return;
 	}
@@ -8473,6 +8465,7 @@ void update_wayland_res(const std::shared_ptr<CommitDoneList_t> &doneCommits, st
 	if ( bOnlyCurrentSurface && !for_current_surface )
 	{
 		wlserver_lock();
+		wlserver_presentation_feedback_discard( reslistentry.presentation_feedbacks );
 		wlr_buffer_unlock( buf );
 		wlserver_unlock();
 		w->receivedDoneCommit = true;
@@ -8719,16 +8712,18 @@ void check_new_xwayland_res(xwayland_ctx_t *ctx)
 void check_new_xdg_res()
 {
 	std::vector<ResListEntry_t> tmp_queue = wlserver_xdg_commit_queue();
-	for ( uint32_t i = 0; i < tmp_queue.size(); i++ )
+	for ( auto &entry : tmp_queue )
 	{
-		for ( const auto& xdg_win : g_steamcompmgr_xdg_wins )
+		steamcompmgr_win_t *w = nullptr;
+		for ( const auto &xdg_win : g_steamcompmgr_xdg_wins )
 		{
-			if ( xdg_win->xdg().surface.main_surface == tmp_queue[ i ].surf )
+			if ( xdg_win->xdg().surface.main_surface == entry.surf )
 			{
-				update_wayland_res( g_steamcompmgr_xdg_done_commits, xdg_win.get(), tmp_queue[ i ] );
+				w = xdg_win.get();
 				break;
 			}
 		}
+		update_wayland_res( g_steamcompmgr_xdg_done_commits, w, entry );
 	}
 }
 
