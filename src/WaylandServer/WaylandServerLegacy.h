@@ -12,6 +12,13 @@
 #include <wlr/types/wlr_compositor.h>
 #include "wlr_end.hpp"
 
+// A queued commit can outlive its client, whose disconnect nulls the resource.
+struct wlserver_presentation_feedback
+{
+	struct wl_resource *resource = nullptr;
+};
+using wlserver_presentation_feedback_ref = std::shared_ptr<wlserver_presentation_feedback>;
+
 
 namespace gamescope
 {
@@ -49,8 +56,7 @@ struct wlserver_wl_surface_info
 	std::shared_ptr<wlserver_vk_swapchain_feedback> swapchain_feedback = {};
 	std::optional<VkPresentModeKHR> oCurrentPresentMode;
 
-	uint64_t sequence = 0;
-	std::vector<struct wl_resource*> pending_presentation_feedbacks;
+	std::vector<wlserver_presentation_feedback_ref> pending_presentation_feedbacks;
 
 	std::vector<struct wl_resource *> gamescope_swapchains;
 	std::optional<uint32_t> present_id = std::nullopt;

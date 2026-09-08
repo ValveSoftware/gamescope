@@ -25,7 +25,7 @@ commit_t::~commit_t()
     wlserver_lock();
     if (!presentation_feedbacks.empty())
     {
-        wlserver_presentation_feedback_discard(surf, presentation_feedbacks);
+        wlserver_presentation_feedback_discard(presentation_feedbacks);
         // presentation_feedbacks cleared by wlserver_presentation_feedback_discard
     }
     wlr_buffer_unlock( buf );

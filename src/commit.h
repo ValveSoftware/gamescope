@@ -71,7 +71,7 @@ struct commit_t final : public gamescope::RcObject, public gamescope::IWaitable,
 
 	uint64_t win_seq = 0;
 	struct wlr_surface *surf = nullptr;
-	std::vector<struct wl_resource*> presentation_feedbacks;
+	std::vector<wlserver_presentation_feedback_ref> presentation_feedbacks;
 
 	std::optional<uint32_t> present_id = std::nullopt;
 	uint64_t desired_present_time = 0;
