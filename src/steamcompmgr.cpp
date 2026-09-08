@@ -377,9 +377,10 @@ create_color_mgmt_luts(const gamescope_color_mgmt_t& newColorMgmt, gamescope_col
 				}
 
 				// The final display colorimetry is used to build the output mapping, as we want a gamut-aware handling
-				// for sdrGamutWideness indepdendent of the output encoding (for SDR data), and when mapping SDR -> PQ output
-				// we only want to utilize a portion of the gamut the actual display can reproduce
-				buildSDRColorimetry( &inputColorimetry, &colorMapping, newColorMgmt.sdrGamutWideness, displayColorimetry );
+				// for sdrGamutWideness independent of the output encoding (for SDR data). buildSDRColorimetry is
+				// output-aware: on a wide-gamut display SDR -> PQ uses a portion of the panel gamut; on a non-wide
+				// display it encodes SDR from an absolute 709/D65 source, since the sink owns the container->panel mapping.
+				buildSDRColorimetry( &inputColorimetry, &colorMapping, newColorMgmt.sdrGamutWideness, displayColorimetry, newColorMgmt.outputEncodingEOTF );
 			}
 			else if ( inputEOTF == EOTF_PQ )
 			{

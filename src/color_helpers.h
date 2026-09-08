@@ -383,10 +383,11 @@ void calcColorTransform( lut1d_t * pShaper, int nLutSize1d,
 	const lut3d_t * pLook, float flGain )
 
 // Build colorimetry and a gamut mapping for the given SDR configuration
-// Note: the output colorimetry will use the native display's white point
-// Only the color gamut will change
+// Note: the source colorimetry uses the native display's white point, except for
+// PQ output on non-wide displays, where it is built against the D65 container.
+// The outputEncodingEOTF parameter only affects non-wide displays.
 void buildSDRColorimetry( displaycolorimetry_t * pColorimetry, colormapping_t *pMapping,
-	float flSDRGamutWideness, const displaycolorimetry_t & nativeDisplayOutput );
+	float flSDRGamutWideness, const displaycolorimetry_t & nativeDisplayOutput, EOTF outputEncodingEOTF );
 
 // Build colorimetry and a gamut mapping for the given PQ configuration
 void buildPQColorimetry( displaycolorimetry_t * pColorimetry, colormapping_t *pMapping, const displaycolorimetry_t & nativeDisplayOutput );

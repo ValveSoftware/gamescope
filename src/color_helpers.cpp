@@ -835,7 +835,7 @@ bool BIsWideGamut( const displaycolorimetry_t & nativeDisplayOutput )
 }
 
 void buildSDRColorimetry( displaycolorimetry_t * pColorimetry, colormapping_t *pMapping,
-	float flSDRGamutWideness, const displaycolorimetry_t & nativeDisplayOutput  )
+	float flSDRGamutWideness, const displaycolorimetry_t & nativeDisplayOutput, EOTF outputEncodingEOTF )
 {
     if ( BIsWideGamut( nativeDisplayOutput) )
     {
@@ -858,45 +858,63 @@ void buildSDRColorimetry( displaycolorimetry_t * pColorimetry, colormapping_t *p
     }
     else
     {
-        // If not set, make it native.
+        // If not set, default to 0.0f.
         if (flSDRGamutWideness < 0 )
             flSDRGamutWideness = 0.0f;
 
-        // 0.0: Native
-        // 0.5: Generic wide gamut display w/smooth mapping
-        // 1.0: Generic wide gamut display w/harsh mapping
-
-        // This is a full blending to the unit cube, starting at 70% max sat
-        // Creates a smooth transition from in-gamut to out of gamut
-        colormapping_t smoothRemap;
-        smoothRemap.blendEnableMinSat = 0.7f;
-        smoothRemap.blendEnableMaxSat = 1.0f;
-        smoothRemap.blendAmountMin = 0.0f;
-        smoothRemap.blendAmountMax = 1.f;
-
-        // Assume linear saturation computation
-        // This is a partial (25%) blending to the unit cube
-        // Allows some (but not full) clipping
-        colormapping_t partialRemap;
-        partialRemap.blendEnableMinSat = 0.7f;
-        partialRemap.blendEnableMaxSat = 1.0f;
-        partialRemap.blendAmountMin = 0.0f;
-        partialRemap.blendAmountMax = 0.25;
-
-        displaycolorimetry_t wideGamutNativeWhite = displaycolorimetry_widegamutgeneric;
-        wideGamutNativeWhite.white = nativeDisplayOutput.white;
-
-        if ( flSDRGamutWideness < 0.5f )
+        if ( outputEncodingEOTF == EOTF_PQ )
         {
-            float t = cfit( flSDRGamutWideness, 0.f, 0.5f, 0.0f, 1.0f );
-            *pColorimetry = lerp( nativeDisplayOutput, wideGamutNativeWhite, t );
-            *pMapping = smoothRemap;
+            // PQ dest is an absolute D65 container, not the panel, so the
+            // saturation blend toward the dest cube does not apply; use a
+            // pure colorimetric map from a D65 source.
+            // 0.0: 709
+            // 0.5+: Generic wide gamut
+            colormapping_t noRemap;
+            noRemap.blendEnableMinSat = 0.7f;
+            noRemap.blendEnableMaxSat = 1.0f;
+            noRemap.blendAmountMin = 0.0f;
+            noRemap.blendAmountMax = 0.0f;
+            *pMapping = noRemap;
+            *pColorimetry = lerp( displaycolorimetry_709, displaycolorimetry_widegamutgeneric, cfit( flSDRGamutWideness, 0.f, 0.5f, 0.0f, 1.0f ) );
         }
         else
         {
-            float t = cfit( flSDRGamutWideness, 0.5f, 1.0f, 0.0f, 1.0f );
-            *pColorimetry = wideGamutNativeWhite;
-            *pMapping = lerp( smoothRemap, partialRemap, t );
+            // 0.0: Native
+            // 0.5: Generic wide gamut display w/smooth mapping
+            // 1.0: Generic wide gamut display w/harsh mapping
+
+            // This is a full blending to the unit cube, starting at 70% max sat
+            // Creates a smooth transition from in-gamut to out of gamut
+            colormapping_t smoothRemap;
+            smoothRemap.blendEnableMinSat = 0.7f;
+            smoothRemap.blendEnableMaxSat = 1.0f;
+            smoothRemap.blendAmountMin = 0.0f;
+            smoothRemap.blendAmountMax = 1.f;
+
+            // Assume linear saturation computation
+            // This is a partial (25%) blending to the unit cube
+            // Allows some (but not full) clipping
+            colormapping_t partialRemap;
+            partialRemap.blendEnableMinSat = 0.7f;
+            partialRemap.blendEnableMaxSat = 1.0f;
+            partialRemap.blendAmountMin = 0.0f;
+            partialRemap.blendAmountMax = 0.25;
+
+            displaycolorimetry_t wideGamutNativeWhite = displaycolorimetry_widegamutgeneric;
+            wideGamutNativeWhite.white = nativeDisplayOutput.white;
+
+            if ( flSDRGamutWideness < 0.5f )
+            {
+                float t = cfit( flSDRGamutWideness, 0.f, 0.5f, 0.0f, 1.0f );
+                *pColorimetry = lerp( nativeDisplayOutput, wideGamutNativeWhite, t );
+                *pMapping = smoothRemap;
+            }
+            else
+            {
+                float t = cfit( flSDRGamutWideness, 0.5f, 1.0f, 0.0f, 1.0f );
+                *pColorimetry = wideGamutNativeWhite;
+                *pMapping = lerp( smoothRemap, partialRemap, t );
+            }
         }
     }
 }
