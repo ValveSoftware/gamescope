@@ -23,6 +23,7 @@
 #include <optional>
 
 #include <poll.h>
+#include <sys/stat.h>
 // For limiter file.
 #include <time.h>
 #include <fcntl.h>
@@ -114,14 +115,36 @@ namespace GamescopeWSILayer {
       if (!gamescopeSocketName || !*gamescopeSocketName)
         return false;
 
-      // Gamescope always sets or unsets WAYLAND_SOCKET.
-      // So if that is set to something else, we know we cannot be running
-      // under Gamescope and must be in a nested Wayland session inside of gamescope.
       const char *waylandSocketName = std::getenv("WAYLAND_DISPLAY");
-      if (waylandSocketName && *waylandSocketName && strcmp(gamescopeSocketName, waylandSocketName) != 0)
+      if (!waylandSocketName || !*waylandSocketName || strcmp(gamescopeSocketName, waylandSocketName) == 0)
+        return true;
+
+      // An inherited connection overrides the socket name. Do not broaden
+      // the existing check when we cannot identify it by its path.
+      if (std::getenv("WAYLAND_SOCKET"))
         return false;
 
-      return true;
+      std::array<std::string, 2> paths = { gamescopeSocketName, waylandSocketName };
+      const char *runtimeDir = std::getenv("XDG_RUNTIME_DIR");
+      for (auto &path : paths) {
+        if (path.front() != '/') {
+          if (!runtimeDir || !*runtimeDir)
+            return false;
+          path = std::string(runtimeDir) + "/" + path;
+        }
+      }
+
+      struct stat gamescopeStat, waylandStat;
+      if (stat(paths[0].c_str(), &gamescopeStat) != 0 || !S_ISSOCK(gamescopeStat.st_mode))
+        return false;
+
+      // Pressure-vessel can rewrite an empty display to a missing wayland-0,
+      // or expose one socket under two different bind-mount paths.
+      if (stat(paths[1].c_str(), &waylandStat) != 0)
+        return errno == ENOENT || errno == ENOTDIR;
+
+      return S_ISSOCK(waylandStat.st_mode) &&
+        gamescopeStat.st_dev == waylandStat.st_dev && gamescopeStat.st_ino == waylandStat.st_ino;
     }();
 
     return s_isRunningUnderGamescope;
