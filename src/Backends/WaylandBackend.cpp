@@ -298,6 +298,7 @@ namespace gamescope
         libdecor_window_state m_eWindowState = LIBDECOR_WINDOW_STATE_NONE;
         std::vector<wl_output *> m_pOutputs;
         bool m_bNeedsDecorCommit = false;
+        bool m_bUnmappedAwaitingConfigure = false;
         uint32_t m_uFractionalScale = 120;
         bool m_bHasRecievedScale = false;
 
@@ -1600,6 +1601,9 @@ namespace gamescope
             }
             // The x/y here does nothing? Why? What is it for...
             // Use the subsurface set_position thing instead.
+            if ( m_pFrame && m_bUnmappedAwaitingConfigure )
+                return;
+
             wl_surface_attach( m_pSurface, oState->pBuffer, 0, 0 );
             wl_surface_damage( m_pSurface, 0, 0, INT32_MAX, INT32_MAX );
             wl_surface_set_opaque_region( m_pSurface, oState->bOpaque ? m_pBackend->GetFullRegion() : nullptr );
@@ -1607,6 +1611,9 @@ namespace gamescope
         }
         else
         {
+            if ( m_pFrame )
+                m_bUnmappedAwaitingConfigure = true;
+
             wl_surface_attach( m_pSurface, nullptr, 0, 0 );
             wl_surface_damage( m_pSurface, 0, 0, INT32_MAX, INT32_MAX );
         }
@@ -1741,6 +1748,8 @@ namespace gamescope
         }
         g_nOutputWidth  = WaylandScaleToPhysical( nWidth, uScale );
         g_nOutputHeight = WaylandScaleToPhysical( nHeight, uScale );
+
+        m_bUnmappedAwaitingConfigure = false;
 
         CommitLibDecor( pConfiguration );
 
