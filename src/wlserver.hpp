@@ -46,8 +46,7 @@ struct ResListEntry_t {
 	bool fifo;
 	std::shared_ptr<wlserver_vk_swapchain_feedback> feedback;
 	std::vector<wlserver_presentation_feedback_ref> presentation_feedbacks;
-	std::optional<uint32_t> present_id;
-	uint64_t desired_present_time;
+	gamescope::PresentTiming present_timing;
 	std::shared_ptr<gamescope::CAcquireTimelinePoint> pAcquirePoint;
 	std::shared_ptr<gamescope::CReleaseTimelinePoint> pReleasePoint;
 	pixman_box32_t damageExtents;
@@ -317,8 +316,11 @@ void wlserver_destroy_xwayland_server(gamescope_xwayland_server_t *server);
 void wlserver_presentation_feedback_presented( std::vector<wlserver_presentation_feedback_ref>& presentation_feedbacks, uint64_t last_refresh_nsec, uint64_t refresh_cycle, uint64_t sequence );
 void wlserver_presentation_feedback_discard( std::vector<wlserver_presentation_feedback_ref>& presentation_feedbacks );
 
-void wlserver_past_present_timing( struct wlr_surface *surface, uint32_t present_id, uint64_t desired_present_time, uint64_t actual_present_time, uint64_t earliest_present_time, uint64_t present_margin );
-void wlserver_refresh_cycle( struct wlr_surface *surface, uint64_t refresh_cycle );
+extern LogScope present_timing_log;
+
+void wlserver_present_timing_report( gamescope::PresentTiming &timing, uint64_t queue_end, uint64_t dequeued, uint64_t pixel_out, uint64_t earliest_present_time, uint64_t earliest_latch_time );
+void wlserver_present_timing_discard( gamescope::PresentTiming &timing );
+void wlserver_refresh_cycle( struct wlr_surface *surface, uint64_t refresh_cycle, uint64_t refresh_interval );
 
 void wlserver_app_presented( uint32_t app_id, uint64_t frametime_ns );
 

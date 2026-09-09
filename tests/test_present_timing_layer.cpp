@@ -1013,3 +1013,76 @@ TEST_CASE("Retiring an old swapchain preserves its surface globals and successor
   VkDeviceOverrides::DestroySwapchainKHR(dispatch, VK_NULL_HANDLE, handles[1], nullptr);
   wl_surface_destroy(appSurface);
 }
+
+TEST_CASE("A timed present round-trips through the gamescope protocol", "[present_timing_layer][surface_globals]") {
+  using namespace GamescopeWSILayer;
+  WaylandTestServer peer;
+  auto owner = GamescopeWaylandObjects::get(peer.display);
+  REQUIRE(owner.valid());
+  auto *appSurface = peer.CreateSurface();
+  const auto surface = reinterpret_cast<VkSurfaceKHR>(uintptr_t(2101));
+  const auto handle = reinterpret_cast<VkSwapchainKHR>(uintptr_t(2102));
+  REQUIRE(gamescopeSurfaces.create(surface, GamescopeSurfaceData{}));
+  auto *eventQueue = wl_display_create_queue(peer.display);
+  auto *wrapper = static_cast<gamescope_swapchain_factory_v2 *>(wl_proxy_create_wrapper(owner.gamescopeSwapchainFactory.get()));
+  wl_proxy_set_queue(reinterpret_cast<wl_proxy *>(wrapper), eventQueue);
+  auto *object = gamescope_swapchain_factory_v2_create_swapchain_with_timing(wrapper, appSurface);
+  wl_proxy_wrapper_destroy(wrapper);
+  auto *state = gamescopeSwapchains.create(handle, GamescopeSwapchainData{
+    .object = object, .display = peer.display, .globalsQueue = owner.queue.get(), .eventQueue = eventQueue,
+    .surface = surface, .isBypassingXWayland = true, .presentMode = VK_PRESENT_MODE_FIFO_KHR, .presentTimingEnabled = true});
+  REQUIRE(state);
+  gamescope_swapchain_add_listener(object, &s_swapchainListener, state);
+  state->timingQueue.setSize(4);
+
+  presented.clear();
+  presentCalls = failPresent = 0;
+  const uint64_t target = 0x1'0000'0005;
+  const VkPresentTimingInfoFlagsEXT flags =
+    VK_PRESENT_TIMING_INFO_PRESENT_AT_RELATIVE_TIME_BIT_EXT | VK_PRESENT_TIMING_INFO_PRESENT_AT_NEAREST_REFRESH_CYCLE_BIT_EXT;
+  VkPresentTimingInfoEXT timing{.sType = VK_STRUCTURE_TYPE_PRESENT_TIMING_INFO_EXT, .flags = flags, .targetTime = target,
+    .presentStageQueries = VK_PRESENT_STAGE_IMAGE_FIRST_PIXEL_OUT_BIT_EXT};
+  VkPresentTimingsInfoEXT timings{VK_STRUCTURE_TYPE_PRESENT_TIMINGS_INFO_EXT, nullptr, 1, &timing};
+  uint64_t id = 42;
+  VkPresentId2KHR ids{VK_STRUCTURE_TYPE_PRESENT_ID_2_KHR, &timings, 1, &id};
+  uint32_t image = 0;
+  VkResult result = VK_NOT_READY;
+  VkPresentInfoKHR info{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR, &ids, 0, nullptr, 1, &handle, &image, &result};
+  VkDeviceCreateInfo createInfo{.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
+  vkroots::VkDeviceDispatch device(getSurfaceDeviceProc, VK_NULL_HANDLE, VK_NULL_HANDLE, nullptr, &createInfo);
+  vkroots::VkQueueDispatch queue(VK_NULL_HANDLE, &device);
+  REQUIRE(VkDeviceOverrides::QueuePresentKHR(queue, VK_NULL_HANDLE, &info) == VK_SUCCESS);
+  CHECK(presented.size() == 1);
+  peer.Sync();
+
+  const auto requests = peer.TimingRequests();
+  REQUIRE(requests.size() == 1);
+  CHECK(requests[0].target == target);
+  CHECK(requests[0].flags == flags);
+
+  peer.SendTimingProperties(8'333'333, 8'333'333);
+  peer.SendPresentTiming(requests[0].serial, 0x2'0000'0010, 0x2'0000'0020, 0x2'0000'0030);
+  peer.Sync();
+
+  VkSwapchainTimingPropertiesEXT properties{.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_TIMING_PROPERTIES_EXT};
+  uint64_t counter = 0;
+  CHECK(VkDeviceOverrides::GetSwapchainTimingPropertiesEXT(device, VK_NULL_HANDLE, handle, &properties, &counter) == VK_SUCCESS);
+  CHECK(properties.refreshDuration == 8'333'333);
+  CHECK(counter != 0);
+
+  VkPresentStageTimeEXT stage{};
+  VkPastPresentationTimingEXT past{.sType = VK_STRUCTURE_TYPE_PAST_PRESENTATION_TIMING_EXT, .presentStageCount = 1, .pPresentStages = &stage};
+  VkPastPresentationTimingInfoEXT pastInfo{.sType = VK_STRUCTURE_TYPE_PAST_PRESENTATION_TIMING_INFO_EXT, .swapchain = handle};
+  VkPastPresentationTimingPropertiesEXT pastProperties{.sType = VK_STRUCTURE_TYPE_PAST_PRESENTATION_TIMING_PROPERTIES_EXT,
+    .presentationTimingCount = 1, .pPresentationTimings = &past};
+  CHECK(VkDeviceOverrides::GetPastPresentationTimingEXT(device, VK_NULL_HANDLE, &pastInfo, &pastProperties) == VK_SUCCESS);
+  CHECK(pastProperties.presentationTimingCount == 1);
+  CHECK(past.presentId == id);
+  CHECK(past.reportComplete);
+  CHECK(stage.stage == VK_PRESENT_STAGE_IMAGE_FIRST_PIXEL_OUT_BIT_EXT);
+  CHECK(stage.time == 0x2'0000'0030);
+
+  VkDeviceOverrides::DestroySwapchainKHR(device, VK_NULL_HANDLE, handle, nullptr);
+  gamescopeSurfaces.erase(surface);
+  wl_surface_destroy(appSurface);
+}

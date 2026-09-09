@@ -243,6 +243,14 @@ namespace gamescope
 		return oVBlank;
 	}
 
+	std::optional<VBlankScheduleTime> CVBlankTimer::GetArmedSchedule()
+	{
+		std::unique_lock lock( m_ScheduleMutex );
+		if ( UsingTimerFD() && m_bArmed )
+			return m_TimerFDSchedule;
+		return std::nullopt;
+	}
+
 	void CVBlankTimer::MarkVBlank( uint64_t ulNanos, bool bReArmTimer )
 	{
 		m_ulLastVBlank = ulNanos;
