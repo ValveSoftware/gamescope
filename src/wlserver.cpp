@@ -1379,6 +1379,19 @@ void wlserver_app_presented( uint32_t app_id, uint64_t frametime_ns )
 	wlserver.app_perf_requests.erase( it );
 }
 
+static void gamescope_control_set_keyboard_layout( struct wl_client *client, struct wl_resource *resource, const char *layout, const char *variant )
+{
+	// A variant with no layout is meaningless, let the empty layout reset through.
+	std::string sLayout = layout;
+	if ( !sLayout.empty() && variant[0] )
+	{
+		sLayout += ":";
+		sLayout += variant;
+	}
+
+	wlserver_set_keyboard_layout( sLayout.c_str() );
+}
+
 static const struct gamescope_control_interface gamescope_control_impl = {
 	.destroy = gamescope_control_handle_destroy,
 	.set_app_target_refresh_cycle = gamescope_control_set_app_target_refresh_cycle,
@@ -1387,6 +1400,7 @@ static const struct gamescope_control_interface gamescope_control_impl = {
 	.set_look = gamescope_control_set_look,
 	.unset_look = gamescope_control_unset_look,
 	.request_app_performance_stats = gamescope_control_request_app_performance_stats,
+	.set_keyboard_layout = gamescope_control_set_keyboard_layout,
 };
 
 static uint32_t get_conn_display_info_flags()
@@ -1457,6 +1471,7 @@ static void gamescope_control_bind( struct wl_client *client, void *data, uint32
 	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_MURA_CORRECTION, 1, 0 );
 	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_LOOK, 1, 0 );
 	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_PERF_QUERY, 1, 0 );
+	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_KEYBOARD_LAYOUT, 1, 0 );
 	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_DONE, 0, 0 );
 
 	wlserver_send_gamescope_control( resource );
@@ -1466,7 +1481,7 @@ static void gamescope_control_bind( struct wl_client *client, void *data, uint32
 
 static void create_gamescope_control( void )
 {
-	uint32_t version = 6;
+	uint32_t version = 7;
 	wl_global_create( wlserver.display, &gamescope_control_interface, version, NULL, gamescope_control_bind );
 }
 
@@ -2074,7 +2089,8 @@ static std::unique_ptr<gamescope::GamescopeInputServer> g_InputServer;
 static void wlserver_update_keymap();
 
 // Steam pushes the user's keyboard layout in here, as nothing in the session
-// exports it to us. See GAMESCOPE_KEYBOARD_LAYOUT in steamcompmgr.
+// exports it to us. See gamescope_control.set_keyboard_layout and
+// GAMESCOPE_KEYBOARD_LAYOUT in steamcompmgr.
 static gamescope::ConVar<std::string> cv_xkb_layout( "xkb_layout", "",
 	"XKB layout[:variant] used for physical keyboards, eg. \"es\" or \"fr:bepo\". Empty follows XKB_DEFAULT_LAYOUT and XKB_DEFAULT_VARIANT.",
 	[]( gamescope::ConVar<std::string> & ) { wlserver_update_keymap(); } );
