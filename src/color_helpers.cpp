@@ -691,6 +691,7 @@ void calcColorTransform( lut1d_t * pShaper, int nLutSize1d,
 	lut3d_t * pLut3d,
 	const displaycolorimetry_t & source, EOTF sourceEOTF,
 	const displaycolorimetry_t & dest,  EOTF destEOTF,
+    const displaycolorimetry_t & native,
     const glm::vec2 & destVirtualWhite, EChromaticAdaptationMethod eMethod,
     const colormapping_t & mapping, const nightmode_t & nightmode, const tonemapping_t & tonemapping,
     const lut3d_t * pLook, float flGain )
@@ -726,6 +727,11 @@ void calcColorTransform( lut1d_t * pShaper, int nLutSize1d,
 
         glm::mat3 xyz_from_source = normalised_primary_matrix( source.primaries, source.white, 1.f );
         glm::mat3 dest_from_source = dest_from_xyz * xyz_from_source; // XYZ scaling for white point adjustment
+
+        // Avoid roundoff when the output encoding is already native.
+        glm::mat3 dest_from_native( 1.f );
+        if ( native != dest )
+            dest_from_native = dest_from_xyz * normalised_primary_matrix( native.primaries, native.white, 1.f );
 
         // Precalc night mode scalars & digital gain
         // amount and saturation are overdetermined but we separate the two as they conceptually represent
@@ -794,7 +800,10 @@ void calcColorTransform( lut1d_t * pShaper, int nLutSize1d,
                     // float colorSaturation = rgb_to_hsv( sourceColor ).y;
                     float colorSaturation = rgb_to_hsv( sourceColorLinear ).y;
                     float amount = cfit( colorSaturation, mapping.blendEnableMinSat, mapping.blendEnableMaxSat, mapping.blendAmountMin, mapping.blendAmountMax );
-                    destColorLinear = glm::mix( destColorLinear, sourceColorLinear, amount );
+                    // Treat the original linear RGB values as native display RGB,
+                    // then convert to the output color space before blending.
+                    glm::vec3 nativeColorLinear = dest_from_native * sourceColorLinear;
+                    destColorLinear = glm::mix( destColorLinear, nativeColorLinear, amount );
 
                     // Apply linear Mult
                     destColorLinear = vMultLinear * destColorLinear;
