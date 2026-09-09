@@ -1703,14 +1703,13 @@ namespace GamescopeWSILayer {
       if (waylandPumpEvents(gamescopeSwapchain->display) < 0)
         return VK_ERROR_SURFACE_LOST_KHR;
 
-      uint32_t originalCount = *pPresentationTimingCount;
-
       std::unique_lock lock(*gamescopeSwapchain->presentTimingMutex);
       auto& timings = gamescopeSwapchain->pastPresentTimings;
 
       VkResult result = vkroots::array(timings, pPresentationTimingCount, pPresentationTimings);
       // Erase those that we returned so we don't return them again.
-      timings.erase(timings.begin(), timings.begin() + originalCount);
+      if (pPresentationTimings)
+        timings.erase(timings.begin(), timings.begin() + *pPresentationTimingCount);
 
       return result;
     }
