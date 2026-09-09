@@ -1,6 +1,14 @@
 #pragma once
 
 #include <wayland-server-core.h>
+#include <wayland-client.h>
+#include <algorithm>
+#include <functional>
+#include <memory>
+#include <unordered_map>
+#include <vector>
+#include "../src/WaylandServer/SwapchainTiming.h"
+#include <unistd.h>
 #include <sys/eventfd.h>
 #include <sys/socket.h>
 #include <future>
@@ -9,6 +17,12 @@
 
 // A real protocol peer; all server-side work runs on its event-loop thread.
 struct WaylandTestServer {
+  struct TimingRequest {
+    uint64_t serial;
+    uint64_t target;
+    uint32_t flags;
+  };
+
   wl_display *server = wl_display_create();
   wl_display *display = nullptr;
   wl_event_queue *syncQueue = nullptr;
@@ -19,10 +33,12 @@ struct WaylandTestServer {
   std::vector<std::function<void()>> tasks;
   std::vector<wl_resource *> limiters;
   std::vector<wl_resource *> swapchains;
+  std::unordered_map<wl_resource *, std::shared_ptr<gamescope::PresentTimingRoute>> routes;
+  std::vector<TimingRequest> timingRequests;
   unsigned factories = 0;
   unsigned surfaces = 0;
 
-  explicit WaylandTestServer(bool compositor = true) {
+  explicit WaylandTestServer(bool compositor = true, uint32_t factoryVersion = 2) {
     REQUIRE(server);
     REQUIRE(wakeFd >= 0);
     int sockets[2];
@@ -54,26 +70,17 @@ struct WaylandTestServer {
           };
           wl_resource_set_implementation(resource, &implementation, data, nullptr);
         }));
-    REQUIRE(wl_global_create(server, &gamescope_swapchain_factory_v2_interface, 2, this,
+    REQUIRE(wl_global_create(server, &gamescope_swapchain_factory_v2_interface, factoryVersion, this,
       [](wl_client *client, void *data, uint32_t version, uint32_t id) {
         auto *self = static_cast<WaylandTestServer *>(data);
         auto *resource = wl_resource_create(client, &gamescope_swapchain_factory_v2_interface, version, id);
-        static const struct {
-          void (*destroy)(wl_client *, wl_resource *);
-          void (*createSwapchain)(wl_client *, wl_resource *, wl_resource *, uint32_t);
-        } implementation = {
-          [](wl_client *, wl_resource *resource) { wl_resource_destroy(resource); },
-          [](wl_client *client, wl_resource *factory, wl_resource *, uint32_t id) {
-            auto *self = static_cast<WaylandTestServer *>(wl_resource_get_user_data(factory));
-            auto *resource = wl_resource_create(client, &gamescope_swapchain_interface, 2, id);
-            static const struct { void (*destroy)(wl_client *, wl_resource *); } implementation = {
-              [](wl_client *, wl_resource *resource) { wl_resource_destroy(resource); },
-            };
-            self->swapchains.push_back(resource);
-            wl_resource_set_implementation(resource, &implementation, self, [](wl_resource *resource) {
-              auto *self = static_cast<WaylandTestServer *>(wl_resource_get_user_data(resource));
-              std::erase(self->swapchains, resource);
-            });
+        static const struct gamescope_swapchain_factory_v2_interface implementation = {
+          .destroy = [](wl_client *, wl_resource *resource) { wl_resource_destroy(resource); },
+          .create_swapchain = [](wl_client *client, wl_resource *factory, wl_resource *, uint32_t id) {
+            CreateSwapchain(client, factory, id, false);
+          },
+          .create_swapchain_with_timing = [](wl_client *client, wl_resource *factory, wl_resource *, uint32_t id) {
+            CreateSwapchain(client, factory, id, true);
           },
         };
         ++self->factories;
@@ -114,6 +121,34 @@ struct WaylandTestServer {
     thread = std::thread([&] { wl_display_run(server); });
   }
 
+  static void CreateSwapchain(wl_client *client, wl_resource *factory, uint32_t id, bool timing) {
+    auto *self = static_cast<WaylandTestServer *>(wl_resource_get_user_data(factory));
+    auto *resource = wl_resource_create(client, &gamescope_swapchain_interface, wl_resource_get_version(factory), id);
+    static const struct gamescope_swapchain_interface implementation = {
+      .destroy = [](wl_client *, wl_resource *resource) { wl_resource_destroy(resource); },
+      .override_window_content = [](wl_client *, wl_resource *, uint32_t, uint32_t) {},
+      .swapchain_feedback = [](wl_client *, wl_resource *, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, const char *) {},
+      .set_present_mode = [](wl_client *, wl_resource *, uint32_t) {},
+      .set_hdr_metadata = [](wl_client *, wl_resource *, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t,
+                             uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t) {},
+      .set_present_time = [](wl_client *, wl_resource *, uint32_t, uint32_t, uint32_t) {},
+      .set_present_timing = [](wl_client *, wl_resource *resource, uint32_t serialHi, uint32_t serialLo,
+                               uint32_t targetHi, uint32_t targetLo, uint32_t flags) {
+        static_cast<WaylandTestServer *>(wl_resource_get_user_data(resource))->timingRequests.push_back({
+          (uint64_t(serialHi) << 32) | serialLo, (uint64_t(targetHi) << 32) | targetLo, flags});
+      },
+    };
+    self->swapchains.push_back(resource);
+    self->routes.emplace(resource, std::make_shared<gamescope::PresentTimingRoute>(gamescope::PresentTimingRoute{
+      .resource = resource, .timing_events = timing}));
+    wl_resource_set_implementation(resource, &implementation, self, [](wl_resource *resource) {
+      auto *self = static_cast<WaylandTestServer *>(wl_resource_get_user_data(resource));
+      self->routes.at(resource)->resource = nullptr;
+      self->routes.erase(resource);
+      std::erase(self->swapchains, resource);
+    });
+  }
+
   void Run(std::function<void()> fn) {
     std::promise<void> done;
     auto future = done.get_future();
@@ -138,6 +173,50 @@ struct WaylandTestServer {
     Run([&] {
       for (auto *swapchain : swapchains)
         wl_resource_post_event(swapchain, 1, 0u, cycle);
+      wl_display_flush_clients(server);
+    });
+  }
+
+  void SendTimingEvents() {
+    Run([&] {
+      for (auto &[resource, route] : routes) {
+        route->SendTimingProperties(8'333'333, UINT64_MAX);
+        route->SendPresentTiming(0x100000002, 0x200000003, 0x300000004, 0x400000005);
+        route->SendPresentTiming(0x100000006, 0, 0, 0);
+      }
+      wl_display_flush_clients(server);
+    });
+  }
+
+  void SendPresentTiming(uint64_t serial, uint64_t queueEnd, uint64_t dequeued, uint64_t pixelOut) {
+    Run([&] {
+      for (auto &[resource, route] : routes)
+        route->SendPresentTiming(serial, queueEnd, dequeued, pixelOut);
+      wl_display_flush_clients(server);
+    });
+  }
+
+  void SendTimingProperties(uint64_t duration, uint64_t interval) {
+    Run([&] {
+      for (auto &[resource, route] : routes)
+        route->SendTimingProperties(duration, interval);
+      wl_display_flush_clients(server);
+    });
+  }
+
+  std::vector<TimingRequest> TimingRequests() {
+    std::vector<TimingRequest> result;
+    Run([&] { result = timingRequests; });
+    return result;
+  }
+
+  void SendLegacyEvents() {
+    Run([&] {
+      for (auto *resource : swapchains) {
+        gamescope_swapchain_send_refresh_cycle(resource, 0, 4'166'667);
+        gamescope_swapchain_send_past_present_timing(resource, 7, 0, 0, 0, 10, 0, 9, 0, 1);
+        gamescope_swapchain_send_retired(resource);
+      }
       wl_display_flush_clients(server);
     });
   }

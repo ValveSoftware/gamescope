@@ -1,4 +1,5 @@
 #include "steamcompmgr_shared.hpp"
+#include "WaylandServer/WaylandServerLegacy.h"
 #include "Utils/NonCopyable.h"
 
 #include <memory>
@@ -61,6 +62,7 @@ struct commit_t final : public gamescope::RcObject, public gamescope::IWaitable,
 
 	uint64_t commitID = 0;
 	bool done = false;
+	std::atomic<bool> abandoned = false;
 	bool async = false;
 	bool fifo = false;
 	bool is_steam = false;
@@ -73,10 +75,11 @@ struct commit_t final : public gamescope::RcObject, public gamescope::IWaitable,
 	struct wlr_surface *surf = nullptr;
 	std::vector<wlserver_presentation_feedback_ref> presentation_feedbacks;
 
-	std::optional<uint32_t> present_id = std::nullopt;
-	uint64_t desired_present_time = 0;
+	gamescope::PresentTiming present_timing;
+	uint64_t earliest_latch_time = 0;
+	uint64_t latch_time = 0;
+	uint64_t predicted_present_time = 0;
 	uint64_t earliest_present_time = 0;
-	uint64_t present_margin = 0;
 	uint64_t present_time = 0;
 
 	std::mutex m_WaitableCommitStateMutex;

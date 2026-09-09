@@ -44,6 +44,9 @@ namespace gamescope
 
         int GetRefresh() const;
         uint64_t GetLastVBlank() const;
+        // Schedule of the armed vblank pass that has not run yet, if any.
+        std::optional<VBlankScheduleTime> GetArmedSchedule();
+        uint64_t VRRWakeupOffset( uint64_t *pulDrawTime = nullptr, uint64_t *pulRedZone = nullptr ) const;
         uint64_t GetNextVBlank( uint64_t ulOffset ) const;
         bool IsVRRFlipReady() const;
 
@@ -65,7 +68,6 @@ namespace gamescope
         void OnPollIn() final;
     private:
         void VBlankDebugSpew( uint64_t ulOffset, uint64_t ulDrawTime, uint64_t ulRedZone );
-        uint64_t VRRWakeupOffset( uint64_t *pulDrawTime = nullptr, uint64_t *pulRedZone = nullptr ) const;
 
         uint64_t m_ulTargetVBlank = 0;
         std::atomic<uint64_t> m_ulLastVBlank = { 0 };
