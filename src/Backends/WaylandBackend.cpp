@@ -133,6 +133,7 @@ namespace gamescope
     struct WaylandPlaneState
     {
         wl_buffer *pBuffer;
+        CWaylandFb *pFb;
         int32_t nDestX;
         int32_t nDestY;
         double flSrcX;
@@ -1101,13 +1102,12 @@ namespace gamescope
                 uint32_t uCurrentPlane = 0;
                 if ( bNeedsBacking )
                 {
-                    m_pBackend->GetBlackFb()->OnCompositorAcquire();
-
                     CWaylandPlane *pPlane = &m_Planes[uCurrentPlane++];
                     pPlane->Present(
                         WaylandPlaneState
                         {
                             .pBuffer     = m_pBackend->GetBlackFb()->GetHostBuffer(),
+                            .pFb         = m_pBackend->GetBlackFb(),
                             .flSrcWidth  = 1.0,
                             .flSrcHeight = 1.0,
                             .nDstWidth   = int32_t( g_nOutputWidth ),
@@ -1597,6 +1597,10 @@ namespace gamescope
             }
             // The x/y here does nothing? Why? What is it for...
             // Use the subsurface set_position thing instead.
+            // Take the compositor hold where the buffer is actually attached,
+            // rather than at the call sites that build the plane state.
+            if ( oState->pFb )
+                oState->pFb->OnCompositorAcquire();
             wl_surface_attach( m_pSurface, oState->pBuffer, 0, 0 );
             wl_surface_damage( m_pSurface, 0, 0, INT32_MAX, INT32_MAX );
             wl_surface_set_opaque_region( m_pSurface, oState->bOpaque ? m_pBackend->GetFullRegion() : nullptr );
@@ -1645,12 +1649,11 @@ namespace gamescope
 
         if ( pBuffer )
         {
-            pWaylandFb->OnCompositorAcquire();
-
             Present(
                 ClipPlane( WaylandPlaneState
                 {
                     .pBuffer     = pBuffer,
+                    .pFb         = pWaylandFb,
                     .nDestX      = int32_t( -pLayer->offset.x ),
                     .nDestY      = int32_t( -pLayer->offset.y ),
                     .flSrcX      = 0.0,
