@@ -10471,6 +10471,30 @@ steamcompmgr_main(int argc, char **argv)
 #endif
 		}
 
+		if ( vblank )
+		{
+			int nRealRefreshmHz = g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh;
+			g_SteamCompMgrAppRefreshCycle = gamescope::mHzToRefreshCycle( nRealRefreshmHz );
+			g_SteamCompMgrLimitedAppRefreshCycle = g_SteamCompMgrAppRefreshCycle;
+			if ( g_nSteamCompMgrTargetFPS )
+			{
+				int nRealRefreshHz = gamescope::ConvertmHzToHz( nRealRefreshmHz );
+				int nTargetFPS = g_nSteamCompMgrTargetFPS;
+				nTargetFPS = std::min<int>( nTargetFPS, nRealRefreshHz );
+
+				if ( GetBackend()->GetCurrentConnector() && GetBackend()->GetCurrentConnector()->IsVRRActive() )
+				{
+					g_SteamCompMgrLimitedAppRefreshCycle = gamescope::mHzToRefreshCycle( gamescope::ConvertHztomHz( nTargetFPS ) );
+				}
+				else
+				{
+					int nVblankDivisor = nRealRefreshHz / nTargetFPS;
+
+					g_SteamCompMgrLimitedAppRefreshCycle = g_SteamCompMgrAppRefreshCycle * nVblankDivisor;
+				}
+			}
+		}
+
 		// Ask for a new surface every vblank
 		// When we observe a new commit being complete for a surface, we ask for a new frame.
 		// This ensures that FIFO works properly, since otherwise we might ask for a new frame
@@ -10531,30 +10555,6 @@ steamcompmgr_main(int argc, char **argv)
 		{
 			g_FPSLimitVRRTimer.ArmTimer( *s_oLowestFPSLimitScheduleVRR );
 			s_oLowestFPSLimitScheduleVRR = std::nullopt;
-		}
-
-		if ( vblank )
-		{
-			int nRealRefreshmHz = g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh;
-			g_SteamCompMgrAppRefreshCycle = gamescope::mHzToRefreshCycle( nRealRefreshmHz );
-			g_SteamCompMgrLimitedAppRefreshCycle = g_SteamCompMgrAppRefreshCycle;
-			if ( g_nSteamCompMgrTargetFPS )
-			{
-				int nRealRefreshHz = gamescope::ConvertmHzToHz( nRealRefreshmHz );
-				int nTargetFPS = g_nSteamCompMgrTargetFPS;
-				nTargetFPS = std::min<int>( nTargetFPS, nRealRefreshHz );
-
-				if ( GetBackend()->GetCurrentConnector() && GetBackend()->GetCurrentConnector()->IsVRRActive() )
-				{
-					g_SteamCompMgrLimitedAppRefreshCycle = gamescope::mHzToRefreshCycle( gamescope::ConvertHztomHz( nTargetFPS ) );
-				}
-				else
-				{
-					int nVblankDivisor = nRealRefreshHz / nTargetFPS;
-
-					g_SteamCompMgrLimitedAppRefreshCycle = g_SteamCompMgrAppRefreshCycle * nVblankDivisor;
-				}
-			}
 		}
 
 		// Handle presentation-time stuff
