@@ -90,6 +90,24 @@ namespace GamescopeWSILayer {
     }
   }
 
+  // Unlink a layer-owned structure and restore the application's chain.
+  template<typename T>
+  class ChainRemoval {
+  public:
+    template<typename U>
+    explicit ChainRemoval(U *root, bool remove = true) {
+      if (remove)
+        std::tie(object, parent) = vkroots::RemoveFromChain<T>(root);
+    }
+    ~ChainRemoval() {
+      if (object)
+        parent->pNext = reinterpret_cast<VkBaseOutStructure *>(object);
+    }
+  private:
+    T *object = nullptr;
+    VkBaseOutStructure *parent = nullptr;
+  };
+
   uint32_t clientAppId() {
     const char *appid = getenv("SteamAppId");
     if (!appid || !*appid)
@@ -1531,21 +1549,25 @@ namespace GamescopeWSILayer {
       if (pPresentModeInfo)
         oOriginalPresentModeInfo = *pPresentModeInfo;
 
-      // Force all present modes to MAILBOX to the underlying driver
-      // We implement fifo ourselves.
-      vkroots::ChainPatcher<VkSwapchainPresentModeInfoEXT, std::vector<VkPresentModeKHR>>
-        presentModePatcher(&presentInfo, [&](std::vector<VkPresentModeKHR>& mailboxModes, VkSwapchainPresentModeInfoEXT *pMaintenance1)
-      {
-        for (uint32_t i = 0; i < presentInfo.swapchainCount; i++) {
-          if (gamescopeSwapchains.find(presentInfo.pSwapchains[i])) {
-            mailboxModes.emplace_back(VK_PRESENT_MODE_MAILBOX_KHR);
-          }
-        }
-
-        pMaintenance1->pPresentModes = mailboxModes.data();
-        return true;
-      });
-
+      ChainRemoval<VkSwapchainPresentModeInfoEXT> removeModes(&presentInfo);
+      std::vector<VkPresentModeKHR> driverModes;
+      bool allLayer = true;
+      for (uint32_t i = 0; i < presentInfo.swapchainCount; i++) {
+        auto swapchain = gamescopeSwapchains.find(presentInfo.pSwapchains[i]);
+        allLayer &= swapchain != nullptr;
+        driverModes.push_back(swapchain ? VK_PRESENT_MODE_MAILBOX_KHR :
+          (oOriginalPresentModeInfo ? oOriginalPresentModeInfo->pPresentModes[i] : VK_PRESENT_MODE_MAX_ENUM_KHR));
+      }
+      VkSwapchainPresentModeInfoEXT driverModeInfo = {
+        .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_MODE_INFO_EXT,
+        .pNext = presentInfo.pNext,
+        .swapchainCount = presentInfo.swapchainCount,
+        .pPresentModes = driverModes.data(),
+      };
+      // Without an explicit mode for a non-layer swapchain, leave its creation
+      // mode in effect. Layer swapchains were already created as MAILBOX.
+      if (allLayer || oOriginalPresentModeInfo)
+        presentInfo.pNext = &driverModeInfo;
 
       if (display) {
         waylandPumpEvents(display);
