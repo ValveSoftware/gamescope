@@ -458,7 +458,7 @@ namespace GamescopeWSILayer {
     std::string engineName;
     GamescopeLayerClient::Flags flags = 0;
   };
-  VKROOTS_DEFINE_SYNCHRONIZED_MAP_TYPE(GamescopeInstance, VkInstance);
+  static vkroots::ObjectMap<VkInstance, GamescopeInstanceData> gamescopeInstances;
 
   struct GamescopeSurfaceData {
     VkInstance instance;
@@ -591,7 +591,7 @@ namespace GamescopeWSILayer {
       return true;
     }
   };
-  VKROOTS_DEFINE_SYNCHRONIZED_MAP_TYPE(GamescopeSurface, VkSurfaceKHR);
+  static vkroots::ObjectMap<VkSurfaceKHR, GamescopeSurfaceData> gamescopeSurfaces;
 
   struct GamescopeSwapchainData {
     gamescope_swapchain *object;
@@ -610,7 +610,7 @@ namespace GamescopeWSILayer {
     std::vector<VkPastPresentationTimingGOOGLE> pastPresentTimings;
     uint64_t refreshCycle = 16'666'666;
   };
-  VKROOTS_DEFINE_SYNCHRONIZED_MAP_TYPE(GamescopeSwapchain, VkSwapchainKHR);
+  static vkroots::ObjectMap<VkSwapchainKHR, GamescopeSwapchainData> gamescopeSwapchains;
   static constexpr gamescope_swapchain_listener s_swapchainListener = {
     .past_present_timing = [](
             void *data,
@@ -721,7 +721,7 @@ namespace GamescopeWSILayer {
         if (pCreateInfo->pApplicationInfo && pCreateInfo->pApplicationInfo->pEngineName)
           engineName = pCreateInfo->pApplicationInfo->pEngineName;
 
-        auto state = GamescopeInstance::create(*pInstance, GamescopeInstanceData {
+        auto state = gamescopeInstances.create(*pInstance, GamescopeInstanceData {
           .display = display,
           .appId   = appId,
           .engineName = engineName,
@@ -730,7 +730,7 @@ namespace GamescopeWSILayer {
 
         // If we know at instance creation time we should disable HDR, force off
         // DXVK_HDR now.
-        if (state->flags & GamescopeLayerClient::Flag::DisableHDR)
+        if (state && (state->flags & GamescopeLayerClient::Flag::DisableHDR))
           setenv("DXVK_HDR", "0", 1);
       }
 
@@ -742,18 +742,22 @@ namespace GamescopeWSILayer {
     }
 
     static void DestroyInstance(
-      const vkroots::VkInstanceDispatch* pDispatch,
+      const vkroots::VkInstanceDispatch & pDispatch,
             VkInstance                   instance,
       const VkAllocationCallbacks*       pAllocator) {
-      if (auto state = GamescopeInstance::get(instance)) {
+      if (auto state = gamescopeInstances.find(instance)) {
         wl_display_disconnect(state->display);
       }
-      GamescopeInstance::remove(instance);
-      pDispatch->DestroyInstance(instance, pAllocator);
+      gamescopeInstances.erase(instance);
+      // vkroots' DestroyInstance method erases its own dispatch before using
+      // the saved entry point. Keep that entry point alive across table cleanup.
+      auto destroy = reinterpret_cast<PFN_vkDestroyInstance>(pDispatch.GetInstanceProcAddr(instance, "vkDestroyInstance"));
+      vkroots::tables::DestroyDispatchTable(instance);
+      destroy(instance, pAllocator);
     }
 
     static VkResult CreateDevice(
-      const vkroots::VkInstanceDispatch* pDispatch,
+      const vkroots::VkPhysicalDeviceDispatch & pDispatch,
             VkPhysicalDevice             physicalDevice,
       const VkDeviceCreateInfo*          pCreateInfo,
       const VkAllocationCallbacks*       pAllocator,
@@ -774,70 +778,70 @@ namespace GamescopeWSILayer {
         return true;
       });
 
-      return pDispatch->CreateDevice(physicalDevice, &deviceCreateInfo, pAllocator, pDevice);
+      return pDispatch.CreateDevice(physicalDevice, &deviceCreateInfo, pAllocator, pDevice);
     }
 
     static VkBool32 GetPhysicalDeviceXcbPresentationSupportKHR(
-      const vkroots::VkInstanceDispatch* pDispatch,
+      const vkroots::VkPhysicalDeviceDispatch & pDispatch,
             VkPhysicalDevice             physicalDevice,
             uint32_t                     queueFamilyIndex,
             xcb_connection_t*            connection,
             xcb_visualid_t               visual_id) {
-      auto gamescopeInstance = GamescopeInstance::get(pDispatch->Instance);
+      auto gamescopeInstance = gamescopeInstances.find(pDispatch.pInstanceDispatch->Instance);
       if (!gamescopeInstance)
-        return pDispatch->GetPhysicalDeviceXcbPresentationSupportKHR(physicalDevice, queueFamilyIndex, connection, visual_id);
+        return pDispatch.GetPhysicalDeviceXcbPresentationSupportKHR(physicalDevice, queueFamilyIndex, connection, visual_id);
 
       return GetPhysicalDeviceGamescopePresentationSupport(pDispatch, gamescopeInstance, physicalDevice, queueFamilyIndex);
     }
 
     static VkBool32 GetPhysicalDeviceXlibPresentationSupportKHR(
-      const vkroots::VkInstanceDispatch* pDispatch,
+      const vkroots::VkPhysicalDeviceDispatch & pDispatch,
             VkPhysicalDevice             physicalDevice,
             uint32_t                     queueFamilyIndex,
             Display*                     dpy,
             VisualID                     visualID) {
-      auto gamescopeInstance = GamescopeInstance::get(pDispatch->Instance);
+      auto gamescopeInstance = gamescopeInstances.find(pDispatch.pInstanceDispatch->Instance);
       if (!gamescopeInstance)
-        return pDispatch->GetPhysicalDeviceXlibPresentationSupportKHR(physicalDevice, queueFamilyIndex, dpy, visualID);
+        return pDispatch.GetPhysicalDeviceXlibPresentationSupportKHR(physicalDevice, queueFamilyIndex, dpy, visualID);
 
       return GetPhysicalDeviceGamescopePresentationSupport(pDispatch, gamescopeInstance, physicalDevice, queueFamilyIndex);
     }
 
     static VkResult CreateXcbSurfaceKHR(
-      const vkroots::VkInstanceDispatch* pDispatch,
+      const vkroots::VkInstanceDispatch & pDispatch,
             VkInstance                   instance,
       const VkXcbSurfaceCreateInfoKHR*   pCreateInfo,
       const VkAllocationCallbacks*       pAllocator,
             VkSurfaceKHR*                pSurface) {
-      auto gamescopeInstance = GamescopeInstance::get(instance);
+      auto gamescopeInstance = gamescopeInstances.find(instance);
       if (!gamescopeInstance)
-        return pDispatch->CreateXcbSurfaceKHR(instance, pCreateInfo, pAllocator, pSurface);
+        return pDispatch.CreateXcbSurfaceKHR(instance, pCreateInfo, pAllocator, pSurface);
 
       return CreateGamescopeSurface(pDispatch, gamescopeInstance, instance, pCreateInfo->connection, pCreateInfo->window, pAllocator, pSurface);
     }
 
     static VkResult CreateXlibSurfaceKHR(
-      const vkroots::VkInstanceDispatch* pDispatch,
+      const vkroots::VkInstanceDispatch & pDispatch,
             VkInstance                   instance,
       const VkXlibSurfaceCreateInfoKHR*  pCreateInfo,
       const VkAllocationCallbacks*       pAllocator,
             VkSurfaceKHR*                pSurface) {
-      auto gamescopeInstance = GamescopeInstance::get(instance);
+      auto gamescopeInstance = gamescopeInstances.find(instance);
       if (!gamescopeInstance)
-        return pDispatch->CreateXlibSurfaceKHR(instance, pCreateInfo, pAllocator, pSurface);
+        return pDispatch.CreateXlibSurfaceKHR(instance, pCreateInfo, pAllocator, pSurface);
 
       return CreateGamescopeSurface(pDispatch, gamescopeInstance, instance, XGetXCBConnection(pCreateInfo->dpy), xcb_window_t(pCreateInfo->window), pAllocator, pSurface);
     }
 
     static VkResult CreateWaylandSurfaceKHR(
-      const vkroots::VkInstanceDispatch*   pDispatch,
+      const vkroots::VkInstanceDispatch &   pDispatch,
             VkInstance                     instance,
       const VkWaylandSurfaceCreateInfoKHR* pCreateInfo,
       const VkAllocationCallbacks*         pAllocator,
             VkSurfaceKHR*                  pSurface) {
-      auto gamescopeInstance = GamescopeInstance::get(instance);
+      auto gamescopeInstance = gamescopeInstances.find(instance);
       if (!gamescopeInstance)
-        return pDispatch->CreateWaylandSurfaceKHR(instance, pCreateInfo, pAllocator, pSurface);
+        return pDispatch.CreateWaylandSurfaceKHR(instance, pCreateInfo, pAllocator, pSurface);
 
       GamescopeWaylandObjects waylandObjects = GamescopeWaylandObjects::get(pCreateInfo->display);
       if (!waylandObjects.valid()) {
@@ -845,11 +849,11 @@ namespace GamescopeWSILayer {
         return VK_ERROR_SURFACE_LOST_KHR;
       }
 
-      VkResult res = pDispatch->CreateWaylandSurfaceKHR(instance, pCreateInfo, pAllocator, pSurface);
+      VkResult res = pDispatch.CreateWaylandSurfaceKHR(instance, pCreateInfo, pAllocator, pSurface);
       if (res != VK_SUCCESS)
         return res;
 
-      auto gamescopeSurface = GamescopeSurface::create(*pSurface, GamescopeSurfaceData {
+      auto gamescopeSurface = gamescopeSurfaces.create(*pSurface, GamescopeSurfaceData {
         .instance        = instance,
         .display         = pCreateInfo->display,
         .waylandObjects  = waylandObjects,
@@ -858,6 +862,8 @@ namespace GamescopeWSILayer {
         .flags           = gamescopeInstance->flags,
         .hdrOutput       = false, // XXXX FIXME FIXME FIXME //hdrOutput,
       });
+      if (!gamescopeSurface)
+        return VK_ERROR_SURFACE_LOST_KHR;
 
       DumpGamescopeSurfaceState(gamescopeInstance, gamescopeSurface);
 
@@ -878,14 +884,14 @@ namespace GamescopeWSILayer {
     }();
 
     static VkResult GetPhysicalDeviceSurfaceFormatsKHR(
-      const vkroots::VkInstanceDispatch* pDispatch,
+      const vkroots::VkPhysicalDeviceDispatch & pDispatch,
             VkPhysicalDevice             physicalDevice,
             VkSurfaceKHR                 surface,
             uint32_t*                    pSurfaceFormatCount,
             VkSurfaceFormatKHR*          pSurfaceFormats) {
-      auto gamescopeSurface = GamescopeSurface::get(surface);
+      auto gamescopeSurface = gamescopeSurfaces.find(surface);
       if (!gamescopeSurface)
-        return pDispatch->GetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, pSurfaceFormatCount, pSurfaceFormats);
+        return pDispatch.GetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, pSurfaceFormatCount, pSurfaceFormats);
 
       const bool canBypass = gamescopeSurface->canBypassXWayland();
       VkSurfaceKHR selectedSurface = canBypass ? surface : gamescopeSurface->fallbackSurface;
@@ -894,10 +900,10 @@ namespace GamescopeWSILayer {
       // an HDR colorspace could bypass, even if SDR currently can't.
       if (!gamescopeSurface->shouldExposeHDR() ||
           !(canBypass || gamescopeSurface->canBypassXWayland(true)))
-        return pDispatch->GetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, selectedSurface, pSurfaceFormatCount, pSurfaceFormats);
+        return pDispatch.GetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, selectedSurface, pSurfaceFormatCount, pSurfaceFormats);
 
-      return vkroots::helpers::append(
-        pDispatch->GetPhysicalDeviceSurfaceFormatsKHR,
+      return vkroots::append(
+        std::bind_front(&vkroots::VkPhysicalDeviceDispatch::GetPhysicalDeviceSurfaceFormatsKHR, &pDispatch),
         s_ExtraHDRSurfaceFormats,
         pSurfaceFormatCount,
         pSurfaceFormats,
@@ -906,14 +912,14 @@ namespace GamescopeWSILayer {
     }
 
     static VkResult GetPhysicalDeviceSurfaceFormats2KHR(
-      const vkroots::VkInstanceDispatch*     pDispatch,
+      const vkroots::VkPhysicalDeviceDispatch &     pDispatch,
             VkPhysicalDevice                 physicalDevice,
       const VkPhysicalDeviceSurfaceInfo2KHR* pSurfaceInfo,
             uint32_t*                        pSurfaceFormatCount,
             VkSurfaceFormat2KHR*             pSurfaceFormats) {
-      auto gamescopeSurface = GamescopeSurface::get(pSurfaceInfo->surface);
+      auto gamescopeSurface = gamescopeSurfaces.find(pSurfaceInfo->surface);
       if (!gamescopeSurface)
-        return pDispatch->GetPhysicalDeviceSurfaceFormats2KHR(physicalDevice, pSurfaceInfo, pSurfaceFormatCount, pSurfaceFormats);
+        return pDispatch.GetPhysicalDeviceSurfaceFormats2KHR(physicalDevice, pSurfaceInfo, pSurfaceFormatCount, pSurfaceFormats);
 
       VkPhysicalDeviceSurfaceInfo2KHR surfaceInfo = *pSurfaceInfo;
       const bool canBypass = gamescopeSurface->canBypassXWayland();
@@ -923,10 +929,10 @@ namespace GamescopeWSILayer {
       // an HDR colorspace could bypass, even if SDR currently can't.
       if (!gamescopeSurface->shouldExposeHDR() ||
           !(canBypass || gamescopeSurface->canBypassXWayland(true)))
-        return pDispatch->GetPhysicalDeviceSurfaceFormats2KHR(physicalDevice, &surfaceInfo, pSurfaceFormatCount, pSurfaceFormats);
+        return pDispatch.GetPhysicalDeviceSurfaceFormats2KHR(physicalDevice, &surfaceInfo, pSurfaceFormatCount, pSurfaceFormats);
 
-      return vkroots::helpers::append(
-        pDispatch->GetPhysicalDeviceSurfaceFormats2KHR,
+      return vkroots::append(
+        std::bind_front(&vkroots::VkPhysicalDeviceDispatch::GetPhysicalDeviceSurfaceFormats2KHR, &pDispatch),
         s_ExtraHDRSurfaceFormat2s,
         pSurfaceFormatCount,
         pSurfaceFormats,
@@ -935,16 +941,16 @@ namespace GamescopeWSILayer {
     }
 
     static VkResult GetPhysicalDeviceSurfaceCapabilitiesKHR(
-      const vkroots::VkInstanceDispatch*     pDispatch,
+      const vkroots::VkPhysicalDeviceDispatch &     pDispatch,
             VkPhysicalDevice                 physicalDevice,
             VkSurfaceKHR                     surface,
             VkSurfaceCapabilitiesKHR*        pSurfaceCapabilities) {
-      auto gamescopeSurface = GamescopeSurface::get(surface);
+      auto gamescopeSurface = gamescopeSurfaces.find(surface);
       if (!gamescopeSurface)
-        return pDispatch->GetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, pSurfaceCapabilities);
+        return pDispatch.GetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, pSurfaceCapabilities);
 
       VkResult res = VK_SUCCESS;
-      if ((res = pDispatch->GetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, pSurfaceCapabilities)) != VK_SUCCESS)
+      if ((res = pDispatch.GetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, pSurfaceCapabilities)) != VK_SUCCESS)
         return res;
 
       if (!gamescopeSurface->isWayland()) {
@@ -960,13 +966,13 @@ namespace GamescopeWSILayer {
     }
 
     static VkResult GetPhysicalDeviceSurfaceCapabilities2KHR(
-      const vkroots::VkInstanceDispatch*     pDispatch,
+      const vkroots::VkPhysicalDeviceDispatch &     pDispatch,
             VkPhysicalDevice                 physicalDevice,
       const VkPhysicalDeviceSurfaceInfo2KHR* pSurfaceInfo,
             VkSurfaceCapabilities2KHR*       pSurfaceCapabilities) {
-      auto gamescopeSurface = GamescopeSurface::get(pSurfaceInfo->surface);
+      auto gamescopeSurface = gamescopeSurfaces.find(pSurfaceInfo->surface);
       if (!gamescopeSurface)
-        return pDispatch->GetPhysicalDeviceSurfaceCapabilities2KHR(physicalDevice, pSurfaceInfo, pSurfaceCapabilities);
+        return pDispatch.GetPhysicalDeviceSurfaceCapabilities2KHR(physicalDevice, pSurfaceInfo, pSurfaceCapabilities);
 
       // Incomplete writes here, do not return VK_INCOMPLETE.
       if (gamescopeIsForcingFifo(gamescopeSurface->waylandObjects) && gamescopeSurface->frameLimiterAware()) {
@@ -976,17 +982,17 @@ namespace GamescopeWSILayer {
         }};
         auto [pPresentModeCompat, pPresentModeCompatParent] = vkroots::RemoveFromChain<VkSurfacePresentModeCompatibilityEXT>(pSurfaceCapabilities);
         if (pPresentModeCompat)
-          vkroots::helpers::array(s_SingleMode, &pPresentModeCompat->presentModeCount, pPresentModeCompat->pPresentModes);
+          vkroots::array(s_SingleMode, &pPresentModeCompat->presentModeCount, pPresentModeCompat->pPresentModes);
 
         VkResult res = VK_SUCCESS;
-        if ((res = pDispatch->GetPhysicalDeviceSurfaceCapabilities2KHR(physicalDevice, pSurfaceInfo, pSurfaceCapabilities)) != VK_SUCCESS)
+        if ((res = pDispatch.GetPhysicalDeviceSurfaceCapabilities2KHR(physicalDevice, pSurfaceInfo, pSurfaceCapabilities)) != VK_SUCCESS)
           return res;
 
         if (pPresentModeCompat)
           vkroots::AddToChain(pPresentModeCompatParent, pPresentModeCompat);
       } else {
         VkResult res = VK_SUCCESS;
-        if ((res = pDispatch->GetPhysicalDeviceSurfaceCapabilities2KHR(physicalDevice, pSurfaceInfo, pSurfaceCapabilities)) != VK_SUCCESS)
+        if ((res = pDispatch.GetPhysicalDeviceSurfaceCapabilities2KHR(physicalDevice, pSurfaceInfo, pSurfaceCapabilities)) != VK_SUCCESS)
           return res;
       }
 
@@ -1003,21 +1009,21 @@ namespace GamescopeWSILayer {
     }
 
     static void GetPhysicalDeviceFeatures2(
-      const vkroots::VkInstanceDispatch* pDispatch,
+      const vkroots::VkPhysicalDeviceDispatch & pDispatch,
             VkPhysicalDevice             physicalDevice,
             VkPhysicalDeviceFeatures2*   pFeatures) {
-      pDispatch->GetPhysicalDeviceFeatures2(physicalDevice, pFeatures);
+      pDispatch.GetPhysicalDeviceFeatures2(physicalDevice, pFeatures);
     }
 
     static void GetPhysicalDeviceFeatures2KHR(
-      const vkroots::VkInstanceDispatch* pDispatch,
+      const vkroots::VkPhysicalDeviceDispatch & pDispatch,
             VkPhysicalDevice             physicalDevice,
             VkPhysicalDeviceFeatures2*   pFeatures) {
       GetPhysicalDeviceFeatures2(pDispatch, physicalDevice, pFeatures);
     }
 
     static VkResult GetPhysicalDeviceSurfacePresentModesKHR(
-      const vkroots::VkInstanceDispatch* pDispatch,
+      const vkroots::VkPhysicalDeviceDispatch & pDispatch,
         VkPhysicalDevice                 physicalDevice,
         VkSurfaceKHR                     surface,
         uint32_t*                        pPresentModeCount,
@@ -1026,31 +1032,31 @@ namespace GamescopeWSILayer {
         VK_PRESENT_MODE_FIFO_KHR,
       }};
 
-      if (auto state = GamescopeSurface::get(surface)) {
+      if (auto state = gamescopeSurfaces.find(surface)) {
         if (gamescopeIsForcingFifo(state->waylandObjects) && state->frameLimiterAware())
-          return vkroots::helpers::array(s_FifoPresentModes, pPresentModeCount, pPresentModes);
+          return vkroots::array(s_FifoPresentModes, pPresentModeCount, pPresentModes);
       }
 
-      return pDispatch->GetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface, pPresentModeCount, pPresentModes);
+      return pDispatch.GetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface, pPresentModeCount, pPresentModes);
     }
 
     static void DestroySurfaceKHR(
-      const vkroots::VkInstanceDispatch* pDispatch,
+      const vkroots::VkInstanceDispatch & pDispatch,
             VkInstance                   instance,
             VkSurfaceKHR                 surface,
       const VkAllocationCallbacks*       pAllocator) {
-      if (auto state = GamescopeSurface::get(surface)) {
-        pDispatch->DestroySurfaceKHR(instance, state->fallbackSurface, pAllocator);
+      if (auto state = gamescopeSurfaces.find(surface)) {
+        pDispatch.DestroySurfaceKHR(instance, state->fallbackSurface, pAllocator);
         if (!state->isNativeSurface) {
           wl_surface_destroy(state->surface);
         }
       }
-      GamescopeSurface::remove(surface);
-      pDispatch->DestroySurfaceKHR(instance, surface, pAllocator);
+      gamescopeSurfaces.erase(surface);
+      pDispatch.DestroySurfaceKHR(instance, surface, pAllocator);
     }
 
     static VkResult EnumerateDeviceExtensionProperties(
-      const vkroots::VkInstanceDispatch* pDispatch,
+      const vkroots::VkPhysicalDeviceDispatch & pDispatch,
             VkPhysicalDevice             physicalDevice,
             const char*                  pLayerName,
             uint32_t*                    pPropertyCount,
@@ -1064,14 +1070,14 @@ namespace GamescopeWSILayer {
 
       if (pLayerName) {
         if (pLayerName == "VK_LAYER_FROG_gamescope_wsi"sv) {
-          return vkroots::helpers::array(s_LayerExposedExts, pPropertyCount, pProperties);
+          return vkroots::array(s_LayerExposedExts, pPropertyCount, pProperties);
         } else {
-          return pDispatch->EnumerateDeviceExtensionProperties(physicalDevice, pLayerName, pPropertyCount, pProperties);
+          return pDispatch.EnumerateDeviceExtensionProperties(physicalDevice, pLayerName, pPropertyCount, pProperties);
         }
       }
 
-      VkResult result = vkroots::helpers::append(
-        pDispatch->EnumerateDeviceExtensionProperties,
+      VkResult result = vkroots::append(
+        std::bind_front(&vkroots::VkPhysicalDeviceDispatch::EnumerateDeviceExtensionProperties, &pDispatch),
         s_LayerExposedExts,
         pPropertyCount,
         pProperties,
@@ -1083,8 +1089,8 @@ namespace GamescopeWSILayer {
 
   private:
     static VkResult CreateGamescopeSurface(
-      const vkroots::VkInstanceDispatch* pDispatch,
-            GamescopeInstance&           gamescopeInstance,
+      const vkroots::VkInstanceDispatch & pDispatch,
+            GamescopeInstanceData *           gamescopeInstance,
             VkInstance                   instance,
             xcb_connection_t*            connection,
             xcb_window_t                 window,
@@ -1122,7 +1128,7 @@ namespace GamescopeWSILayer {
         .surface = waylandSurface,
       };
 
-      VkResult result = pDispatch->CreateWaylandSurfaceKHR(instance, &waylandCreateInfo, pAllocator, pSurface);
+      VkResult result = pDispatch.CreateWaylandSurfaceKHR(instance, &waylandCreateInfo, pAllocator, pSurface);
       if (result != VK_SUCCESS) {
         fprintf(stderr, "[Gamescope WSI] Failed to create Vulkan wayland surface - vr: %s xid: 0x%x\n", vkroots::helpers::enumString(result), window);
         return result;
@@ -1136,14 +1142,14 @@ namespace GamescopeWSILayer {
         .window     = window,
       };
       VkSurfaceKHR fallbackSurface = VK_NULL_HANDLE;
-      result = pDispatch->CreateXcbSurfaceKHR(instance, &xcbCreateInfo, pAllocator, &fallbackSurface);
+      result = pDispatch.CreateXcbSurfaceKHR(instance, &xcbCreateInfo, pAllocator, &fallbackSurface);
       if (result != VK_SUCCESS) {
         fprintf(stderr, "[Gamescope WSI] Failed to create Vulkan xcb (fallback) surface - vr: %s xid: 0x%x\n", vkroots::helpers::enumString(result), window);
         return result;
       }
 
       fprintf(stderr, "[Gamescope WSI] Made gamescope surface for xid: 0x%x\n", window);
-      auto gamescopeSurface = GamescopeSurface::create(*pSurface, GamescopeSurfaceData {
+      auto gamescopeSurface = gamescopeSurfaces.create(*pSurface, GamescopeSurfaceData {
         .instance        = instance,
         .display         = gamescopeInstance->display,
         .waylandObjects  = waylandObjects,
@@ -1155,13 +1161,15 @@ namespace GamescopeWSILayer {
         .flags           = flags,
         .hdrOutput       = hdrOutput,
       });
+      if (!gamescopeSurface)
+        return VK_ERROR_SURFACE_LOST_KHR;
 
       DumpGamescopeSurfaceState(gamescopeInstance, gamescopeSurface);
 
       return result;
     }
 
-    static void DumpGamescopeSurfaceState(GamescopeInstance& instance, GamescopeSurface& surface) {
+    static void DumpGamescopeSurfaceState(GamescopeInstanceData * instance, GamescopeSurfaceData * surface) {
       fprintf(stderr, "[Gamescope WSI] Surface state:\n");
       fprintf(stderr, "  steam app id:                  %u\n", instance->appId);
       fprintf(stderr, "  window xid:                    0x%x\n", surface->window);
@@ -1172,38 +1180,46 @@ namespace GamescopeWSILayer {
     }
 
     static VkBool32 GetPhysicalDeviceGamescopePresentationSupport(
-      const vkroots::VkInstanceDispatch* pDispatch,
-            GamescopeInstance&           gamescopeInstance,
+      const vkroots::VkPhysicalDeviceDispatch & pDispatch,
+            GamescopeInstanceData *           gamescopeInstance,
             VkPhysicalDevice             physicalDevice,
             uint32_t                     queueFamilyIndex) {
-      return pDispatch->GetPhysicalDeviceWaylandPresentationSupportKHR(physicalDevice, queueFamilyIndex, gamescopeInstance->display);
+      return pDispatch.GetPhysicalDeviceWaylandPresentationSupportKHR(physicalDevice, queueFamilyIndex, gamescopeInstance->display);
     }
 
   };
 
   class VkDeviceOverrides {
   public:
+    static void DestroyDevice(
+      const vkroots::VkDeviceDispatch &dispatch, VkDevice device, const VkAllocationCallbacks *allocator) {
+      // As with instance teardown, table cleanup invalidates dispatch itself.
+      auto destroy = reinterpret_cast<PFN_vkDestroyDevice>(dispatch.GetDeviceProcAddr(device, "vkDestroyDevice"));
+      vkroots::tables::DestroyDispatchTable(device);
+      destroy(device, allocator);
+    }
+
     static void DestroySwapchainKHR(
-      const vkroots::VkDeviceDispatch* pDispatch,
+      const vkroots::VkDeviceDispatch & pDispatch,
             VkDevice                   device,
             VkSwapchainKHR             swapchain,
       const VkAllocationCallbacks*     pAllocator) {
-      if (auto state = GamescopeSwapchain::get(swapchain)) {
+      if (auto state = gamescopeSwapchains.find(swapchain)) {
         gamescope_swapchain_destroy(state->object);
       }
-      GamescopeSwapchain::remove(swapchain);
+      gamescopeSwapchains.erase(swapchain);
       fprintf(stderr, "[Gamescope WSI] Destroying swapchain: %p\n", reinterpret_cast<void*>(swapchain));
-      pDispatch->DestroySwapchainKHR(device, swapchain, pAllocator);
+      pDispatch.DestroySwapchainKHR(device, swapchain, pAllocator);
       fprintf(stderr, "[Gamescope WSI] Destroyed swapchain: %p\n", reinterpret_cast<void*>(swapchain));
     }
 
     static VkResult CreateSwapchainKHR(
-      const vkroots::VkDeviceDispatch* pDispatch,
+      const vkroots::VkDeviceDispatch & pDispatch,
             VkDevice                   device,
       const VkSwapchainCreateInfoKHR*  pCreateInfo,
       const VkAllocationCallbacks*     pAllocator,
             VkSwapchainKHR*            pSwapchain) {
-      auto gamescopeSurface = GamescopeSurface::get(pCreateInfo->surface);
+      auto gamescopeSurface = gamescopeSurfaces.find(pCreateInfo->surface);
 
       if (!gamescopeSurface) {
         static bool s_warned = false;
@@ -1218,7 +1234,7 @@ namespace GamescopeWSILayer {
             abort();
           s_warned = true;
         }
-        return pDispatch->CreateSwapchainKHR(device, pCreateInfo, pAllocator, pSwapchain);
+        return pDispatch.CreateSwapchainKHR(device, pCreateInfo, pAllocator, pSwapchain);
       }
 
       // Only the colorspaces we expose in s_ExtraHDRSurfaceFormat2s count as
@@ -1230,7 +1246,7 @@ namespace GamescopeWSILayer {
       VkSwapchainCreateInfoKHR swapchainInfo = *pCreateInfo;
 
       if (pCreateInfo->oldSwapchain) {
-        if (auto gamescopeSwapchain = GamescopeSwapchain::get(pCreateInfo->oldSwapchain)) {
+        if (auto gamescopeSwapchain = gamescopeSwapchains.find(pCreateInfo->oldSwapchain)) {
           gamescopeSwapchain->retired = true;
           // If we are going to/from being able to bypass XWayland, make sure
           // we NULL out oldSwapchain, as they'll be for different surfaces and swapchain types.
@@ -1291,10 +1307,10 @@ namespace GamescopeWSILayer {
       // if that VkFormat is unsupported for the underlying surface.
       {
         std::vector<VkSurfaceFormatKHR> supportedSurfaceFormats;
-        vkroots::helpers::enumerate(
-          pDispatch->pPhysicalDeviceDispatch->pInstanceDispatch->GetPhysicalDeviceSurfaceFormatsKHR,
+        vkroots::enumerate(
+          std::bind_front(&vkroots::VkPhysicalDeviceDispatch::GetPhysicalDeviceSurfaceFormatsKHR, pDispatch.pPhysicalDeviceDispatch),
           supportedSurfaceFormats,
-          pDispatch->PhysicalDevice,
+          pDispatch.PhysicalDevice,
           swapchainInfo.surface);
 
         bool supportedSwapchainFormat = std::ranges::any_of(
@@ -1323,13 +1339,13 @@ namespace GamescopeWSILayer {
         serverId = *oServerId;
       }
 
-      auto gamescopeInstance = GamescopeInstance::get(gamescopeSurface->instance);
+      auto gamescopeInstance = gamescopeInstances.find(gamescopeSurface->instance);
       if (!gamescopeInstance) {
         fprintf(stderr, "[Gamescope WSI] CreateSwapchainKHR: Instance for swapchain was already destroyed. (App use after free).\n");
         return VK_ERROR_SURFACE_LOST_KHR;
       }
 
-      VkResult result = pDispatch->CreateSwapchainKHR(device, &swapchainInfo, pAllocator, pSwapchain);
+      VkResult result = pDispatch.CreateSwapchainKHR(device, &swapchainInfo, pAllocator, pSwapchain);
       if (result != VK_SUCCESS) {
         fprintf(stderr, "[Gamescope WSI] Failed to create swapchain - vr: %s xid: 0x%x\n", vkroots::helpers::enumString(result), gamescopeSurface->window);
         return result;
@@ -1340,7 +1356,7 @@ namespace GamescopeWSILayer {
         gamescopeSurface->surface);
 
       {
-        auto gamescopeSwapchain = GamescopeSwapchain::create(*pSwapchain, GamescopeSwapchainData{
+        auto gamescopeSwapchain = gamescopeSwapchains.create(*pSwapchain, GamescopeSwapchainData{
           .object              = gamescopeSwapchainObject,
           .display             = gamescopeSurface->display,
           .surface             = pCreateInfo->surface, // Always the Wayland side surface.
@@ -1352,13 +1368,19 @@ namespace GamescopeWSILayer {
           .serverId            = serverId,
           .isHdrColorspace     = hdrColorspace,
         });
+        if (!gamescopeSwapchain) {
+          gamescope_swapchain_destroy(gamescopeSwapchainObject);
+          pDispatch.DestroySwapchainKHR(device, *pSwapchain, pAllocator);
+          *pSwapchain = VK_NULL_HANDLE;
+          return VK_ERROR_OUT_OF_HOST_MEMORY;
+        }
         gamescopeSwapchain->pastPresentTimings.reserve(MaxPastPresentationTimes);
 
-        gamescope_swapchain_add_listener(gamescopeSwapchainObject, &s_swapchainListener, reinterpret_cast<void*>(gamescopeSwapchain.get()));
+        gamescope_swapchain_add_listener(gamescopeSwapchainObject, &s_swapchainListener, reinterpret_cast<void*>(gamescopeSwapchain));
       }
 
       uint32_t imageCount = 0;
-      pDispatch->GetSwapchainImagesKHR(device, *pSwapchain, &imageCount, nullptr);
+      pDispatch.GetSwapchainImagesKHR(device, *pSwapchain, &imageCount, nullptr);
 
       fprintf(stderr, "[Gamescope WSI] Created swapchain for xid: 0x%0x swapchain: %p - imageCount: %u\n",
         gamescopeSurface->window,
@@ -1379,7 +1401,7 @@ namespace GamescopeWSILayer {
     }
 
     static VkResult AcquireNextImageKHR(
-      const vkroots::VkDeviceDispatch* pDispatch,
+      const vkroots::VkDeviceDispatch & pDispatch,
             VkDevice                   device,
             VkSwapchainKHR             swapchain,
             uint64_t                   timeout,
@@ -1399,16 +1421,16 @@ namespace GamescopeWSILayer {
     }
 
     static VkResult AcquireNextImage2KHR(
-      const vkroots::VkDeviceDispatch* pDispatch,
+      const vkroots::VkDeviceDispatch & pDispatch,
             VkDevice                   device,
       const VkAcquireNextImageInfoKHR* pAcquireInfo,
             uint32_t*                  pImageIndex) {
-      if (auto gamescopeSwapchain = GamescopeSwapchain::get(pAcquireInfo->swapchain)) {
+      if (auto gamescopeSwapchain = gamescopeSwapchains.find(pAcquireInfo->swapchain)) {
         if (gamescopeSwapchain->retired)
           return VK_ERROR_OUT_OF_DATE_KHR;
       }
 
-      return pDispatch->AcquireNextImage2KHR(device, pAcquireInfo, pImageIndex);
+      return pDispatch.AcquireNextImage2KHR(device, pAcquireInfo, pImageIndex);
     }
 
     // A present that fails with VK_ERROR_OUT_OF_DATE_KHR must still perform
@@ -1416,7 +1438,7 @@ namespace GamescopeWSILayer {
     // the driver, so wait the semaphores and signal any
     // VkSwapchainPresentFenceInfoEXT fences ourselves with an empty submit.
     static VkResult PresentRetiredSwapchain(
-      const vkroots::VkDeviceDispatch* pDispatch,
+      const vkroots::VkQueueDispatch & pDispatch,
             VkQueue                    queue,
       const VkPresentInfoKHR*          pPresentInfo) {
       std::vector<VkPipelineStageFlags> waitStages(pPresentInfo->waitSemaphoreCount, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
@@ -1437,13 +1459,13 @@ namespace GamescopeWSILayer {
           .pWaitDstStageMask  = waitStages.data(),
         };
 
-        VkResult result = pDispatch->QueueSubmit(queue, 1, &submitInfo, presentFences.empty() ? VK_NULL_HANDLE : presentFences[0]);
+        VkResult result = pDispatch.QueueSubmit(queue, 1, &submitInfo, presentFences.empty() ? VK_NULL_HANDLE : presentFences[0]);
 
         // Fence signals are ordered after everything earlier in submission
         // order, so any extra fences can ride empty submits.
         for (size_t i = 1; i < presentFences.size() && result == VK_SUCCESS; i++) {
           VkSubmitInfo emptySubmitInfo = { .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO };
-          result = pDispatch->QueueSubmit(queue, 1, &emptySubmitInfo, presentFences[i]);
+          result = pDispatch.QueueSubmit(queue, 1, &emptySubmitInfo, presentFences[i]);
         }
 
         if (result < VK_SUCCESS)
@@ -1459,7 +1481,7 @@ namespace GamescopeWSILayer {
     }
 
     static VkResult QueuePresentKHR(
-      const vkroots::VkDeviceDispatch* pDispatch,
+      const vkroots::VkQueueDispatch & pDispatch,
             VkQueue                    queue,
       const VkPresentInfoKHR*          pPresentInfo) {
       VkPresentInfoKHR presentInfo = *pPresentInfo;
@@ -1468,7 +1490,7 @@ namespace GamescopeWSILayer {
 
       wl_display *display = nullptr;
       for (uint32_t i = 0; i < presentInfo.swapchainCount; i++) {
-        if (auto gamescopeSwapchain = GamescopeSwapchain::get(presentInfo.pSwapchains[i])) {
+        if (auto gamescopeSwapchain = gamescopeSwapchains.find(presentInfo.pSwapchains[i])) {
           if (gamescopeSwapchain->retired) {
             return PresentRetiredSwapchain(pDispatch, queue, pPresentInfo);
           }
@@ -1494,8 +1516,8 @@ namespace GamescopeWSILayer {
       // All VkSurfaceKHR's come from the same VkInstance, so we only need to check one surface.
       bool frameLimiterAware = [&]() {
         for (uint32_t i = 0; i < presentInfo.swapchainCount; i++) {
-          if (auto gamescopeSwapchain = GamescopeSwapchain::get(presentInfo.pSwapchains[i])) {
-              auto gamescopeSurface = GamescopeSurface::get(gamescopeSwapchain->surface);
+          if (auto gamescopeSwapchain = gamescopeSwapchains.find(presentInfo.pSwapchains[i])) {
+              auto gamescopeSurface = gamescopeSurfaces.find(gamescopeSwapchain->surface);
               if (gamescopeSurface)
                 return gamescopeSurface->frameLimiterAware();
           }
@@ -1515,7 +1537,7 @@ namespace GamescopeWSILayer {
         presentModePatcher(&presentInfo, [&](std::vector<VkPresentModeKHR>& mailboxModes, VkSwapchainPresentModeInfoEXT *pMaintenance1)
       {
         for (uint32_t i = 0; i < presentInfo.swapchainCount; i++) {
-          if (auto gamescopeSwapchain = GamescopeSwapchain::get(presentInfo.pSwapchains[i])) {
+          if (gamescopeSwapchains.find(presentInfo.pSwapchains[i])) {
             mailboxModes.emplace_back(VK_PRESENT_MODE_MAILBOX_KHR);
           }
         }
@@ -1545,8 +1567,8 @@ namespace GamescopeWSILayer {
       // After the pump, so the state reflects events received this frame.
       bool forceFifo = [&]() {
         for (uint32_t i = 0; i < presentInfo.swapchainCount; i++) {
-          if (auto gamescopeSwapchain = GamescopeSwapchain::get(presentInfo.pSwapchains[i])) {
-            if (auto gamescopeSurface = GamescopeSurface::get(gamescopeSwapchain->surface))
+          if (auto gamescopeSwapchain = gamescopeSwapchains.find(presentInfo.pSwapchains[i])) {
+            if (auto gamescopeSurface = gamescopeSurfaces.find(gamescopeSwapchain->surface))
               return gamescopeIsForcingFifo(gamescopeSurface->waylandObjects);
           }
         }
@@ -1554,8 +1576,8 @@ namespace GamescopeWSILayer {
       }();
 
       for (uint32_t i = 0; i < presentInfo.swapchainCount; i++) {
-        if (auto gamescopeSwapchain = GamescopeSwapchain::get(presentInfo.pSwapchains[i])) {
-          auto gamescopeSurface = GamescopeSurface::get(gamescopeSwapchain->surface);
+        if (auto gamescopeSwapchain = gamescopeSwapchains.find(presentInfo.pSwapchains[i])) {
+          auto gamescopeSurface = gamescopeSurfaces.find(gamescopeSwapchain->surface);
           if (gamescopeSwapchain->isWayland || gamescopeSwapchain->isBypassingXWayland) {
             if (!gamescopeSwapchain->isWayland) {
               gamescope_swapchain_override_window_content(gamescopeSwapchain->object, gamescopeSwapchain->serverId, gamescopeSurface->window);
@@ -1568,7 +1590,7 @@ namespace GamescopeWSILayer {
         }
       }
 
-      VkResult result = pDispatch->QueuePresentKHR(queue, &presentInfo);
+      VkResult result = pDispatch.QueuePresentKHR(queue, &presentInfo);
 
       for (uint32_t i = 0; i < presentInfo.swapchainCount; i++) {
         VkSwapchainKHR swapchain = presentInfo.pSwapchains[i];
@@ -1580,7 +1602,7 @@ namespace GamescopeWSILayer {
             result = newResult;
         };
 
-        if (auto gamescopeSwapchain = GamescopeSwapchain::get(swapchain)) {
+        if (auto gamescopeSwapchain = gamescopeSwapchains.find(swapchain)) {
           // If we are a frame limiter aware application like DXVK or VKD3D-Proton, we don't
           // transparently change their vkQueuePresent to just FIFO modes, we change what is
           // exposed as supported in order for them to handle presentation latency like they
@@ -1590,7 +1612,7 @@ namespace GamescopeWSILayer {
               UpdateSwapchainResult(VK_ERROR_OUT_OF_DATE_KHR);
           }
 
-          auto gamescopeSurface = GamescopeSurface::get(gamescopeSwapchain->surface);
+          auto gamescopeSurface = gamescopeSurfaces.find(gamescopeSwapchain->surface);
           if (!gamescopeSurface) {
             fprintf(stderr, "[Gamescope WSI] QueuePresentKHR: Surface for swapchain %u was already destroyed. (App use after free).\n", i);
             abort();
@@ -1626,13 +1648,13 @@ namespace GamescopeWSILayer {
     }
 
     static void SetHdrMetadataEXT(
-      const vkroots::VkDeviceDispatch* pDispatch,
+      const vkroots::VkDeviceDispatch & pDispatch,
             VkDevice                   device,
             uint32_t                   swapchainCount,
       const VkSwapchainKHR*            pSwapchains,
       const VkHdrMetadataEXT*          pMetadata) {
       for (uint32_t i = 0; i < swapchainCount; i++) {
-        auto gamescopeSwapchain = GamescopeSwapchain::get(pSwapchains[i]);
+        auto gamescopeSwapchain = gamescopeSwapchains.find(pSwapchains[i]);
         if (!gamescopeSwapchain) {
           fprintf(stderr, "[Gamescope WSI] SetHdrMetadataEXT: Swapchain %u does not support HDR.\n", i);
           continue;
@@ -1666,12 +1688,12 @@ namespace GamescopeWSILayer {
     }
 
     static VkResult GetPastPresentationTimingGOOGLE(
-      const vkroots::VkDeviceDispatch*      pDispatch,
+      const vkroots::VkDeviceDispatch &      pDispatch,
             VkDevice                        device,
             VkSwapchainKHR                  swapchain,
             uint32_t*                       pPresentationTimingCount,
             VkPastPresentationTimingGOOGLE* pPresentationTimings) {
-      auto gamescopeSwapchain = GamescopeSwapchain::get(swapchain);
+      auto gamescopeSwapchain = gamescopeSwapchains.find(swapchain);
       if (!gamescopeSwapchain) {
         fprintf(stderr, "[Gamescope WSI] GetPastPresentationTimingGOOGLE: Not a gamescope swapchain.\n");
         return VK_ERROR_SURFACE_LOST_KHR;
@@ -1686,7 +1708,7 @@ namespace GamescopeWSILayer {
       std::unique_lock lock(*gamescopeSwapchain->presentTimingMutex);
       auto& timings = gamescopeSwapchain->pastPresentTimings;
 
-      VkResult result = vkroots::helpers::array(timings, pPresentationTimingCount, pPresentationTimings);
+      VkResult result = vkroots::array(timings, pPresentationTimingCount, pPresentationTimings);
       // Erase those that we returned so we don't return them again.
       timings.erase(timings.begin(), timings.begin() + originalCount);
 
@@ -1694,11 +1716,11 @@ namespace GamescopeWSILayer {
     }
 
     static VkResult GetRefreshCycleDurationGOOGLE(
-      const vkroots::VkDeviceDispatch*      pDispatch,
+      const vkroots::VkDeviceDispatch &      pDispatch,
             VkDevice                        device,
             VkSwapchainKHR                  swapchain,
             VkRefreshCycleDurationGOOGLE*   pDisplayTimingProperties) {
-      auto gamescopeSwapchain = GamescopeSwapchain::get(swapchain);
+      auto gamescopeSwapchain = gamescopeSwapchains.find(swapchain);
       if (!gamescopeSwapchain) {
         fprintf(stderr, "[Gamescope WSI] GetRefreshCycleDurationGOOGLE: Not a gamescope swapchain.\n");
         return VK_ERROR_SURFACE_LOST_KHR;
@@ -1719,9 +1741,4 @@ namespace GamescopeWSILayer {
 }
 
 VKROOTS_DEFINE_LAYER_INTERFACES(GamescopeWSILayer::VkInstanceOverrides,
-                                vkroots::NoOverrides,
                                 GamescopeWSILayer::VkDeviceOverrides);
-
-VKROOTS_IMPLEMENT_SYNCHRONIZED_MAP_TYPE(GamescopeWSILayer::GamescopeInstance);
-VKROOTS_IMPLEMENT_SYNCHRONIZED_MAP_TYPE(GamescopeWSILayer::GamescopeSurface);
-VKROOTS_IMPLEMENT_SYNCHRONIZED_MAP_TYPE(GamescopeWSILayer::GamescopeSwapchain);
