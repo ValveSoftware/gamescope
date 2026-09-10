@@ -43,6 +43,11 @@ enum class GamescopeUpscaleFilter : uint32_t
     FROM_VIEW = 0xF, // internal
 };
 
+static constexpr bool UpscaleFilterUsesSharpness( GamescopeUpscaleFilter eFilter )
+{
+    return eFilter == GamescopeUpscaleFilter::FSR || eFilter == GamescopeUpscaleFilter::NIS;
+}
+
 static constexpr bool DoesHardwareSupportUpscaleFilter( GamescopeUpscaleFilter eFilter )
 {
     // Could do nearest someday... AMDGPU DC supports custom tap placement to an extent.
@@ -63,6 +68,7 @@ struct UpscaleSettings_t
 {
     GamescopeUpscaleFilter eFilter{};
     GamescopeUpscaleScaler eScaler{};
+    int nSharpness{};
 };
 
 // XXX(misyl): This is bad! We shouldnt change the upscaler like this at all!!!
@@ -70,12 +76,13 @@ struct UpscaleSettings_t
 static constexpr UpscaleSettings_t GetUpscaleSettings(
     bool bFocusIsSteam,
     GamescopeUpscaleFilter eWantedFilter,
-    GamescopeUpscaleScaler eWantedScaler )
+    GamescopeUpscaleScaler eWantedScaler,
+    int nWantedSharpness )
 {
     if ( bFocusIsSteam )
-        return UpscaleSettings_t{ GamescopeUpscaleFilter::LINEAR, GamescopeUpscaleScaler::FIT };
+        return UpscaleSettings_t{ GamescopeUpscaleFilter::LINEAR, GamescopeUpscaleScaler::FIT, nWantedSharpness };
 
-    return UpscaleSettings_t{ eWantedFilter, eWantedScaler };
+    return UpscaleSettings_t{ eWantedFilter, eWantedScaler, nWantedSharpness };
 }
 
 extern GamescopeUpscaleFilter g_wantedUpscaleFilter;

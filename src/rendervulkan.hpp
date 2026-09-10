@@ -285,6 +285,7 @@ struct FrameInfo_t
 	// Upscale settings for this frame.
 	GamescopeUpscaleFilter eUpscaleFilter = GamescopeUpscaleFilter::LINEAR;
 	GamescopeUpscaleScaler eUpscaleScaler = GamescopeUpscaleScaler::AUTO;
+	int nUpscaleSharpness = 0;
 	bool bFadingOut;
 	BlurMode blurLayer0;
 	int blurRadius;

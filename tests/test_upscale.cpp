@@ -2,26 +2,35 @@
 
 #include "main.hpp"
 
+TEST_CASE("UpscaleFilterUsesSharpness", "[upscale]") {
+	REQUIRE( UpscaleFilterUsesSharpness( GamescopeUpscaleFilter::FSR ) );
+	REQUIRE( UpscaleFilterUsesSharpness( GamescopeUpscaleFilter::NIS ) );
+	REQUIRE_FALSE( UpscaleFilterUsesSharpness( GamescopeUpscaleFilter::LINEAR ) );
+	REQUIRE_FALSE( UpscaleFilterUsesSharpness( GamescopeUpscaleFilter::PIXEL ) );
+}
+
 TEST_CASE("GetUpscaleSettings", "[upscale]") {
 	SECTION("a Steam focus window forces linear and fit") {
 		const UpscaleSettings_t settings = GetUpscaleSettings(
-			true, GamescopeUpscaleFilter::FSR, GamescopeUpscaleScaler::INTEGER );
+			true, GamescopeUpscaleFilter::FSR, GamescopeUpscaleScaler::INTEGER, 7 );
 
 		REQUIRE( settings.eFilter == GamescopeUpscaleFilter::LINEAR );
 		REQUIRE( settings.eScaler == GamescopeUpscaleScaler::FIT );
+		REQUIRE( settings.nSharpness == 7 );
 	}
 
 	SECTION("a non-Steam focus window keeps the wanted settings") {
 		const UpscaleSettings_t settings = GetUpscaleSettings(
-			false, GamescopeUpscaleFilter::FSR, GamescopeUpscaleScaler::INTEGER );
+			false, GamescopeUpscaleFilter::FSR, GamescopeUpscaleScaler::INTEGER, 7 );
 
 		REQUIRE( settings.eFilter == GamescopeUpscaleFilter::FSR );
 		REQUIRE( settings.eScaler == GamescopeUpscaleScaler::INTEGER );
+		REQUIRE( settings.nSharpness == 7 );
 	}
 
 	SECTION("passes through a different wanted filter and scaler pair") {
 		const UpscaleSettings_t settings = GetUpscaleSettings(
-			false, GamescopeUpscaleFilter::NEAREST, GamescopeUpscaleScaler::AUTO );
+			false, GamescopeUpscaleFilter::NEAREST, GamescopeUpscaleScaler::AUTO, 0 );
 
 		REQUIRE( settings.eFilter == GamescopeUpscaleFilter::NEAREST );
 		REQUIRE( settings.eScaler == GamescopeUpscaleScaler::AUTO );
