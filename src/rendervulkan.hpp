@@ -745,6 +745,8 @@ static inline uint32_t div_roundup(uint32_t x, uint32_t y)
 	VK_FUNC(CmdEndRendering) \
 	VK_FUNC(CmdPipelineBarrier) \
 	VK_FUNC(CmdPushConstants) \
+	VK_FUNC(CmdResetQueryPool) \
+	VK_FUNC(CmdWriteTimestamp) \
 	VK_FUNC(CreateBuffer) \
 	VK_FUNC(CreateCommandPool) \
 	VK_FUNC(CreateComputePipelines) \
@@ -755,6 +757,7 @@ static inline uint32_t div_roundup(uint32_t x, uint32_t y)
 	VK_FUNC(CreateImage) \
 	VK_FUNC(CreateImageView) \
 	VK_FUNC(CreatePipelineLayout) \
+	VK_FUNC(CreateQueryPool) \
 	VK_FUNC(CreateSampler) \
 	VK_FUNC(CreateSamplerYcbcrConversion) \
 	VK_FUNC(CreateSemaphore) \
@@ -782,6 +785,7 @@ static inline uint32_t div_roundup(uint32_t x, uint32_t y)
 	VK_FUNC(GetImageMemoryRequirements) \
 	VK_FUNC(GetImageSubresourceLayout) \
 	VK_FUNC(GetMemoryFdKHR) \
+	VK_FUNC(GetQueryPoolResults) \
 	VK_FUNC(GetSemaphoreCounterValue) \
 	VK_FUNC(GetSwapchainImagesKHR) \
 	VK_FUNC(MapMemory) \
@@ -849,6 +853,7 @@ public:
 	inline VkCommandPool commandPool() {return m_commandPool;}
 	inline VkCommandPool generalCommandPool() {return m_generalCommandPool;}
 	inline uint32_t queueFamily() {return m_queueFamily;}
+	uint64_t completedSeqNo();
 	inline uint32_t generalQueueFamily() {return m_generalQueueFamily;}
 	inline VkBuffer uploadBuffer() {return m_uploadBuffer;}
 	inline VkPipelineLayout pipelineLayout() {return m_pipelineLayout;}
