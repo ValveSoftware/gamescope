@@ -1481,8 +1481,7 @@ static void gamescope_control_bind( struct wl_client *client, void *data, uint32
 
 static void create_gamescope_control( void )
 {
-	uint32_t version = 7;
-	wl_global_create( wlserver.display, &gamescope_control_interface, version, NULL, gamescope_control_bind );
+	wl_global_create( wlserver.display, &gamescope_control_interface, gamescope_control_interface.version, NULL, gamescope_control_bind );
 }
 
 ////////////////////////
