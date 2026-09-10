@@ -86,6 +86,7 @@ const struct option *gamescope_options = (struct option[]){
 	{ "grab", no_argument, nullptr, 'g' },
 	{ "force-grab-cursor", no_argument, nullptr, 0 },
 	{ "display-index", required_argument, nullptr, 0 },
+    { "inhibit-idle", no_argument, nullptr, 0 },
 
 	// embedded mode options
 	{ "disable-layers", no_argument, nullptr, 0 },
@@ -227,7 +228,8 @@ const char usage[] =
 	"  -f, --fullscreen               make the window fullscreen\n"
 	"  -g, --grab                     grab the keyboard\n"
 	"  --force-grab-cursor            always use relative mouse mode instead of flipping dependent on cursor visibility.\n"
-	"  --display-index                forces gamescope to use a specific display in nested mode."
+	"  --display-index                forces gamescope to use a specific display in nested mode.\n"
+    "  --inhibit-idle                 if the parent compositor is Wayland, attempts to disable idle detection. You should use this when using a gamepad which is not recognised by libinput and therefore does not send activity signals to Wayland.\n"
 	"\n"
 	"Embedded mode options:\n"
 	"  -O, --prefer-output            list of connectors in order of preference (ex: DP-1,DP-2,DP-3,HDMI-A-1)\n"
@@ -298,6 +300,7 @@ int g_nNestedHeight = 0;
 int g_nNestedRefresh = 0;
 int g_nNestedUnfocusedRefresh = 0;
 int g_nNestedDisplayIndex = 0;
+bool g_bNestedWaylandInhibitIdle = false;
 
 uint32_t g_nOutputWidth = 0;
 uint32_t g_nOutputHeight = 0;
@@ -840,6 +843,8 @@ int main(int argc, char **argv)
 					g_bForceRelativeMouse = true;
 				} else if (strcmp(opt_name, "display-index") == 0) {
 					g_nNestedDisplayIndex = parse_integer( optarg, opt_name );
+                } else if (strcmp(opt_name, "inhibit-idle") == 0) {
+                    g_bNestedWaylandInhibitIdle = true;
 				} else if (strcmp(opt_name, "adaptive-sync") == 0) {
 					cv_adaptive_sync = true;
 				} else if (strcmp(opt_name, "expose-wayland") == 0) {
