@@ -152,13 +152,6 @@ namespace gamescope
         }
     };
 
-    struct BackendMode
-    {
-        uint32_t uWidth;
-        uint32_t uHeight;
-        uint32_t uRefresh; // Hz
-    };
-
     struct BackendPresentFeedback
     {
     public:
@@ -211,6 +204,9 @@ namespace gamescope
         virtual BackendPresentFeedback& PresentationFeedback() = 0;
 
         virtual uint64_t GetVirtualConnectorKey() const = 0;
+
+        // A stand-in connector with no display behind it, e.g. the DRM headless virtual screen.
+        virtual bool IsHeadless() const { return false; }
 
         virtual INestedHints *GetNestedHints() = 0;
 

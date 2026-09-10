@@ -355,4 +355,55 @@ namespace gamescope
 
         return edid;
     }
+
+    const char *EnsureVirtualEdid()
+    {
+        const char *pszPatchedEdidPath = GetPatchedEdidPath();
+        if ( !pszPatchedEdidPath )
+            return nullptr;
+
+        FILE *pFile = fopen( pszPatchedEdidPath, "rb" );
+        if ( !pFile )
+            return nullptr;
+
+        uint8_t edid[4096];
+        size_t ulSize = fread( edid, 1, sizeof( edid ), pFile );
+        fclose( pFile );
+        if ( ulSize < 128 || ulSize % 128 != 0 )
+            return nullptr;
+
+        // Gamescope's own vendor, product and serial identity, the last display's timings and HDR block stay.
+        memcpy( &edid[8], &s_GamescopeBaseEdid[8], 8 );
+
+        for ( uint32_t i = 0; i < EDID_BYTE_DESCRIPTOR_COUNT; i++ )
+        {
+            uint8_t *pDesc = &edid[0x36 + i * EDID_BYTE_DESCRIPTOR_SIZE];
+            if ( pDesc[0] == 0 && pDesc[1] == 0 && pDesc[3] == 0xfc )
+                memcpy( &pDesc[5], "VirtualScreen", 13 );
+        }
+
+        patch_edid_checksum( &edid[0] );
+
+        // Truncation would collapse both names onto the published path, losing the atomic rename.
+        static char szPath[PATH_MAX];
+        if ( snprintf( szPath, sizeof( szPath ), "%s.virtual", pszPatchedEdidPath ) >= (int)sizeof( szPath ) )
+            return nullptr;
+
+        char szTmpPath[PATH_MAX];
+        if ( snprintf( szTmpPath, sizeof( szTmpPath ), "%s.virtual.tmp", pszPatchedEdidPath ) >= (int)sizeof( szTmpPath ) )
+            return nullptr;
+
+        pFile = fopen( szTmpPath, "wb" );
+        if ( !pFile )
+            return nullptr;
+
+        // Fail closed, the returned path gets published.
+        bool bWritten = fwrite( edid, 1, ulSize, pFile ) == ulSize;
+        bWritten &= fflush( pFile ) == 0;
+        bWritten &= fclose( pFile ) == 0;
+        if ( !bWritten || rename( szTmpPath, szPath ) != 0 )
+            return nullptr;
+
+        return szPath;
+    }
 }

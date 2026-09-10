@@ -4534,7 +4534,7 @@ void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win
 		eStrategy = gamescope::VirtualConnectorStrategies::SteamControlled;
 		ulKey = 0;
 	}
-	else if ( GetBackend() && GetBackend()->GetCurrentConnector() )
+	else if ( GetBackend() && GetBackend()->GetCurrentConnector() && !GetBackend()->GetCurrentConnector()->IsHeadless() )
 	{
 		eStrategy = gamescope::cv_backend_virtual_connector_strategy;
 		ulKey = GetBackend()->GetCurrentConnector()->GetVirtualConnectorKey();
@@ -7812,7 +7812,7 @@ bool handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint64_t co
 				// TODO: fix this properly for all overlays, including Steam notifications and QAM
 				// HACK: If VRR is active, prevent external overlays, i.e. mangoapp, from repainting the base plane
 				if ( ( w == pFocus->externalOverlayWindow && w->opacity != TRANSLUCENT ) &&
-				     ( GetBackend()->GetCurrentConnector() && !GetBackend()->GetCurrentConnector()->IsVRRActive() ) )
+				     ( GetBackend()->GetCurrentConnector() && !GetBackend()->GetCurrentConnector()->IsVRRActive() && !GetBackend()->GetCurrentConnector()->IsHeadless() ) )
 				{
 					hasRepaintNonBasePlane = true;
 				}
@@ -9185,6 +9185,14 @@ void update_edid_prop()
 	if (!filename)
 		return;
 
+	// Headless: present the virtual screen's identity, not the last display's.
+	if (!GetBackend()->GetCurrentConnector() || GetBackend()->GetCurrentConnector()->IsHeadless())
+	{
+		const char *pszVirtualEdid = gamescope::EnsureVirtualEdid();
+		if (pszVirtualEdid)
+			filename = pszVirtualEdid;
+	}
+
 	gamescope_xwayland_server_t *server = NULL;
 	for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
 	{
@@ -10067,6 +10075,7 @@ steamcompmgr_main(int argc, char **argv)
 			hasRepaint = true;
 
 			update_mode_atoms(root_ctx, &flush_root);
+			update_edid_prop();
 		}
 
 		g_uCompositeDebug = cv_composite_debug;
