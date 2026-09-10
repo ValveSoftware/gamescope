@@ -160,6 +160,10 @@ struct drm_t {
 
 	std::unordered_map< std::string, int > connector_priorities;
 
+	// Runtime override of the connector preference list
+	std::mutex m_PrefOutputMutex;
+	std::string m_PrefOutputOverride;
+
 	char *device_name = nullptr;
 };
 
@@ -527,7 +531,7 @@ namespace gamescope
 			std::vector<uint32_t> ValidDynamicRefreshRates{};
 			std::vector<uint8_t> EdidData; // Raw, unmodified.
 			std::vector<BackendMode> BackendModes;
-			
+
 			displaycolorimetry_t DisplayColorimetry = displaycolorimetry_709;
 			BackendConnectorHDRInfo HDR;
 
@@ -546,7 +550,7 @@ namespace gamescope
 		~CDRMFb();
 
 		uint32_t GetFbId() const { return m_uFbId; }
-	
+
 	private:
 		uint32_t m_uFbId = 0;
 	};
@@ -608,12 +612,12 @@ static constexpr uint32_t s_kSteamDeckLCDRates[] =
 
 static constexpr uint32_t s_kSteamDeckOLEDRates[] =
 {
-	45, 47, 48, 49, 
-	50, 51, 53, 55, 56, 59, 
-	60, 62, 64, 65, 66, 68, 
-	72, 73, 76, 77, 78, 
-	80, 81, 82, 84, 85, 86, 87, 88, 
-	90, 
+	45, 47, 48, 49,
+	50, 51, 53, 55, 56, 59,
+	60, 62, 64, 65, 66, 68,
+	72, 73, 76, 77, 78,
+	80, 81, 82, 84, 85, 86, 87, 88,
+	90,
 };
 
 void update_connector_display_info_wl(struct drm_t *drm)
@@ -1032,6 +1036,33 @@ static int get_connector_priority(struct drm_t *drm, const char *name)
 	return drm->connector_priorities.size();
 }
 
+static void refresh_connector_priorities( struct drm_t *drm )
+{
+	std::string sPreferredOutput;
+	{
+		std::scoped_lock lock( drm->m_PrefOutputMutex );
+		sPreferredOutput = drm->m_PrefOutputOverride;
+	}
+
+	drm->connector_priorities = parse_connector_priorities(
+		sPreferredOutput.empty() ? g_sOutputName : sPreferredOutput.c_str() );
+}
+
+gamescope::ConVar<std::string> cv_drm_preferred_output(
+	"drm_preferred_output",
+	"",
+	"Comma-separated list of connectors in order of preference (ex: DP-1,DP-2,DP-3,HDMI-A-1). Overrides --prefer-output while non-empty, empty restores it.",
+	[]( gamescope::ConVar<std::string> &cv )
+	{
+		{
+			std::scoped_lock lock( g_DRM.m_PrefOutputMutex );
+			g_DRM.m_PrefOutputOverride = std::string{ cv };
+		}
+
+		if ( GetBackend() )
+			GetBackend()->DirtyState( true, true );
+	} );
+
 static bool get_saved_mode(const char *description, saved_mode &mode_info)
 {
 	const char *mode_file = getenv("GAMESCOPE_MODE_SAVE_FILE");
@@ -1050,7 +1081,7 @@ static bool get_saved_mode(const char *description, saved_mode &mode_info)
         int ret = sscanf(line, "%255[^:]:%dx%d@%d %u", saved_description, &mode_info.width, &mode_info.height, &mode_info.refresh, &broadcast_mode);
 
 		mode_info.broadcast_mode = (GamescopeBroadcastRGBMode_t) broadcast_mode;
-		
+
 		bool valid = ret == 4 || ret == 5;
 
 		if (valid && !strcmp(saved_description, description))
@@ -1067,6 +1098,8 @@ static GamescopeBroadcastRGBMode_t s_ExternalBroadcastRGBMode = GAMESCOPE_BROADC
 
 static bool setup_best_connector(struct drm_t *drm, bool force, bool initial)
 {
+	refresh_connector_priorities( drm );
+
 	if (drm->pConnector && drm->pConnector->GetModeConnector()->connection != DRM_MODE_CONNECTED) {
 		drm_log.infof("current connector '%s' disconnected", drm->pConnector->GetName());
 		drm->pConnector = nullptr;
@@ -1230,7 +1263,7 @@ static void
 gamescope_liftoff_log_handler(enum liftoff_log_priority liftoff_priority, const char *fmt, va_list args)
 {
 	enum LogPriority priority = LOG_DEBUG;
-	
+
 	switch ( liftoff_priority )
 	{
 		case LIFTOFF_ERROR:
@@ -1342,7 +1375,7 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 		return false;
 	if ( liftoff_device_register_all_planes( drm->lo_device ) < 0 )
 		return false;
-	
+
 	drm_log.infof("Connectors:");
 	for ( auto &iter : drm->connectors )
 	{
@@ -1354,8 +1387,6 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 
 		drm_log.infof("  %s (%s)", pConnector->GetName(), status_str);
 	}
-
-	drm->connector_priorities = parse_connector_priorities( g_sOutputName );
 
 	if (!setup_best_connector(drm, true, true)) {
 		return false;
@@ -2400,7 +2431,7 @@ namespace gamescope
 						sol::function_result ret = fnDynamicModegen(tInMode, nRefreshHz);
 						if ( !ret.valid() || !ret.get<sol::table>() )
 							return *pBaseMode;
-						
+
 						sol::table tOutMode = ret;
 
 						drmModeModeInfo outMode = *pBaseMode;
@@ -2476,7 +2507,7 @@ namespace gamescope
 							if ( pMode->hdisplay != pPreferredMode->hdisplay || pMode->vdisplay != pPreferredMode->vdisplay )
 								continue;
 
-							
+
 							if ( !Algorithm::Contains( m_Mutable.ValidDynamicRefreshRates, pMode->vrefresh ) )
 							{
 								m_Mutable.ValidDynamicRefreshRates.push_back( pMode->vrefresh );
@@ -4029,7 +4060,7 @@ namespace gamescope
 		{
 #if __linux__
 			auto [nMajor, nMinor, nPatch] = GetKernelVersion();
-			
+
 			// Only expose support on 6.8+ for eventfd fixes.
 			if ( nMajor < 6 )
 				return false;
