@@ -1074,6 +1074,7 @@ namespace gamescope
             bNeedsFullComposite |= cv_composite_force;
             bNeedsFullComposite |= pFrameInfo->useFSRLayer0;
             bNeedsFullComposite |= pFrameInfo->useNISLayer0;
+            bNeedsFullComposite |= pFrameInfo->useSGSRLayer0;
             bNeedsFullComposite |= pFrameInfo->blurLayer0;
             bNeedsFullComposite |= bNeedsCompositeFromFilter;
             bNeedsFullComposite |= g_bColorSliderInUse;

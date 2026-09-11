@@ -45,6 +45,7 @@
       <entry name="look" value="6"/>
       <entry name="perf_query" value="7"/>
       <entry name="keyboard_layout" value="8"/>
+      <entry name="sgsr_filter" value="9"/>
     </enum>
 
     <event name="feature_support">

@@ -176,9 +176,10 @@ const char usage[] =
 	"  -r, --nested-refresh           game refresh rate (frames per second)\n"
 	"  -m, --max-scale                maximum scale factor\n"
 	"  -S, --scaler                   upscaler type (auto, integer, fit, fill, stretch)\n"
-	"  -F, --filter                   upscaler filter (linear, nearest, fsr, nis, pixel)\n"
+	"  -F, --filter                   upscaler filter (linear, nearest, fsr, nis, pixel, sgsr)\n"
 	"                                     fsr => AMD FidelityFX™ Super Resolution 1.0\n"
 	"                                     nis => NVIDIA Image Scaling v1.0.3\n"
+	"                                     sgsr => Snapdragon™ Game Super Resolution 1 with RCAS\n"
 	"  --sharpness, --fsr-sharpness   upscaler sharpness from 0 (max) to 20 (min)\n"
 	"  --expose-wayland               support wayland clients using xdg-shell\n"
 	"  -s, --mouse-sensitivity        multiply mouse movement by given decimal number\n"
@@ -416,6 +417,8 @@ static enum GamescopeUpscaleFilter parse_upscaler_filter(const char *str)
 		return GamescopeUpscaleFilter::NIS;
 	} else if (strcmp(str, "pixel") == 0) {
 		return GamescopeUpscaleFilter::PIXEL;
+	} else if (strcmp(str, "sgsr") == 0) {
+		return GamescopeUpscaleFilter::SGSR;
 	} else {
 		fprintf( stderr, "gamescope: invalid value for --filter\n" );
 		exit(1);

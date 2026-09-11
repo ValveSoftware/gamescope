@@ -2,7 +2,27 @@
 
 #include "main.hpp"
 
+TEST_CASE("SGSR keeps the wire value Steam writes", "[upscale]") {
+	REQUIRE( uint32_t( GamescopeUpscaleFilter::SGSR ) == 5 );
+}
+
+TEST_CASE("SGSR only takes SDR RGB input", "[upscale]") {
+	REQUIRE( SgsrSupportsInput( GAMESCOPE_APP_TEXTURE_COLORSPACE_LINEAR, false ) );
+	REQUIRE( SgsrSupportsInput( GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB, false ) );
+	REQUIRE_FALSE( SgsrSupportsInput( GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB, true ) );
+	for ( auto colorspace : { GAMESCOPE_APP_TEXTURE_COLORSPACE_SCRGB, GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ, GAMESCOPE_APP_TEXTURE_COLORSPACE_PASSTHRU } )
+		REQUIRE_FALSE( SgsrSupportsInput( colorspace, false ) );
+}
+
+TEST_CASE("SGSR falls back on input it cannot read", "[upscale]") {
+	REQUIRE( ResolveUpscaleFilter( GamescopeUpscaleFilter::SGSR, GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB, false ) == GamescopeUpscaleFilter::SGSR );
+	REQUIRE( ResolveUpscaleFilter( GamescopeUpscaleFilter::SGSR, GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ, false ) == GamescopeUpscaleFilter::FSR );
+	REQUIRE( ResolveUpscaleFilter( GamescopeUpscaleFilter::SGSR, GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB, true ) == GamescopeUpscaleFilter::LINEAR );
+	REQUIRE( ResolveUpscaleFilter( GamescopeUpscaleFilter::NIS, GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ, false ) == GamescopeUpscaleFilter::NIS );
+}
+
 TEST_CASE("UpscaleFilterUsesSharpness", "[upscale]") {
+	REQUIRE( UpscaleFilterUsesSharpness( GamescopeUpscaleFilter::SGSR ) );
 	REQUIRE( UpscaleFilterUsesSharpness( GamescopeUpscaleFilter::FSR ) );
 	REQUIRE( UpscaleFilterUsesSharpness( GamescopeUpscaleFilter::NIS ) );
 	REQUIRE_FALSE( UpscaleFilterUsesSharpness( GamescopeUpscaleFilter::LINEAR ) );

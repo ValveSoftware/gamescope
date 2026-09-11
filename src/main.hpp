@@ -4,6 +4,8 @@
 
 #include <atomic>
 
+#include "gamescope_shared.h"
+
 extern const char *gamescope_optstring;
 extern const struct option *gamescope_options;
 
@@ -39,13 +41,30 @@ enum class GamescopeUpscaleFilter : uint32_t
     FSR,
     NIS,
     PIXEL,
+    SGSR,
 
     FROM_VIEW = 0xF, // internal
 };
 
 static constexpr bool UpscaleFilterUsesSharpness( GamescopeUpscaleFilter eFilter )
 {
-    return eFilter == GamescopeUpscaleFilter::FSR || eFilter == GamescopeUpscaleFilter::NIS;
+    return eFilter == GamescopeUpscaleFilter::FSR ||
+           eFilter == GamescopeUpscaleFilter::NIS ||
+           eFilter == GamescopeUpscaleFilter::SGSR;
+}
+
+// cs_sgsr reads the plain sampler slot, not the YCbCr one, and thresholds in 8-bit SDR units.
+static constexpr bool SgsrSupportsInput( GamescopeAppTextureColorspace eColorspace, bool bYcbcr )
+{
+    return !bYcbcr && ( eColorspace == GAMESCOPE_APP_TEXTURE_COLORSPACE_LINEAR || eColorspace == GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB );
+}
+
+// Sharp ran FSR before SGSR existed, so HDR keeps that rather than losing the sharpening. Neither pre-pass reads the YCbCr slot.
+static constexpr GamescopeUpscaleFilter ResolveUpscaleFilter( GamescopeUpscaleFilter eFilter, GamescopeAppTextureColorspace eColorspace, bool bYcbcr )
+{
+    if ( eFilter != GamescopeUpscaleFilter::SGSR || SgsrSupportsInput( eColorspace, bYcbcr ) )
+        return eFilter;
+    return bYcbcr ? GamescopeUpscaleFilter::LINEAR : GamescopeUpscaleFilter::FSR;
 }
 
 static constexpr bool DoesHardwareSupportUpscaleFilter( GamescopeUpscaleFilter eFilter )

@@ -47,6 +47,7 @@
 #include "cs_nis.h"
 #include "cs_nis_fp16.h"
 #include "cs_rgb_to_nv12.h"
+#include "cs_sgsr.h"
 
 #define A_CPU
 #include "shaders/ffx_a.h"
@@ -965,6 +966,7 @@ bool CVulkanDevice::createShaders()
 		SHADER(NIS, cs_nis);
 	}
 	SHADER(RGB_TO_NV12, cs_rgb_to_nv12);
+	SHADER(SGSR, cs_sgsr);
 #undef SHADER
 
 	for (uint32_t i = 0; i < shaderInfos.size(); i++)
@@ -1195,6 +1197,7 @@ void CVulkanDevice::compileAllPipelines(std::stop_token st)
 	SHADER(EASU, 1, 1, 1);
 	SHADER(NIS, 1, 1, 1);
 	SHADER(RGB_TO_NV12, 1, 1, 1);
+	SHADER(SGSR, 1, 1, 1);
 #undef SHADER
 
 	for (auto& info : pipelineInfos) {
@@ -3811,10 +3814,12 @@ struct BlitPushData_t
 			scale[i] = layer->scale;
 			offset[i] = layer->offsetPixelCenter();
 			opacity[i] = layer->opacity;
-            if (layer->isScreenSize() || (layer->filter == GamescopeUpscaleFilter::LINEAR && layer->viewConvertsToLinearAutomatically()))
+            // SGSR only exists as a pre-pass, a layer still carrying it samples as linear.
+            GamescopeUpscaleFilter eFilter = layer->filter == GamescopeUpscaleFilter::SGSR ? GamescopeUpscaleFilter::LINEAR : layer->filter;
+            if (layer->isScreenSize() || (eFilter == GamescopeUpscaleFilter::LINEAR && layer->viewConvertsToLinearAutomatically()))
                 u_shaderFilter |= ((uint32_t)GamescopeUpscaleFilter::FROM_VIEW) << (i * 4);
             else
-                u_shaderFilter |= ((uint32_t)layer->filter) << (i * 4);
+                u_shaderFilter |= ((uint32_t)eFilter) << (i * 4);
 
 			u_alphaMode |= ((uint32_t)layer->eAlphaBlendingMode) << ( i * 4 );
 
@@ -3917,6 +3922,17 @@ struct EasuPushData_t
 	}
 };
 
+struct SgsrPushData_t
+{
+	uint32_t u_width;
+	uint32_t u_height;
+
+	SgsrPushData_t(uint32_t tempX, uint32_t tempY)
+		: u_width(tempX), u_height(tempY)
+	{
+	}
+};
+
 struct RcasPushData_t
 {
 	uvec2_t u_layer0Offset;
@@ -3955,10 +3971,11 @@ struct RcasPushData_t
 		{
 			const FrameInfo_t::Layer_t *layer = &frameInfo->layers.get( i );
 
-            if (i == 0 || layer->isScreenSize() || (layer->filter == GamescopeUpscaleFilter::LINEAR && layer->viewConvertsToLinearAutomatically()))
+            GamescopeUpscaleFilter eFilter = layer->filter == GamescopeUpscaleFilter::SGSR ? GamescopeUpscaleFilter::LINEAR : layer->filter;
+            if (i == 0 || layer->isScreenSize() || (eFilter == GamescopeUpscaleFilter::LINEAR && layer->viewConvertsToLinearAutomatically()))
                 u_shaderFilter |= ((uint32_t)GamescopeUpscaleFilter::FROM_VIEW) << (i * 4);
             else
-                u_shaderFilter |= ((uint32_t)layer->filter) << (i * 4);
+                u_shaderFilter |= ((uint32_t)eFilter) << (i * 4);
 
 			u_alphaMode |= ((uint32_t)layer->eAlphaBlendingMode) << ( i * 4 );
 
@@ -4144,7 +4161,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 	for (uint32_t i = 0; i < EOTF_Count; i++)
 		cmdBuffer->bindColorMgmtLuts(i, frameInfo->shaperLut[i], frameInfo->lut3D[i]);
 
-	if ( frameInfo->useFSRLayer0 )
+	if ( frameInfo->useFSRLayer0 || frameInfo->useSGSRLayer0 )
 	{
 		uint32_t inputX = frameInfo->layers.get( 0 ).tex->width();
 		uint32_t inputY = frameInfo->layers.get( 0 ).tex->height();
@@ -4154,13 +4171,16 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 
 		update_tmp_images(tempX, tempY);
 
-		cmdBuffer->bindPipeline(g_device.pipeline(SHADER_TYPE_EASU));
+		cmdBuffer->bindPipeline(g_device.pipeline(frameInfo->useSGSRLayer0 ? SHADER_TYPE_SGSR : SHADER_TYPE_EASU));
 		cmdBuffer->bindTarget(g_output.tmpOutput);
 		cmdBuffer->bindTexture(0, frameInfo->layers.get( 0 ).tex);
 		cmdBuffer->setTextureSrgb(0, true);
 		cmdBuffer->setSamplerUnnormalized(0, false);
 		cmdBuffer->setSamplerNearest(0, false);
-		cmdBuffer->uploadConstants<EasuPushData_t>(inputX, inputY, tempX, tempY);
+		if ( frameInfo->useSGSRLayer0 )
+			cmdBuffer->uploadConstants<SgsrPushData_t>(tempX, tempY);
+		else
+			cmdBuffer->uploadConstants<EasuPushData_t>(inputX, inputY, tempX, tempY);
 
 		int pixelsPerGroup = 16;
 
