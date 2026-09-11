@@ -21,6 +21,7 @@ class gamescope_xwayland_server_t;
 struct ignore;
 struct steamcompmgr_win_t;
 class MouseCursor;
+namespace gamescope { struct PresentTimingRoute; }
 
 extern LogScope xwm_log;
 
@@ -52,6 +53,8 @@ struct CommitDoneEntry_t
 	uint64_t winSeq;
 	uint64_t commitID;
 	uint64_t desiredPresentTime;
+	uint32_t timingFlags;
+	std::shared_ptr<gamescope::PresentTimingRoute> route;
 	uint64_t earliestPresentTime;
 	uint64_t earliestLatchTime;
 	bool fifo;

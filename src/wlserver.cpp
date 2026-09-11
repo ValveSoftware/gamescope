@@ -10,6 +10,7 @@
 #include <fcntl.h>
 #include <xf86drm.h>
 #include <sys/eventfd.h>
+#include <unordered_set>
 
 #include <linux/input-event-codes.h>
 
@@ -69,6 +70,7 @@
 #include "commit.h"
 #include "Timeline.h"
 #include "Utils/Process.h"
+#include "Utils/PresentTiming.h"
 
 #if HAVE_PIPEWIRE
 #include "pipewire.hpp"
@@ -132,6 +134,15 @@ std::vector<ResListEntry_t>& gamescope_xwayland_server_t::retrieve_commits()
 
 gamescope::ConVar<bool> cv_drm_debug_syncobj_force_wait_on_commit( "drm_debug_syncobj_force_wait_on_commit", false, "Force a wait on DRM sync objects before committing buffers" );
 
+// The resource owns its route independently of the surface lifetime.
+static std::unordered_map<wl_resource *, std::shared_ptr<gamescope::PresentTimingRoute>> s_PresentTimingRoutes;
+
+static std::shared_ptr<gamescope::PresentTimingRoute> present_timing_route( struct wl_resource *swapchain )
+{
+	auto route = s_PresentTimingRoutes.find( swapchain );
+	return route != s_PresentTimingRoutes.end() ? route->second : nullptr;
+}
+
 ResListEntry_t PrepareCommit( struct wlr_surface *surf, struct wlr_buffer *buf )
 {
 	auto wl_surf = get_wl_surface_info( surf );
@@ -161,15 +172,16 @@ ResListEntry_t PrepareCommit( struct wlr_surface *surf, struct wlr_buffer *buf )
 		wlserver_surface_is_fifo(surf),
 		pFeedback,
 		std::move(wl_surf->pending_presentation_feedbacks),
-		wl_surf->present_id,
-		wl_surf->desired_present_time,
+		std::move( wl_surf->present_timing ),
 		std::move( pAcquirePoint ),
 		std::move( pReleasePoint )
 	};
-	wl_surf->present_id = std::nullopt;
-	wl_surf->desired_present_time = 0;
+	wl_surf->present_timing = {};
 	wl_surf->pending_presentation_feedbacks.clear();
 	wl_surf->oCurrentPresentMode = std::nullopt;
+	// An untimed commit still advances its swapchain's relative anchor.
+	if ( !newEntry.present_timing.route && !wl_surf->gamescope_swapchains.empty() )
+		newEntry.present_timing.route = present_timing_route( wl_surf->gamescope_swapchains.back() );
 
 	struct wlr_surface *pConstraintSurface = wlserver_surface_to_main_surface( surf );
 
@@ -661,6 +673,9 @@ static void handle_wl_surface_destroy( struct wl_listener *l, void *data )
 		{
 			ResListEntry_t pending = std::move( *it );
 
+			wlserver_present_timing_discard( pending.present_timing );
+			wlserver_presentation_feedback_discard( pending.presentation_feedbacks );
+
 			// We owned the buffer lock, so unlock it here.
 			wlr_buffer_unlock(pending.buf);
 			it = g_PendingCommits.erase(it);
@@ -671,12 +686,8 @@ static void handle_wl_surface_destroy( struct wl_listener *l, void *data )
 		}
 	}
 
-	for (auto& feedback : surf->pending_presentation_feedbacks)
-	{
-		wp_presentation_feedback_send_discarded(feedback);
-		wl_resource_destroy(feedback);
-	}
-	surf->pending_presentation_feedbacks.clear();
+	wlserver_presentation_feedback_discard( surf->pending_presentation_feedbacks );
+	wlserver_present_timing_discard( surf->present_timing );
 
 	if ( surf->pSyncobjSurface )
 	{
@@ -952,11 +963,21 @@ static void gamescope_swapchain_destroy_co( struct wl_resource *resource )
 	}
 }
 
+static_assert( gamescope::k_uPresentTimingRelative == GAMESCOPE_SWAPCHAIN_PRESENT_TIMING_FLAGS_RELATIVE );
+static_assert( gamescope::k_uPresentTimingNearest == GAMESCOPE_SWAPCHAIN_PRESENT_TIMING_FLAGS_NEAREST_REFRESH_CYCLE );
+
+
 static void gamescope_swapchain_handle_resource_destroy( struct wl_resource *resource )
 {
 #ifdef GAMESCOPE_SWAPCHAIN_DEBUG
 	wl_log.infof( "gamescope_swapchain_handle_resource_destroy swapchain: %p", resource );
 #endif
+	auto route = s_PresentTimingRoutes.find( resource );
+	if ( route != s_PresentTimingRoutes.end() )
+	{
+		route->second->resource = nullptr;
+		s_PresentTimingRoutes.erase( route );
+	}
 	gamescope_xwayland_server_t *server = NULL;
 	for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
 		server->clear_content_override_swapchain( resource );
@@ -966,6 +987,9 @@ static void gamescope_swapchain_handle_resource_destroy( struct wl_resource *res
 	{
 		gamescope_swapchain_destroy_co( resource );
 		std::erase(wl_surface_info->gamescope_swapchains, resource);
+		// An armed request is surface state and must not pace the next swapchain.
+		if ( wl_surface_info->present_timing.route && !wl_surface_info->present_timing.route->resource )
+			wl_surface_info->present_timing = {};
 	}
 }
 
@@ -1066,11 +1090,47 @@ static void gamescope_swapchain_set_present_time( struct wl_client *client, stru
 {
 	wlserver_wl_surface_info *wl_info = (wlserver_wl_surface_info *)wl_resource_get_user_data( resource );
 
-	if ( wl_info )
+	auto route = s_PresentTimingRoutes.find( resource );
+	if ( wl_info && route != s_PresentTimingRoutes.end() )
 	{
-		wl_info->present_id = present_id;
-		wl_info->desired_present_time = (uint64_t(desired_present_time_hi) << 32) | desired_present_time_lo;
+		wlserver_present_timing_discard( wl_info->present_timing );
+		wl_info->present_timing = {
+			.serial = present_id,
+			.target = (uint64_t(desired_present_time_hi) << 32) | desired_present_time_lo,
+			.legacy = true,
+			.route = route->second,
+		};
 	}
+}
+
+static void gamescope_swapchain_set_present_timing( struct wl_client *client, struct wl_resource *resource,
+	uint32_t serial_hi, uint32_t serial_lo, uint32_t target_hi, uint32_t target_lo, uint32_t flags )
+{
+	auto route = s_PresentTimingRoutes.find( resource );
+	if ( route == s_PresentTimingRoutes.end() )
+		return;
+	auto *info = static_cast<wlserver_wl_surface_info *>( wl_resource_get_user_data( resource ) );
+	if ( info )
+	{
+		wlserver_present_timing_discard( info->present_timing );
+		info->present_timing = {};
+	}
+	// A zero serial only clears, whatever target it carries.
+	if ( !serial_hi && !serial_lo )
+		return;
+	gamescope::PresentTiming timing{
+		.serial = (uint64_t(serial_hi) << 32) | serial_lo,
+		.target = (uint64_t(target_hi) << 32) | target_lo,
+		.flags = flags,
+		.route = route->second,
+	};
+	// The surface may already be gone while its swapchain resource lives on.
+	if ( !info )
+	{
+		wlserver_present_timing_discard( timing );
+		return;
+	}
+	info->present_timing = std::move( timing );
 }
 
 static void gamescope_swapchain_set_present_mode( struct wl_client *client, struct wl_resource *resource, uint32_t present_mode )
@@ -1090,6 +1150,7 @@ static const struct gamescope_swapchain_interface gamescope_swapchain_impl = {
 	.set_present_mode = gamescope_swapchain_set_present_mode,
 	.set_hdr_metadata = gamescope_swapchain_set_hdr_metadata,
 	.set_present_time = gamescope_swapchain_set_present_time,
+	.set_present_timing = gamescope_swapchain_set_present_timing,
 };
 
 static void gamescope_swapchain_factory_v2_destroy( struct wl_client *client, struct wl_resource *resource )
@@ -1110,7 +1171,12 @@ static void gamescope_swapchain_factory_v2_create_swapchain( struct wl_client *c
 	if (wl_surface_info->gamescope_swapchains.size())
 		wl_log.errorf("create_swapchain: Surface already had a gamescope_swapchain! Warning!");
 
+	s_PresentTimingRoutes.emplace( gamescope_swapchain_resource,
+		std::make_shared<gamescope::PresentTimingRoute>( gamescope::PresentTimingRoute{ gamescope_swapchain_resource } ) );
 	wl_surface_info->gamescope_swapchains.emplace_back( gamescope_swapchain_resource );
+	// Resend the cycle on the next vblank so the new resource learns it.
+	wl_surface_info->last_refresh_cycle = 0;
+	wl_surface_info->last_refresh_interval = 0;
 }
 
 static const struct gamescope_swapchain_factory_v2_interface gamescope_swapchain_factory_v2_impl = {
@@ -1126,7 +1192,7 @@ static void gamescope_swapchain_factory_v2_bind( struct wl_client *client, void 
 
 static void create_gamescope_swapchain_factory_v2( void )
 {
-	uint32_t version = 1;
+	uint32_t version = 2;
 	wl_global_create( wlserver.display, &gamescope_swapchain_factory_v2_interface, version, NULL, gamescope_swapchain_factory_v2_bind );
 }
 
@@ -1554,17 +1620,25 @@ static void presentation_time_destroy( struct wl_client *client, struct wl_resou
 	wl_resource_destroy( resource );
 }
 
+static void presentation_feedback_handle_resource_destroy( struct wl_resource *resource )
+{
+	auto *owner = static_cast<wlserver_presentation_feedback_ref *>( wl_resource_get_user_data( resource ) );
+	(*owner)->resource = nullptr;
+	delete owner;
+}
+
 static void presentation_time_feedback( struct wl_client *client, struct wl_resource *resource, struct wl_resource *surface_resource, uint32_t id )
 {
 	struct wlr_surface *surface = wlr_surface_from_resource( surface_resource );
 
 	wlserver_wl_surface_info *wl_surface_info = get_wl_surface_info(surface);
 
-	struct wl_resource *presentation_feedback_resource
-		= wl_resource_create( client, &wp_presentation_feedback_interface, wl_resource_get_version( resource ), id );
-	wl_resource_set_implementation( presentation_feedback_resource, NULL, wl_surface_info, NULL );
+	auto feedback = std::make_shared<wlserver_presentation_feedback>();
+	feedback->resource = wl_resource_create( client, &wp_presentation_feedback_interface, wl_resource_get_version( resource ), id );
+	// The resource holds its own reference so the destructor can null a handle no commit cites.
+	wl_resource_set_implementation( feedback->resource, NULL, new wlserver_presentation_feedback_ref( feedback ), presentation_feedback_handle_resource_destroy );
 
-	wl_surface_info->pending_presentation_feedbacks.emplace_back(presentation_feedback_resource);
+	wl_surface_info->pending_presentation_feedbacks.emplace_back( std::move( feedback ) );
 }
 
 static const struct wp_presentation_interface presentation_time_impl = {
@@ -1586,13 +1660,8 @@ static void create_presentation_time( void )
 	wl_global_create( wlserver.display, &wp_presentation_interface, version, NULL, presentation_time_bind );
 }
 
-void wlserver_presentation_feedback_presented( struct wlr_surface *surface, std::vector<struct wl_resource*>& presentation_feedbacks, uint64_t last_refresh_nsec, uint64_t refresh_cycle )
+void wlserver_presentation_feedback_presented( std::vector<wlserver_presentation_feedback_ref>& presentation_feedbacks, uint64_t last_refresh_nsec, uint64_t refresh_cycle, uint64_t sequence )
 {
-	wlserver_wl_surface_info *wl_surface_info = get_wl_surface_info(surface);
-
-	if ( !wl_surface_info )
-		return;
-
 	uint32_t flags = 0;
 
 	// Don't know when we want to send this.
@@ -1610,41 +1679,40 @@ void wlserver_presentation_feedback_presented( struct wlr_surface *surface, std:
 	// Not useful for an app to know.
 	flags |= WP_PRESENTATION_FEEDBACK_KIND_ZERO_COPY;
 
-	wl_surface_info->sequence++;
-
 	for (auto& feedback : presentation_feedbacks)
 	{
+		if ( !feedback->resource )
+			continue;
+
 		timespec last_refresh_ts;
 		last_refresh_ts.tv_sec = time_t(last_refresh_nsec / 1'000'000'000ul);
 		last_refresh_ts.tv_nsec = long(last_refresh_nsec % 1'000'000'000ul);
 
 		wp_presentation_feedback_send_presented(
-			feedback,
+			feedback->resource,
 			last_refresh_ts.tv_sec >> 32,
 			last_refresh_ts.tv_sec & 0xffffffff,
 			last_refresh_ts.tv_nsec,
 			uint32_t(refresh_cycle),
-			wl_surface_info->sequence >> 32,
-			wl_surface_info->sequence & 0xffffffff,
+			sequence >> 32,
+			sequence & 0xffffffff,
 			flags);
-		wl_resource_destroy(feedback);
+		wl_resource_destroy( feedback->resource );
 	}
 
 	presentation_feedbacks.clear();
 }
 
-void wlserver_presentation_feedback_discard( struct wlr_surface *surface, std::vector<struct wl_resource*>& presentation_feedbacks )
+// Takes no surface, the commit may outlive it in a queue nothing drains.
+void wlserver_presentation_feedback_discard( std::vector<wlserver_presentation_feedback_ref>& presentation_feedbacks )
 {
-	wlserver_wl_surface_info *wl_surface_info = get_wl_surface_info(surface);
-
-	if ( !wl_surface_info )
-		return;
-
-	wl_surface_info->sequence++;
-
 	for (auto& feedback : presentation_feedbacks)
 	{
-		wp_presentation_feedback_send_discarded(feedback);
+		if ( !feedback->resource )
+			continue;
+
+		wp_presentation_feedback_send_discarded( feedback->resource );
+		wl_resource_destroy( feedback->resource );
 	}
 	presentation_feedbacks.clear();
 }
@@ -1652,38 +1720,50 @@ void wlserver_presentation_feedback_discard( struct wlr_surface *surface, std::v
 ///////////////////////
 
 
-void wlserver_past_present_timing( struct wlr_surface *surface, uint32_t present_id, uint64_t desired_present_time, uint64_t actual_present_time, uint64_t earliest_present_time, uint64_t present_margin )
+void wlserver_present_timing_report( gamescope::PresentTiming &timing, uint64_t queue_end, uint64_t dequeued, uint64_t pixel_out, uint64_t earliest_present_time, uint64_t earliest_latch_time )
 {
-	wlserver_wl_surface_info *wl_info = get_wl_surface_info( surface );
-	if ( !wl_info )
+	assert( wlserver_is_lock_held() );
+	auto serial = std::exchange( timing.serial, std::nullopt );
+	if ( !serial || !timing.route || !timing.route->resource )
 		return;
 
-	for (auto& swapchain : wl_info->gamescope_swapchains) {
-		gamescope_swapchain_send_past_present_timing(
-			swapchain,
-			present_id,
-			desired_present_time >> 32,
-			desired_present_time & 0xffffffff,
-			actual_present_time >> 32,
-			actual_present_time & 0xffffffff,
-			earliest_present_time >> 32,
-			earliest_present_time & 0xffffffff,
-			present_margin >> 32,
-			present_margin & 0xffffffff);
+	wl_resource *resource = timing.route->resource;
+	if ( timing.legacy )
+	{
+		uint64_t margin = earliest_present_time > earliest_latch_time ? earliest_present_time - earliest_latch_time : 0;
+		gamescope_swapchain_send_past_present_timing( resource, uint32_t(*serial),
+			timing.target >> 32, uint32_t(timing.target), pixel_out >> 32, uint32_t(pixel_out),
+			earliest_present_time >> 32, uint32_t(earliest_present_time), margin >> 32, uint32_t(margin) );
+	}
+	else if ( wl_resource_get_version( resource ) >= 2 )
+	{
+		present_timing_log.debugf( "report serial %lu: queued %lu, dequeued %lu, pixel out %lu", *serial, queue_end, dequeued, pixel_out );
+		gamescope_swapchain_send_present_timing( resource, *serial >> 32, uint32_t(*serial),
+			queue_end >> 32, uint32_t(queue_end), dequeued >> 32, uint32_t(dequeued),
+			pixel_out >> 32, uint32_t(pixel_out) );
 	}
 }
 
-void wlserver_refresh_cycle( struct wlr_surface *surface, uint64_t refresh_cycle )
+void wlserver_present_timing_discard( gamescope::PresentTiming &timing )
+{
+	// Version 1 never reported dropped frames, keep that behavior.
+	if ( timing.legacy )
+		timing.serial = std::nullopt;
+	else
+		wlserver_present_timing_report( timing, 0, 0, 0, 0, 0 );
+}
+
+void wlserver_refresh_cycle( struct wlr_surface *surface, uint64_t refresh_cycle, uint64_t refresh_interval )
 {
 	wlserver_wl_surface_info *wl_info = get_wl_surface_info( surface );
 	if ( !wl_info )
 		return;
 
 	for (auto& swapchain : wl_info->gamescope_swapchains) {
-		gamescope_swapchain_send_refresh_cycle(
-			swapchain,
-			refresh_cycle >> 32,
-			refresh_cycle & 0xffffffff);
+		gamescope_swapchain_send_refresh_cycle( swapchain, refresh_cycle >> 32, uint32_t(refresh_cycle) );
+		if ( wl_resource_get_version( swapchain ) >= 2 )
+			gamescope_swapchain_send_timing_properties( swapchain,
+				refresh_cycle >> 32, uint32_t(refresh_cycle), refresh_interval >> 32, uint32_t(refresh_interval) );
 	}
 }
 

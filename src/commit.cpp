@@ -23,9 +23,10 @@ commit_t::~commit_t()
         vulkanTex = nullptr;
 
     wlserver_lock();
+    wlserver_present_timing_discard( present_timing );
     if (!presentation_feedbacks.empty())
     {
-        wlserver_presentation_feedback_discard(surf, presentation_feedbacks);
+        wlserver_presentation_feedback_discard(presentation_feedbacks);
         // presentation_feedbacks cleared by wlserver_presentation_feedback_discard
     }
     wlr_buffer_unlock( buf );
@@ -77,7 +78,9 @@ void commit_t::Signal()
         m_pDoneCommits->listCommitsDone.push_back( CommitDoneEntry_t{
             .winSeq = win_seq,
             .commitID = commitID,
-            .desiredPresentTime = desired_present_time,
+            .desiredPresentTime = present_timing.target,
+            .timingFlags = present_timing.flags,
+            .route = present_timing.route,
             .fifo = fifo,
         } );
     }

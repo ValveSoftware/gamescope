@@ -29,7 +29,7 @@
     it.
   </description>
 
-  <interface name="gamescope_swapchain_factory_v2" version="1">
+  <interface name="gamescope_swapchain_factory_v2" version="2">
     <request name="destroy" type="destructor"></request>
 
     <request name="create_swapchain">
@@ -43,7 +43,7 @@
     </request>
   </interface>
 
-  <interface name="gamescope_swapchain" version="1">
+  <interface name="gamescope_swapchain" version="2">
     <request name="destroy" type="destructor"></request>
 
     <request name="override_window_content">
@@ -189,6 +189,58 @@
 
     <event name="retired">
       <description summary="Swapchain was remotely retired"></description>
+    </event>
+    <enum name="present_timing_flags" bitfield="true" since="2">
+      <entry name="relative" value="1" summary="target is a duration after the preceding FIFO expected scanout"/>
+      <entry name="nearest_refresh_cycle" value="2" summary="allow presentation up to half an effective refresh cycle early"/>
+    </enum>
+
+    <request name="set_present_timing" since="2">
+      <description summary="timing request for the next commit">
+        Registers a client-local serial for one timing report. Target uses
+        CLOCK_MONOTONIC nanoseconds, or a duration with the relative flag. Zero
+        requests presentation as soon as possible. Unknown flag bits are ignored.
+        The request applies to the next commit that carries buffer content,
+        including one that recommits the current buffer. Replacing an armed
+        serial reports the old serial as dropped. A zero serial clears any
+        armed request and is never reported.
+      </description>
+      <arg name="serial_hi" type="uint"/>
+      <arg name="serial_lo" type="uint"/>
+      <arg name="target_hi" type="uint"/>
+      <arg name="target_lo" type="uint"/>
+      <arg name="flags" type="uint" enum="present_timing_flags"/>
+    </request>
+
+    <event name="present_timing" since="2">
+      <description summary="timing result for the registering swapchain">
+        Sent once per serial when latched or dropped, unless this object is
+        destroyed first. All timestamps use CLOCK_MONOTONIC nanoseconds. Zero
+        means unavailable, and a dropped commit has all timestamps zero. Pixel
+        out is the compositor's predicted scanout.
+      </description>
+      <arg name="serial_hi" type="uint"/>
+      <arg name="serial_lo" type="uint"/>
+      <arg name="queue_end_hi" type="uint"/>
+      <arg name="queue_end_lo" type="uint"/>
+      <arg name="dequeued_hi" type="uint"/>
+      <arg name="dequeued_lo" type="uint"/>
+      <arg name="pixel_out_hi" type="uint"/>
+      <arg name="pixel_out_lo" type="uint"/>
+    </event>
+
+    <event name="timing_properties" since="2">
+      <description summary="effective and base refresh cycles">
+        Duration is the effective cycle including the frame limiter, the same
+        value refresh_cycle carries. Interval is the panel cycle on fixed
+        refresh, or UINT64_MAX for variable refresh.
+        Sent once the compositor knows the window's timing and whenever the
+        values change. Until then both values are unknown to the client.
+      </description>
+      <arg name="refresh_duration_hi" type="uint"/>
+      <arg name="refresh_duration_lo" type="uint"/>
+      <arg name="refresh_interval_hi" type="uint"/>
+      <arg name="refresh_interval_lo" type="uint"/>
     </event>
   </interface>
 </protocol>
