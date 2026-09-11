@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <array>
 #include <bitset>
+#include <deque>
 #include <dlfcn.h>
 #include "vulkan_include.h"
 #include "Utils/Algorithm.h"
@@ -41,12 +42,14 @@
 #include "cs_composite_blur.h"
 #include "cs_composite_blur_cond.h"
 #include "cs_composite_rcas.h"
+#include "cs_composite_rcas_1px.h"
 #include "cs_easu.h"
 #include "cs_easu_fp16.h"
 #include "cs_gaussian_blur_horizontal.h"
 #include "cs_nis.h"
 #include "cs_nis_fp16.h"
 #include "cs_rgb_to_nv12.h"
+#include "cs_sgsr.h"
 
 #define A_CPU
 #include "shaders/ffx_a.h"
@@ -138,6 +141,8 @@ std::span<const uint64_t> GetSupportedSampleModifiers( uint32_t uDrmFormat )
 }
 
 static LogScope vk_log("vulkan");
+// Debug verbosity turns the timestamp queries on, so log_composite_timing debug is the switch.
+static LogScope composite_timing_log("composite_timing");
 
 static void vk_errorf(VkResult result, const char *fmt, ...) {
 	static char buf[1024];
@@ -524,6 +529,12 @@ bool CVulkanDevice::createDevice()
 		vk.GetPhysicalDeviceFeatures2( physDev(), &features2 );
 
 		m_bSupportsFp16 = vulkan12Features.shaderFloat16 && features2.features.shaderInt16;
+	}
+
+	{
+		VkPhysicalDeviceProperties deviceProperties;
+		vk.GetPhysicalDeviceProperties( physDev(), &deviceProperties );
+		m_uVendorID = deviceProperties.vendorID;
 	}
 
 	float queuePriorities = 1.0f;
@@ -953,7 +964,15 @@ bool CVulkanDevice::createShaders()
 	SHADER(BLUR, cs_composite_blur);
 	SHADER(BLUR_COND, cs_composite_blur_cond);
 	SHADER(BLUR_FIRST_PASS, cs_gaussian_blur_horizontal);
-	SHADER(RCAS, cs_composite_rcas);
+	// The one pixel layout is only measured on Adreno, every other vendor keeps the quad swizzle.
+	if (m_uVendorID == 0x5143) /* Qualcomm */
+	{
+		SHADER(RCAS, cs_composite_rcas_1px);
+	}
+	else
+	{
+		SHADER(RCAS, cs_composite_rcas);
+	}
 	if (m_bSupportsFp16)
 	{
 		SHADER(EASU, cs_easu_fp16);
@@ -965,6 +984,7 @@ bool CVulkanDevice::createShaders()
 		SHADER(NIS, cs_nis);
 	}
 	SHADER(RGB_TO_NV12, cs_rgb_to_nv12);
+	SHADER(SGSR, cs_sgsr);
 #undef SHADER
 
 	for (uint32_t i = 0; i < shaderInfos.size(); i++)
@@ -1195,6 +1215,7 @@ void CVulkanDevice::compileAllPipelines(std::stop_token st)
 	SHADER(EASU, 1, 1, 1);
 	SHADER(NIS, 1, 1, 1);
 	SHADER(RGB_TO_NV12, 1, 1, 1);
+	SHADER(SGSR, 1, 1, 1);
 #undef SHADER
 
 	for (auto& info : pipelineInfos) {
@@ -1383,6 +1404,13 @@ uint64_t CVulkanDevice::submit( std::unique_ptr<CVulkanCmdBuffer> cmdBuffer)
 	uint64_t nextSeqNo = submitInternal(cmdBuffer.get());
 	m_pendingCmdBufs.emplace(nextSeqNo, std::move(cmdBuffer));
 	return nextSeqNo;
+}
+
+uint64_t CVulkanDevice::completedSeqNo()
+{
+	uint64_t ulSeqNo = 0;
+	vk_check( vk.GetSemaphoreCounterValue( device(), m_scratchTimelineSemaphore, &ulSeqNo ) );
+	return ulSeqNo;
 }
 
 void CVulkanDevice::garbageCollect( void )
@@ -3811,10 +3839,12 @@ struct BlitPushData_t
 			scale[i] = layer->scale;
 			offset[i] = layer->offsetPixelCenter();
 			opacity[i] = layer->opacity;
-            if (layer->isScreenSize() || (layer->filter == GamescopeUpscaleFilter::LINEAR && layer->viewConvertsToLinearAutomatically()))
+            // SGSR only exists as a pre-pass, a layer still carrying it samples as linear.
+            GamescopeUpscaleFilter eFilter = layer->filter == GamescopeUpscaleFilter::SGSR ? GamescopeUpscaleFilter::LINEAR : layer->filter;
+            if (layer->isScreenSize() || (eFilter == GamescopeUpscaleFilter::LINEAR && layer->viewConvertsToLinearAutomatically()))
                 u_shaderFilter |= ((uint32_t)GamescopeUpscaleFilter::FROM_VIEW) << (i * 4);
             else
-                u_shaderFilter |= ((uint32_t)layer->filter) << (i * 4);
+                u_shaderFilter |= ((uint32_t)eFilter) << (i * 4);
 
 			u_alphaMode |= ((uint32_t)layer->eAlphaBlendingMode) << ( i * 4 );
 
@@ -3917,6 +3947,17 @@ struct EasuPushData_t
 	}
 };
 
+struct SgsrPushData_t
+{
+	uint32_t u_width;
+	uint32_t u_height;
+
+	SgsrPushData_t(uint32_t tempX, uint32_t tempY)
+		: u_width(tempX), u_height(tempY)
+	{
+	}
+};
+
 struct RcasPushData_t
 {
 	uvec2_t u_layer0Offset;
@@ -3955,10 +3996,11 @@ struct RcasPushData_t
 		{
 			const FrameInfo_t::Layer_t *layer = &frameInfo->layers.get( i );
 
-            if (i == 0 || layer->isScreenSize() || (layer->filter == GamescopeUpscaleFilter::LINEAR && layer->viewConvertsToLinearAutomatically()))
+            GamescopeUpscaleFilter eFilter = layer->filter == GamescopeUpscaleFilter::SGSR ? GamescopeUpscaleFilter::LINEAR : layer->filter;
+            if (i == 0 || layer->isScreenSize() || (eFilter == GamescopeUpscaleFilter::LINEAR && layer->viewConvertsToLinearAutomatically()))
                 u_shaderFilter |= ((uint32_t)GamescopeUpscaleFilter::FROM_VIEW) << (i * 4);
             else
-                u_shaderFilter |= ((uint32_t)layer->filter) << (i * 4);
+                u_shaderFilter |= ((uint32_t)eFilter) << (i * 4);
 
 			u_alphaMode |= ((uint32_t)layer->eAlphaBlendingMode) << ( i * 4 );
 
@@ -4089,6 +4131,180 @@ std::optional<uint64_t> vulkan_screenshot( const struct FrameInfo_t *frameInfo, 
 extern std::string g_reshade_effect;
 extern uint32_t g_reshade_technique_idx;
 
+// GPU timestamps around each composite, read back a few submits later and
+// averaged per filter so a diagnostic never stalls the queue.
+namespace
+{
+	struct CompositeTiming_t
+	{
+		static constexpr uint32_t k_uSlots = 64;
+
+		struct Pending_t
+		{
+			uint32_t uSlot;
+			const char *pszKey;
+			// Set when a middle timestamp splits the two upscale passes.
+			const char *pszKeyPre;
+			const char *pszKeyPost;
+			// A reused slot reports the previous use as available until its
+			// reset executes, so results are only read once the submit is done.
+			uint64_t ulSeqNo;
+		};
+
+		struct Accum_t
+		{
+			double flTotalNs = 0.0;
+			uint32_t uCount = 0;
+		};
+
+		VkQueryPool pool = VK_NULL_HANDLE;
+		float flPeriodNs = 0.0f;
+		uint64_t ulValidMask = ~0ull;
+		bool bUnsupported = false;
+		uint32_t uNextSlot = 0;
+		std::deque<Pending_t> pending;
+		bool bMidWritten[ k_uSlots ] = {};
+		std::unordered_map<const char *, Accum_t> accum;
+		uint64_t ulLastReportNs = 0;
+	};
+
+	CompositeTiming_t g_CompositeTiming;
+
+	const char *UpscaleFilterName( GamescopeUpscaleFilter eFilter )
+	{
+		switch ( eFilter )
+		{
+			case GamescopeUpscaleFilter::LINEAR:  return "linear";
+			case GamescopeUpscaleFilter::NEAREST: return "nearest";
+			case GamescopeUpscaleFilter::FSR:     return "fsr";
+			case GamescopeUpscaleFilter::NIS:     return "nis";
+			case GamescopeUpscaleFilter::PIXEL:   return "pixel";
+			case GamescopeUpscaleFilter::SGSR:    return "sgsr";
+			default:                              return "view";
+		}
+	}
+
+	bool CompositeTimingInit()
+	{
+		CompositeTiming_t &t = g_CompositeTiming;
+		if ( t.pool != VK_NULL_HANDLE || t.bUnsupported )
+			return t.pool != VK_NULL_HANDLE;
+
+		uint32_t uFamilyCount = 0;
+		g_device.vk.GetPhysicalDeviceQueueFamilyProperties( g_device.physDev(), &uFamilyCount, nullptr );
+		std::vector<VkQueueFamilyProperties> families( uFamilyCount );
+		g_device.vk.GetPhysicalDeviceQueueFamilyProperties( g_device.physDev(), &uFamilyCount, families.data() );
+		if ( g_device.queueFamily() >= uFamilyCount || families[ g_device.queueFamily() ].timestampValidBits == 0 )
+		{
+			composite_timing_log.errorf( "queue family %u has no timestamp support", g_device.queueFamily() );
+			t.bUnsupported = true;
+			return false;
+		}
+
+		const uint32_t uValidBits = families[ g_device.queueFamily() ].timestampValidBits;
+		t.ulValidMask = uValidBits >= 64 ? ~0ull : ( ( 1ull << uValidBits ) - 1 );
+
+		VkPhysicalDeviceProperties props;
+		g_device.vk.GetPhysicalDeviceProperties( g_device.physDev(), &props );
+		t.flPeriodNs = props.limits.timestampPeriod;
+
+		VkQueryPoolCreateInfo createInfo =
+		{
+			.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
+			.queryType = VK_QUERY_TYPE_TIMESTAMP,
+			.queryCount = CompositeTiming_t::k_uSlots * 3,
+		};
+		VkResult res = g_device.vk.CreateQueryPool( g_device.device(), &createInfo, nullptr, &t.pool );
+		if ( res != VK_SUCCESS )
+		{
+			vk_errorf( res, "composite_timing: vkCreateQueryPool failed" );
+			t.bUnsupported = true;
+			return false;
+		}
+		return true;
+	}
+
+	void CompositeTimingDrain()
+	{
+		CompositeTiming_t &t = g_CompositeTiming;
+		while ( !t.pending.empty() )
+		{
+			const CompositeTiming_t::Pending_t &p = t.pending.front();
+			if ( p.ulSeqNo == 0 || p.ulSeqNo > g_device.completedSeqNo() )
+				break;
+			// Value then availability per query, 64-bit, begin/mid/end.
+			const uint32_t uCount = p.pszKeyPre ? 3 : 2;
+			const uint32_t uEnd = p.pszKeyPre ? 2 : 1;
+			uint64_t ulResults[ 6 ] = {};
+			VkResult res = g_device.vk.GetQueryPoolResults( g_device.device(), t.pool, p.uSlot * 3, uCount, sizeof( ulResults ), ulResults, sizeof( uint64_t ) * 2,
+				VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT );
+			if ( res != VK_SUCCESS || !ulResults[ 1 ] || !ulResults[ uEnd * 2 + 1 ] )
+				break;
+
+			auto Add = [&]( const char *pszKey, uint64_t ulFrom, uint64_t ulTo )
+			{
+				CompositeTiming_t::Accum_t &a = t.accum[ pszKey ];
+				a.flTotalNs += double( ( ulTo - ulFrom ) & t.ulValidMask ) * t.flPeriodNs;
+				a.uCount++;
+			};
+			Add( p.pszKey, ulResults[ 0 ], ulResults[ uEnd * 2 ] );
+			if ( p.pszKeyPre )
+			{
+				Add( p.pszKeyPre, ulResults[ 0 ], ulResults[ 2 ] );
+				Add( p.pszKeyPost, ulResults[ 2 ], ulResults[ 4 ] );
+			}
+			t.pending.pop_front();
+		}
+
+		const uint64_t ulNow = get_time_in_nanos();
+		if ( ulNow - t.ulLastReportNs < 2'000'000'000ull )
+			return;
+		t.ulLastReportNs = ulNow;
+		for ( auto &[ pszKey, a ] : t.accum )
+		{
+			if ( a.uCount )
+				composite_timing_log.debugf( "%s %.0f us avg over %u", pszKey, a.flTotalNs / a.uCount / 1000.0, a.uCount );
+			a = {};
+		}
+	}
+
+	// Returns the slot whose end timestamp the caller writes before submit.
+	std::optional<uint32_t> CompositeTimingBegin( CVulkanCmdBuffer *pCmdBuffer )
+	{
+		if ( !composite_timing_log.Enabled( LOG_DEBUG ) || !CompositeTimingInit() )
+			return std::nullopt;
+
+		CompositeTiming_t &t = g_CompositeTiming;
+		CompositeTimingDrain();
+		if ( t.pending.size() >= CompositeTiming_t::k_uSlots )
+			return std::nullopt;
+
+		const uint32_t uSlot = t.uNextSlot;
+		t.uNextSlot = ( t.uNextSlot + 1 ) % CompositeTiming_t::k_uSlots;
+		t.bMidWritten[ uSlot ] = false;
+		g_device.vk.CmdResetQueryPool( pCmdBuffer->rawBuffer(), t.pool, uSlot * 3, 3 );
+		// Bottom of pipe so the first timestamp lands after earlier submissions drain.
+		g_device.vk.CmdWriteTimestamp( pCmdBuffer->rawBuffer(), VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, t.pool, uSlot * 3 );
+		return uSlot;
+	}
+
+	// Between the upscale pre-pass and the composite that follows it.
+	void CompositeTimingMid( CVulkanCmdBuffer *pCmdBuffer, uint32_t uSlot )
+	{
+		CompositeTiming_t &t = g_CompositeTiming;
+		g_device.vk.CmdWriteTimestamp( pCmdBuffer->rawBuffer(), VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, t.pool, uSlot * 3 + 1 );
+		t.bMidWritten[ uSlot ] = true;
+	}
+
+	void CompositeTimingEnd( CVulkanCmdBuffer *pCmdBuffer, uint32_t uSlot, const char *pszKey, const char *pszKeyPre, const char *pszKeyPost )
+	{
+		CompositeTiming_t &t = g_CompositeTiming;
+		const bool bMid = t.bMidWritten[ uSlot ];
+		g_device.vk.CmdWriteTimestamp( pCmdBuffer->rawBuffer(), VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, t.pool, uSlot * 3 + ( bMid ? 2 : 1 ) );
+		t.pending.push_back( { uSlot, pszKey, bMid ? pszKeyPre : nullptr, bMid ? pszKeyPost : nullptr, 0 } );
+	}
+}
+
 ReshadeEffectPipeline *g_pLastReshadeEffect = nullptr;
 
 std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamescope::Rc<CVulkanTexture> pPipewireTexture, bool partial, gamescope::Rc<CVulkanTexture> pOutputOverride, bool increment, std::unique_ptr<CVulkanCmdBuffer> pInCommandBuffer )
@@ -4139,12 +4355,16 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 	// Overrides (screenshots, upscale cache) are logical-sized, so never rotated.
 	const uint32_t uOutputRotation = pOutputOverride ? 0u : g_uOutputRotation;
 
+	// The pre-emptive upscale is the only caller that brings its own command buffer.
+	const bool bPreemptiveUpscale = pOutputOverride != nullptr && pInCommandBuffer != nullptr;
 	auto cmdBuffer = pInCommandBuffer ? std::move( pInCommandBuffer ) : g_device.commandBuffer();
+
+	const std::optional<uint32_t> oTimingSlot = CompositeTimingBegin( cmdBuffer.get() );
 
 	for (uint32_t i = 0; i < EOTF_Count; i++)
 		cmdBuffer->bindColorMgmtLuts(i, frameInfo->shaperLut[i], frameInfo->lut3D[i]);
 
-	if ( frameInfo->useFSRLayer0 )
+	if ( frameInfo->useFSRLayer0 || frameInfo->useSGSRLayer0 )
 	{
 		uint32_t inputX = frameInfo->layers.get( 0 ).tex->width();
 		uint32_t inputY = frameInfo->layers.get( 0 ).tex->height();
@@ -4154,17 +4374,23 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 
 		update_tmp_images(tempX, tempY);
 
-		cmdBuffer->bindPipeline(g_device.pipeline(SHADER_TYPE_EASU));
+		cmdBuffer->bindPipeline(g_device.pipeline(frameInfo->useSGSRLayer0 ? SHADER_TYPE_SGSR : SHADER_TYPE_EASU));
 		cmdBuffer->bindTarget(g_output.tmpOutput);
 		cmdBuffer->bindTexture(0, frameInfo->layers.get( 0 ).tex);
 		cmdBuffer->setTextureSrgb(0, true);
 		cmdBuffer->setSamplerUnnormalized(0, false);
 		cmdBuffer->setSamplerNearest(0, false);
-		cmdBuffer->uploadConstants<EasuPushData_t>(inputX, inputY, tempX, tempY);
+		if ( frameInfo->useSGSRLayer0 )
+			cmdBuffer->uploadConstants<SgsrPushData_t>(tempX, tempY);
+		else
+			cmdBuffer->uploadConstants<EasuPushData_t>(inputX, inputY, tempX, tempY);
 
 		int pixelsPerGroup = 16;
 
 		cmdBuffer->dispatch(div_roundup(tempX, pixelsPerGroup), div_roundup(tempY, pixelsPerGroup));
+
+		if ( oTimingSlot )
+			CompositeTimingMid( cmdBuffer.get(), *oTimingSlot );
 
 		cmdBuffer->bindPipeline(g_device.pipeline(SHADER_TYPE_RCAS, frameInfo->layers.count(), frameInfo->ycbcrMask() & ~1, 0u, frameInfo->colorspaceMask(), outputTF ));
 		bind_all_layers(cmdBuffer.get(), frameInfo);
@@ -4173,7 +4399,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 		cmdBuffer->setSamplerUnnormalized(0, false);
 		cmdBuffer->setSamplerNearest(0, false);
 		cmdBuffer->bindTarget(compositeImage);
-		cmdBuffer->uploadConstants<RcasPushData_t>(frameInfo, g_upscaleFilterSharpness / 10.0f, uOutputRotation);
+		cmdBuffer->uploadConstants<RcasPushData_t>(frameInfo, frameInfo->nUpscaleSharpness / 10.0f, uOutputRotation);
 
 		cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup));
 	}
@@ -4187,7 +4413,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 
 		update_tmp_images(tempX, tempY);
 
-		float nisSharpness = (20 - g_upscaleFilterSharpness) / 20.0f;
+		float nisSharpness = (20 - frameInfo->nUpscaleSharpness) / 20.0f;
 
 		cmdBuffer->bindPipeline(g_device.pipeline(SHADER_TYPE_NIS));
 		cmdBuffer->bindTarget(g_output.tmpOutput);
@@ -4320,7 +4546,25 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 		}
 	}
 
+	if ( oTimingSlot )
+	{
+		// Keys are stable buffers so the accumulator can hash the pointer.
+		static char szKeys[ 3 ][ 2 ][ 8 ][ 32 ];
+		const GamescopeUpscaleFilter eFilter = frameInfo->layers.count() ? frameInfo->layers.get( 0 ).filter : GamescopeUpscaleFilter::LINEAR;
+		const uint32_t uFilter = std::min<uint32_t>( uint32_t( eFilter ), 7u );
+		const char *pszMode = bPreemptiveUpscale ? "preupscale" : "composite";
+		char *pszKey = szKeys[ 0 ][ bPreemptiveUpscale ][ uFilter ];
+		char *pszKeyPre = szKeys[ 1 ][ bPreemptiveUpscale ][ uFilter ];
+		char *pszKeyPost = szKeys[ 2 ][ bPreemptiveUpscale ][ uFilter ];
+		snprintf( pszKey, sizeof( szKeys[ 0 ][ 0 ][ 0 ] ), "%s %s", pszMode, UpscaleFilterName( eFilter ) );
+		snprintf( pszKeyPre, sizeof( szKeys[ 0 ][ 0 ][ 0 ] ), "%s %s pre-pass", pszMode, UpscaleFilterName( eFilter ) );
+		snprintf( pszKeyPost, sizeof( szKeys[ 0 ][ 0 ][ 0 ] ), "%s %s rcas", pszMode, UpscaleFilterName( eFilter ) );
+		CompositeTimingEnd( cmdBuffer.get(), *oTimingSlot, pszKey, pszKeyPre, pszKeyPost );
+	}
+
 	uint64_t sequence = g_device.submit(std::move(cmdBuffer));
+	if ( oTimingSlot )
+		g_CompositeTiming.pending.back().ulSeqNo = sequence;
 
 	if ( !GetBackend()->UsesVulkanSwapchain() && pOutputOverride == nullptr && increment )
 	{

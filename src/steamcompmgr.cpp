@@ -301,7 +301,6 @@ gamescope::ConVar<bool> cv_adaptive_sync_uncapped( "adaptive_sync_uncapped", tru
 
 gamescope::ConVar<bool> cv_upscale_preemptive( "upscale_preemptive", true, "Allow pre-emptive upscaling" );
 gamescope::ConVar<bool> cv_upscale_preemptive_debug_force_sync( "upscale_preemptive_debug_force_sync", false, "Force synchronize pre-emptive upscaling" );
-gamescope::ConVar<bool> cv_hack_remap_sharp_to_fsr( "hack_remap_sharp_to_fsr", true, "HACK: treat unknown scaling filter 5 as FSR" );
 
 uint64_t g_SteamCompMgrLimitedAppRefreshCycle = 16'666'666;
 uint64_t g_SteamCompMgrAppRefreshCycle = 16'666'666;
@@ -1018,6 +1017,7 @@ struct global_focus_t : public focus_t
 
 	GamescopeUpscaleFilter eUpscaleFilter = GamescopeUpscaleFilter::LINEAR;
 	GamescopeUpscaleScaler eUpscaleScaler = GamescopeUpscaleScaler::AUTO;
+	int nUpscaleSharpness = 0;
 	// Cleanup for the previous pre-emptive upscale, kept a frame behind.
 	std::optional<uint64_t> oLastPreemptiveUpscaleSeqNo;
 	std::vector<TempUpscaleImage_t> UpscaleImages;
@@ -1027,7 +1027,7 @@ struct global_focus_t : public focus_t
 	std::array< BaseLayerInfo_t, HELD_COMMIT_COUNT > CachedPlanes = {};
 	unsigned int uFadeOutStartTime = 0;
 	bool bPendingFade = false;
-	bool bFSRActive = false;
+	GamescopeUpscaleFilter eActiveUpscaler = GamescopeUpscaleFilter::LINEAR;
 	uint64_t ulBasePlaneCommitID = 0;
 	uint32_t uBasePlaneAppID = 0;
 	bool bBasePlaneIsFifo = false;
@@ -1137,6 +1137,62 @@ static gamescope::ConCommand cc_focus_info( "focus_info", "Dump debug info about
 	g_bPendingFocusInfo = true;
 });
 
+// The upscale globals belong to the steamcompmgr thread, the main loop applies these.
+static std::atomic<int32_t> g_nPendingUpscaleFilter = { -1 };
+static std::atomic<int32_t> g_nPendingUpscaleSharpness = { -1 };
+
+static gamescope::ConCommand cc_scaling_filter( "scaling_filter", "Set the scaling filter (linear, nearest, fsr, nis, pixel, sgsr)",
+[]( std::span<std::string_view> args )
+{
+	if ( args.size() < 2 )
+	{
+		console_log.errorf( "Usage: scaling_filter <filter>" );
+		return;
+	}
+
+	std::optional<GamescopeUpscaleFilter> oFilter = ParseUpscaleFilter( args[1] );
+	if ( !oFilter )
+	{
+		console_log.errorf( "Unknown scaling filter '%.*s'", (int)args[1].size(), args[1].data() );
+		return;
+	}
+
+	g_nPendingUpscaleFilter = int32_t( *oFilter );
+});
+
+static gamescope::ConCommand cc_scaling_sharpness( "scaling_sharpness", "Set the scaling sharpness (0 to 20)",
+[]( std::span<std::string_view> args )
+{
+	if ( args.size() < 2 )
+	{
+		console_log.errorf( "Usage: scaling_sharpness <0 to 20>" );
+		return;
+	}
+
+	std::optional<int32_t> onSharpness = gamescope::Parse<int32_t>( args[1] );
+	if ( !onSharpness )
+	{
+		console_log.errorf( "Failed to parse sharpness." );
+		return;
+	}
+
+	g_nPendingUpscaleSharpness = clamp( *onSharpness, 0, 20 );
+});
+
+static void ApplyPendingUpscaleSettings()
+{
+	int32_t nSharpness = g_nPendingUpscaleSharpness.exchange( -1 );
+	if ( nSharpness >= 0 )
+		g_upscaleFilterSharpness = nSharpness;
+
+	int32_t nFilter = g_nPendingUpscaleFilter.exchange( -1 );
+	if ( nFilter >= 0 )
+		g_wantedUpscaleFilter = GamescopeUpscaleFilter( nFilter );
+
+	if ( nSharpness >= 0 || nFilter >= 0 )
+		hasRepaint = true;
+}
+
 unsigned long	damageSequence = 0;
 
 uint64_t		cursorHideTime = 10'000ul * 1'000'000ul;
@@ -1242,7 +1298,10 @@ gamescope::ConCommand cc_debug_set_fps_limit( "debug_set_fps_limit", "Set refres
 
 static int g_nRuntimeInfoFd = -1;
 
-bool g_bFSRActive = false;
+// The shader upscaler that produced the base layer, LINEAR when none did.
+GamescopeUpscaleFilter g_eActiveUpscaler = GamescopeUpscaleFilter::LINEAR;
+GamescopeUpscaleFilter g_eWantedUpscaler = GamescopeUpscaleFilter::LINEAR;
+int g_nActiveUpscaleSharpness = 0;
 
 BlurMode g_BlurMode = BLUR_MODE_OFF;
 BlurMode g_BlurModeOld = BLUR_MODE_OFF;
@@ -2801,9 +2860,11 @@ static void paint_pipewire()
 	const UpscaleSettings_t upscaleSettings = GetUpscaleSettings(
 		GetCurrentFocus() && window_is_steam( GetCurrentFocus()->focusWindow ),
 		g_wantedUpscaleFilter,
-		g_wantedUpscaleScaler );
+		g_wantedUpscaleScaler,
+		g_upscaleFilterSharpness );
 	frameInfo.eUpscaleFilter = upscaleSettings.eFilter;
 	frameInfo.eUpscaleScaler = upscaleSettings.eScaler;
+	frameInfo.nUpscaleSharpness = upscaleSettings.nSharpness;
 
 	// Apply screenshot-style color management.
 	for ( uint32_t nInputEOTF = 0; nInputEOTF < EOTF_Count; nInputEOTF++ )
@@ -3070,6 +3131,7 @@ paint_all( global_focus_t *pFocus, bool async )
 	frameInfo.bFadingOut = fadingOut;
 	frameInfo.eUpscaleFilter = pFocus->eUpscaleFilter;
 	frameInfo.eUpscaleScaler = pFocus->eUpscaleScaler;
+	frameInfo.nUpscaleSharpness = pFocus->nUpscaleSharpness;
 
 	// If the window we'd paint as the base layer is the streaming client,
 	// find the video underlay and put it up first in the scenegraph
@@ -3137,8 +3199,10 @@ paint_all( global_focus_t *pFocus, bool async )
 					paint_window(pFocus, w, w, &frameInfo, pFocus->cursor, PaintWindowFlag::BasePlane | PaintWindowFlag::DrawBorders, 1.0f, fit);
 
 					bool needsScaling = frameInfo.layers.get( 0 ).scale.x < 0.999f && frameInfo.layers.get( 0 ).scale.y < 0.999f;
-					frameInfo.useFSRLayer0 = frameInfo.eUpscaleFilter == GamescopeUpscaleFilter::FSR && needsScaling;
-					frameInfo.useNISLayer0 = frameInfo.eUpscaleFilter == GamescopeUpscaleFilter::NIS && needsScaling;
+					GamescopeUpscaleFilter eLayer0Filter = ResolveUpscaleFilter( frameInfo.eUpscaleFilter, frameInfo.layers.get( 0 ).colorspace, frameInfo.layers.get( 0 ).isYcbcr() );
+					frameInfo.useFSRLayer0 = eLayer0Filter == GamescopeUpscaleFilter::FSR && needsScaling;
+					frameInfo.useNISLayer0 = eLayer0Filter == GamescopeUpscaleFilter::NIS && needsScaling;
+					frameInfo.useSGSRLayer0 = eLayer0Filter == GamescopeUpscaleFilter::SGSR && needsScaling;
 				}
 				if ( pFocus == GetCurrentMouseFocus() )
 					update_touch_scaling( &frameInfo );
@@ -3315,12 +3379,32 @@ paint_all( global_focus_t *pFocus, bool async )
 
 		frameInfo.useFSRLayer0 = false;
 		frameInfo.useNISLayer0 = false;
+		frameInfo.useSGSRLayer0 = false;
 	}
 
-	pFocus->bFSRActive = frameInfo.useFSRLayer0;
-	if ( const auto& heldCommit = pFocus->HeldCommits[HELD_COMMIT_BASE]; heldCommit && heldCommit->upscaledTexture ) {
-		pFocus->bFSRActive = ( heldCommit->upscaledTexture->eFilter == GamescopeUpscaleFilter::FSR );
+	pFocus->eActiveUpscaler = GamescopeUpscaleFilter::LINEAR;
+	if ( frameInfo.useFSRLayer0 )
+		pFocus->eActiveUpscaler = GamescopeUpscaleFilter::FSR;
+	else if ( frameInfo.useNISLayer0 )
+		pFocus->eActiveUpscaler = GamescopeUpscaleFilter::NIS;
+	else if ( frameInfo.useSGSRLayer0 )
+		pFocus->eActiveUpscaler = GamescopeUpscaleFilter::SGSR;
+	// A full blur draws layer 0 from the blurred image, so its filter never runs.
+	else if ( frameInfo.layers.count() && !frameInfo.layers.get( 0 ).isScreenSize() && frameInfo.blurLayer0 != BLUR_MODE_ALWAYS )
+	{
+		switch ( frameInfo.layers.get( 0 ).filter )
+		{
+			case GamescopeUpscaleFilter::NEAREST:
+			case GamescopeUpscaleFilter::PIXEL:
+				pFocus->eActiveUpscaler = frameInfo.layers.get( 0 ).filter;
+				break;
+			default:
+				break;
+		}
 	}
+	if ( const auto& heldCommit = pFocus->HeldCommits[HELD_COMMIT_BASE];
+		 heldCommit && heldCommit->upscaledTexture && frameInfo.layers.count() && frameInfo.layers.get( 0 ).tex == heldCommit->upscaledTexture->pTexture )
+		pFocus->eActiveUpscaler = ResolveUpscaleFilter( heldCommit->upscaledTexture->eFilter, heldCommit->colorspace(), heldCommit->vulkanTex->isYcbcr() );
 
 	g_bFirstFrame = false;
 
@@ -3502,6 +3586,7 @@ paint_all( global_focus_t *pFocus, bool async )
 				FrameInfo_t screenshotFrameInfo{};
 				screenshotFrameInfo.eUpscaleFilter = frameInfo.eUpscaleFilter;
 				screenshotFrameInfo.eUpscaleScaler = frameInfo.eUpscaleScaler;
+				screenshotFrameInfo.nUpscaleSharpness = frameInfo.nUpscaleSharpness;
 				screenshotFrameInfo.applyOutputColorMgmt = true;
 				screenshotFrameInfo.outputEncodingEOTF = bHDRScreenshot ? EOTF_PQ : EOTF_Gamma22;
 				for ( uint32_t nInputEOTF = 0; nInputEOTF < EOTF_Count; nInputEOTF++ )
@@ -7086,7 +7171,7 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 	if ( ev->atom == ctx->atoms.gamescopeFSRSharpness || ev->atom == ctx->atoms.gamescopeSharpness )
 	{
 		g_upscaleFilterSharpness = (int)clamp( get_prop( ctx, ctx->root, ev->atom, 2 ), 0u, 20u );
-		if ( g_wantedUpscaleFilter == GamescopeUpscaleFilter::FSR || g_wantedUpscaleFilter == GamescopeUpscaleFilter::NIS )
+		if ( UpscaleFilterUsesSharpness( g_wantedUpscaleFilter ) )
 			hasRepaint = true;
 	}
 	if ( ev->atom == ctx->atoms.gamescopeXWaylandModeControl )
@@ -7204,16 +7289,7 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 	{
 		uint32_t uScalingFilter = get_prop( ctx, ctx->root, ctx->atoms.gamescopeNewScalingFilter, 0 );
 
-		// HACK: Steam Frame's Sharp option sends 5, which no filter enum
-		// defines. Remap it so the option does something while the wire
-		// mismatch is sorted out with Steam.
-		if ( cv_hack_remap_sharp_to_fsr && uScalingFilter == 5 )
-		{
-			xwm_log.infof( "HACK: remapping scaling filter 5 to FSR" );
-			uScalingFilter = uint32_t( GamescopeUpscaleFilter::FSR );
-		}
-
-		if ( uScalingFilter > uint32_t( GamescopeUpscaleFilter::PIXEL ) )
+		if ( uScalingFilter > uint32_t( GamescopeUpscaleFilter::SGSR ) )
 			xwm_log.errorf( "Unknown scaling filter %u, keeping %u", uScalingFilter, uint32_t( g_wantedUpscaleFilter ) );
 		else if ( g_wantedUpscaleFilter != GamescopeUpscaleFilter( uScalingFilter ) )
 		{
@@ -8308,9 +8384,12 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 		globalScaleRatio = 1.0f;
 		upscaledFrameInfo.eUpscaleFilter = pUpscaleFocus->eUpscaleFilter;
 		upscaledFrameInfo.eUpscaleScaler = pUpscaleFocus->eUpscaleScaler;
+		upscaledFrameInfo.nUpscaleSharpness = pUpscaleFocus->nUpscaleSharpness;
 		paint_window_commit( newCommit, w, w, &upscaledFrameInfo, nullptr );
-		upscaledFrameInfo.useFSRLayer0 = upscaledFrameInfo.eUpscaleFilter == GamescopeUpscaleFilter::FSR;
-		upscaledFrameInfo.useNISLayer0 = upscaledFrameInfo.eUpscaleFilter == GamescopeUpscaleFilter::NIS;
+		GamescopeUpscaleFilter eLayer0Filter = ResolveUpscaleFilter( upscaledFrameInfo.eUpscaleFilter, upscaledFrameInfo.layers.get( 0 ).colorspace, upscaledFrameInfo.layers.get( 0 ).isYcbcr() );
+		upscaledFrameInfo.useFSRLayer0 = eLayer0Filter == GamescopeUpscaleFilter::FSR;
+		upscaledFrameInfo.useNISLayer0 = eLayer0Filter == GamescopeUpscaleFilter::NIS;
+		upscaledFrameInfo.useSGSRLayer0 = eLayer0Filter == GamescopeUpscaleFilter::SGSR;
 		globalScaleRatio = flOldGlobalScale;
 		zoomScaleRatio = flOldZoomScale;
 		overscanScaleRatio = flOldOverscanScale;
@@ -9534,7 +9613,9 @@ static void publish_mangoapp_snapshot()
 	if ( !pFocus )
 		return;
 
-	g_bFSRActive = pFocus->bFSRActive;
+	g_eActiveUpscaler = pFocus->eActiveUpscaler;
+	g_eWantedUpscaler = g_wantedUpscaleFilter;
+	g_nActiveUpscaleSharpness = pFocus->nUpscaleSharpness;
 	focusWindow_pid = pFocus->nFocusWindowPid;
 	focusWindow_engine = pFocus->pFocusWindowEngine;
 	g_uCurrentBasePlaneCommitID = pFocus->ulBasePlaneCommitID;
@@ -9559,8 +9640,9 @@ static void publish_mangoapp_connector_snapshots()
 		snapshots[ uMsgType ] = MangoappSnapshot_t
 		{
 			.nPid = pFocus->nFocusWindowPid,
-			.bFSRActive = pFocus->bFSRActive,
-			.uFSRSharpness = (uint8_t) g_upscaleFilterSharpness,
+			.eActiveUpscaler = pFocus->eActiveUpscaler,
+			.eWantedUpscaler = g_wantedUpscaleFilter,
+			.uFSRSharpness = (uint8_t) pFocus->nUpscaleSharpness,
 			.pEngineName = pFocus->pFocusWindowEngine,
 			.bSteamFocused = window_is_steam( pFocus->inputFocusWindow ),
 			.bAppWantsHDR = g_bAppWantsHDRCached,
@@ -9909,13 +9991,13 @@ steamcompmgr_main(int argc, char **argv)
 			flush_root = true;
 		}
 
-		if ( g_bFSRActive != g_bWasFSRActive )
+		if ( const bool bFSRActive = g_eActiveUpscaler == GamescopeUpscaleFilter::FSR; bFSRActive != g_bWasFSRActive )
 		{
-			uint32_t active = g_bFSRActive ? 1 : 0;
+			uint32_t active = bFSRActive ? 1 : 0;
 			XChangeProperty( root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeFSRFeedback, XA_CARDINAL, 32, PropModeReplace,
 					(unsigned char *)&active, 1 );
 
-			g_bWasFSRActive = g_bFSRActive;
+			g_bWasFSRActive = bFSRActive;
 			flush_root = true;
 		}
 
@@ -10351,6 +10433,8 @@ steamcompmgr_main(int argc, char **argv)
 		if ( g_bPendingFocusInfo.exchange( false ) )
 			DumpFocusInfo();
 
+		ApplyPendingUpscaleSettings();
+
 		g_bSteamIsActiveWindow = GetCurrentFocus() && window_is_steam( GetCurrentFocus()->focusWindow );
 
 		// If we're in the middle of a fade, then keep us
@@ -10375,9 +10459,11 @@ steamcompmgr_main(int argc, char **argv)
 			const UpscaleSettings_t upscaleSettings = GetUpscaleSettings(
 				window_is_steam( pPaintFocus->focusWindow ),
 				g_wantedUpscaleFilter,
-				g_wantedUpscaleScaler );
+				g_wantedUpscaleScaler,
+				g_upscaleFilterSharpness );
 			pPaintFocus->eUpscaleFilter = upscaleSettings.eFilter;
 			pPaintFocus->eUpscaleScaler = upscaleSettings.eScaler;
+			pPaintFocus->nUpscaleSharpness = upscaleSettings.nSharpness;
 
 			if ( vblank )
 			{

@@ -124,6 +124,7 @@ void commit_t::SetFence( int nFence, bool bMangoNudge, uint32_t uMangoMsgType, C
 }
 
 void calc_scale_factor(GamescopeUpscaleScaler eScaler, float &out_scale_x, float &out_scale_y, float sourceWidth, float sourceHeight);
+void calc_scale_factor_scaler(GamescopeUpscaleScaler eScaler, float &out_scale_x, float &out_scale_y, float sourceWidth, float sourceHeight);
 
 bool commit_t::ShouldPreemptivelyUpscale( GamescopeUpscaleFilter eFilter, GamescopeUpscaleScaler eScaler )
 {
@@ -145,6 +146,16 @@ bool commit_t::ShouldPreemptivelyUpscale( GamescopeUpscaleFilter eFilter, Gamesc
     // I wish this function was more programatic with its inputs, but it does do exactly what we want right now...
     // It should also return a std::pair or a glm uvec
     calc_scale_factor( eScaler, flScaleX, flScaleY, vulkanTex->width(), vulkanTex->height() );
+
+    // The pre-emptive paint forces the global scale to one, so judge magnification without it and on both axes like the paint path.
+    if ( ResolveUpscaleFilter( eFilter, colorspace(), vulkanTex->isYcbcr() ) == GamescopeUpscaleFilter::SGSR )
+    {
+        float flUpscaleX = 1.0f;
+        float flUpscaleY = 1.0f;
+        calc_scale_factor_scaler( eScaler, flUpscaleX, flUpscaleY, vulkanTex->width(), vulkanTex->height() );
+        if ( flUpscaleX <= 1.0f || flUpscaleY <= 1.0f )
+            return false;
+    }
 
     return !close_enough( flScaleX, 1.0f ) || !close_enough( flScaleY, 1.0f );
 }

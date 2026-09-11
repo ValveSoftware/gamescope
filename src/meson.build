@@ -63,12 +63,14 @@ shader_src = [
   'shaders/cs_composite_blur.comp',
   'shaders/cs_composite_blur_cond.comp',
   'shaders/cs_composite_rcas.comp',
+  'shaders/cs_composite_rcas_1px.comp',
   'shaders/cs_easu.comp',
   'shaders/cs_easu_fp16.comp',
   'shaders/cs_gaussian_blur_horizontal.comp',
   'shaders/cs_nis.comp',
   'shaders/cs_nis_fp16.comp',
   'shaders/cs_rgb_to_nv12.comp',
+  'shaders/cs_sgsr.comp',
 ]
 
 spirv_shaders = glsl_generator.process(shader_src)

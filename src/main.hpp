@@ -3,6 +3,11 @@
 #include <getopt.h>
 
 #include <atomic>
+#include <optional>
+#include <string_view>
+#include <utility>
+
+#include "gamescope_shared.h"
 
 extern const char *gamescope_optstring;
 extern const struct option *gamescope_options;
@@ -39,9 +44,31 @@ enum class GamescopeUpscaleFilter : uint32_t
     FSR,
     NIS,
     PIXEL,
+    SGSR,
 
     FROM_VIEW = 0xF, // internal
 };
+
+static constexpr bool UpscaleFilterUsesSharpness( GamescopeUpscaleFilter eFilter )
+{
+    return eFilter == GamescopeUpscaleFilter::FSR ||
+           eFilter == GamescopeUpscaleFilter::NIS ||
+           eFilter == GamescopeUpscaleFilter::SGSR;
+}
+
+// cs_sgsr reads the plain sampler slot, not the YCbCr one, and thresholds in 8-bit SDR units.
+static constexpr bool SgsrSupportsInput( GamescopeAppTextureColorspace eColorspace, bool bYcbcr )
+{
+    return !bYcbcr && ( eColorspace == GAMESCOPE_APP_TEXTURE_COLORSPACE_LINEAR || eColorspace == GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB );
+}
+
+// Sharp ran FSR before SGSR existed, so HDR keeps that rather than losing the sharpening. Neither pre-pass reads the YCbCr slot.
+static constexpr GamescopeUpscaleFilter ResolveUpscaleFilter( GamescopeUpscaleFilter eFilter, GamescopeAppTextureColorspace eColorspace, bool bYcbcr )
+{
+    if ( eFilter != GamescopeUpscaleFilter::SGSR || SgsrSupportsInput( eColorspace, bYcbcr ) )
+        return eFilter;
+    return bYcbcr ? GamescopeUpscaleFilter::LINEAR : GamescopeUpscaleFilter::FSR;
+}
 
 static constexpr bool DoesHardwareSupportUpscaleFilter( GamescopeUpscaleFilter eFilter )
 {
@@ -63,6 +90,7 @@ struct UpscaleSettings_t
 {
     GamescopeUpscaleFilter eFilter{};
     GamescopeUpscaleScaler eScaler{};
+    int nSharpness{};
 };
 
 // XXX(misyl): This is bad! We shouldnt change the upscaler like this at all!!!
@@ -70,12 +98,33 @@ struct UpscaleSettings_t
 static constexpr UpscaleSettings_t GetUpscaleSettings(
     bool bFocusIsSteam,
     GamescopeUpscaleFilter eWantedFilter,
-    GamescopeUpscaleScaler eWantedScaler )
+    GamescopeUpscaleScaler eWantedScaler,
+    int nWantedSharpness )
 {
     if ( bFocusIsSteam )
-        return UpscaleSettings_t{ GamescopeUpscaleFilter::LINEAR, GamescopeUpscaleScaler::FIT };
+        return UpscaleSettings_t{ GamescopeUpscaleFilter::LINEAR, GamescopeUpscaleScaler::FIT, nWantedSharpness };
 
-    return UpscaleSettings_t{ eWantedFilter, eWantedScaler };
+    return UpscaleSettings_t{ eWantedFilter, eWantedScaler, nWantedSharpness };
+}
+
+// One name table for the --filter option and the scaling_filter command, so the two cannot drift.
+inline std::optional<GamescopeUpscaleFilter> ParseUpscaleFilter( std::string_view svName )
+{
+    static constexpr std::pair<std::string_view, GamescopeUpscaleFilter> k_Filters[] =
+    {
+        { "linear",  GamescopeUpscaleFilter::LINEAR },
+        { "nearest", GamescopeUpscaleFilter::NEAREST },
+        { "fsr",     GamescopeUpscaleFilter::FSR },
+        { "nis",     GamescopeUpscaleFilter::NIS },
+        { "pixel",   GamescopeUpscaleFilter::PIXEL },
+        { "sgsr",    GamescopeUpscaleFilter::SGSR },
+    };
+    for ( const auto &[svFilterName, eFilter] : k_Filters )
+    {
+        if ( svFilterName == svName )
+            return eFilter;
+    }
+    return std::nullopt;
 }
 
 extern GamescopeUpscaleFilter g_wantedUpscaleFilter;
