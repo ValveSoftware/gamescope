@@ -41,6 +41,7 @@
 #include "cs_composite_blur.h"
 #include "cs_composite_blur_cond.h"
 #include "cs_composite_rcas.h"
+#include "cs_composite_rcas_1px.h"
 #include "cs_easu.h"
 #include "cs_easu_fp16.h"
 #include "cs_gaussian_blur_horizontal.h"
@@ -527,6 +528,12 @@ bool CVulkanDevice::createDevice()
 		m_bSupportsFp16 = vulkan12Features.shaderFloat16 && features2.features.shaderInt16;
 	}
 
+	{
+		VkPhysicalDeviceProperties deviceProperties;
+		vk.GetPhysicalDeviceProperties( physDev(), &deviceProperties );
+		m_uVendorID = deviceProperties.vendorID;
+	}
+
 	float queuePriorities = 1.0f;
 
 	VkDeviceQueueGlobalPriorityCreateInfoEXT queueCreateInfoEXT = {
@@ -954,7 +961,15 @@ bool CVulkanDevice::createShaders()
 	SHADER(BLUR, cs_composite_blur);
 	SHADER(BLUR_COND, cs_composite_blur_cond);
 	SHADER(BLUR_FIRST_PASS, cs_gaussian_blur_horizontal);
-	SHADER(RCAS, cs_composite_rcas);
+	// The one pixel layout is only measured on Adreno, every other vendor keeps the quad swizzle.
+	if (m_uVendorID == 0x5143) /* Qualcomm */
+	{
+		SHADER(RCAS, cs_composite_rcas_1px);
+	}
+	else
+	{
+		SHADER(RCAS, cs_composite_rcas);
+	}
 	if (m_bSupportsFp16)
 	{
 		SHADER(EASU, cs_easu_fp16);
