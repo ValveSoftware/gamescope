@@ -65,6 +65,10 @@ struct commit_t final : public gamescope::RcObject, public gamescope::IWaitable,
 	bool is_steam = false;
 	uint32_t appID = 0;
 	std::optional<wlserver_vk_swapchain_feedback> feedback = std::nullopt;
+	// GPU readiness of vulkanTex, when the client or gamescope signals one.
+	std::shared_ptr<gamescope::CAcquireTimelinePoint> pAcquirePoint;
+	// vulkanTex is a whole frame of the override surface, merged Xwayland blits included.
+	bool bOverrideContent = false;
 
 	uint64_t win_seq = 0;
 	struct wlr_surface *surf = nullptr;

@@ -1002,14 +1002,6 @@ struct BaseLayerInfo_t
 	AlphaBlendingMode_t eAlphaBlendingMode = ALPHA_BLENDING_MODE_PREMULTIPLIED;
 };
 
-struct TempUpscaleImage_t
-{
-	gamescope::OwningRc<CVulkanTexture> pTexture;
-	// Timeline of upscale -> release, to be used as acquire for the commit.
-	std::shared_ptr<gamescope::CTimeline> pReleaseTimeline;
-	uint64_t ulLastPoint = 0ul;
-};
-
 struct global_focus_t : public focus_t
 {
 	steamcompmgr_win_t	  	 		*keyboardFocusWindow;
@@ -1020,7 +1012,7 @@ struct global_focus_t : public focus_t
 	GamescopeUpscaleScaler eUpscaleScaler = GamescopeUpscaleScaler::AUTO;
 	// Cleanup for the previous pre-emptive upscale, kept a frame behind.
 	std::optional<uint64_t> oLastPreemptiveUpscaleSeqNo;
-	std::vector<TempUpscaleImage_t> UpscaleImages;
+	std::vector<PooledImage_t> UpscaleImages;
 	uint32_t uNextUpscaleImage = 0;
 
 	std::array< gamescope::Rc<commit_t>, HELD_COMMIT_COUNT > HeldCommits;
@@ -8101,7 +8093,7 @@ static void ClearUpscaleImages( global_focus_t *pFocus )
 	pFocus->uNextUpscaleImage = 0;
 }
 
-static TempUpscaleImage_t *GetTempUpscaleImage( global_focus_t *pFocus, uint32_t uWidth, uint32_t uHeight, uint32_t uDrmFormat )
+static PooledImage_t *GetTempUpscaleImage( global_focus_t *pFocus, uint32_t uWidth, uint32_t uHeight, uint32_t uDrmFormat )
 {
 	if ( pFocus->UpscaleImages.size() )
 	{
@@ -8120,7 +8112,7 @@ static TempUpscaleImage_t *GetTempUpscaleImage( global_focus_t *pFocus, uint32_t
 	for ( size_t i = 0; i < pFocus->UpscaleImages.size(); i++ )
 	{
 		size_t uIndex = ( pFocus->uNextUpscaleImage + i ) % pFocus->UpscaleImages.size();
-		TempUpscaleImage_t &image = pFocus->UpscaleImages[ uIndex ];
+		PooledImage_t &image = pFocus->UpscaleImages[ uIndex ];
 		if ( !image.pTexture->IsInUse() )
 		{
 			pFocus->uNextUpscaleImage = ( uIndex + 1 ) % pFocus->UpscaleImages.size();
@@ -8145,9 +8137,144 @@ static TempUpscaleImage_t *GetTempUpscaleImage( global_focus_t *pFocus, uint32_t
 	imageFlags.bStorage = true;
 	imageFlags.bFlippable = true;
 	pTexture->BInit( g_nOutputWidth, g_nOutputHeight, 1, uDrmFormat, imageFlags );
-	TempUpscaleImage_t &image = pFocus->UpscaleImages.emplace_back( std::move( pTexture ), std::move( pTimeline ) );
+	PooledImage_t &image = pFocus->UpscaleImages.emplace_back( std::move( pTexture ), std::move( pTimeline ) );
 
 	return &image;
+}
+
+static PooledImage_t *GetOverrideBlitImage( steamcompmgr_win_t *w, CVulkanTexture *pLike )
+{
+	auto &images = w->overrideBlitImages;
+	if ( !images.empty() &&
+		 ( images[0].pTexture->width() != pLike->width() ||
+		   images[0].pTexture->height() != pLike->height() ||
+		   images[0].pTexture->drmFormat() != pLike->drmFormat() ) )
+	{
+		images.clear();
+		w->uNextOverrideBlitImage = 0;
+	}
+
+	// Round robin so a slot rests as long as possible.
+	for ( size_t i = 0; i < images.size(); i++ )
+	{
+		size_t uIndex = ( w->uNextOverrideBlitImage + i ) % images.size();
+		if ( !images[ uIndex ].pTexture->IsInUse() )
+		{
+			w->uNextOverrideBlitImage = ( uIndex + 1 ) % images.size();
+			return &images[ uIndex ];
+		}
+	}
+
+	if ( images.size() >= 8 )
+	{
+		xwm_log.warnf( "No override blit images free!" );
+		return nullptr;
+	}
+
+	std::shared_ptr<gamescope::CTimeline> pTimeline = gamescope::CTimeline::Create();
+	if ( !pTimeline )
+		return nullptr;
+
+	gamescope::OwningRc<CVulkanTexture> pTexture = new CVulkanTexture();
+	CVulkanTexture::createFlags imageFlags;
+	imageFlags.bSampled = true;
+	imageFlags.bTransferSrc = true;
+	imageFlags.bTransferDst = true;
+	// Only the modifier path needs a format the planes take.
+	imageFlags.bFlippable = !GetBackend()->UsesModifiers() || GetBackend()->SupportsFormat( pLike->drmFormat() );
+	if ( !pTexture->BInit( pLike->width(), pLike->height(), 1, pLike->drmFormat(), imageFlags ) )
+		return nullptr;
+
+	return &images.emplace_back( std::move( pTexture ), std::move( pTimeline ) );
+}
+
+struct BufferWait_t
+{
+	std::shared_ptr<VulkanTimelineSemaphore_t> pSemaphore;
+	uint64_t ulPoint = 0;
+};
+
+// The producer's signal for pBuffer, put on the image's timeline when it is only implicit.
+static std::optional<BufferWait_t> GetBufferWait( PooledImage_t &image, const std::shared_ptr<gamescope::CAcquireTimelinePoint> &pAcquirePoint, struct wlr_buffer *pBuffer )
+{
+	if ( pAcquirePoint )
+		return BufferWait_t{ pAcquirePoint->GetTimeline()->ToVkSemaphore(), pAcquirePoint->GetPoint() };
+
+	// shm uploads are waited for at import.
+	struct wlr_dmabuf_attributes dmabuf = {0};
+	if ( !wlr_buffer_get_dmabuf( pBuffer, &dmabuf ) )
+		return BufferWait_t{};
+
+	const uint64_t ulPoint = ++image.ulLastPoint;
+	if ( !image.pReleaseTimeline->ImportDmabufFences( dmabuf.fd[0], ulPoint ) )
+		return std::nullopt;
+
+	return BufferWait_t{ image.pReleaseTimeline->ToVkSemaphore(), ulPoint };
+}
+
+// Include pending frames so a blit cannot hide a newer override present.
+static gamescope::Rc<commit_t> NewestOverrideFrame( steamcompmgr_win_t *w )
+{
+	for ( auto it = w->commit_queue.rbegin(); it != w->commit_queue.rend(); ++it )
+	{
+		if ( (*it)->bOverrideContent )
+			return *it;
+	}
+	return nullptr;
+}
+
+// A bypassing client's pixmap holds only its GDI blits, lay them over the frame.
+static bool MergeBlitsOverOverride( steamcompmgr_win_t *w, commit_t *pCommit, commit_t *pBase, const ResListEntry_t &entry )
+{
+	gamescope::Rc<CVulkanTexture> pBlits = pCommit->vulkanTex;
+	if ( entry.damage.empty() || pBlits->format() != pBase->vulkanTex->format() || !pBlits->transferSrc() || !pBase->vulkanTex->transferSrc() )
+		return false;
+
+	// The layer only bypasses a child within 2px of its toplevel.
+	if ( std::abs( int32_t( pBlits->width() ) - int32_t( pBase->vulkanTex->width() ) ) > 2 ||
+		 std::abs( int32_t( pBlits->height() ) - int32_t( pBase->vulkanTex->height() ) ) > 2 )
+		return false;
+
+	PooledImage_t *pImage = GetOverrideBlitImage( w, pBase->vulkanTex.get() );
+	if ( !pImage )
+		return false;
+
+	std::optional<BufferWait_t> oBaseWait = GetBufferWait( *pImage, pBase->pAcquirePoint, pBase->buf );
+	std::optional<BufferWait_t> oBlitWait = GetBufferWait( *pImage, entry.pAcquirePoint, entry.buf );
+	if ( !oBaseWait || !oBlitWait )
+		return false;
+
+	gamescope::Rc<CVulkanTexture> pTarget = pImage->pTexture;
+	std::unique_ptr<CVulkanCmdBuffer> pCmdBuffer = g_device.commandBuffer();
+	if ( oBaseWait->pSemaphore )
+		pCmdBuffer->AddDependency( oBaseWait->pSemaphore, oBaseWait->ulPoint );
+	if ( oBlitWait->pSemaphore )
+		pCmdBuffer->AddDependency( oBlitWait->pSemaphore, oBlitWait->ulPoint );
+
+	pCmdBuffer->copyImage( pBase->vulkanTex, pTarget );
+
+	const int32_t nWidth = std::min( pBlits->width(), pTarget->width() );
+	const int32_t nHeight = std::min( pBlits->height(), pTarget->height() );
+	for ( const pixman_box32_t &box : entry.damage )
+	{
+		const int32_t x1 = std::max( box.x1, 0 );
+		const int32_t y1 = std::max( box.y1, 0 );
+		const int32_t x2 = std::min( box.x2, nWidth );
+		const int32_t y2 = std::min( box.y2, nHeight );
+		if ( x2 > x1 && y2 > y1 )
+			pCmdBuffer->copyImageRegion( pBlits, pTarget, x1, y1, x2 - x1, y2 - y1 );
+	}
+
+	const uint64_t ulPoint = ++pImage->ulLastPoint;
+	pCmdBuffer->AddSignal( pImage->pReleaseTimeline->ToVkSemaphore(), ulPoint );
+	if ( entry.pReleasePoint )
+		pCmdBuffer->AddReleasePoint( entry.pReleasePoint );
+	g_device.submit( std::move( pCmdBuffer ) );
+
+	pCommit->vulkanTex = std::move( pTarget );
+	pCommit->bOverrideContent = true;
+	pCommit->pAcquirePoint = std::make_shared<gamescope::CAcquireTimelinePoint>( pImage->pReleaseTimeline, ulPoint );
+	return true;
 }
 
 gamescope::ConVar<bool> cv_surface_update_force_only_current_surface( "surface_update_force_only_current_surface", false, "Force updates to apply only to the current surface, ignoring commits for other surfaces." );
@@ -8185,14 +8312,20 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 	bool bPossiblyBogus = reslistentry.buf->width <= 2 || reslistentry.buf->height <= 2;
 
 	// If the buffer has no damage, always prefer our override surface.
-	bool bHasDamage = ( reslistentry.surf->buffer_damage.extents.x2 - reslistentry.surf->buffer_damage.extents.x1 ) > 2 &&
-					  ( reslistentry.surf->buffer_damage.extents.y2 - reslistentry.surf->buffer_damage.extents.y1 ) > 2;
+	bool bHasDamage = ( reslistentry.damageExtents.x2 - reslistentry.damageExtents.x1 ) > 2 &&
+					  ( reslistentry.damageExtents.y2 - reslistentry.damageExtents.y1 ) > 2;
 
 	// If we have an override surface, make sure this commit is for the current surface
 	// or if the commit is probably bogus.
 	bool bOnlyCurrentSurface = w->bHasHadNonSRGBColorSpace || bPossiblyBogus || !bHasDamage || cv_surface_update_force_only_current_surface;
 
 	bool for_current_surface = !w->override_surface() || w->current_surface() == reslistentry.surf;
+
+	if ( !w->override_surface() )
+	{
+		w->overrideBlitImages.clear();
+		w->uNextOverrideBlitImage = 0;
+	}
 
 	if ( !for_current_surface )
 	{
@@ -8245,6 +8378,21 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 	{
 		// Import failed to import, early exit.
 		return;
+	}
+
+	newCommit->bOverrideContent = reslistentry.surf == w->override_surface();
+	newCommit->pAcquirePoint = reslistentry.pAcquirePoint;
+
+	bool bMerged = false;
+	if ( gamescope::Rc<commit_t> pBase = for_current_surface ? nullptr : NewestOverrideFrame( w ) )
+	{
+		bMerged = MergeBlitsOverOverride( w, newCommit.get(), pBase.get(), reslistentry );
+		// The bare pixmap would flash the frame black, so drop the blit instead.
+		if ( !bMerged )
+		{
+			w->receivedDoneCommit = true;
+			return;
+		}
 	}
 
 	int fence = -1;
@@ -8315,7 +8463,7 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 		zoomScaleRatio = flOldZoomScale;
 		overscanScaleRatio = flOldOverscanScale;
 
-		TempUpscaleImage_t *pTempImage = GetTempUpscaleImage( pUpscaleFocus, g_nOutputWidth, g_nOutputHeight, g_output.uOutputFormat );
+		PooledImage_t *pTempImage = GetTempUpscaleImage( pUpscaleFocus, g_nOutputWidth, g_nOutputHeight, g_output.uOutputFormat );
 		if ( pTempImage )
 		{
 			const uint64_t ulNextReleasePoint = ++pTempImage->ulLastPoint;
@@ -8368,13 +8516,14 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 			ClearUpscaleImages( pUpscaleFocus );
 		}
 
-		if ( reslistentry.pAcquirePoint )
+		if ( newCommit->pAcquirePoint )
 		{
-			eventFd = reslistentry.pAcquirePoint->CreateEventFd();
+			eventFd = newCommit->pAcquirePoint->CreateEventFd();
 		}
 	}
 
-	if ( gamescope::IBackendFb *pBackendFb = newCommit->vulkanTex->GetBackendFb() )
+	// A merged frame is gamescope's own image, the client buffer was only read.
+	if ( gamescope::IBackendFb *pBackendFb = bMerged ? nullptr : newCommit->vulkanTex->GetBackendFb() )
 	{
 		if ( reslistentry.pReleasePoint )
 			pBackendFb->SetReleasePoint( reslistentry.pReleasePoint );
@@ -8386,6 +8535,13 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 	{
 		fence = eventFd.first;
 		bKnownReady = eventFd.second;
+	}
+	else if ( bMerged )
+	{
+		// The client fence does not cover the copy, so wait for its point here.
+		if ( !newCommit->pAcquirePoint->Wait() )
+			xwm_log.errorf( "Waiting for a merged blit failed, presenting it anyway." );
+		bKnownReady = true;
 	}
 	else
 	{

@@ -1521,6 +1521,11 @@ void CVulkanCmdBuffer::AddSignal( std::shared_ptr<VulkanTimelineSemaphore_t> pTi
 	m_ExternalSignals.emplace_back( std::move( pTimelineSemaphore ), ulPoint );
 }
 
+void CVulkanCmdBuffer::AddReleasePoint( std::shared_ptr<gamescope::CReleaseTimelinePoint> pReleasePoint )
+{
+	m_releasePoints.emplace_back( std::move( pReleasePoint ) );
+}
+
 void CVulkanDevice::wait(uint64_t sequence, bool reset)
 {
 	if (m_submissionSeqNo == sequence)
@@ -1575,6 +1580,7 @@ void CVulkanCmdBuffer::reset()
 {
 	vk_check( m_device->vk.ResetCommandBuffer(m_cmdBuffer, 0) );
 	m_textureRefs.clear();
+	m_releasePoints.clear();
 	m_usedDescriptorSets.clear();
 	m_textureState.clear();
 
@@ -1825,6 +1831,12 @@ void CVulkanCmdBuffer::copyImage(gamescope::Rc<CVulkanTexture> src, gamescope::R
 {
 	assert(src->width() == dst->width());
 	assert(src->height() == dst->height());
+	copyImageRegion(src, std::move(dst), 0, 0, src->width(), src->height());
+}
+
+void CVulkanCmdBuffer::copyImageRegion(gamescope::Rc<CVulkanTexture> src, gamescope::Rc<CVulkanTexture> dst, int32_t x, int32_t y, uint32_t width, uint32_t height)
+{
+	assert(src->format() == dst->format());
 	prepareSrcImage(src.get());
 	prepareDestImage(dst.get());
 	insertBarrier();
@@ -1834,13 +1846,15 @@ void CVulkanCmdBuffer::copyImage(gamescope::Rc<CVulkanTexture> src, gamescope::R
 			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
 			.layerCount = 1
 		},
+		.srcOffset = { x, y, 0 },
 		.dstSubresource = {
 			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
 			.layerCount = 1
 		},
+		.dstOffset = { x, y, 0 },
 		.extent = {
-			.width = src->width(),
-			.height = src->height(),
+			.width = width,
+			.height = height,
 			.depth = 1
 		},
 	};
@@ -2163,6 +2177,13 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 		};
 
 		res = getModifierProps( &imageInfo, pDMA->modifier, &externalImageProperties );
+		// Clients pick modifiers advertised for sampling alone, transfer is a bonus.
+		if ( res == VK_ERROR_FORMAT_NOT_SUPPORTED && flags.bTransferSrc )
+		{
+			flags.bTransferSrc = false;
+			imageInfo.usage &= ~VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+			res = getModifierProps( &imageInfo, pDMA->modifier, &externalImageProperties );
+		}
 		if ( res != VK_SUCCESS && res != VK_ERROR_FORMAT_NOT_SUPPORTED ) {
 			vk_errorf( res, "getModifierProps failed" );
 			return false;
@@ -2188,6 +2209,8 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 			imageInfo.tiling = tiling = VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT;
 		}
 	}
+
+	m_bTransferSrc = flags.bTransferSrc;
 
 	std::vector<uint64_t> modifiers = {};
 	// TODO(JoshA): Move this code to backend for making flippable image.
@@ -3651,6 +3674,7 @@ gamescope::OwningRc<CVulkanTexture> vulkan_create_texture_from_dmabuf( struct wl
 
 	CVulkanTexture::createFlags texCreateFlags;
 	texCreateFlags.bSampled = true;
+	texCreateFlags.bTransferSrc = true;
 
 	//fprintf(stderr, "pDMA->width: %d pDMA->height: %d pDMA->format: 0x%x pDMA->modifier: 0x%lx pDMA->n_planes: %d\n",
 	//	pDMA->width, pDMA->height, pDMA->format, pDMA->modifier, pDMA->n_planes);
@@ -4557,6 +4581,7 @@ gamescope::OwningRc<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struc
 	gamescope::OwningRc<CVulkanTexture> pTex = new CVulkanTexture();
 	CVulkanTexture::createFlags texCreateFlags;
 	texCreateFlags.bSampled = true;
+	texCreateFlags.bTransferSrc = true;
 	texCreateFlags.bTransferDst = true;
 	texCreateFlags.bFlippable = true;
 	if ( pTex->BInit( width, height, 1u, drmFormat, texCreateFlags, nullptr, 0, 0, nullptr, pBackendFb ) == false )

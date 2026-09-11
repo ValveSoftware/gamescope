@@ -164,8 +164,16 @@ ResListEntry_t PrepareCommit( struct wlr_surface *surf, struct wlr_buffer *buf )
 		wl_surf->present_id,
 		wl_surf->desired_present_time,
 		std::move( pAcquirePoint ),
-		std::move( pReleasePoint )
+		std::move( pReleasePoint ),
 	};
+	newEntry.damageExtents = *pixman_region32_extents( &surf->buffer_damage );
+	// Only a window with an override surface merges its blits, spare the rest the copy.
+	if ( wl_surf->x11_surface && wl_surf->x11_surface->override_surface )
+	{
+		int nDamageRects = 0;
+		pixman_box32_t *pDamageRects = pixman_region32_rectangles( &surf->buffer_damage, &nDamageRects );
+		newEntry.damage.assign( pDamageRects, pDamageRects + nDamageRects );
+	}
 	wl_surf->present_id = std::nullopt;
 	wl_surf->desired_present_time = 0;
 	wl_surf->pending_presentation_feedbacks.clear();
