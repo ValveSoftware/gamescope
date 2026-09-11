@@ -364,12 +364,14 @@ std::shared_ptr<lut3d_t> LoadCubeLut( const char *pchFileName, bool &bRaisesBlac
 //
 // If the white points differ, this performs an absolute colorimetric match
 // Look luts are optional, but if specified applied in the sourceEOTF space
+// Gamut mapping targets native display colorimetry, encoded in dest colorimetry.
 
 template <uint32_t lutEdgeSize3d>
 void calcColorTransform( lut1d_t * pShaper, int nLutSize1d,
 	lut3d_t * pLut3d,
 	const displaycolorimetry_t & source, EOTF sourceEOTF,
 	const displaycolorimetry_t & dest,  EOTF destEOTF,
+	const displaycolorimetry_t & native,
 	const glm::vec2 & destVirtualWhite, EChromaticAdaptationMethod eMethod,
 	const colormapping_t & mapping, const nightmode_t & nightmode, const tonemapping_t & tonemapping,
 	const lut3d_t * pLook, float flGain );
@@ -378,6 +380,7 @@ void calcColorTransform( lut1d_t * pShaper, int nLutSize1d,
 	lut3d_t * pLut3d,                                                                                                   \
 	const displaycolorimetry_t & source, EOTF sourceEOTF,                                                               \
 	const displaycolorimetry_t & dest,  EOTF destEOTF,                                                                  \
+	const displaycolorimetry_t & native,                                                                               \
 	const glm::vec2 & destVirtualWhite, EChromaticAdaptationMethod eMethod,                                             \
 	const colormapping_t & mapping, const nightmode_t & nightmode, const tonemapping_t & tonemapping,                   \
 	const lut3d_t * pLook, float flGain )
