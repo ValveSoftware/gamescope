@@ -21,6 +21,16 @@ TEST_CASE("SGSR falls back on input it cannot read", "[upscale]") {
 	REQUIRE( ResolveUpscaleFilter( GamescopeUpscaleFilter::NIS, GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ, false ) == GamescopeUpscaleFilter::NIS );
 }
 
+TEST_CASE("ParseUpscaleFilter names every filter", "[upscale]") {
+	REQUIRE( ParseUpscaleFilter( "linear" ) == GamescopeUpscaleFilter::LINEAR );
+	REQUIRE( ParseUpscaleFilter( "nearest" ) == GamescopeUpscaleFilter::NEAREST );
+	REQUIRE( ParseUpscaleFilter( "fsr" ) == GamescopeUpscaleFilter::FSR );
+	REQUIRE( ParseUpscaleFilter( "nis" ) == GamescopeUpscaleFilter::NIS );
+	REQUIRE( ParseUpscaleFilter( "pixel" ) == GamescopeUpscaleFilter::PIXEL );
+	REQUIRE( ParseUpscaleFilter( "sgsr" ) == GamescopeUpscaleFilter::SGSR );
+	REQUIRE_FALSE( ParseUpscaleFilter( "sharp" ).has_value() );
+}
+
 TEST_CASE("UpscaleFilterUsesSharpness", "[upscale]") {
 	REQUIRE( UpscaleFilterUsesSharpness( GamescopeUpscaleFilter::SGSR ) );
 	REQUIRE( UpscaleFilterUsesSharpness( GamescopeUpscaleFilter::FSR ) );

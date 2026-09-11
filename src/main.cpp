@@ -407,22 +407,13 @@ static enum GamescopeUpscaleScaler parse_upscaler_scaler(const char *str)
 
 static enum GamescopeUpscaleFilter parse_upscaler_filter(const char *str)
 {
-	if (strcmp(str, "linear") == 0) {
-		return GamescopeUpscaleFilter::LINEAR;
-	} else if (strcmp(str, "nearest") == 0) {
-		return GamescopeUpscaleFilter::NEAREST;
-	} else if (strcmp(str, "fsr") == 0) {
-		return GamescopeUpscaleFilter::FSR;
-	} else if (strcmp(str, "nis") == 0) {
-		return GamescopeUpscaleFilter::NIS;
-	} else if (strcmp(str, "pixel") == 0) {
-		return GamescopeUpscaleFilter::PIXEL;
-	} else if (strcmp(str, "sgsr") == 0) {
-		return GamescopeUpscaleFilter::SGSR;
-	} else {
+	std::optional<GamescopeUpscaleFilter> oFilter = ParseUpscaleFilter( str );
+	if ( !oFilter )
+	{
 		fprintf( stderr, "gamescope: invalid value for --filter\n" );
 		exit(1);
 	}
+	return *oFilter;
 }
 
 static enum gamescope::GamescopeBackend parse_backend_name(const char *str)

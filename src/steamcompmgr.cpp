@@ -1137,6 +1137,62 @@ static gamescope::ConCommand cc_focus_info( "focus_info", "Dump debug info about
 	g_bPendingFocusInfo = true;
 });
 
+// The upscale globals belong to the steamcompmgr thread, the main loop applies these.
+static std::atomic<int32_t> g_nPendingUpscaleFilter = { -1 };
+static std::atomic<int32_t> g_nPendingUpscaleSharpness = { -1 };
+
+static gamescope::ConCommand cc_scaling_filter( "scaling_filter", "Set the scaling filter (linear, nearest, fsr, nis, pixel, sgsr)",
+[]( std::span<std::string_view> args )
+{
+	if ( args.size() < 2 )
+	{
+		console_log.errorf( "Usage: scaling_filter <filter>" );
+		return;
+	}
+
+	std::optional<GamescopeUpscaleFilter> oFilter = ParseUpscaleFilter( args[1] );
+	if ( !oFilter )
+	{
+		console_log.errorf( "Unknown scaling filter '%.*s'", (int)args[1].size(), args[1].data() );
+		return;
+	}
+
+	g_nPendingUpscaleFilter = int32_t( *oFilter );
+});
+
+static gamescope::ConCommand cc_scaling_sharpness( "scaling_sharpness", "Set the scaling sharpness (0 to 20)",
+[]( std::span<std::string_view> args )
+{
+	if ( args.size() < 2 )
+	{
+		console_log.errorf( "Usage: scaling_sharpness <0 to 20>" );
+		return;
+	}
+
+	std::optional<int32_t> onSharpness = gamescope::Parse<int32_t>( args[1] );
+	if ( !onSharpness )
+	{
+		console_log.errorf( "Failed to parse sharpness." );
+		return;
+	}
+
+	g_nPendingUpscaleSharpness = clamp( *onSharpness, 0, 20 );
+});
+
+static void ApplyPendingUpscaleSettings()
+{
+	int32_t nSharpness = g_nPendingUpscaleSharpness.exchange( -1 );
+	if ( nSharpness >= 0 )
+		g_upscaleFilterSharpness = nSharpness;
+
+	int32_t nFilter = g_nPendingUpscaleFilter.exchange( -1 );
+	if ( nFilter >= 0 )
+		g_wantedUpscaleFilter = GamescopeUpscaleFilter( nFilter );
+
+	if ( nSharpness >= 0 || nFilter >= 0 )
+		hasRepaint = true;
+}
+
 unsigned long	damageSequence = 0;
 
 uint64_t		cursorHideTime = 10'000ul * 1'000'000ul;
@@ -10376,6 +10432,8 @@ steamcompmgr_main(int argc, char **argv)
 
 		if ( g_bPendingFocusInfo.exchange( false ) )
 			DumpFocusInfo();
+
+		ApplyPendingUpscaleSettings();
 
 		g_bSteamIsActiveWindow = GetCurrentFocus() && window_is_steam( GetCurrentFocus()->focusWindow );
 

@@ -3,6 +3,9 @@
 #include <getopt.h>
 
 #include <atomic>
+#include <optional>
+#include <string_view>
+#include <utility>
 
 #include "gamescope_shared.h"
 
@@ -102,6 +105,26 @@ static constexpr UpscaleSettings_t GetUpscaleSettings(
         return UpscaleSettings_t{ GamescopeUpscaleFilter::LINEAR, GamescopeUpscaleScaler::FIT, nWantedSharpness };
 
     return UpscaleSettings_t{ eWantedFilter, eWantedScaler, nWantedSharpness };
+}
+
+// One name table for the --filter option and the scaling_filter command, so the two cannot drift.
+inline std::optional<GamescopeUpscaleFilter> ParseUpscaleFilter( std::string_view svName )
+{
+    static constexpr std::pair<std::string_view, GamescopeUpscaleFilter> k_Filters[] =
+    {
+        { "linear",  GamescopeUpscaleFilter::LINEAR },
+        { "nearest", GamescopeUpscaleFilter::NEAREST },
+        { "fsr",     GamescopeUpscaleFilter::FSR },
+        { "nis",     GamescopeUpscaleFilter::NIS },
+        { "pixel",   GamescopeUpscaleFilter::PIXEL },
+        { "sgsr",    GamescopeUpscaleFilter::SGSR },
+    };
+    for ( const auto &[svFilterName, eFilter] : k_Filters )
+    {
+        if ( svFilterName == svName )
+            return eFilter;
+    }
+    return std::nullopt;
 }
 
 extern GamescopeUpscaleFilter g_wantedUpscaleFilter;
