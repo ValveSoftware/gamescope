@@ -132,7 +132,9 @@ extern float focusedWindowScaleY;
 extern float focusedWindowOffsetX;
 extern float focusedWindowOffsetY;
 
-extern bool g_bFSRActive;
+extern GamescopeUpscaleFilter g_eActiveUpscaler;
+extern GamescopeUpscaleFilter g_eWantedUpscaler;
+extern int g_nActiveUpscaleSharpness;
 
 extern uint32_t inputCounter;
 extern uint64_t g_lastWinSeq;
@@ -145,7 +147,8 @@ void force_repaint( void );
 struct MangoappSnapshot_t
 {
 	pid_t nPid = 0;
-	bool bFSRActive = false;
+	GamescopeUpscaleFilter eActiveUpscaler = GamescopeUpscaleFilter::LINEAR;
+	GamescopeUpscaleFilter eWantedUpscaler = GamescopeUpscaleFilter::LINEAR;
 	uint8_t uFSRSharpness = 0;
 	std::shared_ptr<std::string> pEngineName;
 	bool bSteamFocused = false;
