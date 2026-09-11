@@ -173,10 +173,16 @@ endforeach
 cc = meson.get_compiler('c')
 compiler_name = cc.get_id()
 compiler_version = cc.version()
+version_tag = '(' + compiler_name + ' ' + compiler_version + ')'
 
-vcs_tag_cmd = ['git', 'describe', '--always', '--tags', '--dirty=+']
-vcs_tag = run_command(vcs_tag_cmd, check: false).stdout().strip()
-version_tag = vcs_tag + ' (' + compiler_name + ' ' + compiler_version + ')'
+git = find_program('git', native: true, required: false)
+if git.found()
+  vcs_tag_cmd = [git, 'describe', '--always', '--tags', '--dirty=+']
+  vcs_tag = run_command(vcs_tag_cmd, check: false).stdout().strip()
+  if vcs_tag != ''
+    version_tag = vcs_tag + ' ' + version_tag
+  endif
+endif
 
 gamescope_version_conf = configuration_data()
 gamescope_version_conf.set('VCS_TAG', version_tag)
