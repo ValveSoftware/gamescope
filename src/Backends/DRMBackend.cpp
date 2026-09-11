@@ -101,6 +101,34 @@ namespace gamescope
 	class CDRMConnector;
 }
 
+struct drm_tile_info_t
+{
+	uint32_t group_id = 0;
+	uint32_t single_monitor = 0;
+	uint32_t num_h_tiles = 0;
+	uint32_t num_v_tiles = 0;
+	uint32_t tile_h_loc = 0;
+	uint32_t tile_v_loc = 0;
+	uint32_t tile_h_size = 0;
+	uint32_t tile_v_size = 0;
+
+	bool IsValid() const
+	{
+		return group_id != 0 && single_monitor != 0 &&
+			num_h_tiles > 0 && num_v_tiles > 0 &&
+			tile_h_loc < num_h_tiles && tile_v_loc < num_v_tiles &&
+			tile_h_size > 0 && tile_v_size > 0;
+	}
+};
+
+struct drm_tile_output_t
+{
+	drm_tile_info_t info;
+	gamescope::CDRMConnector *connector = nullptr;
+	gamescope::CDRMCRTC *crtc = nullptr;
+	gamescope::CDRMPlane *primary_plane = nullptr;
+};
+
 struct drm_t {
 	bool bUseLiftoff;
 
@@ -119,6 +147,13 @@ struct drm_t {
 	gamescope::CDRMPlane *pPrimaryPlane;
 	gamescope::CDRMCRTC *pCRTC;
 	gamescope::CDRMConnector *pConnector;
+
+	// A DRM tiled monitor is one logical output backed by multiple
+	// connector/CRTC/primary-plane tuples. The first entry is tile (0,0) and
+	// remains pConnector/pCRTC/pPrimaryPlane for timing and feedback.
+	std::vector<drm_tile_output_t> tiled_outputs;
+	uint32_t tiled_width = 0;
+	uint32_t tiled_height = 0;
 
 	struct wlr_drm_format_set primary_formats;
 
@@ -661,6 +696,74 @@ static gamescope::CDRMCRTC *find_crtc_for_connector( struct drm_t *drm, gamescop
 	return nullptr;
 }
 
+static std::optional<drm_tile_info_t> get_connector_tile_info( struct drm_t *drm, gamescope::CDRMConnector *pConnector )
+{
+	drmModeObjectProperties *pProperties = drmModeObjectGetProperties(
+		drm->fd, pConnector->GetObjectId(), DRM_MODE_OBJECT_CONNECTOR );
+	if ( !pProperties )
+		return std::nullopt;
+	defer( drmModeFreeObjectProperties( pProperties ) );
+
+	for ( uint32_t i = 0; i < pProperties->count_props; i++ )
+	{
+		drmModePropertyRes *pProperty = drmModeGetProperty( drm->fd, pProperties->props[i] );
+		if ( !pProperty )
+			continue;
+		defer( drmModeFreeProperty( pProperty ) );
+
+		if ( strcmp( pProperty->name, "TILE" ) != 0 ||
+			 !(pProperty->flags & DRM_MODE_PROP_BLOB) || pProperties->prop_values[i] == 0 )
+			continue;
+
+		drmModePropertyBlobRes *pBlob = drmModeGetPropertyBlob( drm->fd, pProperties->prop_values[i] );
+		if ( !pBlob )
+			return std::nullopt;
+		defer( drmModeFreePropertyBlob( pBlob ) );
+
+		std::string tileString{
+			reinterpret_cast<const char *>( pBlob->data ),
+			strnlen( reinterpret_cast<const char *>( pBlob->data ), pBlob->length )
+		};
+
+		drm_tile_info_t info;
+		if ( sscanf( tileString.c_str(), "%u:%u:%u:%u:%u:%u:%u:%u",
+			&info.group_id, &info.single_monitor,
+			&info.num_h_tiles, &info.num_v_tiles,
+			&info.tile_h_loc, &info.tile_v_loc,
+			&info.tile_h_size, &info.tile_v_size ) == 8 && info.IsValid() )
+		{
+			return info;
+		}
+
+		return std::nullopt;
+	}
+
+	return std::nullopt;
+}
+
+static gamescope::CDRMConnector *find_tile_origin_connector( struct drm_t *drm, gamescope::CDRMConnector *pConnector )
+{
+	const std::optional<drm_tile_info_t> selectedInfo = get_connector_tile_info( drm, pConnector );
+	if ( !selectedInfo || selectedInfo->num_h_tiles * selectedInfo->num_v_tiles <= 1 )
+		return pConnector;
+
+	for ( auto &iter : drm->connectors )
+	{
+		gamescope::CDRMConnector *pCandidate = &iter.second;
+		if ( pCandidate->GetModeConnector()->connection != DRM_MODE_CONNECTED )
+			continue;
+
+		const std::optional<drm_tile_info_t> candidateInfo = get_connector_tile_info( drm, pCandidate );
+		if ( candidateInfo && candidateInfo->group_id == selectedInfo->group_id &&
+			 candidateInfo->tile_h_loc == 0 && candidateInfo->tile_v_loc == 0 )
+		{
+			return pCandidate;
+		}
+	}
+
+	return pConnector;
+}
+
 static bool get_plane_formats( struct drm_t *drm, gamescope::CDRMPlane *pPlane, struct wlr_drm_format_set *pFormatSet )
 {
 	for ( uint32_t i = 0; i < pPlane->GetModePlane()->count_formats; i++ )
@@ -721,14 +824,14 @@ static uint32_t pick_plane_format( const struct wlr_drm_format_set *formats, uin
 }
 
 /* Pick a primary plane that can be connected to the chosen CRTC. */
-static gamescope::CDRMPlane *find_primary_plane(struct drm_t *drm)
+static gamescope::CDRMPlane *find_primary_plane_for_crtc( struct drm_t *drm, gamescope::CDRMCRTC *pCRTC )
 {
-	if ( !drm->pCRTC )
+	if ( !pCRTC )
 		return nullptr;
 
 	for ( std::unique_ptr< gamescope::CDRMPlane > &pPlane : drm->planes )
 	{
-		if ( pPlane->GetModePlane()->possible_crtcs & drm->pCRTC->GetCRTCMask() )
+		if ( pPlane->GetModePlane()->possible_crtcs & pCRTC->GetCRTCMask() )
 		{
 			if ( pPlane->GetProperties().type->GetCurrentValue() == DRM_PLANE_TYPE_PRIMARY )
 				return pPlane.get();
@@ -736,6 +839,11 @@ static gamescope::CDRMPlane *find_primary_plane(struct drm_t *drm)
 	}
 
 	return nullptr;
+}
+
+static gamescope::CDRMPlane *find_primary_plane( struct drm_t *drm )
+{
+	return find_primary_plane_for_crtc( drm, drm->pCRTC );
 }
 
 static bool have_overlay_planes(struct drm_t *drm)
@@ -1092,6 +1200,11 @@ static bool setup_best_connector(struct drm_t *drm, bool force, bool initial)
 		}
 	}
 
+	// Connector priorities may select any member of a tiled monitor. Use the
+	// top-left tile as the logical connector and vblank/timing master.
+	if ( best )
+		best = find_tile_origin_connector( drm, best );
+
 	if ( best && best == drm->pConnector )
 	{
 		// If the device's EDID changed from user us, force a mode-change
@@ -1170,10 +1283,19 @@ static bool setup_best_connector(struct drm_t *drm, bool force, bool initial)
 	// Don't allow rollback of mode_id after connector change
 	drm->current.mode_id = drm->pending.mode_id;
 
+	int physicalWidth = (int) best->GetModeConnector()->mmWidth;
+	int physicalHeight = (int) best->GetModeConnector()->mmHeight;
+	if ( !drm->tiled_outputs.empty() )
+	{
+		const drm_tile_info_t &tile = drm->tiled_outputs.front().info;
+		physicalWidth *= tile.num_h_tiles;
+		physicalHeight *= tile.num_v_tiles;
+	}
+
 	const struct wlserver_output_info wlserver_output_info = {
 		.description = description,
-		.phys_width = (int) best->GetModeConnector()->mmWidth,
-		.phys_height = (int) best->GetModeConnector()->mmHeight,
+		.phys_width = physicalWidth,
+		.phys_height = physicalHeight,
 	};
 	wlserver_lock();
 	wlserver_set_output_info(&wlserver_output_info);
@@ -2963,6 +3085,89 @@ static void drm_unlink_foreign_planes( struct drm_t *drm )
 	drmModeAtomicFree( req );
 }
 
+static int drm_prepare_tiled( struct drm_t *drm, const FrameInfo_t *pFrameInfo, bool bForceInRequest )
+{
+	if ( pFrameInfo->layers.count() != 1 || !pFrameInfo->layers.get( 0 ).tex )
+		return -EINVAL;
+
+	const FrameInfo_t::Layer_t &layer = pFrameInfo->layers.get( 0 );
+	gamescope::CDRMFb *pDrmFb = static_cast<gamescope::CDRMFb *>(
+		layer.tex->GetBackendFb() ? layer.tex->GetBackendFb()->EnsureImported() : nullptr );
+	if ( !pDrmFb )
+	{
+		drm_log.debugf( "drm_prepare_tiled: composite layer has no FB" );
+		return -EINVAL;
+	}
+
+	if ( layer.tex->width() < drm->tiled_width || layer.tex->height() < drm->tiled_height )
+	{
+		drm_log.errorf( "drm_prepare_tiled: FB is %ux%u, expected at least %ux%u",
+			layer.tex->width(), layer.tex->height(), drm->tiled_width, drm->tiled_height );
+		return -EINVAL;
+	}
+
+	for ( const drm_tile_output_t &output : drm->tiled_outputs )
+	{
+		gamescope::CDRMPlane::PlaneProperties &props = output.primary_plane->GetProperties();
+		if ( !props.FB_ID || !props.CRTC_ID || !props.SRC_X || !props.SRC_Y ||
+			 !props.SRC_W || !props.SRC_H || !props.CRTC_X || !props.CRTC_Y ||
+			 !props.CRTC_W || !props.CRTC_H )
+		{
+			drm_log.errorf( "drm_prepare_tiled: primary plane %u lacks required atomic properties",
+				output.primary_plane->GetObjectId() );
+			return -ENOTSUP;
+		}
+
+		const uint64_t srcX = uint64_t( output.info.tile_h_loc ) * output.info.tile_h_size << 16;
+		const uint64_t srcY = uint64_t( output.info.tile_v_loc ) * output.info.tile_v_size << 16;
+		const uint64_t srcW = uint64_t( output.info.tile_h_size ) << 16;
+		const uint64_t srcH = uint64_t( output.info.tile_v_size ) << 16;
+
+		// drmModeAtomicAddProperty() returns the property index on success, not
+		// zero. Only a negative return value is an error.
+		int ret = 0;
+		auto setProperty = [&]( gamescope::CDRMAtomicProperty &property, uint64_t value, bool force )
+		{
+			if ( ret >= 0 )
+			{
+				const int propertyRet = property.SetPendingValue( drm->req, value, force );
+				if ( propertyRet < 0 )
+					ret = propertyRet;
+			}
+		};
+
+		setProperty( *props.FB_ID, pDrmFb->GetFbId(), true );
+		setProperty( *props.CRTC_ID, output.crtc->GetObjectId(), true );
+		setProperty( *props.SRC_X, srcX, bForceInRequest );
+		setProperty( *props.SRC_Y, srcY, bForceInRequest );
+		setProperty( *props.SRC_W, srcW, bForceInRequest );
+		setProperty( *props.SRC_H, srcH, bForceInRequest );
+		setProperty( *props.CRTC_X, 0, bForceInRequest );
+		setProperty( *props.CRTC_Y, 0, bForceInRequest );
+		setProperty( *props.CRTC_W, output.info.tile_h_size, bForceInRequest );
+		setProperty( *props.CRTC_H, output.info.tile_v_size, bForceInRequest );
+
+		if ( props.IN_FENCE_FD )
+			setProperty( *props.IN_FENCE_FD,
+				cv_drm_debug_disable_in_fence_fd ? uint64_t( -1 ) : uint64_t( g_nAlwaysSignalledSyncFile ), true );
+		if ( props.rotation )
+			setProperty( *props.rotation, DRM_MODE_ROTATE_0, bForceInRequest );
+
+		// Do not submit optional defaults here. In particular, the Polaris
+		// primary planes expose zpos as an immutable 0..0 property; including
+		// it in an atomic request makes drm_atomic_plane_set_property() reject
+		// the request with -EINVAL before atomic_check. A fully opaque RGB
+		// primary plane already has the required alpha/encoding/range defaults.
+
+		if ( ret != 0 )
+			return ret;
+
+		drm->m_FbIdsInRequest.emplace_back( pDrmFb );
+	}
+
+	return 0;
+}
+
 /* Prepares an atomic commit for the provided scene-graph. Returns 0 on success,
  * negative errno on failure or if the scene-graph can't be presented directly. */
 int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameInfo )
@@ -2972,7 +3177,7 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 
 	drm_update_color_mgmt(drm);
 
-	const bool bIsVRRCapable = drm->pConnector && drm->pConnector->GetProperties().vrr_capable && !!drm->pConnector->GetProperties().vrr_capable->GetCurrentValue();
+	const bool bIsVRRCapable = drm->tiled_outputs.empty() && drm->pConnector && drm->pConnector->GetProperties().vrr_capable && !!drm->pConnector->GetProperties().vrr_capable->GetCurrentValue();
 	const bool bHasVRREnable = drm->pCRTC && drm->pCRTC->GetProperties().VRR_ENABLED;
 
 	const bool bVRREnabled = bIsVRRCapable && bHasVRREnable && frameInfo->allowVRR;
@@ -3118,7 +3323,18 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 				pCRTC->GetProperties().AMD_CRTC_REGAMMA_TF->SetPendingValue( drm->req, 0, bForceInRequest );
 		}
 
-		if ( drm->pConnector && !bSleep )
+		if ( !drm->tiled_outputs.empty() && !bSleep )
+		{
+			for ( const drm_tile_output_t &output : drm->tiled_outputs )
+			{
+				output.connector->GetProperties().CRTC_ID->SetPendingValue(
+					drm->req, output.crtc->GetObjectId(), bForceInRequest );
+				if ( output.connector->GetProperties().Colorspace )
+					output.connector->GetProperties().Colorspace->SetPendingValue(
+						drm->req, uColorimetry, bForceInRequest );
+			}
+		}
+		else if ( drm->pConnector && !bSleep )
 		{
 			// Always set our CRTC_ID for the modeset, especially
 			// as we zero-ed it above.
@@ -3128,7 +3344,25 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 				drm->pConnector->GetProperties().Colorspace->SetPendingValue( drm->req, uColorimetry, bForceInRequest );
 		}
 
-		if ( drm->pCRTC && !bSleep )
+		if ( !drm->tiled_outputs.empty() && !bSleep )
+		{
+			for ( const drm_tile_output_t &output : drm->tiled_outputs )
+			{
+				output.crtc->GetProperties().ACTIVE->SetPendingValue( drm->req, 1u, true );
+				output.crtc->GetProperties().MODE_ID->SetPendingValue(
+					drm->req, drm->pending.mode_id ? drm->pending.mode_id->GetBlobValue() : 0lu, true );
+
+				if ( output.crtc->GetProperties().GAMMA_LUT )
+					output.crtc->GetProperties().GAMMA_LUT->SetPendingValue( drm->req, 0, true );
+				if ( output.crtc->GetProperties().DEGAMMA_LUT )
+					output.crtc->GetProperties().DEGAMMA_LUT->SetPendingValue( drm->req, 0, true );
+				if ( output.crtc->GetProperties().CTM )
+					output.crtc->GetProperties().CTM->SetPendingValue( drm->req, 0, true );
+				if ( output.crtc->GetProperties().VRR_ENABLED )
+					output.crtc->GetProperties().VRR_ENABLED->SetPendingValue( drm->req, 0, true );
+			}
+		}
+		else if ( drm->pCRTC && !bSleep )
 		{
 			drm->pCRTC->GetProperties().ACTIVE->SetPendingValue( drm->req, 1u, true );
 			drm->pCRTC->GetProperties().MODE_ID->SetPendingValue( drm->req, drm->pending.mode_id ? drm->pending.mode_id->GetBlobValue() : 0lu, true );
@@ -3181,6 +3415,8 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 	int ret;
 	if ( drm->pCRTC == nullptr || bSleep ) {
 		ret = 0;
+	} else if ( !drm->tiled_outputs.empty() ) {
+		ret = drm_prepare_tiled( drm, frameInfo, needs_modeset );
 	} else if ( drm->bUseLiftoff ) {
 		ret = drm_prepare_liftoff( drm, frameInfo, needs_modeset );
 	} else {
@@ -3244,6 +3480,118 @@ static bool drm_set_crtc( struct drm_t *drm, gamescope::CDRMCRTC *pCRTC )
 	return true;
 }
 
+static bool configure_tiled_outputs( struct drm_t *drm, gamescope::CDRMConnector *pOriginConnector )
+{
+	drm->tiled_outputs.clear();
+	drm->tiled_width = 0;
+	drm->tiled_height = 0;
+
+	const std::optional<drm_tile_info_t> originInfo = get_connector_tile_info( drm, pOriginConnector );
+	if ( !originInfo || originInfo->num_h_tiles * originInfo->num_v_tiles <= 1 )
+		return true;
+
+	const uint32_t expectedTiles = originInfo->num_h_tiles * originInfo->num_v_tiles;
+	std::vector<drm_tile_output_t> outputs;
+	std::vector<bool> occupied( expectedTiles, false );
+
+	for ( auto &iter : drm->connectors )
+	{
+		gamescope::CDRMConnector *pConnector = &iter.second;
+		if ( pConnector->GetModeConnector()->connection != DRM_MODE_CONNECTED )
+			continue;
+
+		const std::optional<drm_tile_info_t> info = get_connector_tile_info( drm, pConnector );
+		if ( !info || info->group_id != originInfo->group_id )
+			continue;
+
+		if ( info->num_h_tiles != originInfo->num_h_tiles ||
+			 info->num_v_tiles != originInfo->num_v_tiles ||
+			 info->tile_h_size != originInfo->tile_h_size ||
+			 info->tile_v_size != originInfo->tile_v_size )
+		{
+			drm_log.errorf( "TILE group %u has inconsistent geometry on %s",
+				originInfo->group_id, pConnector->GetName() );
+			return false;
+		}
+
+		const uint32_t index = info->tile_v_loc * info->num_h_tiles + info->tile_h_loc;
+		if ( occupied[index] )
+		{
+			drm_log.errorf( "TILE group %u has duplicate tile location %u,%u",
+				originInfo->group_id, info->tile_h_loc, info->tile_v_loc );
+			return false;
+		}
+
+		occupied[index] = true;
+		outputs.emplace_back( drm_tile_output_t{ .info = *info, .connector = pConnector } );
+	}
+
+	if ( outputs.size() != expectedTiles ||
+		 std::find( occupied.begin(), occupied.end(), false ) != occupied.end() )
+	{
+		drm_log.errorf( "TILE group %u is incomplete: found %zu of %u tiles",
+			originInfo->group_id, outputs.size(), expectedTiles );
+		return false;
+	}
+
+	std::sort( outputs.begin(), outputs.end(), []( const drm_tile_output_t &a, const drm_tile_output_t &b )
+	{
+		if ( a.info.tile_v_loc != b.info.tile_v_loc )
+			return a.info.tile_v_loc < b.info.tile_v_loc;
+		return a.info.tile_h_loc < b.info.tile_h_loc;
+	} );
+
+	uint32_t usedCRTCMask = 0;
+	for ( drm_tile_output_t &output : outputs )
+	{
+		if ( output.connector == pOriginConnector )
+		{
+			output.crtc = drm->pCRTC;
+			output.primary_plane = drm->pPrimaryPlane;
+		}
+		else
+		{
+			for ( const std::unique_ptr<gamescope::CDRMCRTC> &pCRTC : drm->crtcs )
+			{
+				if ( (usedCRTCMask & pCRTC->GetCRTCMask()) == 0 &&
+					 (output.connector->GetPossibleCRTCMask() & pCRTC->GetCRTCMask()) != 0 )
+				{
+					output.crtc = pCRTC.get();
+					output.primary_plane = find_primary_plane_for_crtc( drm, output.crtc );
+					break;
+				}
+			}
+		}
+
+		if ( !output.crtc || !output.primary_plane ||
+			 (usedCRTCMask & output.crtc->GetCRTCMask()) != 0 )
+		{
+			drm_log.errorf( "No unique CRTC/primary plane for TILE connector %s",
+				output.connector->GetName() );
+			return false;
+		}
+
+		usedCRTCMask |= output.crtc->GetCRTCMask();
+	}
+
+	drm->tiled_width = originInfo->num_h_tiles * originInfo->tile_h_size;
+	drm->tiled_height = originInfo->num_v_tiles * originInfo->tile_v_size;
+	drm->tiled_outputs = std::move( outputs );
+
+	drm_log.infof( "Using DRM TILE group %u as logical %ux%u output (%ux%u tiles)",
+		originInfo->group_id, drm->tiled_width, drm->tiled_height,
+		originInfo->num_h_tiles, originInfo->num_v_tiles );
+	for ( const drm_tile_output_t &output : drm->tiled_outputs )
+	{
+		drm_log.infof( "  tile %u,%u: %s -> CRTC %u, primary plane %u",
+			output.info.tile_h_loc, output.info.tile_v_loc,
+			output.connector->GetName(), output.crtc->GetObjectId(),
+			output.primary_plane->GetObjectId() );
+	}
+
+	return true;
+}
+
 bool drm_set_connector( struct drm_t *drm, gamescope::CDRMConnector *conn )
 {
 	drm_log.infof("selecting connector %s", conn->GetName());
@@ -3265,6 +3613,8 @@ bool drm_set_connector( struct drm_t *drm, gamescope::CDRMConnector *conn )
 	drm->current.mode_id = nullptr;
 
 	drm->pConnector = conn;
+	if ( !configure_tiled_outputs( drm, conn ) )
+		return false;
 	drm->needs_modeset = true;
 
 	return true;
@@ -3274,6 +3624,9 @@ static void drm_unset_connector( struct drm_t *drm )
 {
 	drm->pCRTC = nullptr;
 	drm->pPrimaryPlane = nullptr;
+	drm->tiled_outputs.clear();
+	drm->tiled_width = 0;
+	drm->tiled_height = 0;
 
 	for ( int i = 0; i < k_nMaxLayers; i++ )
 	{
@@ -3392,9 +3745,21 @@ bool drm_set_mode( struct drm_t *drm, const drmModeModeInfo *mode )
 
 	update_drm_effective_orientations(drm, mode);
 
+	if ( !drm->tiled_outputs.empty() )
+	{
+		// TILE coordinates already define the physical orientation and the
+		// logical desktop extent; do not apply the single portrait-tile
+		// orientation heuristic to the assembled monitor.
+		g_bRotated = false;
+		g_nOutputWidth = drm->tiled_width;
+		g_nOutputHeight = drm->tiled_height;
+		return true;
+	}
+
 	// 90/270 transpose the output (g_bRotated); 180 flips in place.
 	uint32_t uStep = 0;
 	uint64_t ulNeeded = 0;
+
 	switch ( drm->pConnector->GetCurrentOrientation() )
 	{
 	default:
@@ -3442,8 +3807,15 @@ bool drm_set_refresh( struct drm_t *drm, int refresh )
 {
 	int width = g_nOutputWidth;
 	int height = g_nOutputHeight;
+	if ( !drm->tiled_outputs.empty() )
+	{
+		// A TILE connector advertises its physical half-mode. Keep the public
+		// output logical while selecting/generating one identical mode per tile.
+		width = drm->tiled_outputs.front().info.tile_h_size;
+		height = drm->tiled_outputs.front().info.tile_v_size;
+	}
 
-	if ( g_bRotated ) {
+	if ( g_bRotated && drm->tiled_outputs.empty() ) {
 		int tmp = width;
 		width = height;
 		height = tmp;
@@ -3500,6 +3872,15 @@ bool drm_set_resolution( struct drm_t *drm, int width, int height )
 		return false;
 
 	drmModeConnector *connector = drm->pConnector->GetModeConnector();
+	if ( !drm->tiled_outputs.empty() )
+	{
+		if ( width != (int) drm->tiled_width || height != (int) drm->tiled_height )
+			return false;
+
+		width = drm->tiled_outputs.front().info.tile_h_size;
+		height = drm->tiled_outputs.front().info.tile_v_size;
+	}
+
 	const drmModeModeInfo *mode = find_mode(connector, width, height, 0);
 	if ( !mode )
 	{
@@ -3511,6 +3892,9 @@ bool drm_set_resolution( struct drm_t *drm, int width, int height )
 
 bool drm_get_vrr_capable(struct drm_t *drm)
 {
+	if ( !drm->tiled_outputs.empty() )
+		return false;
+
 	if ( drm->pConnector )
 		return drm->pConnector->SupportsVRR();
 
@@ -3554,7 +3938,7 @@ std::pair<uint32_t, uint32_t> drm_get_connector_identifier(struct drm_t *drm)
 
 bool drm_supports_color_mgmt(struct drm_t *drm)
 {
-	if ( g_bForceDisableColorMgmt )
+	if ( g_bForceDisableColorMgmt || !drm->tiled_outputs.empty() )
 		return false;
 
 	if ( !drm->pPrimaryPlane )
@@ -3665,6 +4049,10 @@ namespace gamescope
 			bool bNeedsCompositeFromFilter = (pFrameInfo->eUpscaleFilter == GamescopeUpscaleFilter::NEAREST || pFrameInfo->eUpscaleFilter == GamescopeUpscaleFilter::PIXEL) && !bLayer0ScreenSize;
 
 			bool bNeedsFullComposite = false;
+			// A tiled monitor needs one logical framebuffer cropped across all
+			// tile CRTCs. Client buffers cannot be independently direct-scanned
+			// out until multi-output liftoff support exists.
+			bNeedsFullComposite |= !g_DRM.tiled_outputs.empty();
 			bNeedsFullComposite |= cv_composite_force;
 			bNeedsFullComposite |= bWasFirstFrame;
 			bNeedsFullComposite |= pFrameInfo->useFSRLayer0;
