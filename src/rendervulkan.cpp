@@ -473,7 +473,7 @@ bool CVulkanDevice::createDevice()
 		};
 		vk.GetPhysicalDeviceProperties2( physDev(), &props2 );
 
-		if ( !GetBackend()->UsesVulkanSwapchain() && !drmProps.hasPrimary ) {
+		if ( !GetBackend()->UsesVulkanSwapchain() && GetBackend()->IsSessionBased() && !drmProps.hasPrimary ) {
 			vk_log.errorf( "physical device has no primary node" );
 			return false;
 		}
