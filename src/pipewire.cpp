@@ -123,6 +123,11 @@ static void build_format_params(struct spa_pod_builder *builder, spa_video_forma
 							SPA_VIDEO_COLOR_RANGE_16_235,
 							SPA_VIDEO_COLOR_RANGE_0_255),
 			0);
+	} else if (g_bOutputHDREnabled && format == SPA_VIDEO_FORMAT_xBGR_210LE) {
+		spa_pod_builder_add(builder,
+			SPA_FORMAT_VIDEO_colorPrimaries, SPA_POD_Id(SPA_VIDEO_COLOR_PRIMARIES_BT2020),
+			SPA_FORMAT_VIDEO_transferFunction, SPA_POD_Id(SPA_VIDEO_TRANSFER_SMPTE2084),
+			0);
 	}
 	spa_pod_builder_prop(builder, SPA_FORMAT_VIDEO_modifier, SPA_POD_PROP_FLAG_MANDATORY);
 	spa_pod_builder_push_choice(builder, &choice_frame, SPA_CHOICE_Enum, 0);
@@ -152,6 +157,11 @@ static void build_format_params(struct spa_pod_builder *builder, spa_video_forma
 							SPA_VIDEO_COLOR_RANGE_16_235,
 							SPA_VIDEO_COLOR_RANGE_0_255),
 			0);
+	} else if (g_bOutputHDREnabled && format == SPA_VIDEO_FORMAT_xBGR_210LE) {
+		spa_pod_builder_add(builder,
+			SPA_FORMAT_VIDEO_colorPrimaries, SPA_POD_Id(SPA_VIDEO_COLOR_PRIMARIES_BT2020),
+			SPA_FORMAT_VIDEO_transferFunction, SPA_POD_Id(SPA_VIDEO_TRANSFER_SMPTE2084),
+			0);
 	}
 	params.push_back((const struct spa_pod *) spa_pod_builder_pop(builder, &obj_frame));
 
@@ -166,6 +176,8 @@ static std::vector<const struct spa_pod *> build_format_params(struct spa_pod_bu
 
 	build_format_params(builder, SPA_VIDEO_FORMAT_BGRx, params);
 	build_format_params(builder, SPA_VIDEO_FORMAT_NV12, params);
+	if (g_bOutputHDREnabled)
+		build_format_params(builder, SPA_VIDEO_FORMAT_xBGR_210LE, params);
 
 	return params;
 }
@@ -271,6 +283,7 @@ static void copy_buffer(struct pipewire_state *state, struct pipewire_buffer *bu
 
 static void dispatch_nudge(struct pipewire_state *state, int fd)
 {
+	static bool s_bLastHDREnabled = false;
 	while (true) {
 		static char buf[1024];
 		if (read(fd, buf, sizeof(buf)) < 0) {
@@ -285,7 +298,8 @@ static void dispatch_nudge(struct pipewire_state *state, int fd)
 		s_nOutputHeight = g_nOutputHeight;
 		calculate_capture_size();
 	}
-	if (s_nCaptureWidth != state->video_info.size.width || s_nCaptureHeight != state->video_info.size.height) {
+	if (s_nCaptureWidth != state->video_info.size.width || s_nCaptureHeight != state->video_info.size.height || s_bLastHDREnabled != g_bOutputHDREnabled) {
+		s_bLastHDREnabled = g_bOutputHDREnabled;
 		pwr_log.debugf("renegotiating stream params (size: %dx%d)", s_nCaptureWidth, s_nCaptureHeight);
 
 		uint8_t buf[4096];
@@ -450,6 +464,7 @@ uint32_t spa_format_to_drm(uint32_t spa_format)
 	switch (spa_format)
 	{
 		case SPA_VIDEO_FORMAT_NV12: return DRM_FORMAT_NV12;
+		case SPA_VIDEO_FORMAT_xBGR_210LE: return DRM_FORMAT_XBGR2101010;
 		default:
 		case SPA_VIDEO_FORMAT_BGR: return DRM_FORMAT_XRGB8888;
 	}
@@ -507,7 +522,7 @@ static void stream_handle_add_buffer(void *user_data, struct pw_buffer *pw_buffe
 	screenshotImageFlags.bMappable = true;
 	screenshotImageFlags.bTransferDst = true;
 	screenshotImageFlags.bStorage = true;
-	if (is_dmabuf || drmFormat == DRM_FORMAT_NV12)
+	if (is_dmabuf || drmFormat == DRM_FORMAT_NV12 || drmFormat == DRM_FORMAT_XBGR2101010)
 	{
 		screenshotImageFlags.bExportable = true;
 		screenshotImageFlags.bLinear = true; // TODO: support multi-planar DMA-BUF export via PipeWire
