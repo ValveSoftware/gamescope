@@ -1859,7 +1859,7 @@ namespace gamescope
     {
         auto *pHDRInfo = &m_pConnector->m_HDRInfo;
         if (m_pBackend->SupportsColorManagement()) {
-            pHDRInfo->bExposeHDRSupport   = ( cv_hdr_enabled && m_pConnector->m_uMaxTargetLuminance > m_pConnector->m_uReferenceLuminance );
+            pHDRInfo->bExposeHDRSupport   = ( cv_hdr_enabled && m_pConnector->m_uMaxTargetLuminance >= m_pConnector->m_uReferenceLuminance );
             pHDRInfo->eOutputEncodingEOTF = pHDRInfo->bExposeHDRSupport ? EOTF_PQ : EOTF_Gamma22;
         }
 
