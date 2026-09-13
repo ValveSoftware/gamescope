@@ -4345,20 +4345,21 @@ bool vulkan_has_drm_props()
 	return false;
 }
 
-bool vulkan_has_drm_modifiers_for_features(VkFormat format, VkFormatFeatureFlags features)
+bool vulkan_format_supports_features(VkFormat format, VkFormatFeatureFlags features)
 {
-	if ( !g_device.supportsModifiers() )
-		return false;
-
 	VkDrmFormatModifierPropertiesListEXT modifierPropList = {
 		.sType = VK_STRUCTURE_TYPE_DRM_FORMAT_MODIFIER_PROPERTIES_LIST_EXT,
 	};
 	VkFormatProperties2 formatProps = {
 		.sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2,
-		.pNext = &modifierPropList,
+		.pNext = g_device.supportsModifiers() ? &modifierPropList : nullptr,
 	};
 
 	g_device.vk.GetPhysicalDeviceFormatProperties2( g_device.physDev(), format, &formatProps );
+
+	// Without modifiers, flippable images are created with optimal tiling
+	if ( !g_device.supportsModifiers() )
+		return ( formatProps.formatProperties.optimalTilingFeatures & features ) == features;
 
 	if ( modifierPropList.drmFormatModifierCount == 0 )
 		return false;
