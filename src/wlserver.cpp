@@ -1644,6 +1644,7 @@ void wlserver_presentation_feedback_discard( struct wlr_surface *surface, std::v
 	for (auto& feedback : presentation_feedbacks)
 	{
 		wp_presentation_feedback_send_discarded(feedback);
+		wl_resource_destroy(feedback);
 	}
 	presentation_feedbacks.clear();
 }
