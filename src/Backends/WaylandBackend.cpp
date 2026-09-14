@@ -2246,6 +2246,7 @@ namespace gamescope
         if ( !pImportedBuffer )
         {
             xdg_log.errorf( "Failed to import dmabuf" );
+            zwp_linux_buffer_params_v1_destroy( pBufferParams );
             return nullptr;
         }
 
