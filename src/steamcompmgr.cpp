@@ -5513,7 +5513,10 @@ get_size_hints(xwayland_ctx_t *ctx, steamcompmgr_win_t *w)
 
 				// If we have a unique children that isn't override-redirect that is
 				// contained inside this fullscreen window, it's probably it.
+				// GTK4 popups carry a 1x1 InputOnly child, which is not a game window.
 				if (attribs.override_redirect == false &&
+					attribs.c_class == InputOutput &&
+					( attribs.width > 1 || attribs.height > 1 ) &&
 					attribs.width <= w->GetGeometry().nWidth &&
 					attribs.height <= w->GetGeometry().nHeight)
 				{
