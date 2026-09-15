@@ -51,16 +51,16 @@ namespace GamescopeWSILayer {
     return std::ranges::any_of(vec, std::bind_front(std::equal_to{}, lookupValue));
   }
 
-  static int waylandPumpEvents(wl_display *display) {
+  static int waylandPumpEvents(wl_display *display, wl_event_queue *queue) {
     int wlFd = wl_display_get_fd(display);
 
     while (true) {
       int ret = 0;
 
-      if ((ret = wl_display_dispatch_pending(display)) < 0)
+      if ((ret = wl_display_dispatch_queue_pending(display, queue)) < 0)
         return ret;
 
-      if ((ret = wl_display_prepare_read(display)) < 0) {
+      if ((ret = wl_display_prepare_read_queue(display, queue)) < 0) {
         if (errno == EAGAIN)
           continue;
 
@@ -404,15 +404,16 @@ namespace GamescopeWSILayer {
     gamescope_swapchain_factory_v2* gamescopeSwapchainFactory;
     std::shared_ptr<GamescopeLimiterState> limiterState;
 
-    static GamescopeWaylandObjects get(wl_display *display) {
+    static GamescopeWaylandObjects get(wl_display *display, wl_event_queue *queue) {
       wl_registry *registry = wl_display_get_registry(display);
       if (!registry)
         return {};
+      wl_proxy_set_queue(reinterpret_cast<wl_proxy *>(registry), queue);
       GamescopeWaylandObjects waylandObjects{};
       wl_registry_add_listener(registry, &s_registryListener, reinterpret_cast<void *>(&waylandObjects));
       // Dispatch then roundtrip to get registry info.
-      wl_display_dispatch(display);
-      wl_display_roundtrip(display);
+      wl_display_dispatch_queue(display, queue);
+      wl_display_roundtrip_queue(display, queue);
       wl_registry_destroy(registry);
 
       return waylandObjects;
@@ -454,6 +455,7 @@ namespace GamescopeWSILayer {
 
   struct GamescopeInstanceData {
     wl_display* display;
+    wl_event_queue* queue;
     uint32_t appId = 0;
     std::string engineName;
     GamescopeLayerClient::Flags flags = 0;
@@ -463,6 +465,7 @@ namespace GamescopeWSILayer {
   struct GamescopeSurfaceData {
     VkInstance instance;
     wl_display *display;
+    wl_event_queue *queue;
     GamescopeWaylandObjects waylandObjects;
     VkSurfaceKHR fallbackSurface;
     wl_surface* surface;
@@ -596,6 +599,7 @@ namespace GamescopeWSILayer {
   struct GamescopeSwapchainData {
     gamescope_swapchain *object;
     wl_display* display;
+    wl_event_queue* queue;
     VkSurfaceKHR surface; // Always the Gamescope Surface surface -- so the Wayland one.
     bool isWayland;
     bool isBypassingXWayland;
@@ -701,6 +705,13 @@ namespace GamescopeWSILayer {
         return result;
       }
 
+      wl_event_queue *queue = wl_display_create_queue(display);
+	  if (!queue) {
+		fprintf(stderr, "[Gamescope WSI] Failed to create Wayland event queue. Bypass layer will be unavailable.\n");
+		wl_display_disconnect(display);
+		return result;
+	  }
+      
       {
         if (pCreateInfo->pApplicationInfo) {
           fprintf(stderr, "[Gamescope WSI] Application info:\n");
@@ -723,6 +734,7 @@ namespace GamescopeWSILayer {
 
         auto state = GamescopeInstance::create(*pInstance, GamescopeInstanceData {
           .display = display,
+          .queue   = queue,
           .appId   = appId,
           .engineName = engineName,
           .flags   = defaultLayerClientFlags(pCreateInfo->pApplicationInfo, appId),
@@ -746,6 +758,7 @@ namespace GamescopeWSILayer {
             VkInstance                   instance,
       const VkAllocationCallbacks*       pAllocator) {
       if (auto state = GamescopeInstance::get(instance)) {
+        wl_event_queue_destroy(state->queue);
         wl_display_disconnect(state->display);
       }
       GamescopeInstance::remove(instance);
@@ -839,7 +852,13 @@ namespace GamescopeWSILayer {
       if (!gamescopeInstance)
         return pDispatch->CreateWaylandSurfaceKHR(instance, pCreateInfo, pAllocator, pSurface);
 
-      GamescopeWaylandObjects waylandObjects = GamescopeWaylandObjects::get(pCreateInfo->display);
+      wl_event_queue *queue = wl_display_create_queue(pCreateInfo->display);
+	  if (!queue) {
+		fprintf(stderr, "[Gamescope WSI] Failed to create Wayland event queue\n");
+		return VK_ERROR_SURFACE_LOST_KHR;
+	  }
+      
+      GamescopeWaylandObjects waylandObjects = GamescopeWaylandObjects::get(pCreateInfo->display, queue);
       if (!waylandObjects.valid()) {
         fprintf(stderr, "[Gamescope WSI] Failed to get Wayland objects\n");
         return VK_ERROR_SURFACE_LOST_KHR;
@@ -852,6 +871,7 @@ namespace GamescopeWSILayer {
       auto gamescopeSurface = GamescopeSurface::create(*pSurface, GamescopeSurfaceData {
         .instance        = instance,
         .display         = pCreateInfo->display,
+        .queue 		     = queue,
         .waylandObjects  = waylandObjects,
         .surface         = pCreateInfo->surface,
         .isNativeSurface = true,
@@ -1043,6 +1063,8 @@ namespace GamescopeWSILayer {
         pDispatch->DestroySurfaceKHR(instance, state->fallbackSurface, pAllocator);
         if (!state->isNativeSurface) {
           wl_surface_destroy(state->surface);
+        } else {
+          wl_event_queue_destroy(state->queue);
         }
       }
       GamescopeSurface::remove(surface);
@@ -1092,7 +1114,7 @@ namespace GamescopeWSILayer {
             VkSurfaceKHR*                pSurface) {
       fprintf(stderr, "[Gamescope WSI] Creating Gamescope surface: xid: 0x%x\n", window);
 
-      GamescopeWaylandObjects waylandObjects = GamescopeWaylandObjects::get(gamescopeInstance->display);
+      GamescopeWaylandObjects waylandObjects = GamescopeWaylandObjects::get(gamescopeInstance->display, gamescopeInstance->queue);
       if (!waylandObjects.valid()) {
         fprintf(stderr, "[Gamescope WSI] Failed to get Wayland objects\n");
         return VK_ERROR_SURFACE_LOST_KHR;
@@ -1146,6 +1168,7 @@ namespace GamescopeWSILayer {
       auto gamescopeSurface = GamescopeSurface::create(*pSurface, GamescopeSurfaceData {
         .instance        = instance,
         .display         = gamescopeInstance->display,
+        .queue 		     = gamescopeInstance->queue,
         .waylandObjects  = waylandObjects,
         .fallbackSurface = fallbackSurface,
         .surface         = waylandSurface,
@@ -1343,6 +1366,7 @@ namespace GamescopeWSILayer {
         auto gamescopeSwapchain = GamescopeSwapchain::create(*pSwapchain, GamescopeSwapchainData{
           .object              = gamescopeSwapchainObject,
           .display             = gamescopeSurface->display,
+          .queue 		       = gamescopeSurface->queue,
           .surface             = pCreateInfo->surface, // Always the Wayland side surface.
           .isWayland           = gamescopeSurface->isWayland(),
           .isBypassingXWayland = canBypass,
@@ -1467,6 +1491,7 @@ namespace GamescopeWSILayer {
       auto pPresentTimes = vkroots::FindInChain<const VkPresentTimesInfoGOOGLE>(&presentInfo);
 
       wl_display *display = nullptr;
+      wl_event_queue *event_queue = nullptr;
       for (uint32_t i = 0; i < presentInfo.swapchainCount; i++) {
         if (auto gamescopeSwapchain = GamescopeSwapchain::get(presentInfo.pSwapchains[i])) {
           if (gamescopeSwapchain->retired) {
@@ -1488,6 +1513,7 @@ namespace GamescopeWSILayer {
 
           assert(display == nullptr || display == gamescopeSwapchain->display);
           display = gamescopeSwapchain->display;
+		  event_queue = gamescopeSwapchain->queue;
         }
       }
 
@@ -1525,8 +1551,8 @@ namespace GamescopeWSILayer {
       });
 
 
-      if (display) {
-        waylandPumpEvents(display);
+      if (display && event_queue) {
+        waylandPumpEvents(display, event_queue);
       } else {
         static bool s_warned = false;
         if (!s_warned) {
@@ -1678,7 +1704,7 @@ namespace GamescopeWSILayer {
       }
 
       // Dispatch to get the latest timings.
-      if (waylandPumpEvents(gamescopeSwapchain->display) < 0)
+      if (waylandPumpEvents(gamescopeSwapchain->display, gamescopeSwapchain->queue) < 0)
         return VK_ERROR_SURFACE_LOST_KHR;
 
       uint32_t originalCount = *pPresentationTimingCount;
@@ -1705,7 +1731,7 @@ namespace GamescopeWSILayer {
       }
 
       // Dispatch to get the latest cycle.
-      if (waylandPumpEvents(gamescopeSwapchain->display) < 0)
+      if (waylandPumpEvents(gamescopeSwapchain->display, gamescopeSwapchain->queue) < 0)
         return VK_ERROR_SURFACE_LOST_KHR;
 
       std::unique_lock lock(*gamescopeSwapchain->presentTimingMutex);
