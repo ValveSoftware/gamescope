@@ -52,16 +52,16 @@ namespace GamescopeWSILayer {
     return std::ranges::any_of(vec, std::bind_front(std::equal_to{}, lookupValue));
   }
 
-  static int waylandPumpEvents(wl_display *display) {
+  static int waylandPumpEvents(wl_display *display, wl_event_queue *queue) {
     int wlFd = wl_display_get_fd(display);
 
     while (true) {
       int ret = 0;
 
-      if ((ret = wl_display_dispatch_pending(display)) < 0)
+      if ((ret = wl_display_dispatch_queue_pending(display, queue)) < 0)
         return ret;
 
-      if ((ret = wl_display_prepare_read(display)) < 0) {
+      if ((ret = wl_display_prepare_read_queue(display, queue)) < 0) {
         if (errno == EAGAIN)
           continue;
 
@@ -419,6 +419,8 @@ namespace GamescopeWSILayer {
   }
 
   struct GamescopeWaylandObjects {
+    // Declared first so every proxy is destroyed before its queue.
+    std::unique_ptr<wl_event_queue, decltype(&wl_event_queue_destroy)> queue{nullptr, wl_event_queue_destroy};
     std::unique_ptr<wl_compositor, decltype(&wl_compositor_destroy)> compositor{nullptr, wl_compositor_destroy};
     std::unique_ptr<gamescope_swapchain_factory_v2, decltype(&gamescope_swapchain_factory_v2_destroy)>
       gamescopeSwapchainFactory{nullptr, gamescope_swapchain_factory_v2_destroy};
@@ -426,13 +428,22 @@ namespace GamescopeWSILayer {
 
     static GamescopeWaylandObjects get(wl_display *display) {
       GamescopeWaylandObjects waylandObjects;
-      wl_registry *registry = wl_display_get_registry(display);
+      waylandObjects.queue.reset(wl_display_create_queue(display));
+      if (!waylandObjects.queue)
+        return {};
+      // The registry callback's stack data stays private until get() returns.
+      auto *wrapper = static_cast<wl_display *>(wl_proxy_create_wrapper(display));
+      if (!wrapper)
+        return {};
+      wl_proxy_set_queue(reinterpret_cast<wl_proxy *>(wrapper), waylandObjects.queue.get());
+      wl_registry *registry = wl_display_get_registry(wrapper);
+      wl_proxy_wrapper_destroy(wrapper);
       if (!registry)
         return {};
       defer(wl_registry_destroy(registry));
       wl_registry_add_listener(registry, &s_registryListener, &waylandObjects);
-      if (wl_display_dispatch(display) < 0 ||
-          wl_display_roundtrip(display) < 0)
+      if (wl_display_dispatch_queue(display, waylandObjects.queue.get()) < 0 ||
+          wl_display_roundtrip_queue(display, waylandObjects.queue.get()) < 0)
         return {};
       return waylandObjects;
     }
@@ -615,6 +626,7 @@ namespace GamescopeWSILayer {
   struct GamescopeSwapchainData {
     gamescope_swapchain *object;
     wl_display* display;
+    wl_event_queue *queue;
     VkSurfaceKHR surface; // Always the Gamescope Surface surface -- so the Wayland one.
     bool isWayland;
     bool isBypassingXWayland;
@@ -1393,6 +1405,7 @@ namespace GamescopeWSILayer {
         auto gamescopeSwapchain = gamescopeSwapchains.create(*pSwapchain, GamescopeSwapchainData{
           .object              = gamescopeSwapchainObject,
           .display             = gamescopeSurface->display,
+          .queue               = gamescopeSurface->waylandObjects.queue.get(),
           .surface             = pCreateInfo->surface, // Always the Wayland side surface.
           .isWayland           = gamescopeSurface->isWayland(),
           .isBypassingXWayland = canBypass,
@@ -1525,6 +1538,7 @@ namespace GamescopeWSILayer {
       wl_display *display = nullptr;
       for (uint32_t i = 0; i < presentInfo.swapchainCount; i++) {
         if (auto gamescopeSwapchain = gamescopeSwapchains.find(presentInfo.pSwapchains[i])) {
+          waylandPumpEvents(gamescopeSwapchain->display, gamescopeSwapchain->queue);
           if (gamescopeSwapchain->retired) {
             return PresentRetiredSwapchain(pDispatch, queue, pPresentInfo);
           }
@@ -1585,9 +1599,7 @@ namespace GamescopeWSILayer {
       if (allLayer || oOriginalPresentModeInfo)
         presentInfo.pNext = &driverModeInfo;
 
-      if (display) {
-        waylandPumpEvents(display);
-      } else {
+      if (!display) {
         static bool s_warned = false;
         if (!s_warned) {
           int messageId = -1;
@@ -1738,7 +1750,7 @@ namespace GamescopeWSILayer {
       }
 
       // Dispatch to get the latest timings.
-      if (waylandPumpEvents(gamescopeSwapchain->display) < 0)
+      if (waylandPumpEvents(gamescopeSwapchain->display, gamescopeSwapchain->queue) < 0)
         return VK_ERROR_SURFACE_LOST_KHR;
 
       std::unique_lock lock(*gamescopeSwapchain->presentTimingMutex);
@@ -1764,7 +1776,7 @@ namespace GamescopeWSILayer {
       }
 
       // Dispatch to get the latest cycle.
-      if (waylandPumpEvents(gamescopeSwapchain->display) < 0)
+      if (waylandPumpEvents(gamescopeSwapchain->display, gamescopeSwapchain->queue) < 0)
         return VK_ERROR_SURFACE_LOST_KHR;
 
       std::unique_lock lock(*gamescopeSwapchain->presentTimingMutex);
