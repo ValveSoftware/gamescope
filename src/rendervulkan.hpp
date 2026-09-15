@@ -33,11 +33,14 @@ class CVulkanCmdBuffer;
 
 // 1: Fade Plane (Fade outs between switching focus)
 // 2: Base Plane (Game, App)
-// 3: Override Plane (Dropdowns, etc)
-// 4: External Overlay (Mangoapp, etc)
-// 5: Primary Overlay (Steam Overlay)
-// 6: Cursor
-#define k_nMaxLayers 6
+// 3-4: Override Underlays (Ancestors of a nested dropdown, yield first)
+// 5: Override Plane (Dropdowns, etc)
+// 6: External Overlay (Mangoapp, etc)
+// 7: Primary Overlay (Steam Overlay)
+// 8: Cursor
+#define k_nMaxLayers 8
+// The shader constant must agree, and per-layer filter and alpha modes pack four bits each into a uint32_t.
+static_assert( k_nMaxLayers == VKR_MAX_LAYERS && k_nMaxLayers <= 8 );
 #define k_nMaxYcbcrMask 16
 #define k_nMaxYcbcrMask_ToPreCompile 3
 

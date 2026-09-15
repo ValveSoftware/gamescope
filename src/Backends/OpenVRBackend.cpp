@@ -434,7 +434,8 @@ namespace gamescope
 
     private:
         COpenVRBackend *m_pBackend = nullptr;
-        COpenVRPlane m_Planes[8];
+        // One backing plane plus every layer steamcompmgr can hand us.
+        COpenVRPlane m_Planes[k_nMaxLayers + 1];
 
         BackendConnectorHDRInfo m_HDRInfo{};
         std::vector<uint8_t> m_FakeEdid;
@@ -1614,7 +1615,7 @@ namespace gamescope
     COpenVRConnector::COpenVRConnector( COpenVRBackend *pBackend, uint64_t ulVirtualConnectorKey )
         : CBaseBackendConnector{ ulVirtualConnectorKey }
         , m_pBackend{ pBackend }
-        , m_Planes{ this, this, this, this, this, this, this, this }
+        , m_Planes{ this, this, this, this, this, this, this, this, this }
         , m_CursorPlane{ this }
     {
     }
@@ -1867,7 +1868,7 @@ namespace gamescope
             }
 
             const FrameInfo_t::Layer_t *pCursorLayer = nullptr;
-            for ( int i = 0; i < 8 && uCurrentPlane < 8; i++ )
+            for ( int i = 0; uCurrentPlane < std::size( m_Planes ); i++ )
             {
                 const FrameInfo_t::Layer_t *pLayer = i < pFrameInfo->layers.count() ? &pFrameInfo->layers.get( i ) : nullptr;
                 if ( pLayer && pLayer->zpos == g_zposCursor )
@@ -1920,7 +1921,7 @@ namespace gamescope
 
             GetPrimaryPlane()->Present( &compositeLayer );
 
-            for ( int i = 1; i < 8; i++ )
+            for ( size_t i = 1; i < std::size( m_Planes ); i++ )
                 m_Planes[i].Present( nullptr );
         }
 
@@ -2007,7 +2008,7 @@ namespace gamescope
 
         m_bNudgeToVisible = m_pBackend->ShouldNudgeToVisible();
 
-        for ( uint32_t i = 0; i < 8; i++ )
+        for ( uint32_t i = 0; i < std::size( m_Planes ); i++ )
         {
             bool bSuccess = m_Planes[i].Init( i == 0 ? nullptr : &m_Planes[0], i == 0 ? nullptr : &m_Planes[ i - 1 ] );
             if ( !bSuccess )

@@ -477,7 +477,8 @@ namespace gamescope
 
         CWaylandBackend *m_pBackend = nullptr;
 
-        CWaylandPlane m_Planes[8];
+        // One backing plane plus every layer steamcompmgr can hand us.
+        CWaylandPlane m_Planes[k_nMaxLayers + 1];
         bool m_bVisible = true;
         std::atomic<bool> m_bDesiredFullscreenState = { false };
 
@@ -987,7 +988,7 @@ namespace gamescope
     CWaylandConnector::CWaylandConnector( CWaylandBackend *pBackend, uint64_t ulVirtualConnectorKey )
         : CBaseBackendConnector{ ulVirtualConnectorKey }
         , m_pBackend( pBackend )
-        , m_Planes{ this, this, this, this, this, this, this, this }
+        , m_Planes{ this, this, this, this, this, this, this, this, this }
     {
         m_HDRInfo.bAlwaysPatchEdid = true;
     }
@@ -1006,7 +1007,7 @@ namespace gamescope
 
     bool CWaylandConnector::Init()
     {
-        for ( uint32_t i = 0; i < 8; i++ )
+        for ( uint32_t i = 0; i < std::size( m_Planes ); i++ )
         {
             bool bSuccess = m_Planes[i].Init( i == 0 ? nullptr : &m_Planes[0], i == 0 ? nullptr : &m_Planes[ i - 1 ] );
             if ( !bSuccess )
@@ -1058,9 +1059,8 @@ namespace gamescope
 
         if ( !m_bVisible )
         {
-            uint32_t uCurrentPlane = 0;
-            for ( int i = 0; i < 8 && uCurrentPlane < 8; i++ )
-                m_Planes[uCurrentPlane++].Present( nullptr );
+            for ( CWaylandPlane &plane : m_Planes )
+                plane.Present( nullptr );
         }
         else
         {
@@ -1118,7 +1118,7 @@ namespace gamescope
                         } );
                 }
 
-                for ( int i = 0; i < 8 && uCurrentPlane < 8; i++ )
+                for ( int i = 0; uCurrentPlane < std::size( m_Planes ); i++ )
                     m_Planes[uCurrentPlane++].Present( i < pFrameInfo->layers.count() ? &pFrameInfo->layers.get( i ) : nullptr );
             }
             else
@@ -1148,12 +1148,12 @@ namespace gamescope
 
                 m_Planes[0].Present( &compositeLayer );
 
-                for ( int i = 1; i < 8; i++ )
+                for ( size_t i = 1; i < std::size( m_Planes ); i++ )
                     m_Planes[i].Present( nullptr );
             }
         }
 
-        for ( int i = 7; i >= 0; i-- )
+        for ( int i = int( std::size( m_Planes ) ) - 1; i >= 0; i-- )
             m_Planes[i].Commit();
 
         wl_display_flush( m_pBackend->GetDisplay() );
