@@ -4698,18 +4698,22 @@ void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win
 	if ( inputFocus == ctx->focus.focusWindow && ctx->focus.overrideWindowMouse )
 		inputFocus = ctx->focus.overrideWindowMouse;
 
-	// X routes input by stacking. Raise the mouse pick together with its menus,
-	// preserving the parent menu above the base when a submenu takes the pick.
+	// X routes input by stacking, and only mapped windows take part. GTK4 keeps
+	// its unmapped popups stacked above their parent, so raising over one of
+	// those just trades ConfigureNotify events with the client forever.
+	size_t nWindowCount = 0;
+	steamcompmgr_win_t *pFirstMapped = nullptr;
+	for ( steamcompmgr_win_t *pWindow = ctx->list; pWindow; pWindow = pWindow->xwayland().next )
+	{
+		++nWindowCount;
+		if ( !pFirstMapped && pWindow->xwayland().a.map_state == IsViewable )
+			pFirstMapped = pWindow;
+	}
+
+	// Raise the mouse pick together with its menus, preserving the parent menu
+	// above the base when a submenu takes the pick.
 	if ( mouseBaseWindow && mouseBaseWindow != inputFocus )
 	{
-		size_t nWindowCount = 0;
-		steamcompmgr_win_t *pFirstMapped = nullptr;
-		for ( steamcompmgr_win_t *pWindow = ctx->list; pWindow; pWindow = pWindow->xwayland().next )
-		{
-			++nWindowCount;
-			if ( !pFirstMapped && pWindow->xwayland().a.map_state == IsViewable )
-				pFirstMapped = pWindow;
-		}
 
 		auto isMenu = [&]( steamcompmgr_win_t *candidate )
 		{
@@ -4755,7 +4759,7 @@ void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win
 			XRestackWindows( ctx->dpy, order.data(), order.size() );
 		}
 	}
-	else if ( ctx->list[0].xwayland().id != inputFocus->xwayland().id )
+	else if ( pFirstMapped != inputFocus )
 		inputFocus->Raise();
 
 	wlserver_lock();
