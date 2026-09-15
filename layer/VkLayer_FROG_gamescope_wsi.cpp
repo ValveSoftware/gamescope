@@ -435,7 +435,13 @@ namespace GamescopeWSILayer {
         objects->gamescopeSwapchainFactory = reinterpret_cast<gamescope_swapchain_factory_v2 *>(
           wl_registry_bind(registry, name, &gamescope_swapchain_factory_v2_interface, version));
       } else if (interface == "gamescope_limiter"sv) {
-        objects->limiterState = std::make_shared<GamescopeLimiterState>();
+        objects->limiterState = std::shared_ptr<GamescopeLimiterState>(
+          new GamescopeLimiterState(),
+          [](GamescopeLimiterState* limiter) {
+            if (limiter->proxy)
+              gamescope_limiter_destroy(limiter->proxy);
+          }
+        );
         // Cap at our version, binding higher is a fatal protocol error.
         objects->limiterState->proxy = reinterpret_cast<gamescope_limiter *>(
           wl_registry_bind(registry, name, &gamescope_limiter_interface, std::min(version, uint32_t(gamescope_limiter_interface.version))));
@@ -1061,10 +1067,17 @@ namespace GamescopeWSILayer {
       const VkAllocationCallbacks*       pAllocator) {
       if (auto state = GamescopeSurface::get(surface)) {
         pDispatch->DestroySurfaceKHR(instance, state->fallbackSurface, pAllocator);
-        if (!state->isNativeSurface) {
-          wl_surface_destroy(state->surface);
-        } else {
+
+        auto& waylandObjects = state->waylandObjects;
+        if (waylandObjects.compositor)
+          wl_compositor_destroy(waylandObjects.compositor);
+        if (waylandObjects.gamescopeSwapchainFactory)
+          gamescope_swapchain_factory_v2_destroy(waylandObjects.gamescopeSwapchainFactory);
+
+        if (state->isNativeSurface) {
           wl_event_queue_destroy(state->queue);
+        } else {
+          wl_surface_destroy(state->surface);
         }
       }
       GamescopeSurface::remove(surface);
