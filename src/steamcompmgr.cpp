@@ -6950,8 +6950,19 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 		steamcompmgr_win_t * w = find_win(ctx, ev->window);
 		if (w)
 		{
+			// GTK4 rewrites WM_NORMAL_HINTS on every relayout, hover included.
+			bool bSpecified = w->sizeHintsSpecified;
+			bool bIgnoreOverride = w->ignoreOverrideRedirect;
+			bool bMaybeDropdown = w->maybe_a_dropdown;
+			unsigned int uWidth = w->requestedWidth;
+			unsigned int uHeight = w->requestedHeight;
+
 			get_size_hints(ctx, w);
-			MakeFocusDirty();
+
+			if ( bSpecified != w->sizeHintsSpecified || bIgnoreOverride != w->ignoreOverrideRedirect ||
+				 bMaybeDropdown != w->maybe_a_dropdown ||
+				 uWidth != w->requestedWidth || uHeight != w->requestedHeight )
+				MakeFocusDirty();
 		}
 	}
 	if (ev->atom == ctx->atoms.gamesRunningAtom)
