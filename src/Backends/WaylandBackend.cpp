@@ -2867,7 +2867,8 @@ namespace gamescope
             if ( ( nRet = wl_display_dispatch_queue_pending( m_pBackend->GetDisplay(), m_pQueue ) ) < 0 )
             {
                 LogDisplayError( "Failed to dispatch input thread queue", m_pBackend->GetDisplay() );
-                abort();
+                raise( SIGTERM );
+                return;
             }
 
             if ( ( nRet = wl_display_prepare_read_queue( m_pBackend->GetDisplay(), m_pQueue ) ) < 0 )
@@ -2876,7 +2877,8 @@ namespace gamescope
                     continue;
 
                 LogDisplayError( "Failed to prepare read of input thread queue", m_pBackend->GetDisplay() );
-                abort();
+                raise( SIGTERM );
+                return;
             }
 
             if ( ( nRet = m_Waiter.PollEvents() ) <= 0 )
@@ -2885,7 +2887,8 @@ namespace gamescope
                 if ( nRet < 0 )
                 {
                     xdg_log.errorf_errno( "Input thread poll failed" );
-                    abort();
+                    raise( SIGTERM );
+                    return;
                 }
 
                 assert( nRet == 0 );
@@ -2895,7 +2898,8 @@ namespace gamescope
             if ( ( nRet = wl_display_read_events( m_pBackend->GetDisplay() ) ) < 0 )
             {
                 LogDisplayError( "Failed to read events on input thread", m_pBackend->GetDisplay() );
-                abort();
+                raise( SIGTERM );
+                return;
             }
         }
     }
