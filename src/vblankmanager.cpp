@@ -89,8 +89,9 @@ namespace gamescope
 
 		uint64_t ulTargetPoint = GetLastVBlank() + ulIntervalNSecs - ulOffset;
 
-		while ( ulTargetPoint < ulNow )
-			ulTargetPoint += ulIntervalNSecs;
+		// Step in one go, a headless session never marks a vblank so the gap grows with uptime.
+		if ( ulTargetPoint < ulNow )
+			ulTargetPoint += ( ( ulNow - ulTargetPoint - 1 ) / ulIntervalNSecs + 1 ) * ulIntervalNSecs;
 
 		return ulTargetPoint;
 	}

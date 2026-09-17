@@ -111,6 +111,7 @@ src = [
   'color_helpers.cpp',
   'main.cpp',
   'edid.cpp',
+  'mode_list_file.cpp',
   'wlserver.cpp',
   'vblankmanager.cpp',
   'rendervulkan.cpp',

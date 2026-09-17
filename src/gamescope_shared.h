@@ -19,6 +19,13 @@ namespace gamescope
 
 		GAMESCOPE_SCREEN_TYPE_COUNT
 	};
+
+	struct BackendMode
+	{
+		uint32_t uWidth;
+		uint32_t uHeight;
+		uint32_t uRefresh; // Hz
+	};
 }
 
 enum GamescopeAppTextureColorspace
