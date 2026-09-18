@@ -92,7 +92,7 @@ struct xwayland_ctx_t final : public gamescope::IWaitable
 
 	std::unique_ptr<MouseCursor> cursor;
 
-	CommitDoneList_t doneCommits;
+	std::shared_ptr<CommitDoneList_t> doneCommits = std::make_shared<CommitDoneList_t>();
 
 	double accum_x = 0.0;
 	double accum_y = 0.0;

@@ -112,7 +112,7 @@ bool commit_t::CloseFenceInternal()
     return true;
 }
 
-void commit_t::SetFence( int nFence, bool bMangoNudge, uint32_t uMangoMsgType, CommitDoneList_t *pDoneCommits )
+void commit_t::SetFence( int nFence, bool bMangoNudge, uint32_t uMangoMsgType, const std::shared_ptr<CommitDoneList_t> &pDoneCommits )
 {
     std::unique_lock lock( m_WaitableCommitStateMutex );
     CloseFenceInternal();

@@ -1,6 +1,7 @@
 #include "steamcompmgr_shared.hpp"
 #include "Utils/NonCopyable.h"
 
+#include <memory>
 #include <optional>
 #include "main.hpp"
 #include "rendervulkan.hpp"
@@ -34,7 +35,7 @@ struct commit_t final : public gamescope::RcObject, public gamescope::IWaitable,
 
 	// Returns true if we had a fence that was closed.
 	bool CloseFenceInternal();
-	void SetFence( int nFence, bool bMangoNudge, uint32_t uMangoMsgType, CommitDoneList_t *pDoneCommits );
+	void SetFence( int nFence, bool bMangoNudge, uint32_t uMangoMsgType, const std::shared_ptr<CommitDoneList_t> &pDoneCommits );
 
 	bool ShouldPreemptivelyUpscale( GamescopeUpscaleFilter eFilter, GamescopeUpscaleScaler eScaler );
 
@@ -81,5 +82,5 @@ struct commit_t final : public gamescope::RcObject, public gamescope::IWaitable,
 	bool m_bMangoNudge = false;
 	// Typed mangoapp stream to nudge, 0 for none, never the legacy type.
 	uint32_t m_uMangoMsgType = 0;
-	CommitDoneList_t *m_pDoneCommits = nullptr; // I hate this
+	std::shared_ptr<CommitDoneList_t> m_pDoneCommits; // I hate this
 };
