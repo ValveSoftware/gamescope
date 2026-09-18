@@ -1,19 +1,11 @@
 #pragma once
 
 #include <optional>
+#include "Utils/VBlankSchedule.h"
 #include "waitable.h"
 
 namespace gamescope
 {
-    struct VBlankScheduleTime
-    {
-        // The expected time for the vblank we want to target.
-        uint64_t ulTargetVBlank = 0;
-        // The vblank offset by the redzone/scheduling calculation.
-        // This is when we want to wake-up by to meet that vblank time above.
-        uint64_t ulScheduledWakeupPoint = 0;
-    };
-
     struct VBlankTime
     {
         VBlankScheduleTime schedule;
@@ -44,7 +36,6 @@ namespace gamescope
 
         int GetRefresh() const;
         uint64_t GetLastVBlank() const;
-        uint64_t GetNextVBlank( uint64_t ulOffset ) const;
         bool IsVRRFlipReady() const;
 
         VBlankScheduleTime CalcNextWakeupTime( bool bPreemptive );
@@ -66,6 +57,7 @@ namespace gamescope
     private:
         void VBlankDebugSpew( uint64_t ulOffset, uint64_t ulDrawTime, uint64_t ulRedZone );
         uint64_t VRRWakeupOffset( uint64_t *pulDrawTime = nullptr, uint64_t *pulRedZone = nullptr ) const;
+        VBlankScheduleTime CalcNextWakeupTimeLocked( bool bPreemptive );
 
         uint64_t m_ulTargetVBlank = 0;
         std::atomic<uint64_t> m_ulLastVBlank = { 0 };
@@ -82,6 +74,7 @@ namespace gamescope
         // Does not cover m_ulLastVBlank, this is just atomic.
         std::mutex m_ScheduleMutex;
         VBlankScheduleTime m_TimerFDSchedule{};
+        VBlankScheduleTime m_LastVBlankSchedule{};
 
         std::thread m_NudgeThread;
         int m_nNudgePipe[2] = { -1, -1 };
