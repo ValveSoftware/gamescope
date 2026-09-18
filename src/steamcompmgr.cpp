@@ -930,7 +930,7 @@ constexpr const T& clamp( const T& x, const T& min, const T& max )
 
 extern bool g_bForceRelativeMouse;
 
-CommitDoneList_t g_steamcompmgr_xdg_done_commits;
+std::shared_ptr<CommitDoneList_t> g_steamcompmgr_xdg_done_commits = std::make_shared<CommitDoneList_t>();
 
 
 static std::mutex s_KeysToCloseMutex;
@@ -7994,7 +7994,7 @@ bool handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint64_t co
 // TODO: Merge these two functions.
 void handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank, uint64_t vblank_idx )
 {
-	std::lock_guard<std::mutex> lock( ctx->doneCommits.listCommitsDoneLock );
+	std::lock_guard<std::mutex> lock( ctx->doneCommits->listCommitsDoneLock );
 
 	uint64_t next_refresh_time = g_SteamCompMgrVBlankTime.schedule.ulTargetVBlank;
 
@@ -8011,7 +8011,7 @@ void handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank, uint64_t vb
 	uint64_t now = get_time_in_nanos();
 
 	// very fast loop yes
-	for ( auto& entry : ctx->doneCommits.listCommitsDone )
+	for ( auto& entry : ctx->doneCommits->listCommitsDone )
 	{
 		steamcompmgr_win_t *entry_win = nullptr;
 		for ( steamcompmgr_win_t *w = ctx->list; w; w = w->xwayland().next )
@@ -8051,12 +8051,12 @@ void handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank, uint64_t vb
 		}
 	}
 
-	ctx->doneCommits.listCommitsDone.swap( commits_before_their_time );
+	ctx->doneCommits->listCommitsDone.swap( commits_before_their_time );
 }
 
 void handle_done_commits_xdg( bool vblank, uint64_t vblank_idx )
 {
-	std::lock_guard<std::mutex> lock( g_steamcompmgr_xdg_done_commits.listCommitsDoneLock );
+	std::lock_guard<std::mutex> lock( g_steamcompmgr_xdg_done_commits->listCommitsDoneLock );
 
 	uint64_t next_refresh_time = g_SteamCompMgrVBlankTime.schedule.ulTargetVBlank;
 
@@ -8073,7 +8073,7 @@ void handle_done_commits_xdg( bool vblank, uint64_t vblank_idx )
 	uint64_t now = get_time_in_nanos();
 
 	// very fast loop yes
-	for ( auto& entry : g_steamcompmgr_xdg_done_commits.listCommitsDone )
+	for ( auto& entry : g_steamcompmgr_xdg_done_commits->listCommitsDone )
 	{
 		steamcompmgr_win_t *entry_win = nullptr;
 		for (const auto& xdg_win : g_steamcompmgr_xdg_wins)
@@ -8113,7 +8113,7 @@ void handle_done_commits_xdg( bool vblank, uint64_t vblank_idx )
 		}
 	}
 
-	g_steamcompmgr_xdg_done_commits.listCommitsDone.swap( commits_before_their_time );
+	g_steamcompmgr_xdg_done_commits->listCommitsDone.swap( commits_before_their_time );
 }
 
 gamescope::ConVar<bool> cv_mangoapp_use_output_timing{ "mangoapp_use_output_timing", true };
@@ -8416,7 +8416,7 @@ static std::optional<uint64_t> MergeBlitsOverOverride( steamcompmgr_win_t *w, co
 
 gamescope::ConVar<bool> cv_surface_update_force_only_current_surface( "surface_update_force_only_current_surface", false, "Force updates to apply only to the current surface, ignoring commits for other surfaces." );
 
-void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, ResListEntry_t& reslistentry)
+void update_wayland_res(const std::shared_ptr<CommitDoneList_t> &doneCommits, steamcompmgr_win_t *w, ResListEntry_t& reslistentry)
 {
 	struct wlr_buffer *buf = reslistentry.buf;
 
@@ -8712,7 +8712,7 @@ void check_new_xwayland_res(xwayland_ctx_t *ctx)
 	for ( uint32_t i = 0; i < tmp_queue.size(); i++ )
 	{
 		steamcompmgr_win_t	*w = find_win( ctx, tmp_queue[ i ].surf );
-		update_wayland_res( &ctx->doneCommits, w, tmp_queue[ i ]);
+		update_wayland_res( ctx->doneCommits, w, tmp_queue[ i ]);
 	}
 }
 
@@ -8725,7 +8725,7 @@ void check_new_xdg_res()
 		{
 			if ( xdg_win->xdg().surface.main_surface == tmp_queue[ i ].surf )
 			{
-				update_wayland_res( &g_steamcompmgr_xdg_done_commits, xdg_win.get(), tmp_queue[ i ] );
+				update_wayland_res( g_steamcompmgr_xdg_done_commits, xdg_win.get(), tmp_queue[ i ] );
 				break;
 			}
 		}
