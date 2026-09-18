@@ -105,8 +105,9 @@ bool commit_t::CloseFenceInternal()
     if ( m_nCommitFence < 0 )
         return false;
 
-    // Will automatically remove from epoll!
-    g_ImageWaiter.RemoveWaitable( this );
+    // Do not recreate an Rc after deletion has started.
+    if ( HasLiveReferences() )
+        g_ImageWaiter.RemoveWaitable( this );
     close( m_nCommitFence );
     m_nCommitFence = -1;
     return true;
