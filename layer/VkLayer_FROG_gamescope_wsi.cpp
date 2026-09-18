@@ -867,21 +867,25 @@ namespace GamescopeWSILayer {
         return VK_ERROR_SURFACE_LOST_KHR;
       }
 
-      VkResult res = pDispatch.CreateWaylandSurfaceKHR(instance, pCreateInfo, pAllocator, pSurface);
+      VkSurfaceKHR surface;
+      VkResult res = pDispatch.CreateWaylandSurfaceKHR(instance, pCreateInfo, pAllocator, &surface);
       if (res != VK_SUCCESS)
         return res;
 
-      auto gamescopeSurface = gamescopeSurfaces.create(*pSurface, GamescopeSurfaceData {
+      auto gamescopeSurface = gamescopeSurfaces.create(surface, GamescopeSurfaceData {
         .instance        = instance,
         .display         = pCreateInfo->display,
-        .waylandObjects  = waylandObjects,
         .surface         = pCreateInfo->surface,
         .isNativeSurface = true,
         .flags           = gamescopeInstance->flags,
         .hdrOutput       = false, // XXXX FIXME FIXME FIXME //hdrOutput,
       });
-      if (!gamescopeSurface)
+      if (!gamescopeSurface) {
+        pDispatch.DestroySurfaceKHR(instance, surface, pAllocator);
         return VK_ERROR_SURFACE_LOST_KHR;
+      }
+      gamescopeSurface->waylandObjects = std::move(waylandObjects);
+      *pSurface = surface;
 
       DumpGamescopeSurfaceState(gamescopeInstance, gamescopeSurface);
 
@@ -1148,9 +1152,11 @@ namespace GamescopeWSILayer {
         .surface = waylandSurface,
       };
 
-      VkResult result = pDispatch.CreateWaylandSurfaceKHR(instance, &waylandCreateInfo, pAllocator, pSurface);
+      VkSurfaceKHR surface;
+      VkResult result = pDispatch.CreateWaylandSurfaceKHR(instance, &waylandCreateInfo, pAllocator, &surface);
       if (result != VK_SUCCESS) {
         fprintf(stderr, "[Gamescope WSI] Failed to create Vulkan wayland surface - vr: %s xid: 0x%x\n", vkroots::helpers::enumString(result), window);
+        wl_surface_destroy(waylandSurface);
         return result;
       }
 
@@ -1161,18 +1167,19 @@ namespace GamescopeWSILayer {
         .connection = connection,
         .window     = window,
       };
-      VkSurfaceKHR fallbackSurface = VK_NULL_HANDLE;
+      VkSurfaceKHR fallbackSurface;
       result = pDispatch.CreateXcbSurfaceKHR(instance, &xcbCreateInfo, pAllocator, &fallbackSurface);
       if (result != VK_SUCCESS) {
         fprintf(stderr, "[Gamescope WSI] Failed to create Vulkan xcb (fallback) surface - vr: %s xid: 0x%x\n", vkroots::helpers::enumString(result), window);
+        pDispatch.DestroySurfaceKHR(instance, surface, pAllocator);
+        wl_surface_destroy(waylandSurface);
         return result;
       }
 
       fprintf(stderr, "[Gamescope WSI] Made gamescope surface for xid: 0x%x\n", window);
-      auto gamescopeSurface = gamescopeSurfaces.create(*pSurface, GamescopeSurfaceData {
+      auto gamescopeSurface = gamescopeSurfaces.create(surface, GamescopeSurfaceData {
         .instance        = instance,
         .display         = gamescopeInstance->display,
-        .waylandObjects  = waylandObjects,
         .fallbackSurface = fallbackSurface,
         .surface         = waylandSurface,
         .isNativeSurface = false,
@@ -1181,8 +1188,14 @@ namespace GamescopeWSILayer {
         .flags           = flags,
         .hdrOutput       = hdrOutput,
       });
-      if (!gamescopeSurface)
+      if (!gamescopeSurface) {
+        pDispatch.DestroySurfaceKHR(instance, fallbackSurface, pAllocator);
+        pDispatch.DestroySurfaceKHR(instance, surface, pAllocator);
+        wl_surface_destroy(waylandSurface);
         return VK_ERROR_SURFACE_LOST_KHR;
+      }
+      gamescopeSurface->waylandObjects = std::move(waylandObjects);
+      *pSurface = surface;
 
       DumpGamescopeSurfaceState(gamescopeInstance, gamescopeSurface);
 
