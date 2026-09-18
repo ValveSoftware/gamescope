@@ -140,7 +140,9 @@ namespace gamescope
 	{
 		const GamescopeScreenType eScreenType = GetBackend()->GetScreenType();
 
-		const int nRefreshRate = GetRefresh();
+		// SDL changes the override on focus events; use one snapshot for rate and policy.
+		const int nNestedRefresh = g_nNestedRefresh;
+		const int nRefreshRate = nNestedRefresh ? nNestedRefresh : g_nOutputRefresh;
 		const uint64_t ulRefreshInterval = mHzToRefreshCycle( nRefreshRate );
 
 		bool bVRR = GetBackend()->GetCurrentConnector() && GetBackend()->GetCurrentConnector()->IsVRRActive();
@@ -220,6 +222,7 @@ namespace gamescope
 			.ulOffset = ulOffset,
 			.ulNow = get_time_in_nanos(),
 			.bVRR = bVRR,
+			.bRateOverride = GetBackend()->SupportsIndependentRefresh() && nNestedRefresh != 0,
 		}, m_LastVBlankSchedule );
 	}
 
@@ -399,10 +402,12 @@ namespace gamescope
 			{
 				std::unique_lock lock( m_ScheduleMutex );
 				const bool bVRR = GetBackend()->GetCurrentConnector() && GetBackend()->GetCurrentConnector()->IsVRRActive();
+				const int nNestedRefresh = g_nNestedRefresh;
 				const uint64_t ulTargetFloor = VBlank::TargetFloor( m_LastVBlankSchedule,
 				{
-					.ulInterval = mHzToRefreshCycle( GetRefresh() ),
+					.ulInterval = mHzToRefreshCycle( nNestedRefresh ? nNestedRefresh : g_nOutputRefresh ),
 					.bVRR = bVRR,
+					.bRateOverride = GetBackend()->SupportsIndependentRefresh() && nNestedRefresh != 0,
 				} );
 				// A feedback rearm can start FrameSync before the previous nudge is read.
 				if ( time.schedule.ulTargetVBlank > ulTargetFloor )

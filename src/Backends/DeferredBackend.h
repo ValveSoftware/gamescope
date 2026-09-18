@@ -300,6 +300,11 @@ namespace gamescope
             return false;
         }
 
+        virtual bool SupportsIndependentRefresh() const override
+        {
+            return m_pChild->SupportsIndependentRefresh();
+        }
+
         virtual TouchClickMode GetTouchClickMode() override
         {
             // Doesn't need to be 'initted' for this check.

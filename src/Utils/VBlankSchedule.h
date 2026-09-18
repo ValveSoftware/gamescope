@@ -25,6 +25,7 @@ namespace gamescope
             uint64_t ulOffset = 0;
             uint64_t ulNow = 0;
             bool bVRR = false;
+            bool bRateOverride = false;
         };
 
         inline uint64_t LastTarget( const VBlankScheduleTime &lastSchedule, uint64_t ulInterval )
@@ -39,13 +40,22 @@ namespace gamescope
             if ( params.bVRR || !lastSchedule.ulTargetVBlank )
                 return 0;
 
-            return LastTarget( lastSchedule, params.ulInterval ) + params.ulInterval / 2;
+            const uint64_t ulSeparation = params.bRateOverride ? params.ulInterval - 1 : params.ulInterval / 2;
+            return LastTarget( lastSchedule, params.ulInterval ) + ulSeparation;
         }
 
         inline VBlankScheduleTime Next( const ScheduleParams &params, const VBlankScheduleTime &lastSchedule )
         {
-            const uint64_t ulAnchor = params.ulLastVBlank;
-            const uint64_t ulOffset = params.ulOffset;
+            uint64_t ulAnchor = params.ulLastVBlank;
+            uint64_t ulOffset = params.ulOffset;
+            if ( params.bRateOverride && !params.bVRR )
+            {
+                // An explicit rate owns its cadence, independent of host feedback.
+                if ( lastSchedule.ulTargetVBlank )
+                    ulAnchor = LastTarget( lastSchedule, params.ulInterval );
+                ulOffset = std::min( ulOffset, params.ulInterval );
+            }
+
             const uint64_t ulTargetFloor = TargetFloor( lastSchedule, params );
             uint64_t ulWake = ulAnchor + params.ulInterval - ulOffset;
             uint64_t ulEarliestWake = params.ulNow;
