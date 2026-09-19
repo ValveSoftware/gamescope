@@ -1,6 +1,8 @@
 #include "steamcompmgr_shared.hpp"
+#include "WaylandServer/WaylandServerLegacy.h"
 #include "Utils/NonCopyable.h"
 
+#include <memory>
 #include <optional>
 #include "main.hpp"
 #include "rendervulkan.hpp"
@@ -34,7 +36,7 @@ struct commit_t final : public gamescope::RcObject, public gamescope::IWaitable,
 
 	// Returns true if we had a fence that was closed.
 	bool CloseFenceInternal();
-	void SetFence( int nFence, bool bMangoNudge, uint32_t uMangoMsgType, CommitDoneList_t *pDoneCommits );
+	void SetFence( int nFence, bool bMangoNudge, uint32_t uMangoMsgType, const std::shared_ptr<CommitDoneList_t> &pDoneCommits );
 
 	bool ShouldPreemptivelyUpscale( GamescopeUpscaleFilter eFilter, GamescopeUpscaleScaler eScaler );
 
@@ -68,12 +70,13 @@ struct commit_t final : public gamescope::RcObject, public gamescope::IWaitable,
 
 	uint64_t win_seq = 0;
 	struct wlr_surface *surf = nullptr;
-	std::vector<struct wl_resource*> presentation_feedbacks;
+	std::vector<wlserver_presentation_feedback_ref> presentation_feedbacks;
 
-	std::optional<uint32_t> present_id = std::nullopt;
-	uint64_t desired_present_time = 0;
+	gamescope::PresentTiming present_timing;
+	uint64_t earliest_latch_time = 0;
+	uint64_t latch_time = 0;
+	uint64_t predicted_present_time = 0;
 	uint64_t earliest_present_time = 0;
-	uint64_t present_margin = 0;
 	uint64_t present_time = 0;
 
 	std::mutex m_WaitableCommitStateMutex;
@@ -81,5 +84,5 @@ struct commit_t final : public gamescope::RcObject, public gamescope::IWaitable,
 	bool m_bMangoNudge = false;
 	// Typed mangoapp stream to nudge, 0 for none, never the legacy type.
 	uint32_t m_uMangoMsgType = 0;
-	CommitDoneList_t *m_pDoneCommits = nullptr; // I hate this
+	std::shared_ptr<CommitDoneList_t> m_pDoneCommits; // I hate this
 };

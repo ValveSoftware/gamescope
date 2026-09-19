@@ -74,6 +74,12 @@ foreach xml : protocols
 		command: [wayland_scanner, 'client-header', '@INPUT@', '@OUTPUT@'],
 	)
 
+	if name == 'gamescope-swapchain'
+		swapchain_server_header = server_header
+		swapchain_client_src = [code, client_header]
+	elif name == 'gamescope-limiter'
+		limiter_client_src = [code, client_header]
+	endif
 	protocols_server_src += [code, server_header]
 	protocols_client_src += [code, client_header]
 endforeach

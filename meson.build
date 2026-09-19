@@ -49,6 +49,12 @@ hwdata_dep = dependency('hwdata', required : false)
 dep_x11 = dependency('x11')
 dep_wayland = dependency('wayland-client')
 vulkan_dep = dependency('vulkan')
+if import('fs').is_dir('thirdparty/Vulkan-Headers/include')
+  vulkan_dep = declare_dependency(
+    include_directories: include_directories('thirdparty/Vulkan-Headers/include'),
+    dependencies: vulkan_dep.partial_dependency(compile_args: false, includes: false,
+      link_args: true, links: true))
+endif
 
 glm_proj = subproject('glm')
 glm_dep = glm_proj.get_variable('glm_dep')
