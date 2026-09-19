@@ -10,3 +10,5 @@ option('enable_openvr_support',      type : 'boolean', value : true, description
 option('enable_tests',               type : 'boolean', value : true, description: 'Build unit tests')
 option('enable_zenity',              type : 'boolean', value : true, description: 'Build with zenity support in the WSI layers error handling')
 option('benchmark', type: 'feature', description: 'Benchmark tools')
+option('glm_include_dir',            type : 'string',  value : '', description: 'Custom path to override GLM headers')
+option('stb_include_dir',            type : 'string',  value : '', description: 'Custom path to override STB headers')
