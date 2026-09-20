@@ -449,6 +449,7 @@ namespace gamescope
 
         std::shared_ptr<INestedHints::CursorInfo> m_pCursorInfo;
         COpenVRPlane m_CursorPlane;
+        bool m_bCursorOverlayAttached = false;
 
         // Composite targets, a shared rotation would recycle an image another connector still shows. Steamcompmgr thread only.
         std::vector<gamescope::OwningRc<CVulkanTexture>> m_pCompositeImages;
@@ -1715,7 +1716,10 @@ namespace gamescope
 
         const bool bIsConnectorCurrentMouseFocus = m_pBackend->GetCurrentMouseConnector() == this;
         const bool bUsingPhysicalMouse = !m_bUsingVRMouse;
-        if ( pCursorLayer && pCursorInfo && bIsConnectorCurrentMouseFocus && !IsRelativeMouse() )
+        // The idle hide drops the layer but keeps the cursor info, so we stay attached across it.
+        const bool bOwnCursor = pCursorInfo && bIsConnectorCurrentMouseFocus && !IsRelativeMouse();
+
+        if ( pCursorLayer && bOwnCursor )
         {
             vr::VROverlay()->SetOverlayWidthInMeters( m_CursorPlane.GetOverlay(), cv_vr_cursor_size_in_meters );
 
@@ -1738,6 +1742,7 @@ namespace gamescope
 
             m_CursorPlane.Present( &textureLayer );
             vr::VROverlay()->SetOverlayCursor( GetPrimaryPlane()->GetOverlay(), m_CursorPlane.GetOverlay() );
+            m_bCursorOverlayAttached = true;
 
             if ( bUsingPhysicalMouse )
             {
@@ -1750,10 +1755,23 @@ namespace gamescope
                 m_bCurrentlyOverridingPosition = false;
             }
         }
-        else if ( m_bCurrentlyOverridingPosition )
+        else
         {
-            vr::VROverlay()->ClearOverlayCursorPositionOverride( GetPrimaryPlane()->GetOverlay() );
-            m_bCurrentlyOverridingPosition = false;
+            if ( m_bCursorOverlayAttached && !bOwnCursor )
+            {
+                // Stay attached if the clear is refused, so a later frame tries again.
+                vr::EVROverlayError err = vr::VROverlay()->SetOverlayCursor( GetPrimaryPlane()->GetOverlay(), vr::k_ulOverlayHandleInvalid );
+                if ( err != vr::VROverlayError_None )
+                    openvr_log.debugf( "Failed to detach cursor overlay: %s", vr::VROverlay()->GetOverlayErrorNameFromEnum( err ) );
+                else
+                    m_bCursorOverlayAttached = false;
+            }
+
+            if ( m_bCurrentlyOverridingPosition )
+            {
+                vr::VROverlay()->ClearOverlayCursorPositionOverride( GetPrimaryPlane()->GetOverlay() );
+                m_bCurrentlyOverridingPosition = false;
+            }
         }
     }
 
