@@ -29,7 +29,7 @@
     it.
   </description>
 
-  <interface name="gamescope_control" version="7">
+  <interface name="gamescope_control" version="8">
     <request name="destroy" type="destructor"></request>
 
     <enum name="feature">
@@ -46,6 +46,7 @@
       <entry name="perf_query" value="7"/>
       <entry name="keyboard_layout" value="8"/>
       <entry name="sgsr_filter" value="9"/>
+      <entry name="pointer_settings" value="10"/>
     </enum>
 
     <event name="feature_support">
@@ -145,6 +146,17 @@
       <arg name="frametime_ns_hi" type="uint" summary="frametime_ns high bits"></arg>
     </event>
 
+    <enum name="pointer_type" since="8">
+      <description summary="which libinput pointer devices a setting applies to">
+        Which libinput pointer devices a pointer setting applies to.
+        Devices outside the selection are set back to the default.
+      </description>
+      <entry name="none" value="0" summary="no pointer device"/>
+      <entry name="touchpad" value="1" summary="touchpads only"/>
+      <entry name="mouse" value="2" summary="mice only"/>
+      <entry name="all" value="3" summary="every pointer device"/>
+    </enum>
+
     <request name="set_keyboard_layout" since="7">
       <description summary="Sets the XKB layout used for physical keyboards">
         An empty layout goes back to the layout from the XKB_DEFAULT_*
@@ -153,6 +165,19 @@
       </description>
       <arg name="layout" type="string" summary="XKB layout name, eg. fr"></arg>
       <arg name="variant" type="string" summary="XKB layout variant, eg. bepo. Empty for the default variant"></arg>
+    </request>
+
+    <request name="set_pointer_natural_scrolling" since="8">
+      <description summary="Sets which pointer devices scroll naturally">
+        Selects which libinput pointer devices use natural scrolling.
+        Devices outside the selection go back to regular scrolling, and a
+        device that does not support natural scrolling is left alone.
+
+        This is the pointer_natural_scrolling convar, so a session that
+        sets it on the command line or from a script is overridden by this
+        request.
+      </description>
+      <arg name="pointer_type" type="uint" enum="pointer_type" summary="which devices scroll naturally"></arg>
     </request>
 
   </interface>

@@ -1591,6 +1591,20 @@ static void gamescope_control_set_keyboard_layout( struct wl_client *client, str
 	wlserver_set_keyboard_layout( sLayout.c_str() );
 }
 
+static void gamescope_control_set_pointer_natural_scrolling( struct wl_client *client, struct wl_resource *resource, uint32_t pointer_type )
+{
+	switch ( pointer_type )
+	{
+		case GAMESCOPE_CONTROL_POINTER_TYPE_NONE:     cv_pointer_natural_scrolling = "none"; break;
+		case GAMESCOPE_CONTROL_POINTER_TYPE_TOUCHPAD: cv_pointer_natural_scrolling = "touchpad"; break;
+		case GAMESCOPE_CONTROL_POINTER_TYPE_MOUSE:    cv_pointer_natural_scrolling = "mouse"; break;
+		case GAMESCOPE_CONTROL_POINTER_TYPE_ALL:      cv_pointer_natural_scrolling = "all"; break;
+		default:
+			wl_resource_post_error( resource, WL_DISPLAY_ERROR_INVALID_METHOD, "Unknown pointer type %u", pointer_type );
+			break;
+	}
+}
+
 static const struct gamescope_control_interface gamescope_control_impl = {
 	.destroy = gamescope_control_handle_destroy,
 	.set_app_target_refresh_cycle = gamescope_control_set_app_target_refresh_cycle,
@@ -1600,6 +1614,7 @@ static const struct gamescope_control_interface gamescope_control_impl = {
 	.unset_look = gamescope_control_unset_look,
 	.request_app_performance_stats = gamescope_control_request_app_performance_stats,
 	.set_keyboard_layout = gamescope_control_set_keyboard_layout,
+	.set_pointer_natural_scrolling = gamescope_control_set_pointer_natural_scrolling,
 };
 
 static uint32_t get_conn_display_info_flags()
@@ -1672,6 +1687,11 @@ static void gamescope_control_bind( struct wl_client *client, void *data, uint32
 	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_PERF_QUERY, 1, 0 );
 	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_KEYBOARD_LAYOUT, 1, 0 );
 	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_SGSR_FILTER, 1, 0 );
+#ifdef HAVE_DRM
+	// Only a session driving libinput has pointer devices to configure.
+	if ( wlserver.wlr.libinput_backend )
+		gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_POINTER_SETTINGS, 1, 0 );
+#endif
 	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_DONE, 0, 0 );
 
 	wlserver_send_gamescope_control( resource );
