@@ -448,8 +448,10 @@ namespace gamescope
         std::atomic<bool> m_bSceneAppVisible = { false };
 
         std::shared_ptr<INestedHints::CursorInfo> m_pCursorInfo;
+        bool m_bCursorImageKnown = false;
         COpenVRPlane m_CursorPlane;
         bool m_bCursorOverlayAttached = false;
+        bool m_bHideLaserIntersection = false;
 
         // Composite targets, a shared rotation would recycle an image another connector still shows. Steamcompmgr thread only.
         std::vector<gamescope::OwningRc<CVulkanTexture>> m_pCompositeImages;
@@ -1719,6 +1721,18 @@ namespace gamescope
         // The idle hide drops the layer but keeps the cursor info, so we stay attached across it.
         const bool bOwnCursor = pCursorInfo && bIsConnectorCurrentMouseFocus && !IsRelativeMouse();
 
+        // Missing cursor info can mean it has not been routed to this connector yet.
+        bool bHideLaserIntersection = bIsConnectorCurrentMouseFocus && m_bCursorImageKnown && !pCursorLayer && !pCursorInfo;
+        if ( IsRelativeMouse() )
+            bHideLaserIntersection = cv_vr_trackpad_hide_laser;
+
+        if ( bHideLaserIntersection != m_bHideLaserIntersection )
+        {
+            for ( COpenVRPlane &plane : m_Planes )
+                vr::VROverlay()->SetOverlayFlag( plane.GetOverlay(), vr::VROverlayFlags_HideLaserIntersection, bHideLaserIntersection );
+            m_bHideLaserIntersection = bHideLaserIntersection;
+        }
+
         if ( pCursorLayer && bOwnCursor )
         {
             vr::VROverlay()->SetOverlayWidthInMeters( m_CursorPlane.GetOverlay(), cv_vr_cursor_size_in_meters );
@@ -1956,17 +1970,11 @@ namespace gamescope
     void COpenVRConnector::SetCursorImage( std::shared_ptr<INestedHints::CursorInfo> info )
     {
         m_pCursorInfo = info;
+        m_bCursorImageKnown = true;
     }
     void COpenVRConnector::SetRelativeMouseMode( bool bRelative )
     {
-        if ( bRelative != m_bRelativeMouse )
-        {
-            for ( COpenVRPlane &plane : m_Planes )
-            {
-                vr::VROverlay()->SetOverlayFlag( plane.GetOverlay(), vr::VROverlayFlags_HideLaserIntersection, cv_vr_trackpad_hide_laser && bRelative );
-            }
-            m_bRelativeMouse = bRelative;
-        }
+        m_bRelativeMouse = bRelative;
     }
     void COpenVRConnector::SetVisible( bool bVisible )
     {
@@ -2316,7 +2324,6 @@ namespace gamescope
             vr::VROverlay()->SetOverlayFlag( m_hOverlay, vr::VROverlayFlags_WantsModalBehavior,	      m_pBackend->IsModal() );
             vr::VROverlay()->SetOverlayFlag( m_hOverlay, vr::VROverlayFlags_SendVRSmoothScrollEvents, true );
             vr::VROverlay()->SetOverlayFlag( m_hOverlay, vr::VROverlayFlags_VisibleInDashboard,       false );
-            vr::VROverlay()->SetOverlayFlag( m_hOverlay, vr::VROverlayFlags_HideLaserIntersection,    cv_vr_trackpad_hide_laser && m_pConnector->IsRelativeMouse() );
 
             vr::VROverlay()->SetOverlayWidthInMeters( m_hOverlay,  m_pBackend->GetPhysicalWidth() );
             vr::VROverlay()->SetOverlayCurvature	( m_hOverlay,  m_pBackend->GetPhysicalCurvature() );
