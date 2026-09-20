@@ -35,6 +35,7 @@ add_project_arguments(cppc.get_supported_arguments([
   '-Wno-deprecated-volatile',
   '-Wno-ignored-qualifiers', # reshade warning
   '-Wno-missing-braces',
+  '-fno-cxx-modules', # reshade error due to a struct named module
 ]), language: 'cpp')
 
 add_project_arguments(cppc.get_supported_arguments([
