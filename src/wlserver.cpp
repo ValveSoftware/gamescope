@@ -1499,6 +1499,14 @@ static void gamescope_private_execute( struct wl_client *client, struct wl_resou
 		gamescope_private_send_command_executed( resource );
 }
 
+static void gamescope_private_print( struct wl_client *client, struct wl_resource *resource, const char *command )
+{
+	std::vector<std::string_view> args;
+	args.emplace_back( command );
+	if ( gamescope::ConCommand::Exec( std::span<std::string_view>{ args } ) )
+		gamescope_private_send_command_executed( resource );
+}
+
 static void gamescope_private_handle_destroy( struct wl_client *client, struct wl_resource *resource )
 {
 	wl_resource_destroy( resource );
@@ -1507,6 +1515,7 @@ static void gamescope_private_handle_destroy( struct wl_client *client, struct w
 static const struct gamescope_private_interface gamescope_private_impl = {
 	.destroy = gamescope_private_handle_destroy,
 	.execute = gamescope_private_execute,
+	.print = gamescope_private_print,
 };
 
 static void gamescope_private_bind( struct wl_client *client, void *data, uint32_t version, uint32_t id )
@@ -1531,7 +1540,7 @@ static void gamescope_private_bind( struct wl_client *client, void *data, uint32
 
 static void create_gamescope_private( void )
 {
-	uint32_t version = 1;
+	uint32_t version = 2;
 	wl_global_create( wlserver.display, &gamescope_private_interface, version, NULL, gamescope_private_bind );
 }
 
