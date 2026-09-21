@@ -163,6 +163,25 @@ namespace gamescope
             return m_pChild->ImportDmabufToBackend( pDmaBuf );
 		}
 
+		virtual bool SupportsExternalScanoutBuffers() const override
+		{
+            {
+                std::shared_lock lock{ m_mutInit };
+                if ( m_bInittedChild )
+                    return m_pChild->SupportsExternalScanoutBuffers();
+            }
+            return false;
+		}
+		virtual std::shared_ptr<IBackendScanoutBuffer> CreateScanoutBuffer( uint32_t uWidth, uint32_t uHeight, uint32_t uDrmFormat, std::span<const uint64_t> ulModifiers, bool bLinear ) override
+		{
+            {
+                std::shared_lock lock{ m_mutInit };
+                if ( m_bInittedChild )
+                    return m_pChild->CreateScanoutBuffer( uWidth, uHeight, uDrmFormat, ulModifiers, bLinear );
+            }
+            return nullptr;
+		}
+
 		virtual bool UsesModifiers() const override
 		{
             return true;

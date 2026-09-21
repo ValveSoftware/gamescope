@@ -55,6 +55,10 @@
 #include "libdisplay-info/cta.h"
 #include "wlr_end.hpp"
 
+#if HAVE_GBM
+#include <gbm.h>
+#endif
+
 #include "gamescope-control-protocol.h"
 
 extern int g_nPreferredOutputWidth;
@@ -73,6 +77,15 @@ gamescope::ConVar<bool> cv_drm_debug_disable_color_encoding( "drm_debug_disable_
 gamescope::ConVar<bool> cv_drm_debug_disable_color_range( "drm_debug_disable_color_range", false, "YUV Color Range chicken bit. (Forces COLOR_RANGE to DEFAULT, does not affect other logic)" );
 gamescope::ConVar<bool> cv_drm_debug_disable_explicit_sync( "drm_debug_disable_explicit_sync", false, "Force disable explicit sync on the DRM backend." );
 gamescope::ConVar<bool> cv_drm_debug_disable_in_fence_fd( "drm_debug_disable_in_fence_fd", false, "Force disable IN_FENCE_FD being set to avoid over-synchronization on the DRM backend." );
+
+gamescope::ConVar<bool> cv_drm_gbm_scanout( "drm_gbm_scanout", false, "Allocate scanout buffers with GBM and import them into Vulkan. Fixes corrupted scanout on the NVIDIA proprietary driver.",
+	[]( gamescope::ConVar<bool> &cvar )
+	{
+		// The callback also runs for writes of the unchanged value. A spurious
+		// rebuild is cheap, and tracking the previous value here would duplicate
+		// the default declared above and silently go stale if it ever changes.
+		g_bForceOutputImageRemake = true;
+	});
 
 gamescope::ConVar<bool> cv_drm_allow_dynamic_modes_for_external_display( "drm_allow_dynamic_modes_for_external_display", false, "Allow dynamic mode/refresh rate switching for external displays." );
 
@@ -111,6 +124,13 @@ struct drm_t {
 	uint64_t cursor_width, cursor_height;
 	bool allow_modifiers;
 	struct wlr_drm_format_set formats;
+
+	// GBM device on a dup of the KMS fd, for backend-allocated scanout
+	// buffers. Buffers keep the device alive via this shared_ptr; the
+	// deleter destroys the device and closes its dup'd fd, so buffer
+	// teardown stays valid even after drm->fd itself is closed.
+	std::shared_ptr<struct gbm_device> gbm;
+	bool bIsNvidia = false;
 
 	std::vector< std::unique_ptr< gamescope::CDRMPlane > > planes;
 	std::vector< std::unique_ptr< gamescope::CDRMCRTC > > crtcs;
@@ -546,10 +566,37 @@ namespace gamescope
 		~CDRMFb();
 
 		uint32_t GetFbId() const { return m_uFbId; }
-	
+
 	private:
 		uint32_t m_uFbId = 0;
 	};
+
+#if HAVE_GBM
+	class CDRMScanoutBuffer final : public IBackendScanoutBuffer
+	{
+	public:
+		CDRMScanoutBuffer( std::shared_ptr<struct gbm_device> pDevice, struct gbm_bo *pBo, const wlr_dmabuf_attributes &attrs )
+			: m_pDevice{ std::move( pDevice ) }
+			, m_pBo{ pBo }
+			, m_Attrs{ attrs }
+		{
+		}
+
+		~CDRMScanoutBuffer()
+		{
+			wlr_dmabuf_attributes_finish( &m_Attrs );
+			gbm_bo_destroy( m_pBo );
+		}
+
+		const wlr_dmabuf_attributes *GetDmabufAttributes() const override { return &m_Attrs; }
+
+	private:
+		// Declared before m_pBo so the device outlives the bo.
+		std::shared_ptr<struct gbm_device> m_pDevice;
+		struct gbm_bo *m_pBo = nullptr;
+		wlr_dmabuf_attributes m_Attrs = {};
+	};
+#endif
 }
 
 uint32_t g_nDRMFormat = DRM_FORMAT_INVALID;
@@ -1321,6 +1368,45 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 		drm->allow_modifiers = true;
 	}
 
+	if ( drmVersion *pVersion = drmGetVersion( drm->fd ) )
+	{
+		drm->bIsNvidia = pVersion->name && !strcmp( pVersion->name, "nvidia-drm" );
+		drm_log.infof( "KMS driver: %s", pVersion->name ? pVersion->name : "unknown" );
+		drmFreeVersion( pVersion );
+	}
+
+#if HAVE_GBM
+	// Create the GBM device on a dup of the KMS fd so buffer teardown
+	// (gbm_bo_destroy) stays valid even after wlsession_close_kms() has
+	// closed drm->fd; textures holding GBM buffers can outlive the backend
+	// on shutdown. The deleter closes the dup'd fd after the device.
+	if ( int nGbmFd = dup( drm->fd ); nGbmFd >= 0 )
+	{
+		if ( struct gbm_device *pGbmDevice = gbm_create_device( nGbmFd ) )
+		{
+			drm->gbm = std::shared_ptr<struct gbm_device>( pGbmDevice, [ nGbmFd ]( struct gbm_device *pDevice ){ gbm_device_destroy( pDevice ); close( nGbmFd ); } );
+		}
+		else
+		{
+			close( nGbmFd );
+			drm_log.errorf( "Failed to create GBM device on the KMS fd. GBM scanout buffers will be unavailable." );
+		}
+	}
+	else
+	{
+		drm_log.errorf_errno( "Failed to dup KMS fd for GBM. GBM scanout buffers will be unavailable." );
+	}
+
+	// Scanout of Vulkan-allocated buffers corrupts on nvidia-drm, which needs
+	// placement guarantees only GBM gives. Environment overrides are applied
+	// before the backend starts, so an explicit setting still wins.
+	if ( drm->bIsNvidia && !getenv( "gamescope_drm_gbm_scanout" ) )
+	{
+		cv_drm_gbm_scanout = true;
+		drm_log.infof( "nvidia-drm detected: enabling GBM scanout buffers. Set gamescope_drm_gbm_scanout=0 to disable." );
+	}
+#endif
+
 	g_bSupportsAsyncFlips = drmGetCap(drm->fd, DRM_CAP_ATOMIC_ASYNC_PAGE_FLIP, &cap) == 0 && cap != 0;
 	if (!g_bSupportsAsyncFlips)
 		drm_log.errorf("Immediate flips are not supported by the KMS driver");
@@ -1609,6 +1695,12 @@ void finish_drm(struct drm_t *drm)
 	drm->planes.clear();
 	drm->crtcs.clear();
 	drm->connectors.clear();
+
+	// Drop our reference to the GBM device. Outstanding scanout buffers
+	// keep it alive via their own references; the device owns a dup of the
+	// KMS fd, so late gbm_bo_destroy calls stay valid after
+	// wlsession_close_kms() below.
+	drm->gbm = nullptr;
 
 
 	// Signal the page-flip handler thread to exit and join it so it won't be
@@ -3970,6 +4062,116 @@ namespace gamescope
 		virtual OwningRc<IBackendFb> ImportDmabufToBackend( wlr_dmabuf_attributes *pDmaBuf ) override
 		{
 			return drm_fbid_from_dmabuf( &g_DRM, pDmaBuf );
+		}
+
+		virtual bool SupportsExternalScanoutBuffers() const override
+		{
+#if HAVE_GBM
+			return g_DRM.gbm != nullptr && g_DRM.allow_modifiers && cv_drm_gbm_scanout;
+#else
+			return false;
+#endif
+		}
+
+		virtual std::shared_ptr<IBackendScanoutBuffer> CreateScanoutBuffer( uint32_t uWidth, uint32_t uHeight, uint32_t uDrmFormat, std::span<const uint64_t> ulModifiers, bool bLinear ) override
+		{
+#if HAVE_GBM
+			if ( !g_DRM.gbm )
+				return nullptr;
+
+			uint32_t uFlags = GBM_BO_USE_RENDERING | GBM_BO_USE_SCANOUT;
+
+			bool bForceLinearModifier = false;
+			struct gbm_bo *pBo = nullptr;
+			if ( bLinear )
+			{
+				// GBM rejects GBM_BO_USE_LINEAR combined with an explicit
+				// modifier list (EINVAL in Mesa), so allocate directly.
+				pBo = gbm_bo_create( g_DRM.gbm.get(), uWidth, uHeight, uDrmFormat, uFlags | GBM_BO_USE_LINEAR );
+				bForceLinearModifier = true;
+			}
+			else if ( !ulModifiers.empty() )
+			{
+				pBo = gbm_bo_create_with_modifiers2( g_DRM.gbm.get(), uWidth, uHeight, uDrmFormat, ulModifiers.data(), ulModifiers.size(), uFlags );
+
+				// Some GBM implementations cannot allocate with an explicit
+				// modifier list at all. If only LINEAR was requested, a plain
+				// allocation with GBM_BO_USE_LINEAR is equivalent.
+				if ( !pBo && ulModifiers.size() == 1 && ulModifiers[0] == DRM_FORMAT_MOD_LINEAR )
+				{
+					pBo = gbm_bo_create( g_DRM.gbm.get(), uWidth, uHeight, uDrmFormat, uFlags | GBM_BO_USE_LINEAR );
+					bForceLinearModifier = true;
+				}
+			}
+
+			if ( !pBo )
+			{
+				drm_log.errorf( "CreateScanoutBuffer: GBM allocation failed for %ux%u format 0x%x", uWidth, uHeight, uDrmFormat );
+				return nullptr;
+			}
+
+			wlr_dmabuf_attributes attrs =
+			{
+				.width = int32_t( uWidth ),
+				.height = int32_t( uHeight ),
+				.format = uDrmFormat,
+				.modifier = bForceLinearModifier ? DRM_FORMAT_MOD_LINEAR : gbm_bo_get_modifier( pBo ),
+			};
+
+			const int nPlaneCount = gbm_bo_get_plane_count( pBo );
+			bool bSuccess = nPlaneCount >= 1 && nPlaneCount <= WLR_DMABUF_MAX_PLANES;
+
+			if ( bSuccess && !bForceLinearModifier && !Algorithm::Contains( ulModifiers, attrs.modifier ) )
+			{
+				drm_log.errorf( "CreateScanoutBuffer: GBM returned modifier 0x%" PRIx64 " which was not in the allowed list", attrs.modifier );
+				bSuccess = false;
+			}
+
+			// Only count a plane in n_planes once we own its fd, so that
+			// wlr_dmabuf_attributes_finish never closes an fd we didn't acquire.
+			for ( int i = 0; bSuccess && i < nPlaneCount; i++ )
+			{
+				int nFd = gbm_bo_get_fd_for_plane( pBo, i );
+				if ( nFd < 0 )
+				{
+					drm_log.errorf_errno( "CreateScanoutBuffer: gbm_bo_get_fd_for_plane failed" );
+					bSuccess = false;
+					break;
+				}
+				attrs.fd[i] = nFd;
+				attrs.offset[i] = gbm_bo_get_offset( pBo, i );
+				attrs.stride[i] = gbm_bo_get_stride_for_plane( pBo, i );
+				attrs.n_planes = i + 1;
+			}
+			bSuccess = bSuccess && attrs.n_planes == nPlaneCount;
+
+			// Vulkan's dmabuf memory import is single-fd: all planes must
+			// reference the same underlying buffer.
+			for ( int i = 1; bSuccess && i < attrs.n_planes; i++ )
+			{
+				struct stat first, other;
+				if ( fstat( attrs.fd[0], &first ) != 0 || fstat( attrs.fd[i], &other ) != 0 ||
+				     first.st_dev != other.st_dev || first.st_ino != other.st_ino )
+				{
+					drm_log.errorf( "CreateScanoutBuffer: GBM returned a disjoint multi-plane bo, cannot import" );
+					bSuccess = false;
+				}
+			}
+
+			if ( !bSuccess )
+			{
+				wlr_dmabuf_attributes_finish( &attrs );
+				gbm_bo_destroy( pBo );
+				return nullptr;
+			}
+
+			drm_log.debugf( "CreateScanoutBuffer: allocated %ux%u format 0x%x modifier 0x%" PRIx64 " (%d planes)",
+				uWidth, uHeight, uDrmFormat, attrs.modifier, attrs.n_planes );
+
+			return std::make_shared<CDRMScanoutBuffer>( g_DRM.gbm, pBo, attrs );
+#else
+			return nullptr;
+#endif
 		}
 
 		virtual bool UsesModifiers() const override

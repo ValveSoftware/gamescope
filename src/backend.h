@@ -294,6 +294,17 @@ namespace gamescope
         virtual ~IBackendPlane() = default;
     };
 
+    // A scanout-capable buffer allocated by the backend rather than by Vulkan
+    // (GBM on the DRM backend). Owns the underlying allocation and the fds
+    // inside its wlr_dmabuf_attributes; callers must dup() any fds they keep.
+    class IBackendScanoutBuffer
+    {
+    public:
+        virtual ~IBackendScanoutBuffer() {}
+
+        virtual const wlr_dmabuf_attributes *GetDmabufAttributes() const = 0;
+    };
+
     class CBaseBackendFb : public IBackendFb
     {
     public:
@@ -344,6 +355,19 @@ namespace gamescope
         // shared_ptr owns the structure.
         // Rc manages acquire/release of buffer to/from client while imported.
         virtual OwningRc<IBackendFb> ImportDmabufToBackend( wlr_dmabuf_attributes *pDmaBuf ) = 0;
+
+        // Whether the backend can allocate scanout-capable buffers itself
+        // (GBM on the DRM backend) for the renderer to import, instead of the
+        // renderer allocating through Vulkan and exporting.
+        virtual bool SupportsExternalScanoutBuffers() const { return false; }
+        // ulModifiers: final allowed modifier list -- already intersected by the
+        // caller across KMS support ( GetSupportedModifiers ) and Vulkan
+        // importability for every format that will alias this buffer.
+        // Never contains DRM_FORMAT_MOD_INVALID.
+        virtual std::shared_ptr<IBackendScanoutBuffer> CreateScanoutBuffer( uint32_t uWidth, uint32_t uHeight, uint32_t uDrmFormat, std::span<const uint64_t> ulModifiers, bool bLinear )
+        {
+            return nullptr;
+        }
 
         virtual bool UsesModifiers() const = 0;
         virtual std::span<const uint64_t> GetSupportedModifiers( uint32_t uDrmFormat ) const = 0;
