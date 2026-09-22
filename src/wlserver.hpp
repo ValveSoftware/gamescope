@@ -52,6 +52,19 @@ struct ResListEntry_t {
 	std::shared_ptr<gamescope::CReleaseTimelinePoint> pReleasePoint;
 };
 
+// A commit for a surface that is not a toplevel. These are composited as part
+// of their parent's surface tree.
+struct NonToplevelCommit_t
+{
+	struct wlr_surface *surf;
+	std::shared_ptr<struct wlr_buffer> buf;
+	struct wlr_surface *root;
+	uint64_t sequence;
+	std::vector<struct wl_resource*> presentation_feedbacks;
+	std::shared_ptr<gamescope::CAcquireTimelinePoint> pAcquirePoint;
+	std::shared_ptr<gamescope::CReleaseTimelinePoint> pReleasePoint;
+};
+
 struct wlserver_content_override;
 
 bool wlserver_is_lock_held(void);
@@ -208,6 +221,10 @@ struct wlserver_t {
 	std::mutex xdg_commit_lock;
 	std::vector<ResListEntry_t> xdg_commit_queue;
 
+	std::mutex non_toplevel_commit_lock;
+	std::vector<ResListEntry_t> non_toplevel_commit_queue;
+	std::vector<NonToplevelCommit_t> non_toplevel_deferred_commits;
+
 	std::vector<wl_resource*> gamescope_controls;
 	std::unordered_map< uint32_t, std::vector<wl_resource*> > app_perf_requests;
 
@@ -225,6 +242,8 @@ struct wlserver_t {
 extern struct wlserver_t wlserver;
 
 std::vector<ResListEntry_t> wlserver_xdg_commit_queue();
+std::vector<ResListEntry_t> wlserver_non_toplevel_commit_queue();
+std::vector<NonToplevelCommit_t> &wlserver_non_toplevel_deferred_commits();
 
 struct wlserver_pointer {
 	struct wlr_pointer *wlr;

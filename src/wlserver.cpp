@@ -46,6 +46,7 @@
 #include <wlr/types/wlr_pointer_constraints_v1.h>
 #include <wlr/types/wlr_layer_shell_v1.h>
 #include <wlr/types/wlr_data_device.h>
+#include <wlr/types/wlr_subcompositor.h>
 #include <wlr/util/region.h>
 #include "wlr_end.hpp"
 
@@ -227,6 +228,13 @@ void xwayland_surface_commit(struct wlr_surface *wlr_surface) {
 	// Mutter and Weston have forward progress on the frame callback in this situation,
 	// so let the commit go through. It will be duplication-eliminated later.
 
+	// Popups must be configured before they are mapped, which wlroots doesn't do.
+	if ( struct wlr_xdg_surface *xdg_surface = wlr_xdg_surface_try_from_wlr_surface( wlr_surface ) )
+	{
+		if ( xdg_surface->initial_commit && xdg_surface->role != WLR_XDG_SURFACE_ROLE_TOPLEVEL )
+			wlr_xdg_surface_schedule_configure( xdg_surface );
+	}
+
 	VulkanWlrTexture_t *tex = (VulkanWlrTexture_t *) wlr_surface_get_texture( wlr_surface );
 	if ( tex == NULL )
 	{
@@ -247,6 +255,17 @@ void xwayland_surface_commit(struct wlr_surface *wlr_surface) {
 	else if (wlserver_xdg_surface_info)
 	{
 		wlserver_xdg_commit( std::move( entry ) );
+	}
+	else if ( wlr_subsurface_try_from_wlr_surface( wlr_surface ) ||
+	          wlr_xdg_surface_try_from_wlr_surface( wlr_surface ) )
+	{
+		// Popups and subsurfaces need to import their buffer before the surface tree
+		// can be painted. Save the commit in the queue for doing this later.
+		{
+			std::lock_guard<std::mutex> lock( wlserver.non_toplevel_commit_lock );
+			wlserver.non_toplevel_commit_queue.push_back( std::move( entry ) );
+		}
+		nudge_steamcompmgr();
 	}
 	else
 	{
@@ -644,6 +663,39 @@ static void handle_wl_surface_destroy( struct wl_listener *l, void *data )
 	{
 		wlserver_xdg_surface_info_finish( surf->xdg_surface );
 		surf->xdg_surface = nullptr;
+	}
+
+	std::vector<ResListEntry_t> discarded_commits;
+	{
+		std::lock_guard<std::mutex> lock( wlserver.non_toplevel_commit_lock );
+		std::erase_if( wlserver.non_toplevel_commit_queue,
+			[surf = surf->wlr, &discarded_commits]( auto &entry ) {
+				if ( entry.surf != surf )
+					return false;
+				discarded_commits.push_back( std::move( entry ) );
+				return true;
+			} );
+	}
+	for ( auto &entry : discarded_commits )
+	{
+		wlserver_presentation_feedback_list_destroy( entry.presentation_feedbacks );
+		if ( entry.buf )
+			wlr_buffer_unlock( entry.buf );
+	}
+
+	{
+		std::vector<NonToplevelCommit_t> &deferred = wlserver_non_toplevel_deferred_commits();
+		for ( auto it = deferred.begin(); it != deferred.end(); )
+		{
+			if ( it->surf != surf->wlr )
+			{
+				++it;
+				continue;
+			}
+
+			wlserver_presentation_feedback_list_destroy( it->presentation_feedbacks );
+			it = deferred.erase( it );
+		}
 	}
 
 	if ( surf->wlr == wlserver.mouse_focus_surface )
@@ -2218,6 +2270,12 @@ bool wlserver_init( void ) {
 
 	wl_signal_add( &wlserver.wlr.compositor->events.new_surface, &new_surface_listener );
 
+	if ( !wlr_subcompositor_create( wlserver.display ) )
+	{
+		wl_log.errorf( "Unable to create subcompositor interface" );
+		return false;
+	}
+
 	create_ime_manager( &wlserver );
 
 	create_reshade();
@@ -2470,6 +2528,17 @@ void wlserver_run(void)
 	}
 
 	{
+		std::unique_lock lock4(wlserver.non_toplevel_commit_lock);
+		for ( auto &entry : wlserver.non_toplevel_commit_queue )
+		{
+			wlserver_presentation_feedback_list_destroy( entry.presentation_feedbacks );
+			if ( entry.buf )
+				wlr_buffer_unlock( entry.buf );
+		}
+		wlserver.non_toplevel_commit_queue.clear();
+	}
+
+	{
 		std::unique_lock lock2(g_wlserver_xdg_shell_windows_lock);
 		wlserver.xdg_wins.clear();
 	}
@@ -2484,6 +2553,13 @@ void wlserver_run(void)
 	// wlroots will restart it automatically.
 	wlserver_lock();
 	wlserver.wlr.xwayland_servers.clear();
+
+	{
+		std::vector<NonToplevelCommit_t> &deferred = wlserver_non_toplevel_deferred_commits();
+		for ( auto &entry : deferred )
+			wlserver_presentation_feedback_list_destroy( entry.presentation_feedbacks );
+		deferred.clear();
+	}
 
 	wl_list_remove( &new_surface_listener.link );
 	wl_list_remove( &new_input_listener.link );
@@ -3613,6 +3689,23 @@ std::vector<ResListEntry_t> wlserver_xdg_commit_queue()
 		commits = std::move(wlserver.xdg_commit_queue);
 	}
 	return commits;
+}
+
+std::vector<ResListEntry_t> wlserver_non_toplevel_commit_queue()
+{
+	std::vector<ResListEntry_t> commits;
+	{
+		std::lock_guard<std::mutex> lock( wlserver.non_toplevel_commit_lock );
+		commits = std::move(wlserver.non_toplevel_commit_queue);
+	}
+	return commits;
+}
+
+std::vector<NonToplevelCommit_t> &wlserver_non_toplevel_deferred_commits()
+{
+	assert( wlserver_is_lock_held() );
+
+	return wlserver.non_toplevel_deferred_commits;
 }
 
 uint32_t wlserver_make_new_xwayland_server()
