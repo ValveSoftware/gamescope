@@ -3,6 +3,7 @@
 #include <wayland-server-core.h>
 #include "WaylandDecls.h"
 #include "SwapchainTiming.h"
+#include "../Timeline.h"
 #include <memory>
 #include <optional>
 #include <vector>
@@ -61,6 +62,8 @@ struct wlserver_wl_surface_info
 	wlserver_xdg_surface_info *xdg_surface = nullptr;
 
 	gamescope::WaylandServer::CLinuxDrmSyncobjSurface *pSyncobjSurface = nullptr;
+
+	std::shared_ptr<gamescope::CAcquireTimelinePoint> pLastAcquirePoint = {};
 
 	struct wlr_surface *wlr = nullptr;
 	struct wl_listener commit;

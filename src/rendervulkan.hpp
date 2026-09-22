@@ -16,6 +16,7 @@
 
 #include "main.hpp"
 
+#include "Timeline.h"
 #include "gamescope_shared.h"
 #include "backend.h"
 
@@ -330,6 +331,8 @@ struct FrameInfo_t
 
 		std::shared_ptr<gamescope::BackendBlob> ctm;
 		std::shared_ptr<gamescope::BackendBlob> hdr_metadata_blob;
+
+		std::shared_ptr<gamescope::CAcquireTimelinePoint> acquirePoint;
 
 		GamescopeAppTextureColorspace colorspace = GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB;
 
