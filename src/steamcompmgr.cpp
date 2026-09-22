@@ -102,6 +102,8 @@
 
 #include "wlr_begin.hpp"
 #include "wlr/types/wlr_pointer_constraints_v1.h"
+#include "wlr/types/wlr_subcompositor.h"
+#include "wlr/types/wlr_xdg_shell.h"
 #include "wlr_end.hpp"
 
 #if HAVE_AVIF
@@ -126,6 +128,7 @@ static const int g_nBaseCursorScale = 36;
 LogScope xwm_log("xwm");
 LogScope focus_log("focus");
 LogScope g_WaitableLog("waitable");
+LogScope non_toplevel_log("non_toplevel");
 
 gamescope::ConVar<bool> cv_overlay_unmultiplied_alpha{ "overlay_unmultiplied_alpha", false };
 
@@ -2549,41 +2552,26 @@ wlserver_vk_swapchain_feedback* steamcompmgr_get_base_layer_swapchain_feedback()
 
 gamescope::ConVar<bool> cv_paint_debug_pause_base_plane( "paint_debug_pause_base_plane", false, "Pause updates to the base plane." );
 
-static FrameInfo_t::Layer_t *
-paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win_t *w, steamcompmgr_win_t *scaleW, struct FrameInfo_t *frameInfo,
-			  MouseCursor *cursor, PaintWindowFlags flags = 0, float flOpacityScale = 1.0f, steamcompmgr_win_t *fit = nullptr )
+struct WindowTransform_t {
+	vec2_t currentScaleRatio = { 1.0f, 1.0f };
+	vec2_t scale = { 1.0f, 1.0f };
+	vec2_t offset = { 0.0f, 0.0f };
+	vec2_t focusedScale = { 1.0f, 1.0f };
+	vec2_t focusedOffset = { 0.0f, 0.0f };
+};
 
+// Map a window's committed texture onto the output.
+static WindowTransform_t compute_window_transform( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win_t *w,
+	steamcompmgr_win_t *scaleW, struct FrameInfo_t *frameInfo, const gamescope::Rc<CVulkanTexture> &tex,
+	MouseCursor *cursor, PaintWindowFlags flags, steamcompmgr_win_t *fit )
 {
-	int32_t sourceWidth, sourceHeight;
-	int32_t baseWidth, baseHeight;
-	int drawXOffset = 0, drawYOffset = 0;
 	float currentScaleRatio_x = 1.0;
 	float currentScaleRatio_y = 1.0;
 	float baseScaleRatio_x = 1.0;
 	float baseScaleRatio_y = 1.0;
-
-	// Exit out if we have no window or
-	// no commit.
-	//
-	// We may have no commit if we're an overlay,
-	// in which case, we don't want to add it,
-	// or in the case of the base plane, this is our
-	// first ever frame so we have no cached base layer
-	// to hold on to, so we should not add a layer in that
-	// instance either.
-	if (!w || lastCommit == nullptr)
-		return nullptr;
-
-	// Base plane will stay as tex=0 if we don't have contents yet, which will
-	// make us fall back to compositing and use the Vulkan null texture
-
-	FrameInfo_t::Layer_t *layer = frameInfo->layers.push();
-	if ( !layer )
-		return nullptr;
-
-	layer->filter = ( flags & PaintWindowFlag::NoFilter ) ? GamescopeUpscaleFilter::LINEAR : frameInfo->eUpscaleFilter;
-
-	layer->tex = lastCommit->GetTexture( layer->filter, frameInfo->eUpscaleScaler, layer->colorspace );
+	int32_t sourceWidth, sourceHeight;
+	int32_t baseWidth, baseHeight;
+	int drawXOffset = 0, drawYOffset = 0;
 
 	if ( flags & PaintWindowFlag::NoScale )
 	{
@@ -2602,8 +2590,8 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
 		// are using the bypass layer, we don't get that, so we need to handle
 		// this case explicitly.
 		if (w == scaleW) {
-			sourceWidth = layer->tex->width();
-			sourceHeight = layer->tex->height();
+			sourceWidth = tex->width();
+			sourceHeight = tex->height();
 
 			baseWidth = lastCommit->vulkanTex->width();
 			baseHeight = lastCommit->vulkanTex->height();
@@ -2686,16 +2674,125 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
 		}
 	}
 
+	WindowTransform_t transform;
+	transform.currentScaleRatio = { currentScaleRatio_x, currentScaleRatio_y };
+	transform.scale = { float( 1.0 / currentScaleRatio_x ), float( 1.0 / currentScaleRatio_y ) };
+	transform.offset = { float( -drawXOffset ), float( -drawYOffset ) };
+	transform.focusedScale = { float( 1.0f / baseScaleRatio_x ), float( 1.0f / baseScaleRatio_y ) };
+	transform.focusedOffset = { float( -baseXOffset ), float( -baseYOffset ) };
+	return transform;
+}
+
+static void paint_surface_layer( struct wlr_surface *surface, int x, int y,
+	FrameInfo_t::Layer_t *parentLayer, uint32_t zPos, struct FrameInfo_t *frameInfo )
+{
+	if ( frameInfo->layers.count() >= k_nMaxLayers - frameInfo->nReservedLayers )
+		return;
+
+	VulkanWlrTexture_t *tex = (VulkanWlrTexture_t *)wlr_surface_get_texture( surface );
+	if ( !tex || !tex->buf )
+		return;
+
+	gamescope::OwningRc<CVulkanTexture> pTex = s_BufferMemos.LookupVulkanTexture( tex->buf );
+	if ( !pTex )
+		return;
+
+	FrameInfo_t::Layer_t *layer = frameInfo->layers.push();
+	if ( !layer )
+		return;
+
+	layer->tex = pTex;
+	layer->filter = parentLayer->filter;
+
+	if ( pTex->isYcbcr() )
+		layer->colorspace = GAMESCOPE_APP_TEXTURE_COLORSPACE_PASSTHRU;
+	else
+		layer->colorspace = VkColorSpaceToGamescopeAppTextureColorSpace(
+			pTex->format(), VK_COLOR_SPACE_SRGB_NONLINEAR_KHR );
+
+	const float scaleX = parentLayer->scale.x != 0.0f ? parentLayer->scale.x : 1.0f;
+	const float scaleY = parentLayer->scale.y != 0.0f ? parentLayer->scale.y : 1.0f;
+	layer->scale.x = scaleX;
+	layer->scale.y = scaleY;
+	layer->offset.x = parentLayer->offset.x - x / scaleX;
+	layer->offset.y = parentLayer->offset.y - y / scaleY;
+
+	layer->opacity = parentLayer->opacity;
+	layer->zpos = zPos;
+	layer->blackBorder = false;
+	layer->applyColorMgmt = parentLayer->applyColorMgmt;
+	layer->ctm = nullptr;
+	layer->hdr_metadata_blob = nullptr;
+	layer->eAlphaBlendingMode = ALPHA_BLENDING_MODE_PREMULTIPLIED;
+
+	if ( layer->colorspace == GAMESCOPE_APP_TEXTURE_COLORSPACE_SCRGB )
+		layer->ctm = s_scRGB709To2020Matrix;
+}
+
+static void paint_subsurface_tree( struct wlr_subsurface *sub,
+	int parentX, int parentY,
+	FrameInfo_t::Layer_t *parentLayer, uint32_t zPos,
+	struct FrameInfo_t *frameInfo, int depth )
+{
+	if ( !sub || !sub->surface->mapped )
+		return;
+	if ( depth >= k_nMaxLayers )
+		return;
+
+	int x = parentX + sub->current.x;
+	int y = parentY + sub->current.y;
+
+	struct wlr_subsurface *child;
+
+	wl_list_for_each( child, &sub->surface->current.subsurfaces_below, current.link )
+		paint_subsurface_tree( child, x, y, parentLayer, zPos, frameInfo, depth + 1 );
+
+	paint_surface_layer( sub->surface, x, y, parentLayer, zPos, frameInfo );
+
+	wl_list_for_each( child, &sub->surface->current.subsurfaces_above, current.link )
+		paint_subsurface_tree( child, x, y, parentLayer, zPos, frameInfo, depth + 1 );
+}
+
+struct PopupPaintData_t {
+	FrameInfo_t::Layer_t *parentLayer;
+	uint32_t zPos;
+	struct FrameInfo_t *frameInfo;
+};
+
+static void paint_popup_surface( struct wlr_surface *surface, int x, int y, void *data )
+{
+	PopupPaintData_t *popupData = (PopupPaintData_t *) data;
+	paint_surface_layer( surface, x, y, popupData->parentLayer, popupData->zPos, popupData->frameInfo );
+}
+
+static FrameInfo_t::Layer_t *
+paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win_t *w, steamcompmgr_win_t *scaleW, struct FrameInfo_t *frameInfo,
+			  MouseCursor *cursor, PaintWindowFlags flags = 0, float flOpacityScale = 1.0f, steamcompmgr_win_t *fit = nullptr )
+{
+	if (!w || lastCommit == nullptr)
+		return nullptr;
+
+	// Base plane will be tex=0 if we don't have contents yet, which will make it
+	// fall back to compositing.
+
+	FrameInfo_t::Layer_t *layer = frameInfo->layers.push();
+	if ( !layer )
+		return nullptr;
+
+	layer->filter = ( flags & PaintWindowFlag::NoFilter ) ? GamescopeUpscaleFilter::LINEAR : frameInfo->eUpscaleFilter;
+
+	layer->tex = lastCommit->GetTexture( layer->filter, frameInfo->eUpscaleScaler, layer->colorspace );
+
+	WindowTransform_t transform = compute_window_transform( lastCommit, w, scaleW, frameInfo, layer->tex, cursor, flags, fit );
+
 	layer->opacity = ( (w->isOverlay || w->isExternalOverlay) ? w->opacity / (float)OPAQUE : 1.0f ) * flOpacityScale;
 
-	layer->scale.x = 1.0 / currentScaleRatio_x;
-	layer->scale.y = 1.0 / currentScaleRatio_y;
+	layer->scale = transform.scale;
 
-	layer->offset.x = -drawXOffset;
-	layer->offset.y = -drawYOffset;
+	layer->offset = transform.offset;
 
-	frameInfo->focusedWindowScale = { 1.0f / baseScaleRatio_x, 1.0f / baseScaleRatio_y };
-	frameInfo->focusedWindowOffset = { float( -baseXOffset ), float( -baseYOffset ) };
+	frameInfo->focusedWindowScale = transform.focusedScale;
+	frameInfo->focusedWindowOffset = transform.focusedOffset;
 
 	layer->blackBorder = flags & PaintWindowFlag::DrawBorders;
 
@@ -2728,7 +2825,7 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
 	if (layer->filter == GamescopeUpscaleFilter::PIXEL)
 	{
 		// Don't bother doing more expensive filtering if we are sharp + integer.
-		if (float_is_integer(currentScaleRatio_x) && float_is_integer(currentScaleRatio_y))
+		if (float_is_integer(transform.currentScaleRatio.x) && float_is_integer(transform.currentScaleRatio.y))
 			layer->filter = GamescopeUpscaleFilter::NEAREST;
 	}
 
@@ -2768,6 +2865,37 @@ paint_window(global_focus_t *pFocus, steamcompmgr_win_t *w, steamcompmgr_win_t *
 	}
 
 	FrameInfo_t::Layer_t *layer = paint_window_commit( lastCommit, w, scaleW, frameInfo, cursor, flags, flOpacityScale, fit );
+
+	// Subsurfaces and popups are painted here instead of paint_all so their
+	// layers are drawn above the base plane they belong to.
+	if ( layer && ( flags & PaintWindowFlag::BasePlane ) && lastCommit )
+	{
+		struct wlr_surface *rootSurface = lastCommit->surf;
+		if ( rootSurface )
+		{
+			wlserver_lock();
+			if ( w->type != steamcompmgr_win_type_t::XDG || rootSurface == w->main_surface() )
+			{
+				static bool s_bWarnedAboutBelowSubsurfaces = false;
+				if ( !s_bWarnedAboutBelowSubsurfaces && !wl_list_empty( &rootSurface->current.subsurfaces_below ) )
+				{
+					non_toplevel_log.warnf( "ignoring below subsurfaces" );
+					s_bWarnedAboutBelowSubsurfaces = true;
+				}
+
+				struct wlr_subsurface *sub;
+				wl_list_for_each( sub, &rootSurface->current.subsurfaces_above, current.link )
+					paint_subsurface_tree( sub, 0, 0, layer, g_zposSubsurface, frameInfo, 0 );
+
+				if ( struct wlr_xdg_surface *xdgSurface = wlr_xdg_surface_try_from_wlr_surface( rootSurface ) )
+				{
+					PopupPaintData_t popupData = { layer, g_zposSubsurface, frameInfo };
+					wlr_xdg_surface_for_each_popup_surface( xdgSurface, paint_popup_surface, &popupData );
+				}
+			}
+			wlserver_unlock();
+		}
+	}
 
 	if ( layer && ( flags & PaintWindowFlag::BasePlane ) )
 	{
@@ -2966,10 +3094,12 @@ static void paint_pipewire()
 
 	// Paint the windows we have onto the Pipewire stream.
 	steamcompmgr_win_t *fit = pFocus->overrideWindow;
-	paint_window( pFocus, pFocus->focusWindow, pFocus->focusWindow, &frameInfo, nullptr, 0, 1.0f, fit );
 
 	// Leave room for the overlay painted below.
 	const int nReservedLayers = ( !ulFocusAppId && pFocus->overlayWindow && pFocus->overlayWindow->opacity ) ? 1 : 0;
+	frameInfo.nReservedLayers = nReservedLayers;
+
+	paint_window( pFocus, pFocus->focusWindow, pFocus->focusWindow, &frameInfo, nullptr, 0, 1.0f, fit );
 
 	if ( !pFocus->focusWindow->isSteamStreamingClient )
 		paint_override_underlays( pFocus, pFocus->focusWindow, &frameInfo, nullptr, nReservedLayers );
@@ -3146,6 +3276,20 @@ paint_all( global_focus_t *pFocus, bool async )
 	frameInfo.eUpscaleScaler = pFocus->eUpscaleScaler;
 	frameInfo.nUpscaleSharpness = pFocus->nUpscaleSharpness;
 
+	// Leave room for the layers painted after these, so an underlay and a pile of helper windows
+	// cannot push out the Steam overlay or the cursor. The mura plane is not reserved and yields
+	// when the frame is full.
+	int nReservedLayers = 1; // cursor
+	if ( externalOverlay && externalOverlay->opacity && cv_paint_external_overlay_plane )
+		nReservedLayers++;
+	if ( cv_paint_steam_overlay_plane &&
+		 ( ( overlay && overlay->opacity ) ||
+		   ( !GetBackend()->UsesVulkanSwapchain() && GetBackend()->IsSessionBased() ) ) )
+		nReservedLayers++;
+	if ( notification && notification->opacity )
+		nReservedLayers++;
+	frameInfo.nReservedLayers = nReservedLayers;
+
 	// If the window we'd paint as the base layer is the streaming client,
 	// find the video underlay and put it up first in the scenegraph
 	if ( cv_paint_primary_plane )
@@ -3242,19 +3386,6 @@ paint_all( global_focus_t *pFocus, bool async )
 	// with an offset.
 	// Josh: No override if we're streaming video
 	// as we will have too many layers. Better to be safe than sorry.
-	// Leave room for the layers painted after these, so an underlay and a pile of helper windows
-	// cannot push out the Steam overlay or the cursor. The mura plane is not reserved and yields
-	// when the frame is full.
-	int nReservedLayers = 1; // cursor
-	if ( externalOverlay && externalOverlay->opacity && cv_paint_external_overlay_plane )
-		nReservedLayers++;
-	if ( cv_paint_steam_overlay_plane &&
-		 ( ( overlay && overlay->opacity ) ||
-		   ( !GetBackend()->UsesVulkanSwapchain() && GetBackend()->IsSessionBased() ) ) )
-		nReservedLayers++;
-	if ( notification && notification->opacity )
-		nReservedLayers++;
-
 	if ( w && !w->isSteamStreamingClient && cv_paint_override_redirect_plane )
 		paint_override_underlays( pFocus, w, &frameInfo, pFocus->cursor, nReservedLayers );
 
@@ -6762,7 +6893,21 @@ steamcompmgr_flush_frame_done( steamcompmgr_win_t *w )
 
 		if ( main_surface != nullptr )
 		{
-			wlserver_send_frame_done(main_surface, &now);
+			// Subsurfaces and popups commit independently of their toplevel.
+			wlr_surface_for_each_surface( main_surface,
+				[]( struct wlr_surface *surf, int, int, void *data ) {
+					wlserver_send_frame_done( surf, static_cast<const struct timespec *>( data ) );
+				}, &now );
+
+			wlserver_wl_surface_info *wl_info = get_wl_surface_info( main_surface );
+			if ( wl_info && wl_info->xdg_surface && wl_info->xdg_surface->xdg_surface )
+			{
+				wlr_xdg_surface_for_each_popup_surface(
+					wl_info->xdg_surface->xdg_surface,
+					[]( struct wlr_surface *surf, int, int, void *data ) {
+						wlserver_send_frame_done( surf, static_cast<const struct timespec *>( data ) );
+					}, &now );
+			}
 		}
 
 		if ( current_surface != nullptr && main_surface != current_surface )
@@ -8544,6 +8689,109 @@ void check_new_xwayland_res(xwayland_ctx_t *ctx)
 	}
 }
 
+static struct wlr_surface *surface_commit_root( struct wlr_surface *surface )
+{
+	if ( !surface )
+		return nullptr;
+
+	while ( struct wlr_xdg_surface *xdgSurface = wlr_xdg_surface_try_from_wlr_surface( surface ) )
+	{
+		if ( xdgSurface->role != WLR_XDG_SURFACE_ROLE_POPUP )
+			break;
+
+		surface = xdgSurface->popup->parent;
+	}
+
+	return wlr_surface_get_root_surface( surface );
+}
+
+static void check_new_non_toplevel_res()
+{
+	struct NonToplevelImport_t {
+		std::shared_ptr<struct wlr_buffer> buf;
+		std::shared_ptr<gamescope::CAcquireTimelinePoint> pAcquirePoint;
+		std::shared_ptr<gamescope::CReleaseTimelinePoint> pReleasePoint;
+	};
+
+	std::vector<NonToplevelImport_t> imports;
+
+	{
+		wlserver_lock();
+
+		std::vector<ResListEntry_t> queue = wlserver_non_toplevel_commit_queue();
+		std::vector<NonToplevelCommit_t> &deferred = wlserver_non_toplevel_deferred_commits();
+		imports.reserve( queue.size() );
+
+		for ( auto &entry : queue )
+		{
+			NonToplevelCommit_t commit = {};
+			commit.surf = entry.surf;
+			commit.buf = std::shared_ptr<struct wlr_buffer>( entry.buf,
+				[]( struct wlr_buffer *pBuffer ) { wlr_buffer_unlock( pBuffer ); } );
+			commit.root = surface_commit_root( entry.surf );
+
+			if ( !entry.presentation_feedbacks.empty() )
+			{
+				if ( wlserver_wl_surface_info *pInfo = get_wl_surface_info( entry.surf ) )
+					commit.sequence = ++pInfo->sequence;
+			}
+
+			commit.presentation_feedbacks = std::move( entry.presentation_feedbacks );
+			commit.pAcquirePoint = std::move( entry.pAcquirePoint );
+			commit.pReleasePoint = std::move( entry.pReleasePoint );
+
+			for ( const auto &xdg_win : g_steamcompmgr_xdg_wins )
+			{
+				if ( commit.root && xdg_win->xdg().surface.main_surface == commit.root )
+				{
+					xdg_win->receivedDoneCommit = true;
+					break;
+				}
+			}
+
+			imports.push_back( NonToplevelImport_t{ commit.buf, commit.pAcquirePoint, commit.pReleasePoint } );
+			deferred.push_back( std::move( commit ) );
+		}
+
+		wlserver_unlock();
+	}
+
+	if ( imports.empty() )
+		return;
+
+	hasRepaint = true;
+
+	// paint_surface_layer only looks textures up by buffer, so a commit whose
+	// texture has not been imported yet would not be drawn at all.
+	for ( auto &import : imports )
+	{
+		if ( import.pAcquirePoint && !import.pAcquirePoint->Wait() )
+			non_toplevel_log.errorf( "acquire point wait failed" );
+
+		if ( !s_BufferMemos.LookupVulkanTexture( import.buf.get() ) )
+		{
+			struct wlr_dmabuf_attributes dmabuf = {};
+			gamescope::OwningRc<gamescope::IBackendFb> pBackendFb;
+			if ( wlr_buffer_get_dmabuf( import.buf.get(), &dmabuf ) )
+				pBackendFb = GetBackend()->ImportDmabufToBackend( &dmabuf );
+
+			gamescope::OwningRc<CVulkanTexture> pTex =
+				vulkan_create_texture_from_wlr_buffer( import.buf.get(), std::move( pBackendFb ) );
+			if ( pTex )
+				s_BufferMemos.MemoizeBuffer( import.buf.get(), std::move( pTex ) );
+		}
+
+		if ( import.pReleasePoint )
+		{
+			if ( gamescope::OwningRc<CVulkanTexture> pTex = s_BufferMemos.LookupVulkanTexture( import.buf.get() ) )
+			{
+				if ( gamescope::IBackendFb *pBackendFb = pTex->GetBackendFb() )
+					pBackendFb->SetReleasePoint( import.pReleasePoint );
+			}
+		}
+	}
+}
+
 void check_new_xdg_res()
 {
 	std::vector<ResListEntry_t> tmp_queue = wlserver_xdg_commit_queue();
@@ -9278,6 +9526,8 @@ void steamcompmgr_check_xdg(bool vblank, uint64_t vblank_idx)
 		MakeFocusDirty();
 	}
 
+	check_new_non_toplevel_res();
+
 	handle_done_commits_xdg( vblank, vblank_idx );
 
 	// When we have observed both a complete commit and a VBlank, we should request a new frame.
@@ -9290,6 +9540,17 @@ void steamcompmgr_check_xdg(bool vblank, uint64_t vblank_idx)
 
 		wlserver_lock();
 		handle_presented_xdg();
+
+		// The deferred entries own their buffer lock, so dropping them releases it.
+		for ( auto &commit : wlserver_non_toplevel_deferred_commits() )
+		{
+			if ( !commit.presentation_feedbacks.empty() )
+				wlserver_presentation_feedback_list_presented(
+					commit.presentation_feedbacks, commit.sequence,
+					g_SteamCompMgrVBlankTime.schedule.ulTargetVBlank, g_SteamCompMgrAppRefreshCycle );
+		}
+		wlserver_non_toplevel_deferred_commits().clear();
+
 		wlserver_unlock();
 	}
 

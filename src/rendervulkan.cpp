@@ -4456,8 +4456,12 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 
 		uint32_t blur_layer_count = 1;
 		// Also blur the override on top if we have one.
-		if (frameInfo->layers.count() >= 2 && frameInfo->layers.get( 1 ).zpos == g_zposOverride)
-			blur_layer_count++;
+		for ( uint32_t i = 1; i < (uint32_t)frameInfo->layers.count(); i++ )
+		{
+			if ( frameInfo->layers.get( i ).zpos > (int)g_zposOverride )
+				break;
+			blur_layer_count = i + 1;
+		}
 
 		cmdBuffer->bindPipeline(g_device.pipeline(type, blur_layer_count, frameInfo->ycbcrMask() & 0x3u, 0, frameInfo->colorspaceMask(), outputTF ));
 		cmdBuffer->bindTarget(g_output.tmpOutput);
