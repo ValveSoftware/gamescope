@@ -117,6 +117,8 @@ struct steamcompmgr_win_t {
 	uint32_t steamAppID = 0;
 	bool isOverlay = false;
 	bool isExternalOverlay = false;
+	// mangoapp keeps the property but zeroes it while hidden.
+	bool bHasExternalOverlayProp = false;
 	// Set by per-connector mangoapp instances.
 	uint32_t uMangoappMsgType = 0;
 

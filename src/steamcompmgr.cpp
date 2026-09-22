@@ -5802,7 +5802,7 @@ map_win(xwayland_ctx_t* ctx, Window id, unsigned long sequence)
 		w->appID = 769;
 	
 	w->isOverlay = get_prop(ctx, w->xwayland().id, ctx->atoms.overlayAtom, 0);
-	w->isExternalOverlay = get_prop(ctx, w->xwayland().id, ctx->atoms.externalOverlayAtom, 0);
+	w->isExternalOverlay = get_prop(ctx, w->xwayland().id, ctx->atoms.externalOverlayAtom, 0, &w->bHasExternalOverlayProp);
 	w->uMangoappMsgType = get_prop(ctx, w->xwayland().id, ctx->atoms.mangoappMsgTypeAtom, 0);
 
 	// misyl: Disable appID for overlay types, as parts of the code don't expect that focus-wise.
@@ -7016,7 +7016,7 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 		steamcompmgr_win_t * w = find_win(ctx, ev->window);
 		if (w)
 		{
-			w->isExternalOverlay = get_prop(ctx, w->xwayland().id, ctx->atoms.externalOverlayAtom, 0);
+			w->isExternalOverlay = get_prop(ctx, w->xwayland().id, ctx->atoms.externalOverlayAtom, 0, &w->bHasExternalOverlayProp);
 			if ( w->isExternalOverlay )
 				w->appID = 0;
 			MakeFocusDirty();
@@ -8102,8 +8102,16 @@ gamescope::ConVar<bool> cv_mangoapp_per_connector{ "mangoapp_per_connector", tru
 // An untagged mangoapp reads the legacy stream, whoever spawned it.
 static bool has_legacy_mangoapp_reader()
 {
-	return wlserver_get_xwayland_server( 0 )->ctx->focus.externalOverlayWindow != nullptr ||
-		g_steamcompmgr_xdg_focus.externalOverlayWindow != nullptr;
+	if ( g_steamcompmgr_xdg_focus.externalOverlayWindow )
+		return true;
+
+	// The pick skips a hidden mangoapp, which needs a frame from this stream to show again.
+	for ( steamcompmgr_win_t *w = wlserver_get_xwayland_server( 0 )->ctx->list; w; w = w->xwayland().next )
+	{
+		if ( w->bHasExternalOverlayProp && w->uMangoappMsgType == 0 )
+			return true;
+	}
+	return false;
 }
 
 void handle_presented_for_window( steamcompmgr_win_t* w )
