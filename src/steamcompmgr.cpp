@@ -2725,6 +2725,9 @@ static void paint_surface_layer( struct wlr_surface *surface, int x, int y,
 	layer->hdr_metadata_blob = nullptr;
 	layer->eAlphaBlendingMode = ALPHA_BLENDING_MODE_PREMULTIPLIED;
 
+	if ( wlserver_wl_surface_info *pInfo = get_wl_surface_info( surface ) )
+		layer->acquirePoint = pInfo->pLastAcquirePoint;
+
 	if ( layer->colorspace == GAMESCOPE_APP_TEXTURE_COLORSPACE_SCRGB )
 		layer->ctm = s_scRGB709To2020Matrix;
 }
@@ -8709,7 +8712,6 @@ static void check_new_non_toplevel_res()
 {
 	struct NonToplevelImport_t {
 		std::shared_ptr<struct wlr_buffer> buf;
-		std::shared_ptr<gamescope::CAcquireTimelinePoint> pAcquirePoint;
 		std::shared_ptr<gamescope::CReleaseTimelinePoint> pReleasePoint;
 	};
 
@@ -8737,7 +8739,6 @@ static void check_new_non_toplevel_res()
 			}
 
 			commit.presentation_feedbacks = std::move( entry.presentation_feedbacks );
-			commit.pAcquirePoint = std::move( entry.pAcquirePoint );
 			commit.pReleasePoint = std::move( entry.pReleasePoint );
 
 			for ( const auto &xdg_win : g_steamcompmgr_xdg_wins )
@@ -8749,7 +8750,7 @@ static void check_new_non_toplevel_res()
 				}
 			}
 
-			imports.push_back( NonToplevelImport_t{ commit.buf, commit.pAcquirePoint, commit.pReleasePoint } );
+			imports.push_back( NonToplevelImport_t{ commit.buf, commit.pReleasePoint } );
 			deferred.push_back( std::move( commit ) );
 		}
 
@@ -8765,9 +8766,6 @@ static void check_new_non_toplevel_res()
 	// texture has not been imported yet would not be drawn at all.
 	for ( auto &import : imports )
 	{
-		if ( import.pAcquirePoint && !import.pAcquirePoint->Wait() )
-			non_toplevel_log.errorf( "acquire point wait failed" );
-
 		if ( !s_BufferMemos.LookupVulkanTexture( import.buf.get() ) )
 		{
 			struct wlr_dmabuf_attributes dmabuf = {};

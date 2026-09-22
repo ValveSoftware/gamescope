@@ -156,6 +156,8 @@ ResListEntry_t PrepareCommit( struct wlr_surface *surf, struct wlr_buffer *buf )
 		}
 	}
 
+	wl_surf->pLastAcquirePoint = pAcquirePoint;
+
 	ResListEntry_t newEntry = ResListEntry_t {
 		surf,
 		buf,

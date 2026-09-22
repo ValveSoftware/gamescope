@@ -61,7 +61,6 @@ struct NonToplevelCommit_t
 	struct wlr_surface *root;
 	uint64_t sequence;
 	std::vector<struct wl_resource*> presentation_feedbacks;
-	std::shared_ptr<gamescope::CAcquireTimelinePoint> pAcquirePoint;
 	std::shared_ptr<gamescope::CReleaseTimelinePoint> pReleasePoint;
 };
 

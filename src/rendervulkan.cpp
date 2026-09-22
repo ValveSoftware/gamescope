@@ -4359,6 +4359,15 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 	const bool bPreemptiveUpscale = pOutputOverride != nullptr && pInCommandBuffer != nullptr;
 	auto cmdBuffer = pInCommandBuffer ? std::move( pInCommandBuffer ) : g_device.commandBuffer();
 
+	// Subsurfaces and popups are fenced by the client's acquire point. Wait on it on
+	// the GPU rather than on this thread to avoid stalling the compositor.
+	for ( int i = 0; i < frameInfo->layers.count(); i++ )
+	{
+		const FrameInfo_t::Layer_t &layer = frameInfo->layers.get( i );
+		if ( layer.acquirePoint )
+			cmdBuffer->AddDependency( layer.acquirePoint->GetTimeline()->ToVkSemaphore(), layer.acquirePoint->GetPoint() );
+	}
+
 	const std::optional<uint32_t> oTimingSlot = CompositeTimingBegin( cmdBuffer.get() );
 
 	for (uint32_t i = 0; i < EOTF_Count; i++)
