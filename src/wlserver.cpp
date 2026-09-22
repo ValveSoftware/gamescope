@@ -1996,10 +1996,6 @@ static void waylandy_surface_destroy(struct wl_listener *listener, void *data) {
 		wlserver_surface->xdg_surface = nullptr;
 }
 
-void xdg_toplevel_new(struct wl_listener *listener, void *data)
-{
-}
-
 wlserver_xdg_surface_info* waylandy_type_surface_new(struct wl_client *client, struct wlr_surface *surface)
 {
 	wlserver_wl_surface_info *wlserver_surface = get_wl_surface_info(surface);
@@ -2058,11 +2054,15 @@ wlserver_xdg_surface_info* waylandy_type_surface_new(struct wl_client *client, s
 	return xdg_surface_info;
 }
 
-void xdg_surface_new(struct wl_listener *listener, void *data)
+void xdg_toplevel_new(struct wl_listener *listener, void *data)
 {
-	struct wlr_xdg_surface *xdg_surface = (struct wlr_xdg_surface *)data;
+	struct wlr_xdg_toplevel *toplevel = (struct wlr_xdg_toplevel *)data;
+	struct wlr_xdg_surface *xdg_surface = toplevel->base;
 
 	wlserver_xdg_surface_info *surface_info = waylandy_type_surface_new(xdg_surface->client->client, xdg_surface->surface);
+	if (!surface_info)
+		return;
+
 	surface_info->destroy.notify = waylandy_surface_destroy;
 	wl_signal_add(&xdg_surface->events.destroy, &surface_info->destroy);
 
@@ -2075,6 +2075,9 @@ void layer_shell_surface_new(struct wl_listener *listener, void *data)
 	struct wlr_layer_surface_v1 *layer_surface = (struct wlr_layer_surface_v1 *)data;
 
 	wlserver_xdg_surface_info *surface_info = waylandy_type_surface_new(nullptr, layer_surface->surface);
+	if (!surface_info)
+		return;
+
 	surface_info->destroy.notify = waylandy_surface_destroy;
 	wl_signal_add(&layer_surface->events.destroy, &surface_info->destroy);
 
@@ -2270,9 +2273,7 @@ bool wlserver_init( void ) {
 		wl_log.infof("Unable to create XDG shell interface");
 		return false;
 	}
-	wlserver.new_xdg_surface.notify = xdg_surface_new;
 	wlserver.new_xdg_toplevel.notify = xdg_toplevel_new;
-	wl_signal_add(&wlserver.xdg_shell->events.new_surface, &wlserver.new_xdg_surface);
 	wl_signal_add(&wlserver.xdg_shell->events.new_toplevel, &wlserver.new_xdg_toplevel);
 
 	wlserver.layer_shell_v1 = wlr_layer_shell_v1_create(wlserver.display, 4);
@@ -2487,7 +2488,6 @@ void wlserver_run(void)
 	wl_list_remove( &new_surface_listener.link );
 	wl_list_remove( &new_input_listener.link );
 	wl_list_remove( &wlserver.new_pointer_constraint.link );
-	wl_list_remove( &wlserver.new_xdg_surface.link );
 	wl_list_remove( &wlserver.new_xdg_toplevel.link );
 	wl_list_remove( &wlserver.new_layer_shell_surface.link );
 
