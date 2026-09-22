@@ -672,12 +672,7 @@ static void handle_wl_surface_destroy( struct wl_listener *l, void *data )
 		}
 	}
 
-	for (auto& feedback : surf->pending_presentation_feedbacks)
-	{
-		wp_presentation_feedback_send_discarded(feedback);
-		wl_resource_destroy(feedback);
-	}
-	surf->pending_presentation_feedbacks.clear();
+	wlserver_presentation_feedback_list_destroy( surf->pending_presentation_feedbacks );
 
 	if ( surf->pSyncobjSurface )
 	{
@@ -1587,13 +1582,8 @@ static void create_presentation_time( void )
 	wl_global_create( wlserver.display, &wp_presentation_interface, version, NULL, presentation_time_bind );
 }
 
-void wlserver_presentation_feedback_presented( struct wlr_surface *surface, std::vector<struct wl_resource*>& presentation_feedbacks, uint64_t last_refresh_nsec, uint64_t refresh_cycle )
+void wlserver_presentation_feedback_list_presented( std::vector<struct wl_resource*>& presentation_feedbacks, uint64_t sequence, uint64_t last_refresh_nsec, uint64_t refresh_cycle )
 {
-	wlserver_wl_surface_info *wl_surface_info = get_wl_surface_info(surface);
-
-	if ( !wl_surface_info )
-		return;
-
 	uint32_t flags = 0;
 
 	// Don't know when we want to send this.
@@ -1611,8 +1601,6 @@ void wlserver_presentation_feedback_presented( struct wlr_surface *surface, std:
 	// Not useful for an app to know.
 	flags |= WP_PRESENTATION_FEEDBACK_KIND_ZERO_COPY;
 
-	wl_surface_info->sequence++;
-
 	for (auto& feedback : presentation_feedbacks)
 	{
 		timespec last_refresh_ts;
@@ -1625,8 +1613,8 @@ void wlserver_presentation_feedback_presented( struct wlr_surface *surface, std:
 			last_refresh_ts.tv_sec & 0xffffffff,
 			last_refresh_ts.tv_nsec,
 			uint32_t(refresh_cycle),
-			wl_surface_info->sequence >> 32,
-			wl_surface_info->sequence & 0xffffffff,
+			sequence >> 32,
+			sequence & 0xffffffff,
 			flags);
 		wl_resource_destroy(feedback);
 	}
@@ -1634,21 +1622,34 @@ void wlserver_presentation_feedback_presented( struct wlr_surface *surface, std:
 	presentation_feedbacks.clear();
 }
 
-void wlserver_presentation_feedback_discard( struct wlr_surface *surface, std::vector<struct wl_resource*>& presentation_feedbacks )
+void wlserver_presentation_feedback_list_destroy( std::vector<struct wl_resource*>& presentation_feedbacks )
 {
-	wlserver_wl_surface_info *wl_surface_info = get_wl_surface_info(surface);
-
-	if ( !wl_surface_info )
-		return;
-
-	wl_surface_info->sequence++;
-
 	for (auto& feedback : presentation_feedbacks)
 	{
 		wp_presentation_feedback_send_discarded(feedback);
 		wl_resource_destroy(feedback);
 	}
 	presentation_feedbacks.clear();
+}
+
+void wlserver_presentation_feedback_presented( struct wlr_surface *surface, std::vector<struct wl_resource*>& presentation_feedbacks, uint64_t last_refresh_nsec, uint64_t refresh_cycle )
+{
+	wlserver_wl_surface_info *wl_surface_info = get_wl_surface_info(surface);
+
+	if ( !wl_surface_info )
+		return;
+
+	wlserver_presentation_feedback_list_presented( presentation_feedbacks, ++wl_surface_info->sequence, last_refresh_nsec, refresh_cycle );
+}
+
+void wlserver_presentation_feedback_discard( struct wlr_surface *surface, std::vector<struct wl_resource*>& presentation_feedbacks )
+{
+	wlserver_wl_surface_info *wl_surface_info = get_wl_surface_info(surface);
+
+	if ( wl_surface_info )
+		wl_surface_info->sequence++;
+
+	wlserver_presentation_feedback_list_destroy( presentation_feedbacks );
 }
 
 ///////////////////////

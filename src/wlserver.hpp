@@ -314,6 +314,8 @@ void wlserver_destroy_xwayland_server(gamescope_xwayland_server_t *server);
 
 void wlserver_presentation_feedback_presented( struct wlr_surface *surface, std::vector<struct wl_resource*>& presentation_feedbacks, uint64_t last_refresh_nsec, uint64_t refresh_cycle );
 void wlserver_presentation_feedback_discard( struct wlr_surface *surface, std::vector<struct wl_resource*>& presentation_feedbacks );
+void wlserver_presentation_feedback_list_presented( std::vector<struct wl_resource*>& presentation_feedbacks, uint64_t sequence, uint64_t last_refresh_nsec, uint64_t refresh_cycle );
+void wlserver_presentation_feedback_list_destroy( std::vector<struct wl_resource*>& presentation_feedbacks );
 
 void wlserver_past_present_timing( struct wlr_surface *surface, uint32_t present_id, uint64_t desired_present_time, uint64_t actual_present_time, uint64_t earliest_present_time, uint64_t present_margin );
 void wlserver_refresh_cycle( struct wlr_surface *surface, uint64_t refresh_cycle );
