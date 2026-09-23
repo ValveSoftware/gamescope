@@ -11,11 +11,11 @@ Scripts and configs working between revisions is not guaranteed to work, it shou
 Gamescope uses Lua for it's configuration and scripting system.
 
 Scripts ending in `.lua` are executed recursively in alphabetical order from the following directories:
- - `/usr/share/gamescope`
- - `/etc/gamescope`
- - `$XDG_CONFIG_DIR/gamescope`
+ - `/usr/share/gamescope/scripts`
+ - `/etc/gamescope/scripts`
+ - `$XDG_CONFIG_HOME/gamescope/scripts` (`$HOME/.config/gamescope/scripts` when `XDG_CONFIG_HOME` is unset)
 
-You can develop easily without overriding your installation by setting `script_use_local_scripts` which will eliminate `/usr/share/gamescope` and `/etc/gamescope` from being read, and instead read from `../config` of where Gamescope is run instead of those.
+You can develop easily without overriding your installation by setting `script_use_local_scripts` which will eliminate `/usr/share/gamescope` and `/etc/gamescope` from being read, and instead read from `../scripts` of where Gamescope is run instead of those.
 
 When errors are encountered, it will simply output that to the terminal. There is no visual indicator of this currently.
 
@@ -23,9 +23,9 @@ Things should mostly fail-safe, unless you actually made an egregious mistake in
 
 # Making modifications as a user
 
-If you wish to make modifications that will persist as a user, simply make a new `.lua` file in `$XDG_CONFIG_DIR/gamescope` which is usually `$HOME/.config/gamescope` with what you want to change.
+If you wish to make modifications that will persist as a user, simply make a new `.lua` file in `$XDG_CONFIG_HOME/gamescope/scripts` which is usually `$HOME/.config/gamescope/scripts` with what you want to change.
 
-For example, to make the Steam Deck LCD use spec colorimetry instead of the measured colorimetry you could create the following file `~/.config/gamescope/my_deck_lcd_colorimetry.lua` with the following contents:
+For example, to make the Steam Deck LCD use spec colorimetry instead of the measured colorimetry you could create the following file `~/.config/gamescope/scripts/my_deck_lcd_colorimetry.lua` with the following contents:
 
 ```lua
 local steamdeck_lcd_colorimetry_spec = {
@@ -40,7 +40,7 @@ gamescope.config.known_displays.steamdeck_lcd.colorimetry = steamdeck_lcd_colori
 
 and it would override that.
 
-You could also place this in `/etc/gamescope` if you really want it to apply to all users/system-wide, but that would need root privelages.
+You could also place this in `/etc/gamescope/scripts` if you really want it to apply to all users/system-wide, but that would need root privelages.
 
 # Features
 

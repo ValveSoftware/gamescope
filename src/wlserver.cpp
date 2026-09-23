@@ -494,9 +494,13 @@ static void wlserver_handle_keyboard_destroy(struct wl_listener *listener, void 
 	free( keyboard );
 }
 
+static void wlserver_forget_libinput_pointer(struct wlr_input_device *device);
+
 static void wlserver_handle_pointer_destroy(struct wl_listener *listener, void *data)
 {
 	struct wlserver_pointer *pointer = wl_container_of( listener, pointer, destroy );
+
+	wlserver_forget_libinput_pointer( (struct wlr_input_device *)data );
 
 	wl_list_remove( &pointer->motion.link );
 	wl_list_remove( &pointer->button.link );
@@ -515,6 +519,194 @@ static void wlserver_handle_touch_destroy(struct wl_listener *listener, void *da
 	wl_list_remove( &touch->motion.link );
 	wl_list_remove( &touch->destroy.link );
 	free( touch );
+}
+
+namespace {
+
+	enum class SelectedPointerType
+	{
+		NONE,
+		TOUCHPAD,
+		MOUSE,
+		ALL,
+	};
+
+	SelectedPointerType ParseSelectedPointerType( std::string_view svValue )
+	{
+		if ( svValue == "all"sv )
+			return SelectedPointerType::ALL;
+		if ( svValue == "mouse"sv )
+			return SelectedPointerType::MOUSE;
+		if ( svValue == "touchpad"sv )
+			return SelectedPointerType::TOUCHPAD;
+
+		if ( svValue != "none"sv && !svValue.empty() )
+		{
+			wl_log.warnf( "Unknown pointer device selection \"%.*s\", expected none, touchpad, mouse or all. Using none.",
+				(int)svValue.length(), svValue.data() );
+		}
+
+		return SelectedPointerType::NONE;
+	}
+
+	bool ParseFlatAccelProfile( std::string_view svValue )
+	{
+		if ( svValue == "flat"sv )
+			return true;
+
+		if ( svValue != "adaptive"sv && !svValue.empty() )
+		{
+			wl_log.warnf( "Unknown pointer acceleration profile \"%.*s\", expected adaptive or flat. Using adaptive.",
+				(int)svValue.length(), svValue.data() );
+		}
+
+		return false;
+	}
+
+}
+
+static void wlserver_update_libinput_pointers();
+
+gamescope::ConVar<bool> cv_pointer_tap_to_click( "pointer_tap_to_click", false,
+	"Enable tap-to-click on libinput pointer devices",
+	[]( gamescope::ConVar<bool> & ){ wlserver_update_libinput_pointers(); } );
+gamescope::ConVar<bool> cv_pointer_tap_and_drag( "pointer_tap_and_drag", false,
+	"Enable tap-and-drag on libinput pointer devices",
+	[]( gamescope::ConVar<bool> & ){ wlserver_update_libinput_pointers(); } );
+gamescope::ConVar<bool> cv_pointer_drag_lock( "pointer_drag_lock", false,
+	"Enable drag-lock on libinput pointer devices",
+	[]( gamescope::ConVar<bool> & ){ wlserver_update_libinput_pointers(); } );
+gamescope::ConVar<bool> cv_pointer_middle_emulation( "pointer_middle_emulation", false,
+	"Enable middle button emulation on libinput pointer devices",
+	[]( gamescope::ConVar<bool> & ){ wlserver_update_libinput_pointers(); } );
+gamescope::ConVar<bool> cv_pointer_left_handed( "pointer_left_handed", false,
+	"Enable left handed mode on libinput pointer devices",
+	[]( gamescope::ConVar<bool> & ){ wlserver_update_libinput_pointers(); } );
+gamescope::ConVar<bool> cv_pointer_disable_while_typing( "pointer_disable_while_typing", false,
+	"Disable libinput pointer devices while typing",
+	[]( gamescope::ConVar<bool> & ){ wlserver_update_libinput_pointers(); } );
+gamescope::ConVar<bool> cv_pointer_disable_while_trackpointing( "pointer_disable_while_trackpointing", false,
+	"Disable libinput pointer devices while trackpointing",
+	[]( gamescope::ConVar<bool> & ){ wlserver_update_libinput_pointers(); } );
+gamescope::ConVar<std::string> cv_pointer_natural_scrolling( "pointer_natural_scrolling", "none",
+	"Which libinput pointer devices use natural scrolling: none, touchpad, mouse or all",
+	[]( gamescope::ConVar<std::string> &cvar ){ ParseSelectedPointerType( cvar.Get() ); wlserver_update_libinput_pointers(); } );
+gamescope::ConVar<std::string> cv_pointer_accel_profile( "pointer_accel_profile", "adaptive",
+	"Acceleration profile for libinput pointer devices: adaptive or flat",
+	[]( gamescope::ConVar<std::string> &cvar ){ ParseFlatAccelProfile( cvar.Get() ); wlserver_update_libinput_pointers(); } );
+gamescope::ConVar<float> cv_pointer_accel_speed( "pointer_accel_speed", 0.0f,
+	"Acceleration speed for libinput pointer devices, within [-1, 1]",
+	[]( gamescope::ConVar<float> &cvar )
+	{
+		if ( cvar.Get() < -1.0f || cvar.Get() > 1.0f )
+			wl_log.warnf( "Pointer acceleration speed %f is outside [-1, 1] and will be clamped.", cvar.Get() );
+		wlserver_update_libinput_pointers();
+	} );
+
+#ifdef HAVE_DRM
+// Every libinput pointer we have seen, so that a convar change can be applied
+// to the devices that are already connected. Only touched on the wlserver thread.
+static std::vector<struct wlr_input_device *> s_LibinputPointers;
+#endif
+
+static void wlserver_set_libinput_pointer(struct wlr_input_device *device)
+{
+#ifdef HAVE_DRM
+	if (device->type != WLR_INPUT_DEVICE_POINTER || !wlr_input_device_is_libinput(device))
+		return;
+
+	struct libinput_device *pDevice = wlr_libinput_get_device_handle(device);
+	const char *pszName = device->name ? device->name : "unnamed libinput pointer";
+
+	libinput_device_config_tap_set_enabled(pDevice,
+		cv_pointer_tap_to_click ? LIBINPUT_CONFIG_TAP_ENABLED : LIBINPUT_CONFIG_TAP_DISABLED);
+	libinput_device_config_tap_set_drag_enabled(pDevice,
+		cv_pointer_tap_and_drag ? LIBINPUT_CONFIG_DRAG_ENABLED : LIBINPUT_CONFIG_DRAG_DISABLED);
+	libinput_device_config_tap_set_drag_lock_enabled(pDevice,
+		cv_pointer_drag_lock ? LIBINPUT_CONFIG_DRAG_LOCK_ENABLED : LIBINPUT_CONFIG_DRAG_LOCK_DISABLED);
+
+	if (libinput_device_config_middle_emulation_is_available(pDevice))
+	{
+		libinput_device_config_middle_emulation_set_enabled(pDevice,
+			cv_pointer_middle_emulation ? LIBINPUT_CONFIG_MIDDLE_EMULATION_ENABLED : LIBINPUT_CONFIG_MIDDLE_EMULATION_DISABLED);
+	}
+	else if (cv_pointer_middle_emulation)
+	{
+		wl_log.warnf("libinput pointer \"%s\": middle button emulation is not supported", pszName);
+	}
+
+	if (libinput_device_config_left_handed_is_available(pDevice))
+	{
+		libinput_device_config_left_handed_set(pDevice, cv_pointer_left_handed);
+	}
+	else if (cv_pointer_left_handed)
+	{
+		wl_log.warnf("libinput pointer \"%s\": left handed mode is not supported", pszName);
+	}
+
+	if (libinput_device_config_dwt_is_available(pDevice))
+	{
+		libinput_device_config_dwt_set_enabled(pDevice,
+			cv_pointer_disable_while_typing ? LIBINPUT_CONFIG_DWT_ENABLED : LIBINPUT_CONFIG_DWT_DISABLED);
+	}
+	else if (cv_pointer_disable_while_typing)
+	{
+		wl_log.warnf("libinput pointer \"%s\": disable while typing is not supported", pszName);
+	}
+
+	if (libinput_device_config_dwtp_is_available(pDevice))
+	{
+		libinput_device_config_dwtp_set_enabled(pDevice,
+			cv_pointer_disable_while_trackpointing ? LIBINPUT_CONFIG_DWTP_ENABLED : LIBINPUT_CONFIG_DWTP_DISABLED);
+	}
+	else if (cv_pointer_disable_while_trackpointing)
+	{
+		wl_log.warnf("libinput pointer \"%s\": disable while trackpointing is not supported", pszName);
+	}
+
+	const SelectedPointerType eNaturalScrolling = ParseSelectedPointerType( cv_pointer_natural_scrolling.Get() );
+	if (libinput_device_config_scroll_has_natural_scroll(pDevice) != 0)
+	{
+		// libinput has no "is a touchpad" query, but only touchpads report a tap finger count.
+		const bool bIsTouchpad = libinput_device_config_tap_get_finger_count(pDevice) != 0;
+		const bool bNaturalScrolling =
+			eNaturalScrolling == SelectedPointerType::ALL ||
+			(eNaturalScrolling == SelectedPointerType::TOUCHPAD && bIsTouchpad) ||
+			(eNaturalScrolling == SelectedPointerType::MOUSE && !bIsTouchpad);
+
+		libinput_device_config_scroll_set_natural_scroll_enabled(pDevice, bNaturalScrolling);
+	}
+	else if (eNaturalScrolling != SelectedPointerType::NONE)
+	{
+		wl_log.warnf("libinput pointer \"%s\": natural scrolling is not supported", pszName);
+	}
+
+	if (libinput_device_config_accel_is_available(pDevice))
+	{
+		libinput_device_config_accel_set_profile(pDevice,
+			ParseFlatAccelProfile( cv_pointer_accel_profile.Get() ) ? LIBINPUT_CONFIG_ACCEL_PROFILE_FLAT : LIBINPUT_CONFIG_ACCEL_PROFILE_ADAPTIVE);
+		libinput_device_config_accel_set_speed(pDevice, std::clamp(cv_pointer_accel_speed.Get(), -1.0f, 1.0f));
+	}
+	else if (cv_pointer_accel_speed != 0.0f || ParseFlatAccelProfile( cv_pointer_accel_profile.Get() ))
+	{
+		wl_log.warnf("libinput pointer \"%s\": pointer acceleration is not supported", pszName);
+	}
+#endif
+}
+
+static void wlserver_forget_libinput_pointer(struct wlr_input_device *device)
+{
+#ifdef HAVE_DRM
+	std::erase( s_LibinputPointers, device );
+#endif
+}
+
+static void wlserver_update_libinput_pointers()
+{
+#ifdef HAVE_DRM
+	for (struct wlr_input_device *device : s_LibinputPointers)
+		wlserver_set_libinput_pointer(device);
+#endif
 }
 
 static void wlserver_new_input(struct wl_listener *listener, void *data)
@@ -564,6 +756,12 @@ static void wlserver_new_input(struct wl_listener *listener, void *data)
 			wl_signal_add( &pointer->wlr->events.frame, &pointer->frame);
 			pointer->destroy.notify = wlserver_handle_pointer_destroy;
 			wl_signal_add( &device->events.destroy, &pointer->destroy);
+
+#ifdef HAVE_DRM
+			if ( wlr_input_device_is_libinput( device ) )
+				s_LibinputPointers.push_back( device );
+#endif
+			wlserver_set_libinput_pointer(device);
 		}
 		break;
 		case WLR_INPUT_DEVICE_TOUCH:
@@ -1393,6 +1591,20 @@ static void gamescope_control_set_keyboard_layout( struct wl_client *client, str
 	wlserver_set_keyboard_layout( sLayout.c_str() );
 }
 
+static void gamescope_control_set_pointer_natural_scrolling( struct wl_client *client, struct wl_resource *resource, uint32_t pointer_type )
+{
+	switch ( pointer_type )
+	{
+		case GAMESCOPE_CONTROL_POINTER_TYPE_NONE:     cv_pointer_natural_scrolling = "none"; break;
+		case GAMESCOPE_CONTROL_POINTER_TYPE_TOUCHPAD: cv_pointer_natural_scrolling = "touchpad"; break;
+		case GAMESCOPE_CONTROL_POINTER_TYPE_MOUSE:    cv_pointer_natural_scrolling = "mouse"; break;
+		case GAMESCOPE_CONTROL_POINTER_TYPE_ALL:      cv_pointer_natural_scrolling = "all"; break;
+		default:
+			wl_resource_post_error( resource, WL_DISPLAY_ERROR_INVALID_METHOD, "Unknown pointer type %u", pointer_type );
+			break;
+	}
+}
+
 static const struct gamescope_control_interface gamescope_control_impl = {
 	.destroy = gamescope_control_handle_destroy,
 	.set_app_target_refresh_cycle = gamescope_control_set_app_target_refresh_cycle,
@@ -1402,6 +1614,7 @@ static const struct gamescope_control_interface gamescope_control_impl = {
 	.unset_look = gamescope_control_unset_look,
 	.request_app_performance_stats = gamescope_control_request_app_performance_stats,
 	.set_keyboard_layout = gamescope_control_set_keyboard_layout,
+	.set_pointer_natural_scrolling = gamescope_control_set_pointer_natural_scrolling,
 };
 
 static uint32_t get_conn_display_info_flags()
@@ -1474,6 +1687,11 @@ static void gamescope_control_bind( struct wl_client *client, void *data, uint32
 	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_PERF_QUERY, 1, 0 );
 	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_KEYBOARD_LAYOUT, 1, 0 );
 	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_SGSR_FILTER, 1, 0 );
+#ifdef HAVE_DRM
+	// Only a session driving libinput has pointer devices to configure.
+	if ( wlserver.wlr.libinput_backend )
+		gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_POINTER_SETTINGS, 1, 0 );
+#endif
 	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_DONE, 0, 0 );
 
 	wlserver_send_gamescope_control( resource );
