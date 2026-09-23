@@ -17,3 +17,7 @@ end
 function debug(text)
     gamescope.log(gamescope.log_priority.debug, text)
 end
+
+function command(args)
+    gamescope.command(args)
+end
