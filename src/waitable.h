@@ -185,6 +185,24 @@ namespace gamescope
             ArmTimer( 0ul, false );
         }
 
+        uint64_t ReadExpirations()
+        {
+            uint64_t ulExpirations;
+            ssize_t nRead;
+            do
+            {
+                nRead = read( m_nFD, &ulExpirations, sizeof( ulExpirations ) );
+            } while ( nRead < 0 && errno == EINTR );
+            if ( nRead < 0 && errno == EAGAIN )
+                return 0;
+            if ( nRead != sizeof( ulExpirations ) )
+            {
+                g_WaitableLog.errorf_errno( "Failed to read timerfd" );
+                return 0;
+            }
+            return ulExpirations;
+        }
+
         int GetFD()
         {
             return m_nFD;
