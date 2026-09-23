@@ -15,6 +15,7 @@
 
 #include "main.hpp"
 
+#include "Timeline.h"
 #include "gamescope_shared.h"
 #include "backend.h"
 
@@ -301,6 +302,8 @@ struct FrameInfo_t
 	bool applyOutputColorMgmt; // drm only
 	EOTF outputEncodingEOTF;
 
+	int nReservedLayers = 0;
+
 	// Maps output space onto the focused window's own space for absolute input.
 	// Not the base layer's transform, whose texture may already be upscaled.
 	vec2_t focusedWindowScale = { 1.0f, 1.0f };
@@ -309,24 +312,26 @@ struct FrameInfo_t
 	struct Layer_t
 	{
 		gamescope::Rc<CVulkanTexture> tex;
-		int zpos;
+		int zpos = 0;
 
-		vec2_t offset;
-		vec2_t scale;
+		vec2_t offset = { 0.0f, 0.0f };
+		vec2_t scale = { 1.0f, 1.0f };
 
-		float opacity;
+		float opacity = 1.0f;
 
 		GamescopeUpscaleFilter filter = GamescopeUpscaleFilter::LINEAR;
 
-		bool blackBorder;
-		bool applyColorMgmt; // drm only
+		bool blackBorder = false;
+		bool applyColorMgmt = false; // drm only
 
 		AlphaBlendingMode_t eAlphaBlendingMode = ALPHA_BLENDING_MODE_PREMULTIPLIED;
 
 		std::shared_ptr<gamescope::BackendBlob> ctm;
 		std::shared_ptr<gamescope::BackendBlob> hdr_metadata_blob;
 
-		GamescopeAppTextureColorspace colorspace;
+		std::shared_ptr<gamescope::CAcquireTimelinePoint> acquirePoint;
+
+		GamescopeAppTextureColorspace colorspace = GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB;
 
 		bool isYcbcr() const
 		{
