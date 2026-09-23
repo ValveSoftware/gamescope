@@ -99,6 +99,8 @@
 #include "BufferMemo.h"
 #include "vrclient_detect.h"
 #include "Utils/Process.h"
+#include "Utils/PresentTiming.h"
+#include "Utils/CommitQueue.h"
 
 #include "wlr_begin.hpp"
 #include "wlr/types/wlr_pointer_constraints_v1.h"
@@ -125,6 +127,7 @@ static const int g_nBaseCursorScale = 36;
 
 LogScope xwm_log("xwm");
 LogScope focus_log("focus");
+LogScope present_timing_log("present_timing");
 LogScope g_WaitableLog("waitable");
 
 gamescope::ConVar<bool> cv_overlay_unmultiplied_alpha{ "overlay_unmultiplied_alpha", false };
@@ -930,7 +933,7 @@ constexpr const T& clamp( const T& x, const T& min, const T& max )
 
 extern bool g_bForceRelativeMouse;
 
-CommitDoneList_t g_steamcompmgr_xdg_done_commits;
+std::shared_ptr<CommitDoneList_t> g_steamcompmgr_xdg_done_commits = std::make_shared<CommitDoneList_t>();
 
 
 static std::mutex s_KeysToCloseMutex;
@@ -1824,9 +1827,8 @@ import_commit (
 	struct wlr_buffer *buf,
 	bool async,
 	std::shared_ptr<wlserver_vk_swapchain_feedback> swapchain_feedback,
-	std::vector<struct wl_resource*> presentation_feedbacks,
-	std::optional<uint32_t> present_id,
-	uint64_t desired_present_time,
+	std::vector<wlserver_presentation_feedback_ref> presentation_feedbacks,
+	gamescope::PresentTiming present_timing,
 	bool fifo )
 {
 	gamescope::Rc<commit_t> commit = new commit_t;
@@ -1841,8 +1843,7 @@ import_commit (
 	commit->presentation_feedbacks = std::move(presentation_feedbacks);
 	if (swapchain_feedback)
 		commit->feedback = *swapchain_feedback;
-	commit->present_id = present_id;
-	commit->desired_present_time = desired_present_time;
+	commit->present_timing = std::move( present_timing );
 	if (window_is_vr_scene_app( w )) {
 		commit->async = true;
 		commit->fifo = false;
@@ -7889,113 +7890,143 @@ register_systray(xwayland_ctx_t *ctx)
 	XSetSelectionOwner(ctx->dpy, net_system_tray, ctx->ourWindow, 0);
 }
 
-bool handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint64_t commitID, uint64_t earliestPresentTime, uint64_t earliestLatchTime )
+// Scanout the next latch lands on. Written once per steamcompmgr loop
+// iteration, before any done commit is handled.
+static uint64_t s_PredictedPresentTime = 0;
+
+static uint64_t window_refresh_cycle( steamcompmgr_win_t *w )
 {
-	bool bFoundWindow = false;
-	uint32_t j;
-	for ( j = 0; j < w->commit_queue.size(); j++ )
+	return g_nSteamCompMgrTargetFPS && steamcompmgr_window_should_limit_fps( w )
+		? g_SteamCompMgrLimitedAppRefreshCycle : g_SteamCompMgrAppRefreshCycle;
+}
+
+static bool hold_done_commit( CommitDoneEntry_t &entry, steamcompmgr_win_t *w, uint64_t now )
+{
+	const bool first = !entry.earliestLatchTime;
+	if ( first )
 	{
-		if (w->commit_queue[ j ]->feedback.has_value())
-			w->engineName = w->commit_queue[ j ]->feedback->vk_engine_name;
+		entry.earliestPresentTime = s_PredictedPresentTime;
+		entry.earliestLatchTime = now;
+		entry.desiredPresentTime = gamescope::ResolvePresentTarget( entry.desiredPresentTime,
+			entry.timingFlags, entry.route ? entry.route->last_expected_present_time : 0 );
+	}
 
-		if ( w->commit_queue[ j ]->commitID == commitID )
+	uint64_t target = gamescope::PresentTargetThreshold( entry.desiredPresentTime, entry.timingFlags, window_refresh_cycle( w ) );
+	if ( target <= s_PredictedPresentTime )
+		return false;
+
+	// The target is fixed and the scanout estimate only advances, so a hold starts on the first pass or never.
+	if ( first )
+		present_timing_log.debugf( "hold commit %lu until %lu, next scanout %lu", entry.commitID, target, s_PredictedPresentTime );
+
+	if ( GetBackend()->GetCurrentConnector() && GetBackend()->GetCurrentConnector()->IsVRRActive() )
+	{
+		auto wake = gamescope::PresentTargetWake( target, GetVBlankTimer().VRRWakeupOffset(), now );
+		if ( wake && ( !s_oLowestFPSLimitScheduleVRR || *wake < *s_oLowestFPSLimitScheduleVRR ) )
+			s_oLowestFPSLimitScheduleVRR = wake;
+	}
+	return true;
+}
+
+static gamescope::CommitQueue::SelectionResult handle_done_commit( steamcompmgr_win_t *w, CommitDoneEntry_t &entry, uint64_t now )
+{
+	const auto [status, selected] = gamescope::CommitQueue::Select( w->commit_queue, entry.commitID );
+	if ( status != gamescope::CommitQueue::SelectionResult::Ready )
+		return status;
+	if ( hold_done_commit( entry, w, now ) )
+		return gamescope::CommitQueue::SelectionResult::Blocked;
+
+	(*selected)->done = true;
+	for ( auto iter = w->commit_queue.begin(); iter != selected + 1; ++iter )
+	{
+		if ( (*iter)->feedback.has_value() )
+			w->engineName = (*iter)->feedback->vk_engine_name;
+	}
+
+	gpuvis_trace_printf( "commit %lu done", (*selected)->commitID );
+	(*selected)->earliest_present_time = entry.earliestPresentTime;
+	(*selected)->earliest_latch_time = entry.earliestLatchTime;
+	(*selected)->latch_time = now;
+	(*selected)->predicted_present_time = s_PredictedPresentTime;
+
+	// Window just got a new available commit, determine if that's worth a repaint
+
+	// If this is a forwarded vr plane, repaint
+	if ( w->oulTargetVROverlay )
+	{
+		g_bUpdateForwardedVROverlays = true;
+		w->bNeedsForwarding = true;
+	}
+
+	for ( auto &iter : g_VirtualConnectorFocuses )
+	{
+		global_focus_t *pFocus = &iter.second;
+
+		// If this is an overlay that we're presenting, repaint
+		if ( w == pFocus->overlayWindow && w->opacity != TRANSLUCENT )
 		{
-			gpuvis_trace_printf( "commit %lu done", w->commit_queue[ j ]->commitID );
-			w->commit_queue[ j ]->done = true;
-			w->commit_queue[ j ]->earliest_present_time = earliestPresentTime;
-			w->commit_queue[ j ]->present_margin = earliestPresentTime - earliestLatchTime;
-			bFoundWindow = true;
+			hasRepaintNonBasePlane = true;
+		}
 
-			// Window just got a new available commit, determine if that's worth a repaint
+		if ( w == pFocus->notificationWindow && w->opacity != TRANSLUCENT )
+		{
+			hasRepaintNonBasePlane = true;
+		}
 
-			// If this is a forwarded vr plane, repaint
-			if ( w->oulTargetVROverlay )
-			{
-				g_bUpdateForwardedVROverlays = true;
-				w->bNeedsForwarding = true;
-			}
+		// matt: the performance overlay in Steam will interfere with VRR if we let this repaint.
+		// This has been broken since the logic for external overlay repaints was moved out of
+		// outdatedInteractiveFocus. It can cause displays to jump between the focused app's
+		// refresh rate and the maximum panel refresh rate when presenting any type of overlay,
+		// creating noticeable VRR flicker in the process.
+		// TODO: fix this properly for all overlays, including Steam notifications and QAM
+		// HACK: If VRR is active, prevent external overlays, i.e. mangoapp, from repainting the base plane
+		if ( ( w == pFocus->externalOverlayWindow && w->opacity != TRANSLUCENT ) &&
+		     ( GetBackend()->GetCurrentConnector() && !GetBackend()->GetCurrentConnector()->IsVRRActive() ) )
+		{
+			hasRepaintNonBasePlane = true;
+		}
 
-			for ( auto &iter : g_VirtualConnectorFocuses )
-			{
-				global_focus_t *pFocus = &iter.second;
+		// If this is the main plane, repaint
+		if ( w == pFocus->focusWindow && !w->isSteamStreamingClient )
+		{
+			if ( !cv_paint_debug_pause_base_plane )
+				pFocus->HeldCommits[ HELD_COMMIT_BASE ] = (*selected);
+			hasRepaint = true;
 
-				// If this is an overlay that we're presenting, repaint
-				if ( w == pFocus->overlayWindow && w->opacity != TRANSLUCENT )
-				{
-					hasRepaintNonBasePlane = true;
-				}
+			pFocus->pFocusWindowEngine = w->engineName;
+			pFocus->nFocusWindowPid = w->pid;
+		}
 
-				if ( w == pFocus->notificationWindow && w->opacity != TRANSLUCENT )
-				{
-					hasRepaintNonBasePlane = true;
-				}
+		if ( w == pFocus->overrideWindow ||
+			 gamescope::Algorithm::Contains( pFocus->overrideUnderlayWindows, w ) ||
+			 gamescope::Algorithm::Contains( pFocus->decorationWindows, w ) )
+		{
+			hasRepaintNonBasePlane = true;
+		}
 
-				// matt: the performance overlay in Steam will interfere with VRR if we let this repaint.
-				// This has been broken since the logic for external overlay repaints was moved out of
-				// outdatedInteractiveFocus. It can cause displays to jump between the focused app's
-				// refresh rate and the maximum panel refresh rate when presenting any type of overlay,
-				// creating noticeable VRR flicker in the process.
-				// TODO: fix this properly for all overlays, including Steam notifications and QAM
-				// HACK: If VRR is active, prevent external overlays, i.e. mangoapp, from repainting the base plane
-				if ( ( w == pFocus->externalOverlayWindow && w->opacity != TRANSLUCENT ) &&
-				     ( GetBackend()->GetCurrentConnector() && !GetBackend()->GetCurrentConnector()->IsVRRActive() ) )
-				{
-					hasRepaintNonBasePlane = true;
-				}
-
-				// If this is the main plane, repaint
-				if ( w == pFocus->focusWindow && !w->isSteamStreamingClient )
-				{
-					if ( !cv_paint_debug_pause_base_plane )
-						pFocus->HeldCommits[ HELD_COMMIT_BASE ] = w->commit_queue[ j ];
-					hasRepaint = true;
-
-					pFocus->pFocusWindowEngine = w->engineName;
-					pFocus->nFocusWindowPid = w->pid;
-				}
-
-				if ( w == pFocus->overrideWindow ||
-					 gamescope::Algorithm::Contains( pFocus->overrideUnderlayWindows, w ) ||
-					 gamescope::Algorithm::Contains( pFocus->decorationWindows, w ) )
-				{
-					hasRepaintNonBasePlane = true;
-				}
-
-				if ( w->isSteamStreamingClientVideo && pFocus->focusWindow && pFocus->focusWindow->isSteamStreamingClient )
-				{
-					if ( !cv_paint_debug_pause_base_plane )
-						pFocus->HeldCommits[ HELD_COMMIT_BASE ] = w->commit_queue[ j ];
-					hasRepaint = true;
-				}
-			}
-
-			if ( w->outdatedInteractiveFocus )
-			{
-				MakeFocusDirty();
-				w->outdatedInteractiveFocus = false;
-			}
-
-			break;
+		if ( w->isSteamStreamingClientVideo && pFocus->focusWindow && pFocus->focusWindow->isSteamStreamingClient )
+		{
+			if ( !cv_paint_debug_pause_base_plane )
+				pFocus->HeldCommits[ HELD_COMMIT_BASE ] = (*selected);
+			hasRepaint = true;
 		}
 	}
 
-	if ( bFoundWindow == true )
+	if ( w->outdatedInteractiveFocus )
 	{
-		if ( j > 0 )
-			w->commit_queue.erase( w->commit_queue.begin(), w->commit_queue.begin() + j );
-		w->receivedDoneCommit = true;
-		return true;
+		MakeFocusDirty();
+		w->outdatedInteractiveFocus = false;
 	}
 
-	return false;
+	w->commit_queue.erase( w->commit_queue.begin(), selected );
+	w->receivedDoneCommit = true;
+	return gamescope::CommitQueue::SelectionResult::Ready;
 }
 
 // TODO: Merge these two functions.
 void handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank, uint64_t vblank_idx )
 {
-	std::lock_guard<std::mutex> lock( ctx->doneCommits.listCommitsDoneLock );
-
-	uint64_t next_refresh_time = g_SteamCompMgrVBlankTime.schedule.ulTargetVBlank;
+	std::lock_guard<std::mutex> lock( ctx->doneCommits->listCommitsDoneLock );
 
 	// commits that were not ready to be presented based on their display timing.
 	static std::vector< CommitDoneEntry_t > commits_before_their_time;
@@ -8010,7 +8041,7 @@ void handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank, uint64_t vb
 	uint64_t now = get_time_in_nanos();
 
 	// very fast loop yes
-	for ( auto& entry : ctx->doneCommits.listCommitsDone )
+	for ( auto& entry : ctx->doneCommits->listCommitsDone )
 	{
 		steamcompmgr_win_t *entry_win = nullptr;
 		for ( steamcompmgr_win_t *w = ctx->list; w; w = w->xwayland().next )
@@ -8022,6 +8053,9 @@ void handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank, uint64_t vb
 			break;
 		}
 
+		if ( !entry_win )
+			continue;
+
 		// Only pace windows the FPS limiter covers.
 		const bool entry_vblank = vblank && steamcompmgr_should_vblank_window( entry_win, vblank_idx, now );
 
@@ -8031,33 +8065,24 @@ void handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank, uint64_t vb
 			continue;
 		}
 
-		if (!entry.earliestPresentTime)
-		{
-			entry.earliestPresentTime = next_refresh_time;
-			entry.earliestLatchTime = now;
-		}
-
-		if ( entry.desiredPresentTime > next_refresh_time )
-		{
+		const auto result = handle_done_commit( entry_win, entry, now );
+		if ( result == gamescope::CommitQueue::SelectionResult::Blocked )
 			commits_before_their_time.push_back( entry );
-			continue;
-		}
-
-		if ( entry_win && handle_done_commit(entry_win, ctx, entry.commitID, entry.earliestPresentTime, entry.earliestLatchTime) )
+		else if ( result == gamescope::CommitQueue::SelectionResult::Ready )
 		{
+			if ( entry.route )
+				entry.route->last_expected_present_time = s_PredictedPresentTime;
 			if (entry.fifo)
 				fifo_win_seqs.insert(entry.winSeq);
 		}
 	}
 
-	ctx->doneCommits.listCommitsDone.swap( commits_before_their_time );
+	ctx->doneCommits->listCommitsDone.swap( commits_before_their_time );
 }
 
 void handle_done_commits_xdg( bool vblank, uint64_t vblank_idx )
 {
-	std::lock_guard<std::mutex> lock( g_steamcompmgr_xdg_done_commits.listCommitsDoneLock );
-
-	uint64_t next_refresh_time = g_SteamCompMgrVBlankTime.schedule.ulTargetVBlank;
+	std::lock_guard<std::mutex> lock( g_steamcompmgr_xdg_done_commits->listCommitsDoneLock );
 
 	// commits that were not ready to be presented based on their display timing.
 	static std::vector< CommitDoneEntry_t > commits_before_their_time;
@@ -8072,7 +8097,7 @@ void handle_done_commits_xdg( bool vblank, uint64_t vblank_idx )
 	uint64_t now = get_time_in_nanos();
 
 	// very fast loop yes
-	for ( auto& entry : g_steamcompmgr_xdg_done_commits.listCommitsDone )
+	for ( auto& entry : g_steamcompmgr_xdg_done_commits->listCommitsDone )
 	{
 		steamcompmgr_win_t *entry_win = nullptr;
 		for (const auto& xdg_win : g_steamcompmgr_xdg_wins)
@@ -8084,6 +8109,9 @@ void handle_done_commits_xdg( bool vblank, uint64_t vblank_idx )
 			break;
 		}
 
+		if ( !entry_win )
+			continue;
+
 		// Only pace windows the FPS limiter covers.
 		const bool entry_vblank = vblank && steamcompmgr_should_vblank_window( entry_win, vblank_idx, now );
 
@@ -8093,26 +8121,19 @@ void handle_done_commits_xdg( bool vblank, uint64_t vblank_idx )
 			continue;
 		}
 		
-		if (!entry.earliestPresentTime)
-		{
-			entry.earliestPresentTime = next_refresh_time;
-			entry.earliestLatchTime = now;
-		}
-
-		if ( entry.desiredPresentTime > next_refresh_time )
-		{
+		const auto result = handle_done_commit( entry_win, entry, now );
+		if ( result == gamescope::CommitQueue::SelectionResult::Blocked )
 			commits_before_their_time.push_back( entry );
-			break;
-		}
-
-		if ( entry_win && handle_done_commit(entry_win, nullptr, entry.commitID, entry.earliestPresentTime, entry.earliestLatchTime) )
+		else if ( result == gamescope::CommitQueue::SelectionResult::Ready )
 		{
+			if ( entry.route )
+				entry.route->last_expected_present_time = s_PredictedPresentTime;
 			if (entry.fifo)
 				fifo_win_seqs.insert(entry.winSeq);
 		}
 	}
 
-	g_steamcompmgr_xdg_done_commits.listCommitsDone.swap( commits_before_their_time );
+	g_steamcompmgr_xdg_done_commits->listCommitsDone.swap( commits_before_their_time );
 }
 
 gamescope::ConVar<bool> cv_mangoapp_use_output_timing{ "mangoapp_use_output_timing", true };
@@ -8140,9 +8161,9 @@ void handle_presented_for_window( steamcompmgr_win_t* w )
 
 	uint64_t next_refresh_time = g_SteamCompMgrVBlankTime.schedule.ulTargetVBlank;
 
-	uint64_t refresh_cycle = g_nSteamCompMgrTargetFPS && steamcompmgr_window_should_limit_fps( w )
-		? g_SteamCompMgrLimitedAppRefreshCycle
-		: g_SteamCompMgrAppRefreshCycle;
+	uint64_t refresh_cycle = window_refresh_cycle( w );
+	bool vrr = GetBackend()->GetCurrentConnector() && GetBackend()->GetCurrentConnector()->IsVRRActive();
+	uint64_t refresh_interval = vrr ? UINT64_MAX : g_SteamCompMgrAppRefreshCycle;
 
 	commit_t *lastCommit = get_window_last_done_commit_peek(w);
 	if (lastCommit)
@@ -8161,44 +8182,24 @@ void handle_presented_for_window( steamcompmgr_win_t* w )
 			}
 		}
 
-		if (!lastCommit->presentation_feedbacks.empty() || lastCommit->present_id)
+		// The timing report must reach the client before its present-wait feedback.
+		wlserver_present_timing_report( lastCommit->present_timing, lastCommit->present_time, lastCommit->latch_time,
+			lastCommit->predicted_present_time, lastCommit->earliest_present_time, lastCommit->earliest_latch_time );
+		if ( !lastCommit->presentation_feedbacks.empty() )
 		{
-			if (!lastCommit->presentation_feedbacks.empty())
-			{
-				wlserver_presentation_feedback_presented(
-					lastCommit->surf,
-					lastCommit->presentation_feedbacks,
-					next_refresh_time,
-					refresh_cycle);
-			}
-
-			if (lastCommit->present_id)
-			{
-				wlserver_past_present_timing(
-					lastCommit->surf,
-					*lastCommit->present_id,
-					lastCommit->desired_present_time,
-					next_refresh_time,
-					lastCommit->earliest_present_time,
-					lastCommit->present_margin);
-				lastCommit->present_id = std::nullopt;
-			}
+			wlserver_presentation_feedback_presented( lastCommit->presentation_feedbacks,
+				next_refresh_time, refresh_cycle, ++w->presentation_sequence );
 		}
 	}
 
 	if (struct wlr_surface *surface = w->current_surface())
 	{
 		auto info = get_wl_surface_info(surface);
-		if (info != nullptr && info->last_refresh_cycle != refresh_cycle)
+		if ( info && ( info->last_refresh_cycle != refresh_cycle || info->last_refresh_interval != refresh_interval ) )
 		{
-			// Could have got the override set in this bubble.
-			surface = w->current_surface();
-
-			if  (info->last_refresh_cycle != refresh_cycle)
-			{
-				info->last_refresh_cycle = refresh_cycle;
-				wlserver_refresh_cycle(surface, refresh_cycle);
-			}
+			info->last_refresh_cycle = refresh_cycle;
+			info->last_refresh_interval = refresh_interval;
+			wlserver_refresh_cycle( surface, refresh_cycle, refresh_interval );
 		}
 	}
 }
@@ -8287,24 +8288,17 @@ static TempUpscaleImage_t *GetTempUpscaleImage( global_focus_t *pFocus, uint32_t
 
 gamescope::ConVar<bool> cv_surface_update_force_only_current_surface( "surface_update_force_only_current_surface", false, "Force updates to apply only to the current surface, ignoring commits for other surfaces." );
 
-void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, ResListEntry_t& reslistentry)
+void update_wayland_res(const std::shared_ptr<CommitDoneList_t> &doneCommits, steamcompmgr_win_t *w, ResListEntry_t& reslistentry)
 {
 	struct wlr_buffer *buf = reslistentry.buf;
 
 	if ( w == nullptr )
 	{
 		wlserver_lock();
+		wlserver_present_timing_discard( reslistentry.present_timing );
+		wlserver_presentation_feedback_discard( reslistentry.presentation_feedbacks );
 		wlr_buffer_unlock( buf );
 		wlserver_unlock();
-
-		// Make sure to send the discarded event if we hit this
-		// to ensure forward progress.
-		if (!reslistentry.presentation_feedbacks.empty())
-		{
-			wlserver_presentation_feedback_discard( reslistentry.surf, reslistentry.presentation_feedbacks );
-			// presentation_feedbacks cleared by wlserver_presentation_feedback_discard
-		}
-
 		xwm_log.errorf( "waylandres but no win" );
 		return;
 	}
@@ -8337,6 +8331,8 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 	if ( bOnlyCurrentSurface && !for_current_surface )
 	{
 		wlserver_lock();
+		wlserver_present_timing_discard( reslistentry.present_timing );
+		wlserver_presentation_feedback_discard( reslistentry.presentation_feedbacks );
 		wlr_buffer_unlock( buf );
 		wlserver_unlock();
 		w->receivedDoneCommit = true;
@@ -8350,7 +8346,7 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 			already_exists = true;
 	}
 
-	if ( already_exists && !reslistentry.feedback && reslistentry.presentation_feedbacks.empty() )
+	if ( already_exists && !reslistentry.feedback && reslistentry.presentation_feedbacks.empty() && !reslistentry.present_timing.serial )
 	{
 		wlserver_lock();
 		wlr_buffer_unlock( buf );
@@ -8371,8 +8367,7 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 		reslistentry.async,
 		std::move(reslistentry.feedback),
 		std::move(reslistentry.presentation_feedbacks),
-		reslistentry.present_id,
-		reslistentry.desired_present_time,
+		std::move( reslistentry.present_timing ),
 		reslistentry.fifo );
 
 
@@ -8543,8 +8538,12 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 		newCommit->SetFence( fence, mango_nudge, uMangoMsgType, doneCommits );
 		if ( bKnownReady )
 			newCommit->Signal();
-		else
-			g_ImageWaiter.AddWaitable( newCommit.get() );
+		else if ( !g_ImageWaiter.AddWaitable( newCommit.get() ) )
+		{
+			// A cached framebuffer can retain its release point until recommit.
+			w->receivedDoneCommit = true;
+			return;
+		}
 	}
 
 	w->commit_queue.push_back( std::move(newCommit) );
@@ -8560,23 +8559,25 @@ void check_new_xwayland_res(xwayland_ctx_t *ctx)
 	for ( uint32_t i = 0; i < tmp_queue.size(); i++ )
 	{
 		steamcompmgr_win_t	*w = find_win( ctx, tmp_queue[ i ].surf );
-		update_wayland_res( &ctx->doneCommits, w, tmp_queue[ i ]);
+		update_wayland_res( ctx->doneCommits, w, tmp_queue[ i ]);
 	}
 }
 
 void check_new_xdg_res()
 {
 	std::vector<ResListEntry_t> tmp_queue = wlserver_xdg_commit_queue();
-	for ( uint32_t i = 0; i < tmp_queue.size(); i++ )
+	for ( auto &entry : tmp_queue )
 	{
-		for ( const auto& xdg_win : g_steamcompmgr_xdg_wins )
+		steamcompmgr_win_t *w = nullptr;
+		for ( const auto &xdg_win : g_steamcompmgr_xdg_wins )
 		{
-			if ( xdg_win->xdg().surface.main_surface == tmp_queue[ i ].surf )
+			if ( xdg_win->xdg().surface.main_surface == entry.surf )
 			{
-				update_wayland_res( &g_steamcompmgr_xdg_done_commits, xdg_win.get(), tmp_queue[ i ] );
+				w = xdg_win.get();
 				break;
 			}
 		}
+		update_wayland_res( g_steamcompmgr_xdg_done_commits, w, entry );
 	}
 }
 
@@ -10311,6 +10312,40 @@ steamcompmgr_main(int argc, char **argv)
 #endif
 		}
 
+		if ( vblank )
+		{
+			int nRealRefreshmHz = g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh;
+			g_SteamCompMgrAppRefreshCycle = gamescope::mHzToRefreshCycle( nRealRefreshmHz );
+			g_SteamCompMgrLimitedAppRefreshCycle = g_SteamCompMgrAppRefreshCycle;
+			if ( g_nSteamCompMgrTargetFPS )
+			{
+				int nRealRefreshHz = gamescope::ConvertmHzToHz( nRealRefreshmHz );
+				int nTargetFPS = g_nSteamCompMgrTargetFPS;
+				nTargetFPS = std::min<int>( nTargetFPS, nRealRefreshHz );
+
+				if ( GetBackend()->GetCurrentConnector() && GetBackend()->GetCurrentConnector()->IsVRRActive() )
+				{
+					g_SteamCompMgrLimitedAppRefreshCycle = gamescope::mHzToRefreshCycle( gamescope::ConvertHztomHz( nTargetFPS ) );
+				}
+				else
+				{
+					int nVblankDivisor = nRealRefreshHz / nTargetFPS;
+
+					g_SteamCompMgrLimitedAppRefreshCycle = g_SteamCompMgrAppRefreshCycle * nVblankDivisor;
+				}
+			}
+		}
+
+		uint64_t ulNow = get_time_in_nanos();
+		// Fence wakes can latch mailbox frames after the last timer target passed.
+		// Keep the fixed-refresh phase while choosing a future scanout for them.
+		s_PredictedPresentTime = gamescope::PredictFixedPresentTime( ulNow,
+			g_SteamCompMgrVBlankTime.schedule.ulTargetVBlank, g_SteamCompMgrAppRefreshCycle );
+		if ( bVRR )
+			s_PredictedPresentTime = gamescope::PredictPresentTime( ulNow,
+				GetVBlankTimer().VRRWakeupOffset(), GetVBlankTimer().GetLastVBlank(),
+				gamescope::mHzToRefreshCycle( GetVBlankTimer().GetRefresh() ) );
+
 		// Ask for a new surface every vblank
 		// When we observe a new commit being complete for a surface, we ask for a new frame.
 		// This ensures that FIFO works properly, since otherwise we might ask for a new frame
@@ -10366,30 +10401,7 @@ steamcompmgr_main(int argc, char **argv)
 		}
 
 		if ( vblank )
-		{
 			vblank_idx++;
-
-			int nRealRefreshmHz = g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh;
-			g_SteamCompMgrAppRefreshCycle = gamescope::mHzToRefreshCycle( nRealRefreshmHz );
-			g_SteamCompMgrLimitedAppRefreshCycle = g_SteamCompMgrAppRefreshCycle;
-			if ( g_nSteamCompMgrTargetFPS )
-			{
-				int nRealRefreshHz = gamescope::ConvertmHzToHz( nRealRefreshmHz );
-				int nTargetFPS = g_nSteamCompMgrTargetFPS;
-				nTargetFPS = std::min<int>( nTargetFPS, nRealRefreshHz );
-
-				if ( GetBackend()->GetCurrentConnector() && GetBackend()->GetCurrentConnector()->IsVRRActive() )
-				{
-					g_SteamCompMgrLimitedAppRefreshCycle = gamescope::mHzToRefreshCycle( gamescope::ConvertHztomHz( nTargetFPS ) );
-				}
-				else
-				{
-					int nVblankDivisor = nRealRefreshHz / nTargetFPS;
-
-					g_SteamCompMgrLimitedAppRefreshCycle = g_SteamCompMgrAppRefreshCycle * nVblankDivisor;
-				}
-			}
-		}
 
 		// Handle presentation-time stuff
 		//
