@@ -11,7 +11,7 @@ wayland_protos = dependency('wayland-protocols',
 )
 wl_protocol_dir = wayland_protos.get_variable('pkgdatadir')
 
-protocols = [
+server_protocols = [
 	# Upstream protocols
 	wl_protocol_dir / 'stable/linux-dmabuf/linux-dmabuf-v1.xml',
 	wl_protocol_dir / 'stable/viewporter/viewporter.xml',
@@ -47,10 +47,18 @@ protocols = [
 	'wlr-layer-shell-unstable-v1.xml',
 ]
 
+# Wayland protocols that may be utilised if exposed by parent compositor 
+# These are NOT implemented by gamescope
+client_protocols = [
+    wl_protocol_dir / 'unstable/idle-inhibit/idle-inhibit-unstable-v1.xml',
+]
+
+all_protocols = server_protocols + client_protocols
+
 protocols_client_src = []
 protocols_server_src = []
 
-foreach xml : protocols
+foreach xml : all_protocols
 	name = fs.name(xml).replace('.xml', '')
 
 	code = custom_target(
@@ -60,13 +68,6 @@ foreach xml : protocols
 		command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
 	)
 
-	server_header = custom_target(
-		name + '-protocol.h',
-		input: xml,
-		output: '@BASENAME@-protocol.h',
-		command: [wayland_scanner, 'server-header', '@INPUT@', '@OUTPUT@'],
-	)
-
 	client_header = custom_target(
 		name + '-client-protocol.h',
 		input: xml,
@@ -74,6 +75,18 @@ foreach xml : protocols
 		command: [wayland_scanner, 'client-header', '@INPUT@', '@OUTPUT@'],
 	)
 
-	protocols_server_src += [code, server_header]
 	protocols_client_src += [code, client_header]
+endforeach
+
+foreach xml: server_protocols
+	name = fs.name(xml).replace('.xml', '')
+
+	server_header = custom_target(
+		name + '-protocol.h',
+		input: xml,
+		output: '@BASENAME@-protocol.h',
+		command: [wayland_scanner, 'server-header', '@INPUT@', '@OUTPUT@'],
+	)
+
+	protocols_server_src += [code, server_header]
 endforeach
