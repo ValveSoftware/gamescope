@@ -4048,19 +4048,28 @@ namespace gamescope
 			if ( bDefer && !!( g_uCompositeDebug & CompositeDebugFlag::Markers ) )
 				g_uCompositeDebug |= CompositeDebugFlag::Markers_Partial;
 
-			std::optional oCompositeResult = vulkan_composite( &compositeFrameInfo, nullptr, !bNeedsFullComposite );
+			// Only present composites advance the output ring, so the last one is still on screen.
+			const bool bReuseLastComposite = pFrameInfo->bRepeatFrame && bNeedsFullComposite &&
+				m_bWasCompositing && !m_bWasPartialCompositing;
 
-			m_bWasCompositing = true;
-
-			g_uCompositeDebug &= ~CompositeDebugFlag::Markers_Partial;
-
-			if ( !oCompositeResult )
+			if ( !bReuseLastComposite )
 			{
-				xwm_log.errorf("vulkan_composite failed");
-				return -EINVAL;
-			}
+				std::optional oCompositeResult = vulkan_composite( &compositeFrameInfo, nullptr, !bNeedsFullComposite );
 
-			vulkan_wait( *oCompositeResult, true );
+				m_bWasCompositing = true;
+
+				g_uCompositeDebug &= ~CompositeDebugFlag::Markers_Partial;
+
+				if ( !oCompositeResult )
+				{
+					// A failed composite can leave no output images to present again.
+					m_bWasCompositing = false;
+					xwm_log.errorf("vulkan_composite failed");
+					return -EINVAL;
+				}
+
+				vulkan_wait( *oCompositeResult, true );
+			}
 
 			FrameInfo_t presentCompFrameInfo = {};
 			presentCompFrameInfo.allowVRR = pFrameInfo->allowVRR;
