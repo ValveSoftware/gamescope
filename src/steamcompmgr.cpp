@@ -4488,8 +4488,14 @@ resize_window_to_desired_geometry( xwayland_ctx_t *ctx, steamcompmgr_win_t *w )
 {
 	if ( win_has_game_id( w ) )
 	{
-		if ( window_is_fullscreen( w ) || ctx->force_windows_fullscreen )
+		if ( window_is_fullscreen( w ) || w->isMaximized || ctx->force_windows_fullscreen )
 		{
+			if ( w->isMaximized && !w->restoreWidth && !w->restoreHeight )
+			{
+				w->restoreWidth = w->GetGeometry().nWidth;
+				w->restoreHeight = w->GetGeometry().nHeight;
+			}
+
 			bool bIsSteam = window_is_steam( w );
 			int fs_width  = ctx->root_width;
 			int fs_height = ctx->root_height;
@@ -4502,6 +4508,15 @@ resize_window_to_desired_geometry( xwayland_ctx_t *ctx, steamcompmgr_win_t *w )
 
 			if ( w->GetGeometry().nWidth != fs_width || w->GetGeometry().nHeight != fs_height || globalScaleRatio != 1.0f )
 				XResizeWindow( ctx->dpy, w->xwayland().id, fs_width, fs_height );
+		}
+		else if ( w->restoreWidth || w->restoreHeight )
+		{
+			if ( (unsigned)w->GetGeometry().nWidth != w->restoreWidth ||
+				 (unsigned)w->GetGeometry().nHeight != w->restoreHeight )
+				XResizeWindow( ctx->dpy, w->xwayland().id, w->restoreWidth, w->restoreHeight );
+
+			w->restoreWidth = 0;
+			w->restoreHeight = 0;
 		}
 		else
 		{
@@ -5878,6 +5893,9 @@ get_net_wm_state(xwayland_ctx_t *ctx, steamcompmgr_win_t *w)
 	for (size_t i = 0; i < nitems; i++) {
 		if (props[i] == ctx->atoms.netWMStateFullscreenAtom) {
 			w->isFullscreen = true;
+		} else if (props[i] == ctx->atoms.netWMStateMaximizedHorzAtom ||
+			   props[i] == ctx->atoms.netWMStateMaximizedVertAtom) {
+			w->isMaximized = true;
 		} else if (props[i] == ctx->atoms.netWMStateSkipTaskbarAtom) {
 			w->skipTaskbar = true;
 		} else if (props[i] == ctx->atoms.netWMStateSkipPagerAtom) {
@@ -6647,11 +6665,18 @@ handle_net_wm_state(xwayland_ctx_t *ctx, steamcompmgr_win_t *w, XClientMessageEv
 	bool fullscreenChanged = false;
 	bool skipTaskbarChanged = false;
 	bool skipPagerChanged = false;
+	bool maximizedChanged = false;
 	for (size_t i = 0; i < 2; i++) {
 		if (props[i] == ctx->atoms.netWMStateFullscreenAtom) {
 			bool wasFullscreen = w->isFullscreen;
 			update_net_wm_state(action, &w->isFullscreen);
 			fullscreenChanged |= w->isFullscreen != wasFullscreen;
+			MakeFocusDirty();
+		} else if (props[i] == ctx->atoms.netWMStateMaximizedHorzAtom ||
+			   props[i] == ctx->atoms.netWMStateMaximizedVertAtom) {
+			bool wasMaximized = w->isMaximized;
+			update_net_wm_state(action, &w->isMaximized);
+			maximizedChanged |= w->isMaximized != wasMaximized;
 			MakeFocusDirty();
 		} else if (props[i] == ctx->atoms.netWMStateSkipTaskbarAtom) {
 			bool wasSkipTaskbar = w->skipTaskbar;
@@ -6668,10 +6693,10 @@ handle_net_wm_state(xwayland_ctx_t *ctx, steamcompmgr_win_t *w, XClientMessageEv
 		}
 	}
 
-	if (fullscreenChanged)
+	if (fullscreenChanged || maximizedChanged)
 		resize_window_to_desired_geometry( ctx, w );
 
-	if (!fullscreenChanged && !skipTaskbarChanged && !skipPagerChanged)
+	if (!fullscreenChanged && !skipTaskbarChanged && !skipPagerChanged && !maximizedChanged)
 		return;
 
 	Atom type;
@@ -6690,11 +6715,17 @@ handle_net_wm_state(xwayland_ctx_t *ctx, steamcompmgr_win_t *w, XClientMessageEv
 
 	std::erase_if(atoms, [&](Atom atom) {
 		return atom == ctx->atoms.netWMStateFullscreenAtom ||
+			   atom == ctx->atoms.netWMStateMaximizedHorzAtom ||
+			   atom == ctx->atoms.netWMStateMaximizedVertAtom ||
 			   atom == ctx->atoms.netWMStateSkipTaskbarAtom ||
 			   atom == ctx->atoms.netWMStateSkipPagerAtom;
 	});
 
 	if (w->isFullscreen) atoms.push_back(ctx->atoms.netWMStateFullscreenAtom);
+	if (w->isMaximized) {
+		atoms.push_back(ctx->atoms.netWMStateMaximizedHorzAtom);
+		atoms.push_back(ctx->atoms.netWMStateMaximizedVertAtom);
+	}
 	if (w->skipTaskbar) atoms.push_back(ctx->atoms.netWMStateSkipTaskbarAtom);
 	if (w->skipPager) atoms.push_back(ctx->atoms.netWMStateSkipPagerAtom);
 
@@ -8109,6 +8140,8 @@ register_cm(xwayland_ctx_t *ctx)
 	Atom supportedAtoms[] = {
 		XInternAtom(ctx->dpy, "_NET_WM_STATE", false),
 		XInternAtom(ctx->dpy, "_NET_WM_STATE_FULLSCREEN", false),
+		XInternAtom(ctx->dpy, "_NET_WM_STATE_MAXIMIZED_HORZ", false),
+		XInternAtom(ctx->dpy, "_NET_WM_STATE_MAXIMIZED_VERT", false),
 		XInternAtom(ctx->dpy, "_NET_WM_STATE_SKIP_TASKBAR", false),
 		XInternAtom(ctx->dpy, "_NET_WM_STATE_SKIP_PAGER", false),
 		XInternAtom(ctx->dpy, "_NET_ACTIVE_WINDOW", false),
@@ -9434,6 +9467,8 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 	ctx->atoms.netWMStateFocusedAtom = XInternAtom(ctx->dpy, "_NET_WM_STATE_FOCUSED", false);
 	ctx->atoms.netWMStateSkipTaskbarAtom = XInternAtom(ctx->dpy, "_NET_WM_STATE_SKIP_TASKBAR", false);
 	ctx->atoms.netWMStateSkipPagerAtom = XInternAtom(ctx->dpy, "_NET_WM_STATE_SKIP_PAGER", false);
+	ctx->atoms.netWMStateMaximizedHorzAtom = XInternAtom(ctx->dpy, "_NET_WM_STATE_MAXIMIZED_HORZ", false);
+	ctx->atoms.netWMStateMaximizedVertAtom = XInternAtom(ctx->dpy, "_NET_WM_STATE_MAXIMIZED_VERT", false);
 	ctx->atoms.WLSurfaceIDAtom = XInternAtom(ctx->dpy, "WL_SURFACE_ID", false);
 	ctx->atoms.WMStateAtom = XInternAtom(ctx->dpy, "WM_STATE", false);
 	ctx->atoms.utf8StringAtom = XInternAtom(ctx->dpy, "UTF8_STRING", false);
