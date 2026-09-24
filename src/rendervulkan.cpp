@@ -4681,6 +4681,10 @@ bool vulkan_format_supports_features(VkFormat format, VkFormatFeatureFlags featu
 
 gamescope::Rc<CVulkanTexture> vulkan_get_last_output_image( bool partial, bool defer )
 {
+	// A remake drops the deferred images until the next composite makes them.
+	if ( g_output.outputImages.empty() )
+		return nullptr;
+
 	// Get previous image ( +2 )
 	// 1 2 3
 	//   |
