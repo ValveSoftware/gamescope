@@ -2468,7 +2468,8 @@ namespace gamescope
     {
         bool bUseHostCursor = false;
 
-        if ( !m_pPointer )
+        // Skip if we don't have a pointer or if the pointer isn't over a gamescope plane (libdecor frame)
+        if ( !m_pPointer || !m_bMouseEntered )
             return;
 
 		if ( cv_wayland_mouse_warp_without_keyboard_focus )
