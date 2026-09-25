@@ -2466,29 +2466,22 @@ namespace gamescope
 
     void CWaylandBackend::UpdateCursor()
     {
-        bool bUseHostCursor = false;
-
-        if ( !m_pPointer )
+        // Skip if we don't have a pointer or if the pointer isn't over a gamescope plane (libdecor frame)
+        if ( !m_pPointer || !m_bMouseEntered )
             return;
 
-		if ( cv_wayland_mouse_warp_without_keyboard_focus )
-			bUseHostCursor = m_bPointerLocked && !m_bKeyboardEntered && m_pDefaultCursorSurface;
-		else
-			bUseHostCursor = !m_bKeyboardEntered && m_pDefaultCursorSurface;
+        bool bUseHostCursor = !m_bKeyboardEntered;
+        bool bShowCursor = !m_bPointerLocked;
 
-        if ( bUseHostCursor )
-        {
+        if ( cv_wayland_mouse_warp_without_keyboard_focus )
+            bUseHostCursor &= m_bPointerLocked;
+
+        if ( bUseHostCursor && m_pDefaultCursorSurface )
             wl_pointer_set_cursor( m_pPointer, m_uPointerEnterSerial, m_pDefaultCursorSurface, m_pDefaultCursorInfo->uXHotspot, m_pDefaultCursorInfo->uYHotspot );
-        }
+        else if ( bShowCursor && m_pCursorSurface )
+            wl_pointer_set_cursor( m_pPointer, m_uPointerEnterSerial, m_pCursorSurface, m_pCursorInfo->uXHotspot, m_pCursorInfo->uYHotspot );
         else
-        {
-			bool bHideCursor = m_bPointerLocked || !m_pCursorSurface;
-
-            if ( bHideCursor )
-                wl_pointer_set_cursor( m_pPointer, m_uPointerEnterSerial, nullptr, 0, 0 );
-            else
-                wl_pointer_set_cursor( m_pPointer, m_uPointerEnterSerial, m_pCursorSurface, m_pCursorInfo->uXHotspot, m_pCursorInfo->uYHotspot );
-        }
+            wl_pointer_set_cursor( m_pPointer, m_uPointerEnterSerial, nullptr, 0, 0 );
     }
 
     /////////////////////
