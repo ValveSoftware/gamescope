@@ -3266,6 +3266,24 @@ bool vulkan_make_swapchain( VulkanOutput_t *pOutput )
 
 	vk_log.infof("Creating Gamescope nested swapchain with format %u and colorspace %u", eVkFormat, pOutput->surfaceFormats[surfaceFormat].colorSpace);
 
+	VkPresentModeKHR ePresentMode = VK_PRESENT_MODE_FIFO_KHR;
+	if ( const char *pszMode = getenv( "GAMESCOPE_NESTED_PRESENT_MODE" ) )
+	{
+		VkPresentModeKHR eWanted = VK_PRESENT_MODE_FIFO_KHR;
+		if ( !strcmp( pszMode, "mailbox" ) )
+			eWanted = VK_PRESENT_MODE_MAILBOX_KHR;
+		else if ( !strcmp( pszMode, "immediate" ) )
+			eWanted = VK_PRESENT_MODE_IMMEDIATE_KHR;
+		for ( VkPresentModeKHR eMode : pOutput->presentModes )
+		{
+			if ( eMode == eWanted )
+				ePresentMode = eWanted;
+		}
+		if ( ePresentMode != eWanted )
+			vk_log.errorf( "GAMESCOPE_NESTED_PRESENT_MODE=%s is not offered by the surface; using FIFO", pszMode );
+	}
+	vk_log.infof( "Nested swapchain present mode %u (0 immediate, 1 mailbox, 2 fifo)", ePresentMode );
+
 	VkSwapchainCreateInfoKHR createInfo = {
 		.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
 		.pNext = formats[0] != formats[1] ? &usageListInfo : nullptr,
@@ -3283,7 +3301,7 @@ bool vulkan_make_swapchain( VulkanOutput_t *pOutput )
 		.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
 		.preTransform = pOutput->surfaceCaps.currentTransform,
 		.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
-		.presentMode = VK_PRESENT_MODE_FIFO_KHR,
+		.presentMode = ePresentMode,
 		.clipped = VK_TRUE,
 	};
 
