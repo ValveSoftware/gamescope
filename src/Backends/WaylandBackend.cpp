@@ -299,6 +299,7 @@ namespace gamescope
         std::vector<wl_output *> m_pOutputs;
         bool m_bNeedsDecorCommit = false;
         bool m_bUnmappedAwaitingConfigure = false;
+        bool m_bHasAttachedBuffer = false;
         uint32_t m_uFractionalScale = 120;
         bool m_bHasRecievedScale = false;
 
@@ -1604,6 +1605,8 @@ namespace gamescope
             if ( m_pFrame && m_bUnmappedAwaitingConfigure )
                 return;
 
+            m_bHasAttachedBuffer = true;
+
             wl_surface_attach( m_pSurface, oState->pBuffer, 0, 0 );
             wl_surface_damage( m_pSurface, 0, 0, INT32_MAX, INT32_MAX );
             wl_surface_set_opaque_region( m_pSurface, oState->bOpaque ? m_pBackend->GetFullRegion() : nullptr );
@@ -1611,8 +1614,11 @@ namespace gamescope
         }
         else
         {
-            if ( m_pFrame )
+            // Attaching NULL only unmaps (and so requires a new configure) if a buffer was mapped.
+            if ( m_pFrame && m_bHasAttachedBuffer )
                 m_bUnmappedAwaitingConfigure = true;
+
+            m_bHasAttachedBuffer = false;
 
             wl_surface_attach( m_pSurface, nullptr, 0, 0 );
             wl_surface_damage( m_pSurface, 0, 0, INT32_MAX, INT32_MAX );
