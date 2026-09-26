@@ -690,7 +690,7 @@ namespace gamescope
     protected:
         virtual void OnBackendBlobDestroyed( BackendBlob *pBlob ) override;
 
-        wl_surface *CursorInfoToSurface( const std::shared_ptr<INestedHints::CursorInfo> &info );
+        wl_surface *CursorInfoToSurface( const std::shared_ptr<INestedHints::CursorInfo> &info, wl_surface *pCursorSurface = nullptr );
 
         bool SupportsColorManagement() const;
 
@@ -2381,10 +2381,25 @@ namespace gamescope
         // Do nothing.
     }
 
-    wl_surface *CWaylandBackend::CursorInfoToSurface( const std::shared_ptr<INestedHints::CursorInfo> &info )
+    static constexpr wl_buffer_listener s_CursorBufferListener =
+    {
+        .release = []( void *pData, wl_buffer *pBuffer )
+        {
+            wl_buffer_destroy( pBuffer );
+        },
+    };
+
+    wl_surface *CWaylandBackend::CursorInfoToSurface( const std::shared_ptr<INestedHints::CursorInfo> &info, wl_surface *pCursorSurface )
     {
         if ( !info )
-            return nullptr;
+            return pCursorSurface;
+
+        if ( !pCursorSurface )
+        {
+            pCursorSurface = wl_compositor_create_surface( m_pCompositor );
+            if ( !pCursorSurface )
+                return nullptr;
+        }
 
         uint32_t uStride = info->uWidth * 4;
         uint32_t uSize = uStride * info->uHeight;
@@ -2395,12 +2410,16 @@ namespace gamescope
         defer( close( nFd ) );
 
         wl_shm_pool *pPool = wl_shm_create_pool( m_pShm, nFd, uSize );
+        if ( !pPool )
+            return nullptr;
         defer( wl_shm_pool_destroy( pPool ) );
 
         wl_buffer *pBuffer = wl_shm_pool_create_buffer( pPool, 0, info->uWidth, info->uHeight, uStride, WL_SHM_FORMAT_ARGB8888 );
-        defer( wl_buffer_destroy( pBuffer ) );
+        if ( !pBuffer )
+            return nullptr;
 
-        wl_surface *pCursorSurface = wl_compositor_create_surface( m_pCompositor );
+        wl_buffer_add_listener( pBuffer, &s_CursorBufferListener, nullptr );
+
         wl_surface_attach( pCursorSurface, pBuffer, 0, 0 );
         wl_surface_damage( pCursorSurface, 0, 0, INT32_MAX, INT32_MAX );
         wl_surface_commit( pCursorSurface );
@@ -2416,15 +2435,7 @@ namespace gamescope
     void CWaylandBackend::SetCursorImage( std::shared_ptr<INestedHints::CursorInfo> info )
     {
         m_pCursorInfo = info;
-
-        if ( m_pCursorSurface )
-        {
-            wl_surface_destroy( m_pCursorSurface );
-            m_pCursorSurface = nullptr;
-        }
-
-        m_pCursorSurface = CursorInfoToSurface( info );
-
+        m_pCursorSurface = CursorInfoToSurface( info, m_pCursorSurface );
         UpdateCursor();
     }
     void CWaylandBackend::SetRelativeMouseMode( wl_surface *pSurface, bool bRelative )
@@ -2482,7 +2493,7 @@ namespace gamescope
         }
         else
         {
-			bool bHideCursor = m_bPointerLocked || !m_pCursorSurface;
+			bool bHideCursor = m_bPointerLocked || !m_pCursorInfo || !m_pCursorSurface;
 
             if ( bHideCursor )
                 wl_pointer_set_cursor( m_pPointer, m_uPointerEnterSerial, nullptr, 0, 0 );
