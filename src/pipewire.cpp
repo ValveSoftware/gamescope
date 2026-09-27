@@ -34,6 +34,9 @@ static uint32_t s_nCaptureHeight;
 static uint32_t s_nOutputWidth;
 static uint32_t s_nOutputHeight;
 
+// Readback mode the current SHM buffers were created with, -1 = no SHM buffers
+static int s_nNegotiatedReadback = -1;
+
 static void destroy_buffer(struct pipewire_buffer *buffer) {
 	assert(buffer->buffer == nullptr);
 
@@ -285,7 +288,9 @@ static void dispatch_nudge(struct pipewire_state *state, int fd)
 		s_nOutputHeight = g_nOutputHeight;
 		calculate_capture_size();
 	}
-	if (s_nCaptureWidth != state->video_info.size.width || s_nCaptureHeight != state->video_info.size.height) {
+	bool bReadbackChanged = s_nNegotiatedReadback >= 0 &&
+		s_nNegotiatedReadback != (int)vulkan_capture_prefers_readback();
+	if (s_nCaptureWidth != state->video_info.size.width || s_nCaptureHeight != state->video_info.size.height || bReadbackChanged) {
 		pwr_log.debugf("renegotiating stream params (size: %dx%d)", s_nCaptureWidth, s_nCaptureHeight);
 
 		uint8_t buf[4096];
@@ -294,6 +299,9 @@ static void dispatch_nudge(struct pipewire_state *state, int fd)
 		int ret = pw_stream_update_params(state->stream, format_params.data(), format_params.size());
 		if (ret < 0) {
 			pwr_log.errorf("pw_stream_update_params failed");
+		} else if (bReadbackChanged) {
+			// One attempt per readback flip, the peer may keep the current buffers
+			s_nNegotiatedReadback = (int)vulkan_capture_prefers_readback();
 		}
 	}
 
@@ -504,14 +512,23 @@ static void stream_handle_add_buffer(void *user_data, struct pw_buffer *pw_buffe
 
 	buffer->texture = new CVulkanTexture();
 	CVulkanTexture::createFlags screenshotImageFlags;
-	screenshotImageFlags.bMappable = true;
 	screenshotImageFlags.bTransferDst = true;
 	screenshotImageFlags.bStorage = true;
-	if (is_dmabuf || drmFormat == DRM_FORMAT_NV12)
+	if (!is_dmabuf && vulkan_capture_prefers_readback())
 	{
-		screenshotImageFlags.bExportable = true;
-		screenshotImageFlags.bLinear = true; // TODO: support multi-planar DMA-BUF export via PipeWire
+		screenshotImageFlags.bReadback = true;
 	}
+	else
+	{
+		screenshotImageFlags.bMappable = true;
+		if (is_dmabuf || drmFormat == DRM_FORMAT_NV12)
+		{
+			screenshotImageFlags.bExportable = true;
+			screenshotImageFlags.bLinear = true; // TODO: support multi-planar DMA-BUF export via PipeWire
+		}
+	}
+	if (!is_dmabuf)
+		s_nNegotiatedReadback = screenshotImageFlags.bReadback;
 	bool bImageInitSuccess = buffer->texture->BInit( s_nCaptureWidth, s_nCaptureHeight, 1u, drmFormat, screenshotImageFlags );
 	if ( !bImageInitSuccess )
 	{
@@ -595,6 +612,7 @@ static void stream_handle_remove_buffer(void *data, struct pw_buffer *pw_buffer)
 {
 	struct pipewire_buffer *buffer = (struct pipewire_buffer *) pw_buffer->user_data;
 
+	s_nNegotiatedReadback = -1;
 	buffer->buffer = nullptr;
 
 	if (!buffer->copying) {
