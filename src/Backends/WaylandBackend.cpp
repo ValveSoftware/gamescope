@@ -52,9 +52,18 @@ extern bool g_bColorSliderInUse;
 extern bool fadingOut;
 extern std::string g_reshade_effect;
 
+extern float g_mouseSensitivity;
+
+gamescope::ConVar<bool> cv_ignore_mouse_acceleration{
+    "ignore_mouse_acceleration", false,
+    "Ignore host compositor acceleration and display scaling for 2D cursor motion in relative pointer mode"
+};
+
 using namespace std::literals;
 
 static LogScope xdg_log( "xdg_backend" );
+
+static uint32_t s_uGlobalFractionalScale = 120;
 
 static const char *GAMESCOPE_proxy_tag = "gamescope-proxy";
 static const char *GAMESCOPE_plane_tag = "gamescope-plane";
@@ -1934,7 +1943,6 @@ namespace gamescope
     {
         bool bDirty = false;
 
-        static uint32_t s_uGlobalFractionalScale = 120;
         if ( s_uGlobalFractionalScale != uScale )
         {
             if ( m_bHasRecievedScale )
@@ -3317,8 +3325,21 @@ namespace gamescope
 		if ( !m_pBackend->m_bPointerLocked || ( !cv_wayland_mouse_relmotion_without_keyboard_focus && !m_bKeyboardEntered ) )
 			return;
 
+        double scale = (double)s_uGlobalFractionalScale / 120.0;
+        double raw_dx = wl_fixed_to_double( fDxUnaccel );
+        double raw_dy = wl_fixed_to_double( fDyUnaccel );
+
+        double cursor_dx = raw_dx;
+        double cursor_dy = raw_dy;
+
+        if ( !cv_ignore_mouse_acceleration )
+        {
+            cursor_dx = wl_fixed_to_double( fDx ) * scale;
+            cursor_dy = wl_fixed_to_double( fDy ) * scale;
+        }
+
         wlserver_lock();
-        wlserver_mousemotion( wl_fixed_to_double( fDxUnaccel ), wl_fixed_to_double( fDyUnaccel ), ++m_uFakeTimestamp );
+        wlserver_mousemotion( cursor_dx, cursor_dy, ++m_uFakeTimestamp, raw_dx, raw_dy );
         wlserver_unlock();
     }
 
