@@ -2738,6 +2738,27 @@ void wlserver_key( uint32_t key, bool press, uint32_t time )
 	bump_input_counter();
 }
 
+void wlserver_keyboard_modifiers( uint32_t depressed, uint32_t latched, uint32_t locked, uint32_t group )
+{
+	assert( wlserver_is_lock_held() );
+
+	wlr_keyboard *keyboard = wlserver.wlr.virtual_keyboard_device;
+	if ( keyboard->keymap && group >= xkb_keymap_num_layouts( keyboard->keymap ) )
+		group = 0;
+	keyboard->modifiers = { .depressed = depressed, .latched = latched, .locked = locked, .group = group };
+
+	if ( wlserver.wlr.seat->keyboard_state.keyboard == keyboard )
+		wlr_seat_keyboard_notify_modifiers( wlserver.wlr.seat, &keyboard->modifiers );
+
+	bump_input_counter();
+}
+
+void wlserver_keyboard_release_modifiers()
+{
+	const wlr_keyboard_modifiers &mods = wlserver.wlr.virtual_keyboard_device->modifiers;
+	wlserver_keyboard_modifiers( 0, 0, mods.locked, mods.group );
+}
+
 struct wlr_surface *wlserver_surface_to_main_surface( struct wlr_surface *pSurface )
 {
 	if ( !pSurface )

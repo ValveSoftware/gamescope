@@ -536,6 +536,7 @@ namespace gamescope
     private:
 
         void HandleKey( uint32_t uKey, bool bPressed );
+        void ReleaseHeldKeys();
 
         CWaylandBackend *m_pBackend = nullptr;
 
@@ -3030,6 +3031,19 @@ namespace gamescope
         wlserver_unlock();
     }
 
+    void CWaylandInputThread::ReleaseHeldKeys()
+    {
+        m_uKeyModifiers = 0;
+
+        wlserver_lock();
+        for ( uint32_t uKey : m_uScancodesHeld )
+            wlserver_key( uKey, false, ++m_uFakeTimestamp );
+        wlserver_keyboard_release_modifiers();
+        wlserver_unlock();
+
+        m_uScancodesHeld.clear();
+    }
+
     // Registry
 
     void CWaylandInputThread::Wayland_Registry_Global( wl_registry *pRegistry, uint32_t uName, const char *pInterface, uint32_t uVersion )
@@ -3251,16 +3265,8 @@ namespace gamescope
 			return;
 
         m_bKeyboardEntered = true;
-        m_uScancodesHeld.clear();
-
-        const uint32_t *pBegin = (uint32_t *)pKeys->data;
-        const uint32_t *pEnd = pBegin + ( pKeys->size / sizeof(uint32_t) );
-        std::span<const uint32_t> keys{ pBegin, pEnd };
-        for ( uint32_t uKey : keys )
-        {
-            HandleKey( uKey, true );
-            m_uScancodesHeld.insert( uKey );
-        }
+        if ( !m_uScancodesHeld.empty() )
+            ReleaseHeldKeys();
 
         if ( m_ofPendingCursorX )
         {
@@ -3277,12 +3283,7 @@ namespace gamescope
 			return;
 
         m_bKeyboardEntered = false;
-        m_uKeyModifiers = 0;
-
-        for ( uint32_t uKey : m_uScancodesHeld )
-            HandleKey( uKey, false );
-
-        m_uScancodesHeld.clear();
+        ReleaseHeldKeys();
     }
     void CWaylandInputThread::Wayland_Keyboard_Key( wl_keyboard *pKeyboard, uint32_t uSerial, uint32_t uTime, uint32_t uKey, uint32_t uState )
     {
@@ -3304,6 +3305,13 @@ namespace gamescope
     void CWaylandInputThread::Wayland_Keyboard_Modifiers( wl_keyboard *pKeyboard, uint32_t uSerial, uint32_t uModsDepressed, uint32_t uModsLatched, uint32_t uModsLocked, uint32_t uGroup )
     {
         m_uKeyModifiers = uModsDepressed | uModsLatched | uModsLocked;
+
+        if ( !m_bKeyboardEntered )
+            return;
+
+        wlserver_lock();
+        wlserver_keyboard_modifiers( uModsDepressed & 0xff, uModsLatched & 0xff, uModsLocked & 0xff, uGroup );
+        wlserver_unlock();
     }
     void CWaylandInputThread::Wayland_Keyboard_RepeatInfo( wl_keyboard *pKeyboard, int32_t nRate, int32_t nDelay )
     {
