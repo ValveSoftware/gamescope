@@ -980,6 +980,9 @@ namespace gamescope
 
         xdg_log.debugf( "buffer_release: %p", pBuffer );
 
+        if ( this == m_pBackend->GetBlackFb() )
+            return;
+
         OnCompositorRelease();
     }
 
@@ -1106,8 +1109,6 @@ namespace gamescope
                 uint32_t uCurrentPlane = 0;
                 if ( bNeedsBacking )
                 {
-                    m_pBackend->GetBlackFb()->OnCompositorAcquire();
-
                     CWaylandPlane *pPlane = &m_Planes[uCurrentPlane++];
                     pPlane->Present(
                         WaylandPlaneState
