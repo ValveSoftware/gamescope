@@ -506,7 +506,7 @@ namespace gamescope
         CWaylandBackend *m_pBackend = nullptr;
         wl_buffer *m_pHostBuffer = nullptr;
         wlr_buffer *m_pClientBuffer = nullptr;
-        bool m_bCompositorAcquired = false;
+        int32_t m_nCompositorAcquireCount = 0;
     };
     const wl_buffer_listener CWaylandFb::s_BufferListener =
     {
@@ -948,29 +948,23 @@ namespace gamescope
 
     void CWaylandFb::OnCompositorAcquire()
     {
-        // If the compositor has acquired us, track that
-        // and increment the ref count.
-        if ( !m_bCompositorAcquired )
-        {
-            m_bCompositorAcquired = true;
+        // Each wl_surface.commit that submits this buffer counts as one acquire.
+        // IncRef only on the 0->1 transition.
+        if ( m_nCompositorAcquireCount++ == 0 )
             IncRef();
-        }
     }
 
     void CWaylandFb::OnCompositorRelease()
     {
         // Compositor has released us, decrement rc.
-        //assert( m_bCompositorAcquired );
-
-        if ( m_bCompositorAcquired )
+        if ( m_nCompositorAcquireCount <= 0 )
         {
-            m_bCompositorAcquired = false;
-            DecRef();
-        }
-        else
-        {
+            // Should never happen: compositor sent more releases than commits.
             xdg_log.errorf( "Compositor released us but we were not acquired. Oh no." );
+            return;
         }
+        if ( --m_nCompositorAcquireCount == 0 )
+            DecRef();
     }
 
     void CWaylandFb::Wayland_Buffer_Release( wl_buffer *pBuffer )
