@@ -86,6 +86,21 @@ TEST_CASE("ParseHotkeyStringToKeysyms", "[action_binding]") {
 		REQUIRE(optTriple->contains(XKB_KEY_Control_L));
 		REQUIRE(optTriple->contains(XKB_KEY_Alt_L));
 		REQUIRE(optTriple->contains(XKB_KEY_Delete));
+
+		for (const auto &[str, keysym] : std::initializer_list<std::pair<const char*, xkb_keysym_t>>{
+			{ "Super+N", XKB_KEY_N },
+			{ "Super+B", XKB_KEY_B },
+			{ "Super+U", XKB_KEY_U },
+			{ "Super+Y", XKB_KEY_Y },
+			{ "Super+I", XKB_KEY_I },
+			{ "Super+O", XKB_KEY_O },
+		}) {
+			auto opt = ParseHotkeyStringToKeysyms(str);
+			REQUIRE(opt.has_value());
+			REQUIRE(opt->size() == 2);
+			REQUIRE(opt->contains(XKB_KEY_Super_L));
+			REQUIRE(opt->contains(keysym));
+		}
 	}
 
 	SECTION("Invalid combinations") {
