@@ -48,6 +48,8 @@ Being able to set known displays (`gamescope.config.known_displays`)
 
 The ability to set convars.
 
+Configurable hotkeys (`gamescope.config.input.hotkeys`)
+
 Hooks
 
 # Examples
@@ -68,6 +70,21 @@ gamescope.hook("OnPostPaint", function()
         warn("Changed composite_force to "..tostring(gamescope.convars.composite_force.value)..".")
     end
 end)
+```
+
+Remapping or unbinding hotkeys:
+
+```lua
+-- Disable default Super+F fullscreen binding
+gamescope.config.input.hotkeys["Super+F"] = nil
+
+-- Remap fullscreen to Alt+Enter
+gamescope.config.input.hotkeys["Alt+Enter"] = "fullscreen"
+
+-- Custom Lua callback on keypress
+gamescope.config.input.hotkeys["Ctrl+Alt+H"] = function()
+    gamescope.log(gamescope.log_priority.info, "Hello from hotkey!")
+end
 ```
 
 # Hot Reloading?
