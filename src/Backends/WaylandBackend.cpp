@@ -740,6 +740,23 @@ namespace gamescope
             m_pFocusConnector.compare_exchange_strong( pConnector, nullptr );
         }
 
+        virtual void ToggleFullscreen() override
+        {
+            if ( auto pConnector = static_cast< CWaylandConnector * >( GetCurrentConnector() ) )
+            {
+                pConnector->SetFullscreen( !g_bFullscreen );
+            }
+        }
+
+        virtual void ToggleGrab() override
+        {
+            g_bGrabbed = !g_bGrabbed;
+            if ( auto pConnector = static_cast< CWaylandConnector * >( GetCurrentConnector() ) )
+            {
+                pConnector->SetTitle( nullptr );
+            }
+        }
+
     private:
 
         void Wayland_Registry_Global( wl_registry *pRegistry, uint32_t uName, const char *pInterface, uint32_t uVersion );
@@ -2956,7 +2973,7 @@ namespace gamescope
                 {
                     if ( !bPressed )
                     {
-                        static_cast< CWaylandConnector * >( m_pBackend->GetCurrentConnector() )->SetFullscreen( !g_bFullscreen );
+                        m_pBackend->ToggleFullscreen();
                     }
                     return;
                 }

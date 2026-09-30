@@ -172,6 +172,9 @@ namespace gamescope
 
 		virtual glm::uvec2 CursorSurfaceSize( glm::uvec2 uvecSize ) const override;
 
+		virtual void ToggleFullscreen() override;
+		virtual void ToggleGrab() override;
+
 		////////////////////////
 		// INestedHints Compat
 		///////////////////////
@@ -525,6 +528,22 @@ namespace gamescope
 		return uvecSize;
 	}
 
+	void CSDLBackend::ToggleFullscreen()
+	{
+		g_bFullscreen = !g_bFullscreen;
+		SDL_SetWindowFullscreen( m_Connector.GetSDLWindow(), g_bFullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0 );
+	}
+
+	void CSDLBackend::ToggleGrab()
+	{
+		g_bGrabbed = !g_bGrabbed;
+		SDL_SetWindowKeyboardGrab( m_Connector.GetSDLWindow(), g_bGrabbed ? SDL_TRUE : SDL_FALSE );
+
+		SDL_Event event;
+		event.type = GetUserEventIndex( GAMESCOPE_SDL_EVENT_TITLE );
+		SDL_PushEvent( &event );
+	}
+
 	///////////////////
 	// INestedHints
 	///////////////////
@@ -764,8 +783,7 @@ namespace gamescope
 						switch ( key )
 						{
 							case KEY_F:
-								g_bFullscreen = !g_bFullscreen;
-								SDL_SetWindowFullscreen( m_Connector.GetSDLWindow(), g_bFullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0 );
+								ToggleFullscreen();
 								break;
 							case KEY_N:
 								g_wantedUpscaleFilter = GamescopeUpscaleFilter::PIXEL;
@@ -791,12 +809,7 @@ namespace gamescope
 								gamescope::CScreenshotManager::Get().TakeScreenshot( true );
 								break;
 							case KEY_G:
-								g_bGrabbed = !g_bGrabbed;
-								SDL_SetWindowKeyboardGrab( m_Connector.GetSDLWindow(), g_bGrabbed ? SDL_TRUE : SDL_FALSE );
-
-								SDL_Event event;
-								event.type = GetUserEventIndex( GAMESCOPE_SDL_EVENT_TITLE );
-								SDL_PushEvent( &event );
+								ToggleGrab();
 								break;
 							default:
 								handled = false;
