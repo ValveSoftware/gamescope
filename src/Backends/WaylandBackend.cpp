@@ -1756,6 +1756,15 @@ namespace gamescope
         g_nOutputWidth  = WaylandScaleToPhysical( nWidth, uScale );
         g_nOutputHeight = WaylandScaleToPhysical( nHeight, uScale );
 
+        if ( m_bUnmappedAwaitingConfigure )
+        {
+            // Unmapping discarded the toplevel's app_id and title, so send them
+            // again before it maps. libdecor skips a title it already sent, so
+            // set that one directly.
+            libdecor_frame_set_app_id( m_pFrame, "gamescope" );
+            if ( const char *pszTitle = libdecor_frame_get_title( m_pFrame ) )
+                xdg_toplevel_set_title( libdecor_frame_get_xdg_toplevel( m_pFrame ), pszTitle );
+        }
         m_bUnmappedAwaitingConfigure = false;
 
         CommitLibDecor( pConfiguration );
