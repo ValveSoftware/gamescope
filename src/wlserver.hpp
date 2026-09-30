@@ -221,6 +221,7 @@ struct wlserver_t {
 
     // Sym each held key resolved to at press time, keyed by device and keycode.
     std::map<std::pair<struct wlr_keyboard *, xkb_keycode_t>, xkb_keysym_t> mapPressedHotkeyKeys;
+    std::set<std::pair<struct wlr_keyboard *, xkb_keycode_t>> setConsumedHotkeyKeys;
 };
 
 extern struct wlserver_t wlserver;

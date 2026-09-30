@@ -230,4 +230,22 @@ namespace gamescope
         GetBackend()->DirtyState( true, true );
     });
 
+    ConCommand cc_fullscreen( "fullscreen", "Toggle fullscreen mode",
+    []( std::span<std::string_view> svArgs )
+    {
+        if ( !GetBackend() )
+            return;
+
+        GetBackend()->ToggleFullscreen();
+    });
+
+    ConCommand cc_toggle_grab( "toggle_grab", "Toggle keyboard and mouse grab",
+    []( std::span<std::string_view> svArgs )
+    {
+        if ( !GetBackend() )
+            return;
+
+        GetBackend()->ToggleGrab();
+    });
+
 }

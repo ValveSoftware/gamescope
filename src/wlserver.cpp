@@ -319,6 +319,7 @@ static void wlserver_handle_key(struct wl_listener *listener, void *data)
 			// This key skips hotkey processing, so drop any press we
 			// recorded for it or the stale sym would wedge every binding.
 			wlserver.mapPressedHotkeyKeys.erase( { keyboard, keycode } );
+			wlserver.setConsumedHotkeyKeys.erase( { keyboard, keycode } );
 
 			wlserver_keyboardfocus( new_kb_surf, false );
 			wlr_seat_set_keyboard( wlserver.wlr.seat, keyboard );
@@ -1701,7 +1702,10 @@ static void handle_session_active( struct wl_listener *listener, void *data )
 {
 	// Releases delivered while another VT owns input never reach us.
 	if ( !wlserver.wlr.session->active )
+	{
 		wlserver.mapPressedHotkeyKeys.clear();
+		wlserver.setConsumedHotkeyKeys.clear();
+	}
 
 	GetBackend()->DirtyState( wlserver.wlr.session->active, wlserver.wlr.session->active );
 	wl_log.infof( "Session %s", wlserver.wlr.session->active ? "resumed" : "paused" );
@@ -2144,6 +2148,8 @@ static void wlserver_update_keymap()
 		// the group, so AltGr would still arrive as the layout it joined with. Each one
 		// is checked on its own, so a keyboard we failed to update is retried next time.
 		wlserver_set_keyboard_keymap( &wlserver.keyboard_group->keyboard, keymap );
+		if ( wlserver.wlr.virtual_keyboard_device )
+			wlserver_set_keyboard_keymap( wlserver.wlr.virtual_keyboard_device, keymap );
 		for ( struct wlserver_keyboard *pKeyboard : s_Keyboards )
 			wlserver_set_keyboard_keymap( pKeyboard->wlr, keymap );
 	}
@@ -2563,19 +2569,28 @@ bool wlserver_process_hotkeys( wlr_keyboard *keyboard, uint32_t key, bool press 
 	// Remember the sym at press time so a release erases exactly what the press inserted.
 	if ( press )
 	{
-		xkb_keysym_t keysym = xkb_state_key_get_one_sym( keyboard->xkb_state, keycode );
-		wlserver.mapPressedHotkeyKeys[ { keyboard, keycode } ] = NormalizeKeysymForHotkey( keysym );
+		struct xkb_state *xkb_state = keyboard ? keyboard->xkb_state : nullptr;
+		if ( !xkb_state && wlserver.keyboard_group )
+			xkb_state = wlserver.keyboard_group->keyboard.xkb_state;
+
+		xkb_keysym_t keysym = xkb_state ? xkb_state_key_get_one_sym( xkb_state, keycode ) : XKB_KEY_NoSymbol;
+		wlserver.mapPressedHotkeyKeys[ { keyboard, keycode } ] = gamescope::NormalizeKeysymForHotkey( keysym );
 	}
 	else
 	{
+		bool bWasConsumed = ( wlserver.setConsumedHotkeyKeys.erase( { keyboard, keycode } ) > 0 );
+
 		auto it = wlserver.mapPressedHotkeyKeys.find( { keyboard, keycode } );
 
 		// A release we never saw the press for cannot end a binding.
 		if ( it == wlserver.mapPressedHotkeyKeys.end() )
-			return false;
+			return bWasConsumed;
 
 		xkb_keysym_t released = it->second;
 		wlserver.mapPressedHotkeyKeys.erase( it );
+
+		if ( bWasConsumed )
+			return true;
 
 		// Two keycodes can resolve to the same sym, so only a release that actually drops the sym can end a binding.
 		for ( const auto &[ deviceKey, uKeySym ] : wlserver.mapPressedHotkeyKeys )
@@ -2589,21 +2604,21 @@ bool wlserver_process_hotkeys( wlr_keyboard *keyboard, uint32_t key, bool press 
 
 	if ( log_binding.Enabled( LOG_DEBUG ) )
 	{
-		std::string sPressedKeySymsDebugName = ComputeDebugName( setPressedKeySyms );
+		std::string sPressedKeySymsDebugName = gamescope::ComputeDebugName( setPressedKeySyms );
 		log_binding.debugf( "Looking for: [%s].", sPressedKeySymsDebugName.c_str() );
 	}
 
 	{
-		using namespace gamescope::WaylandServer;
+		using namespace gamescope;
 
-		std::span<CGamescopeActionBinding *> ppBindings = CGamescopeActionBinding::GetBindings();
+		std::span<CServerActionBinding *> ppBindings = CServerActionBinding::GetBindings();
 
-		for ( CGamescopeActionBinding *pBinding : ppBindings )
+		for ( CServerActionBinding *pBinding : ppBindings )
 		{
 			if ( !pBinding->IsArmed() )
 				continue;
 
-			std::span<Keybind_t> pKeybinds = pBinding->GetKeyboardTriggers();
+			std::span<const Keybind_t> pKeybinds = pBinding->GetKeyboardTriggers();
 			for ( const Keybind_t &keybind : pKeybinds )
 			{
 				if ( !pBinding->IsArmed() )
@@ -2613,7 +2628,10 @@ bool wlserver_process_hotkeys( wlr_keyboard *keyboard, uint32_t key, bool press 
 					continue;
 
 				if ( pBinding->Execute() )
+				{
+					wlserver.setConsumedHotkeyKeys.insert( { keyboard, keycode } );
 					return true;
+				}
 			}
 		}
 	}
