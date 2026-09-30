@@ -537,7 +537,6 @@ namespace gamescope
     private:
 
         void HandleKey( uint32_t uKey, bool bPressed );
-        void RunHotkey( uint32_t uKey );
         void ReleaseHeldKeys();
 
         CWaylandBackend *m_pBackend = nullptr;
@@ -578,7 +577,6 @@ namespace gamescope
 
         std::atomic<std::shared_ptr<zwp_relative_pointer_v1>> m_pRelativePointer = nullptr;
         std::unordered_set<uint32_t> m_uScancodesHeld;
-        std::unordered_set<uint32_t> m_uScancodesConsumed;
 
         std::unordered_map<int32_t, WaylandPlaneState> m_TouchPlaneStates;
 
@@ -2989,94 +2987,16 @@ namespace gamescope
             zwp_relative_pointer_v1_add_listener( pRelativePointer, &s_RelativePointerListener, this );
         }
     }
-
-    static bool IsHotkey( uint32_t uKey )
-    {
-        switch ( uKey )
-        {
-            case KEY_F:
-            case KEY_N:
-            case KEY_B:
-            case KEY_U:
-            case KEY_Y:
-            case KEY_I:
-            case KEY_O:
-            case KEY_S:
-                return true;
-            default:
-                return false;
-        }
-    }
-
     void CWaylandInputThread::HandleKey( uint32_t uKey, bool bPressed )
     {
         if ( bPressed )
-        {
             m_uScancodesHeld.insert( uKey );
-
-            if ( ( m_uKeyModifiers & m_uModMask[ GAMESCOPE_WAYLAND_MOD_META ] ) && IsHotkey( uKey ) )
-            {
-                m_uScancodesConsumed.insert( uKey );
-                return;
-            }
-        }
         else
-        {
             m_uScancodesHeld.erase( uKey );
-
-            if ( m_uScancodesConsumed.erase( uKey ) )
-            {
-                RunHotkey( uKey );
-                return;
-            }
-        }
 
         wlserver_lock();
         wlserver_key( uKey, bPressed, ++m_uFakeTimestamp );
         wlserver_unlock();
-    }
-
-    void CWaylandInputThread::RunHotkey( uint32_t uKey )
-    {
-        switch ( uKey )
-        {
-            case KEY_F:
-                m_pBackend->ToggleFullscreen();
-                break;
-
-            case KEY_N:
-                g_wantedUpscaleFilter = GamescopeUpscaleFilter::PIXEL;
-                break;
-
-            case KEY_B:
-                g_wantedUpscaleFilter = GamescopeUpscaleFilter::LINEAR;
-                break;
-
-            case KEY_U:
-                g_wantedUpscaleFilter = ( g_wantedUpscaleFilter == GamescopeUpscaleFilter::FSR ) ?
-                    GamescopeUpscaleFilter::LINEAR : GamescopeUpscaleFilter::FSR;
-                break;
-
-            case KEY_Y:
-                g_wantedUpscaleFilter = ( g_wantedUpscaleFilter == GamescopeUpscaleFilter::NIS ) ?
-                    GamescopeUpscaleFilter::LINEAR : GamescopeUpscaleFilter::NIS;
-                break;
-
-            case KEY_I:
-                g_upscaleFilterSharpness = std::min( 20, g_upscaleFilterSharpness + 1 );
-                break;
-
-            case KEY_O:
-                g_upscaleFilterSharpness = std::max( 0, g_upscaleFilterSharpness - 1 );
-                break;
-
-            case KEY_S:
-                gamescope::CScreenshotManager::Get().TakeScreenshot( true );
-                break;
-
-            default:
-                break;
-        }
     }
 
     void CWaylandInputThread::ReleaseHeldKeys()
@@ -3085,15 +3005,11 @@ namespace gamescope
 
         wlserver_lock();
         for ( uint32_t uKey : m_uScancodesHeld )
-        {
-            if ( !m_uScancodesConsumed.contains( uKey ) )
-                wlserver_key( uKey, false, ++m_uFakeTimestamp );
-        }
+            wlserver_key( uKey, false, ++m_uFakeTimestamp );
         wlserver_keyboard_release_modifiers();
         wlserver_unlock();
 
         m_uScancodesHeld.clear();
-        m_uScancodesConsumed.clear();
     }
 
     // Registry
