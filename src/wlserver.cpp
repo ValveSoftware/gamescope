@@ -3062,14 +3062,20 @@ static bool wlserver_apply_constraint( double *dx, double *dy )
 	return true;
 }
 
-void wlserver_mousemotion( double dx, double dy, uint32_t time )
+void wlserver_mousemotion( double dx, double dy, uint32_t time, double unaccel_dx, double unaccel_dy )
 {
 	assert( wlserver_is_lock_held() );
 
 	dx *= g_mouseSensitivity;
 	dy *= g_mouseSensitivity;
 
-	wlserver_perform_rel_pointer_motion( dx, dy );
+	unaccel_dx *= g_mouseSensitivity;
+	unaccel_dy *= g_mouseSensitivity;
+
+	wlserver_perform_rel_pointer_motion( unaccel_dx, unaccel_dy );
+
+	dx *= focusedWindowScaleX;
+	dy *= focusedWindowScaleY;
 
 	if ( !wlserver_apply_constraint( &dx, &dy ) )
 	{
@@ -3093,6 +3099,11 @@ void wlserver_mousemotion( double dx, double dy, uint32_t time )
 
 	wlr_seat_pointer_notify_motion( wlserver.wlr.seat, time, sx, sy );
 	wlr_seat_pointer_notify_frame( wlserver.wlr.seat );
+}
+
+void wlserver_mousemotion( double dx, double dy, uint32_t time )
+{
+	wlserver_mousemotion( dx, dy, time, dx, dy );
 }
 
 void wlserver_mousewarp( double x, double y, uint32_t time, bool bSynthetic )
