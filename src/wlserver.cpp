@@ -2571,7 +2571,7 @@ bool wlserver_process_hotkeys( wlr_keyboard *keyboard, uint32_t key, bool press 
 	if ( press )
 	{
 		xkb_keysym_t keysym = xkb_state_key_get_one_sym( keyboard->xkb_state, keycode );
-		wlserver.mapPressedHotkeyKeys[ { keyboard, keycode } ] = NormalizeKeysymForHotkey( keysym );
+		wlserver.mapPressedHotkeyKeys[ { keyboard, keycode } ] = gamescope::NormalizeKeysymForHotkey( keysym );
 	}
 	else
 	{
@@ -2596,21 +2596,21 @@ bool wlserver_process_hotkeys( wlr_keyboard *keyboard, uint32_t key, bool press 
 
 	if ( log_binding.Enabled( LOG_DEBUG ) )
 	{
-		std::string sPressedKeySymsDebugName = ComputeDebugName( setPressedKeySyms );
+		std::string sPressedKeySymsDebugName = gamescope::ComputeDebugName( setPressedKeySyms );
 		log_binding.debugf( "Looking for: [%s].", sPressedKeySymsDebugName.c_str() );
 	}
 
 	{
-		using namespace gamescope::WaylandServer;
+		using namespace gamescope;
 
-		std::span<CGamescopeActionBinding *> ppBindings = CGamescopeActionBinding::GetBindings();
+		std::span<CServerActionBinding *> ppBindings = CServerActionBinding::GetBindings();
 
-		for ( CGamescopeActionBinding *pBinding : ppBindings )
+		for ( CServerActionBinding *pBinding : ppBindings )
 		{
 			if ( !pBinding->IsArmed() )
 				continue;
 
-			std::span<Keybind_t> pKeybinds = pBinding->GetKeyboardTriggers();
+			std::span<const Keybind_t> pKeybinds = pBinding->GetKeyboardTriggers();
 			for ( const Keybind_t &keybind : pKeybinds )
 			{
 				if ( !pBinding->IsArmed() )
