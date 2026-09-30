@@ -117,7 +117,8 @@ endif
 
 
 # Handle default script/config/looks stuff
-meson.add_install_script('default_extras_install.sh')
+install_subdir('scripts', install_dir: data_dir / 'gamescope')
+install_subdir('looks', install_dir: data_dir / 'gamescope')
 
 devenv = environment()
 devenv.set('GAMESCOPE_SCRIPT_PATH', join_paths(meson.current_source_dir(), 'scripts'))

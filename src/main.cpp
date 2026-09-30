@@ -36,6 +36,7 @@
 
 #include "backends.h"
 #include "refresh_rate.h"
+#include "action_binding.h"
 
 #if HAVE_PIPEWIRE
 #include "pipewire.hpp"
@@ -933,6 +934,8 @@ int main(int argc, char **argv)
 			free( envvar );
 		}
 	}
+
+	gamescope::RegisterHotkeysFromScript();
 
 	XInitThreads();
 	g_mainThread = pthread_self();
