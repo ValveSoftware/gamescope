@@ -13,10 +13,15 @@
 #include "main.hpp"
 #include "pipewire.hpp"
 #include "log.hpp"
+#include "convar.h"
 
 #include <spa/debug/format.h>
 
 static LogScope pwr_log("pipewire");
+
+static gamescope::ConVar<bool> cv_pipewire_device_local( "pipewire_device_local", false,
+	"Keep DMA-BUF PipeWire capture buffers in device-local memory. Faster for consumers that read them on "
+				"the GPU, slower for any that map them on the CPU." );
 
 static struct pipewire_state pipewire_state = { .stream_node_id = SPA_ID_INVALID };
 static int nudgePipe[2] = { -1, -1 };
@@ -504,7 +509,9 @@ static void stream_handle_add_buffer(void *user_data, struct pw_buffer *pw_buffe
 
 	buffer->texture = new CVulkanTexture();
 	CVulkanTexture::createFlags screenshotImageFlags;
-	screenshotImageFlags.bMappable = true;
+	// DMA-BUF consumers that read on the GPU are faster with device-local
+	// buffers. Off by default in case a consumer maps them on the CPU.
+	screenshotImageFlags.bMappable = !( is_dmabuf && cv_pipewire_device_local );
 	screenshotImageFlags.bTransferDst = true;
 	screenshotImageFlags.bStorage = true;
 	if (is_dmabuf || drmFormat == DRM_FORMAT_NV12)
