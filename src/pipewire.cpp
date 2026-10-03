@@ -520,6 +520,15 @@ static void stream_handle_add_buffer(void *user_data, struct pw_buffer *pw_buffe
 		screenshotImageFlags.bLinear = true; // TODO: support multi-planar DMA-BUF export via PipeWire
 	}
 	bool bImageInitSuccess = buffer->texture->BInit( s_nCaptureWidth, s_nCaptureHeight, 1u, drmFormat, screenshotImageFlags );
+	if ( !bImageInitSuccess && !screenshotImageFlags.bMappable )
+	{
+		// Some drivers may not support linear storage images in device-local
+		// memory. Fall back to the default host-visible allocation.
+		pwr_log.warnf("Device-local pipewire texture failed, falling back to host-visible memory");
+		screenshotImageFlags.bMappable = true;
+		buffer->texture = new CVulkanTexture();
+		bImageInitSuccess = buffer->texture->BInit( s_nCaptureWidth, s_nCaptureHeight, 1u, drmFormat, screenshotImageFlags );
+	}
 	if ( !bImageInitSuccess )
 	{
 		pwr_log.errorf("Failed to initialize pipewire texture");
