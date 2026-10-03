@@ -1134,7 +1134,7 @@ static gamescope::ConCommand cc_focus_info( "focus_info", "Dump debug info about
 static std::atomic<int32_t> g_nPendingUpscaleFilter = { -1 };
 static std::atomic<int32_t> g_nPendingUpscaleSharpness = { -1 };
 
-static gamescope::ConCommand cc_scaling_filter( "scaling_filter", "Set the scaling filter (linear, nearest, fsr, nis, pixel, sgsr)",
+static gamescope::ConCommand cc_scaling_filter( "scaling_filter", "Set the scaling filter (linear, nearest, fsr, nis, pixel, sgsr, subpixel_rgb, subpixel_oled, subpixel_vbgr, subpixel_qdoled)",
 []( std::span<std::string_view> args )
 {
 	if ( args.size() < 2 )
@@ -3403,29 +3403,10 @@ paint_all( global_focus_t *pFocus, bool async )
 		frameInfo.useSGSRLayer0 = false;
 	}
 
-	pFocus->eActiveUpscaler = GamescopeUpscaleFilter::LINEAR;
-	if ( frameInfo.useFSRLayer0 )
-		pFocus->eActiveUpscaler = GamescopeUpscaleFilter::FSR;
-	else if ( frameInfo.useNISLayer0 )
-		pFocus->eActiveUpscaler = GamescopeUpscaleFilter::NIS;
-	else if ( frameInfo.useSGSRLayer0 )
-		pFocus->eActiveUpscaler = GamescopeUpscaleFilter::SGSR;
-	// A full blur draws layer 0 from the blurred image, so its filter never runs.
-	else if ( frameInfo.layers.count() && !frameInfo.layers.get( 0 ).isScreenSize() && frameInfo.blurLayer0 != BLUR_MODE_ALWAYS )
-	{
-		switch ( frameInfo.layers.get( 0 ).filter )
-		{
-			case GamescopeUpscaleFilter::NEAREST:
-			case GamescopeUpscaleFilter::PIXEL:
-				pFocus->eActiveUpscaler = frameInfo.layers.get( 0 ).filter;
-				break;
-			default:
-				break;
-		}
-	}
+	pFocus->eActiveUpscaler = vulkan_get_active_filter( frameInfo );
 	if ( const auto& heldCommit = pFocus->HeldCommits[HELD_COMMIT_BASE];
 		 heldCommit && heldCommit->upscaledTexture && frameInfo.layers.count() && frameInfo.layers.get( 0 ).tex == heldCommit->upscaledTexture->pTexture )
-		pFocus->eActiveUpscaler = ResolveUpscaleFilter( heldCommit->upscaledTexture->eFilter, heldCommit->colorspace(), heldCommit->vulkanTex->isYcbcr() );
+		pFocus->eActiveUpscaler = heldCommit->upscaledTexture->eActiveFilter;
 
 	g_bFirstFrame = false;
 
@@ -7329,7 +7310,7 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 	{
 		uint32_t uScalingFilter = get_prop( ctx, ctx->root, ctx->atoms.gamescopeNewScalingFilter, 0 );
 
-		if ( uScalingFilter > uint32_t( GamescopeUpscaleFilter::SGSR ) )
+		if ( uScalingFilter > uint32_t( GamescopeUpscaleFilter::SUBPIXEL_QDOLED ) )
 			xwm_log.errorf( "Unknown scaling filter %u, keeping %u", uScalingFilter, uint32_t( g_wantedUpscaleFilter ) );
 		else if ( g_wantedUpscaleFilter != GamescopeUpscaleFilter( uScalingFilter ) )
 		{
@@ -8619,6 +8600,7 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 			{
 				std::in_place_t{},
 				upscaledFrameInfo.eUpscaleFilter,
+				vulkan_get_active_filter( upscaledFrameInfo ),
 				upscaledFrameInfo.eUpscaleScaler,
 				g_nOutputWidth,
 				g_nOutputHeight,

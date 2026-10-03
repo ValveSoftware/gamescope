@@ -34,6 +34,7 @@
 
 #include "rendervulkan.hpp"
 #include "main.hpp"
+#include "subpixel_filter.h"
 #include "steamcompmgr.hpp"
 #include "log.hpp"
 #include "Utils/Process.h"
@@ -3856,31 +3857,6 @@ float g_flInternalDisplayBrightnessNits = 500.0f;
 float g_flHDRItmSdrNits = 100.f;
 float g_flHDRItmTargetNits = 1000.f;
 
-struct SubpixelFilterDefinition
-{
-	GamescopeUpscaleFilter eFilter;
-	vec2_t downscaleRatio;
-	const char *pName;
-};
-
-static constexpr std::array<SubpixelFilterDefinition, 4> g_SubpixelFilterDefinitions = {{
-	{ GamescopeUpscaleFilter::SUBPIXEL_RGB,   { 3.0f, 3.0f },   "horizontal RGB" },
-	{ GamescopeUpscaleFilter::SUBPIXEL_OLED,  { 2.0f, 2.0f },   "RG/B OLED" },
-	{ GamescopeUpscaleFilter::SUBPIXEL_VBGR,  { 3.0f, 3.0f },   "vertical BGR" },
-	{ GamescopeUpscaleFilter::SUBPIXEL_QDOLED,{ 2.0f, 2.0f },   "G/RB QD-OLED" },
-}};
-
-static const SubpixelFilterDefinition *FindSubpixelFilterDefinition( GamescopeUpscaleFilter eFilter )
-{
-	for ( const auto &definition : g_SubpixelFilterDefinitions )
-	{
-		if ( definition.eFilter == eFilter )
-			return &definition;
-	}
-
-	return nullptr;
-}
-
 static GamescopeUpscaleFilter GetLayerShaderFilter( const FrameInfo_t::Layer_t &layer )
 {
 	// SGSR only exists as a pre-pass, a layer still carrying it samples as linear.
@@ -3890,53 +3866,38 @@ static GamescopeUpscaleFilter GetLayerShaderFilter( const FrameInfo_t::Layer_t &
 
 	if ( const auto *definition = FindSubpixelFilterDefinition( eFilter ) )
 	{
+		// Subpixel kernels require the unnormalized RGB sampler.
+		if ( layer.isYcbcr() )
+			return GamescopeUpscaleFilter::FROM_VIEW;
+
 		static int s_lastState[ g_SubpixelFilterDefinitions.size() ] = { -1, -1, -1, -1 };
 		size_t idx = definition - g_SubpixelFilterDefinitions.data();
 
-		float dimRatioX = 0.0f;
-		float dimRatioY = 0.0f;
-		if ( layer.tex )
-		{
-			dimRatioX = layer.tex->width()  / (float)std::max(1u, currentOutputWidth);
-			dimRatioY = layer.tex->height() / (float)std::max(1u, currentOutputHeight);
-		}
+		// The layer transform is source pixels per destination pixel. It also
+		// covers fitted windows and per-connector/pre-emptive render targets.
+		float observedX = layer.scale.x;
+		float observedY = layer.scale.y;
 
-		auto scaleToRatio = []( float s ) -> float {
-			if ( s == 0.0f )
-				return 0.0f;
-			return s >= 1.0f ? s : (1.0f / s);
-		};
-
-		float scaleRatioX = scaleToRatio( layer.scale.x );
-		float scaleRatioY = scaleToRatio( layer.scale.y );
-
-		float observedX = dimRatioX > 0.0f ? dimRatioX : scaleRatioX;
-		float observedY = dimRatioY > 0.0f ? dimRatioY : scaleRatioY;
-
-		bool ratioOk =
-			close_enough( observedX, definition->downscaleRatio.x ) &&
-			close_enough( observedY, definition->downscaleRatio.y );
+		bool ratioOk = SubpixelFilterSupportsScale( *definition, observedX, observedY );
 
 		int state = ratioOk ? 1 : 0;
 		if ( state != s_lastState[idx] )
 		{
 			if ( ratioOk )
 			{
-				vk_log.infof( "Subpixel %s filter active: scale=(%.3f, %.3f) ratio=(%.3f, %.3f) tex=%ux%u out=%ux%u target=(%.1f, %.1f)",
+				vk_log.infof( "Subpixel %s filter active: scale=(%.3f, %.3f) tex=%ux%u target=%.1f:1",
 					definition->pName,
-					layer.scale.x, layer.scale.y, observedX, observedY,
+					observedX, observedY,
 					layer.tex ? layer.tex->width() : 0, layer.tex ? layer.tex->height() : 0,
-					currentOutputWidth, currentOutputHeight,
-					definition->downscaleRatio.x, definition->downscaleRatio.y );
+					definition->downscaleRatio );
 			}
 			else
 			{
-				vk_log.warnf( "Subpixel %s filter disabled (ratio mismatch): scale=(%.3f, %.3f) ratio=(%.3f, %.3f) tex=%ux%u out=%ux%u target=(%.1f, %.1f)",
+				vk_log.warnf( "Subpixel %s filter disabled (ratio mismatch): scale=(%.3f, %.3f) tex=%ux%u target=%.1f:1",
 					definition->pName,
-					layer.scale.x, layer.scale.y, observedX, observedY,
+					observedX, observedY,
 					layer.tex ? layer.tex->width() : 0, layer.tex ? layer.tex->height() : 0,
-					currentOutputWidth, currentOutputHeight,
-					definition->downscaleRatio.x, definition->downscaleRatio.y );
+					definition->downscaleRatio );
 			}
 			s_lastState[idx] = state;
 		}
@@ -3946,6 +3907,35 @@ static GamescopeUpscaleFilter GetLayerShaderFilter( const FrameInfo_t::Layer_t &
 	}
 
 	return eFilter;
+}
+
+GamescopeUpscaleFilter vulkan_get_active_filter( const FrameInfo_t &frameInfo )
+{
+	if ( frameInfo.useFSRLayer0 )
+		return GamescopeUpscaleFilter::FSR;
+	if ( frameInfo.useNISLayer0 )
+		return GamescopeUpscaleFilter::NIS;
+	if ( frameInfo.useSGSRLayer0 )
+		return GamescopeUpscaleFilter::SGSR;
+
+	// A full blur draws layer 0 from the blurred image, so its filter never runs.
+	if ( frameInfo.layers.count() && !frameInfo.layers.get( 0 ).isScreenSize() && frameInfo.blurLayer0 != BLUR_MODE_ALWAYS )
+	{
+		GamescopeUpscaleFilter eFilter = GetLayerShaderFilter( frameInfo.layers.get( 0 ) );
+		switch ( eFilter )
+		{
+			case GamescopeUpscaleFilter::NEAREST:
+			case GamescopeUpscaleFilter::PIXEL:
+			case GamescopeUpscaleFilter::SUBPIXEL_RGB:
+			case GamescopeUpscaleFilter::SUBPIXEL_OLED:
+			case GamescopeUpscaleFilter::SUBPIXEL_VBGR:
+			case GamescopeUpscaleFilter::SUBPIXEL_QDOLED:
+				return eFilter;
+			default:
+				break;
+		}
+	}
+	return GamescopeUpscaleFilter::LINEAR;
 }
 
 #pragma pack(push, 1)
@@ -4313,6 +4303,10 @@ namespace
 			case GamescopeUpscaleFilter::NIS:     return "nis";
 			case GamescopeUpscaleFilter::PIXEL:   return "pixel";
 			case GamescopeUpscaleFilter::SGSR:    return "sgsr";
+			case GamescopeUpscaleFilter::SUBPIXEL_RGB:    return "subpixel_rgb";
+			case GamescopeUpscaleFilter::SUBPIXEL_OLED:   return "subpixel_oled";
+			case GamescopeUpscaleFilter::SUBPIXEL_VBGR:   return "subpixel_vbgr";
+			case GamescopeUpscaleFilter::SUBPIXEL_QDOLED: return "subpixel_qdoled";
 			default:                              return "view";
 		}
 	}
@@ -4682,18 +4676,9 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 	if ( oTimingSlot )
 	{
 		// Keys are stable buffers so the accumulator can hash the pointer.
-		static char szKeys[ 3 ][ 2 ][ 8 ][ 32 ];
-		GamescopeUpscaleFilter eFilter = frameInfo->layers.count() ? frameInfo->layers.get( 0 ).filter : GamescopeUpscaleFilter::LINEAR;
-		// Label the pass that ran, including HDR fallback and cached frames.
-		if ( frameInfo->useSGSRLayer0 )
-			eFilter = GamescopeUpscaleFilter::SGSR;
-		else if ( frameInfo->useFSRLayer0 )
-			eFilter = GamescopeUpscaleFilter::FSR;
-		else if ( frameInfo->useNISLayer0 )
-			eFilter = GamescopeUpscaleFilter::NIS;
-		else if ( UpscaleFilterUsesSharpness( eFilter ) )
-			eFilter = GamescopeUpscaleFilter::LINEAR;
-		const uint32_t uFilter = std::min<uint32_t>( uint32_t( eFilter ), 7u );
+		static char szKeys[ 3 ][ 2 ][ uint32_t( GamescopeUpscaleFilter::SUBPIXEL_QDOLED ) + 1 ][ 48 ];
+		GamescopeUpscaleFilter eFilter = vulkan_get_active_filter( *frameInfo );
+		const uint32_t uFilter = uint32_t( eFilter );
 		const char *pszMode = bPreemptiveUpscale ? "preupscale" : "composite";
 		char *pszKey = szKeys[ 0 ][ bPreemptiveUpscale ][ uFilter ];
 		char *pszKeyPre = szKeys[ 1 ][ bPreemptiveUpscale ][ uFilter ];
