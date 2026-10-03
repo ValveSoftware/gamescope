@@ -13,6 +13,7 @@
 #include "main.hpp"
 #include "pipewire.hpp"
 #include "log.hpp"
+#include "steamcompmgr.hpp"
 
 #include <spa/debug/format.h>
 
@@ -98,7 +99,12 @@ static void build_format_params(struct spa_pod_builder *builder, spa_video_forma
 	struct spa_rectangle size = SPA_RECTANGLE(s_nCaptureWidth, s_nCaptureHeight);
 	struct spa_rectangle min_requested_size = { 0, 0 };
 	struct spa_rectangle max_requested_size = { UINT32_MAX, UINT32_MAX };
-	struct spa_fraction framerate = SPA_FRACTION(0, 1);
+	uint32_t refresh = g_nOutputRefresh ? (g_nOutputRefresh + 500) / 1000 : 60;
+	struct spa_fraction framerate_def = SPA_FRACTION(refresh, 1);
+	struct spa_fraction framerate_max = SPA_FRACTION(std::max(refresh, 60u), 1);
+	struct spa_fraction framerate_60  = SPA_FRACTION(60, 1);
+	struct spa_fraction framerate_30  = SPA_FRACTION(30, 1);
+	struct spa_fraction framerate_0   = SPA_FRACTION(0, 1);
 	uint64_t modifier = DRM_FORMAT_MOD_LINEAR;
 
 	struct spa_pod_frame obj_frame, choice_frame;
@@ -108,7 +114,7 @@ static void build_format_params(struct spa_pod_builder *builder, spa_video_forma
 		SPA_FORMAT_mediaSubtype, SPA_POD_Id(SPA_MEDIA_SUBTYPE_raw),
 		SPA_FORMAT_VIDEO_format, SPA_POD_Id(format),
 		SPA_FORMAT_VIDEO_size, SPA_POD_Rectangle(&size),
-		SPA_FORMAT_VIDEO_framerate, SPA_POD_Fraction(&framerate),
+		SPA_FORMAT_VIDEO_framerate, SPA_POD_CHOICE_ENUM_Fraction(5, &framerate_def, &framerate_max, &framerate_60, &framerate_30, &framerate_0),
 		SPA_FORMAT_VIDEO_requested_size, SPA_POD_CHOICE_RANGE_Rectangle( &min_requested_size, &min_requested_size, &max_requested_size ),
 		SPA_FORMAT_VIDEO_gamescope_focus_appid, SPA_POD_CHOICE_RANGE_Long( 0ll, INT64_MIN, INT64_MAX ),
 		0);
@@ -137,7 +143,7 @@ static void build_format_params(struct spa_pod_builder *builder, spa_video_forma
 		SPA_FORMAT_mediaSubtype, SPA_POD_Id(SPA_MEDIA_SUBTYPE_raw),
 		SPA_FORMAT_VIDEO_format, SPA_POD_Id(format),
 		SPA_FORMAT_VIDEO_size, SPA_POD_Rectangle(&size),
-		SPA_FORMAT_VIDEO_framerate, SPA_POD_Fraction(&framerate),
+		SPA_FORMAT_VIDEO_framerate, SPA_POD_CHOICE_ENUM_Fraction(5, &framerate_def, &framerate_max, &framerate_60, &framerate_30, &framerate_0),
 		SPA_FORMAT_VIDEO_requested_size, SPA_POD_CHOICE_RANGE_Rectangle( &min_requested_size, &min_requested_size, &max_requested_size ),
 		SPA_FORMAT_VIDEO_gamescope_focus_appid, SPA_POD_CHOICE_RANGE_Long( 0ll, INT64_MIN, INT64_MAX ),
 		0);
@@ -199,7 +205,7 @@ static void copy_buffer(struct pipewire_state *state, struct pipewire_buffer *bu
 
 	struct spa_meta_header *header = (struct spa_meta_header *) spa_buffer_find_meta_data(spa_buffer, SPA_META_Header, sizeof(*header));
 	if (header != nullptr) {
-		header->pts = -1;
+		header->pts = get_time_in_nanos();
 		header->flags = needs_reneg ? SPA_META_HEADER_FLAG_CORRUPTED : 0;
 		header->seq = state->seq++;
 		header->dts_offset = 0;
@@ -310,6 +316,8 @@ static void dispatch_nudge(struct pipewire_state *state, int fd)
 			int ret = pw_stream_queue_buffer(state->stream, buffer->buffer);
 			if (ret < 0) {
 				pwr_log.errorf("pw_stream_queue_buffer failed");
+			} else {
+				pw_stream_trigger_process(state->stream);
 			}
 		} else {
 			destroy_buffer(buffer);
@@ -700,6 +708,10 @@ bool init_pipewire(void)
 	state->stream = pw_stream_new(state->core, "gamescope",
 		pw_properties_new(
 			PW_KEY_MEDIA_CLASS, "Video/Source",
+			PW_KEY_MEDIA_ROLE, "Camera",
+			PW_KEY_NODE_NAME, "gamescope",
+			PW_KEY_NODE_DESCRIPTION, "Gamescope Screen Capture",
+			PW_KEY_DEVICE_DESCRIPTION, "Gamescope",
 			nullptr));
 	if (!state->stream) {
 		pwr_log.errorf("pw_stream_new failed");
