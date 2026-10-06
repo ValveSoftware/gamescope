@@ -4006,10 +4006,25 @@ struct EasuPushData_t
 	uvec4_t Const1;
 	uvec4_t Const2;
 	uvec4_t Const3;
+	glm::mat3x4 ctm;
 
-	EasuPushData_t(uint32_t inputX, uint32_t inputY, uint32_t tempX, uint32_t tempY)
+	EasuPushData_t(const FrameInfo_t::Layer_t *layer, uint32_t inputX, uint32_t inputY, uint32_t tempX, uint32_t tempY)
 	{
 		FsrEasuCon(&Const0.x, &Const1.x, &Const2.x, &Const3.x, inputX, inputY, inputX, inputY, tempX, tempY);
+
+		if (layer->ctm)
+		{
+			ctm = layer->ctm->View<glm::mat3x4>();
+		}
+		else
+		{
+			ctm = glm::mat3x4
+			{
+				1, 0, 0, 0,
+				0, 1, 0, 0,
+				0, 0, 1, 0
+			};
+		}
 	}
 };
 
@@ -4438,9 +4453,13 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 		uint32_t tempX = frameInfo->layers.get( 0 ).integerWidth();
 		uint32_t tempY = frameInfo->layers.get( 0 ).integerHeight();
 
-		update_tmp_images(tempX, tempY, tmp_image_format(frameInfo->layers.get( 0 ).colorspace));
+		// EASU leaves HDR as PQ, so 10 bits holds it at the bandwidth of 8.
+		update_tmp_images(tempX, tempY, ColorspaceIsHDR( frameInfo->layers.get( 0 ).colorspace ) ? DRM_FORMAT_ABGR2101010 : DRM_FORMAT_ARGB8888);
 
-		cmdBuffer->bindPipeline(g_device.pipeline(frameInfo->useSGSRLayer0 ? SHADER_TYPE_SGSR : SHADER_TYPE_EASU));
+		if ( frameInfo->useSGSRLayer0 )
+			cmdBuffer->bindPipeline(g_device.pipeline(SHADER_TYPE_SGSR));
+		else
+			cmdBuffer->bindPipeline(g_device.pipeline(SHADER_TYPE_EASU, 1, 0, 0, frameInfo->layers.get( 0 ).colorspace));
 		cmdBuffer->bindTarget(g_output.tmpOutput);
 		cmdBuffer->bindTexture(0, frameInfo->layers.get( 0 ).tex);
 		cmdBuffer->setTextureSrgb(0, true);
@@ -4449,7 +4468,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 		if ( frameInfo->useSGSRLayer0 )
 			cmdBuffer->uploadConstants<SgsrPushData_t>(tempX, tempY);
 		else
-			cmdBuffer->uploadConstants<EasuPushData_t>(inputX, inputY, tempX, tempY);
+			cmdBuffer->uploadConstants<EasuPushData_t>(&frameInfo->layers.get( 0 ), inputX, inputY, tempX, tempY);
 
 		int pixelsPerGroup = 16;
 
