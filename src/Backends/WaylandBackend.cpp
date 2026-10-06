@@ -125,6 +125,9 @@ namespace gamescope
 
     gamescope::ConVar<float> cv_wayland_hdr10_saturation_scale( "wayland_hdr10_saturation_scale", 1.0, "Saturation scale for HDR10 content by gamut expansion. 1.0 - 1.2 is a good range to play with." );
 
+    // libinput convention: 10px of wl_pointer.axis == one scroll notch.
+    static constexpr double k_flWaylandPixelsPerScrollNotch = 10.0;
+
     class CWaylandConnector;
     class CWaylandPlane;
     class CWaylandBackend;
@@ -3157,13 +3160,17 @@ namespace gamescope
         // Ignore any pointer events for which the `enter` event surface didn't pass `IsGamescopeToplevel` (libdecor frame)
         if ( !m_bMouseEntered )
             return;
-      
+
         if ( !cv_wayland_mouse_warp_without_keyboard_focus && !m_bKeyboardEntered )
             return;
 
-        // Collect scroll info from touchpad
-        m_flScrollAccum[ !uAxis ] += wl_fixed_to_double( fValue ) / 10;
-        
+        // Wheels are handled by axis_value120; the legacy axis event duplicates it in the same
+        // frame. Only finger/continuous sources rely on this event.
+        if ( m_uAxisSource == WL_POINTER_AXIS_SOURCE_WHEEL || m_uAxisSource == WL_POINTER_AXIS_SOURCE_WHEEL_TILT )
+            return;
+
+        // Vertical is first in the wl_pointer_axis enum, flip y,x -> x,y
+        m_flScrollAccum[ !uAxis ] += wl_fixed_to_double( fValue ) / k_flWaylandPixelsPerScrollNotch;
     }
     void CWaylandInputThread::Wayland_Pointer_Axis_Source( wl_pointer *pPointer, uint32_t uAxisSource )
     {
