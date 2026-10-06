@@ -46,6 +46,8 @@ namespace gamescope
         uint32_t GetSyncobjHandle() const { return m_uSyncobjHandle; }
 
         std::shared_ptr<VulkanTimelineSemaphore_t> ToVkSemaphore();
+
+        bool ImportDmabufFences( int32_t nDmabufFd, uint64_t ulPoint );
         
     private:
         int32_t m_nSyncobjFd = -1;

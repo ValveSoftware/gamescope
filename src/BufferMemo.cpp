@@ -31,7 +31,10 @@ namespace gamescope
 
     void CBufferMemo::OnBufferDestroyed( void *pUserData )
     {
-        assert( m_pVulkanTexture->GetRefCount() == 0 );
+        // A pending render command buffer can still reference the texture and keep it alive, so just drop our private reference here.
+        if ( m_pVulkanTexture->GetRefCount() != 0 )
+            memo_log.debugf( "Buffer destroyed with %u live texture references, unmemoizing anyway", m_pVulkanTexture->GetRefCount() );
+
         m_pMemoizer->UnmemoizeBuffer( m_pBuffer );
     }
 

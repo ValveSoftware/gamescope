@@ -27,6 +27,7 @@ namespace gamescope
 
         virtual void OnPollIn() {}
         virtual void OnPollOut() {}
+        virtual void OnPollPri() {}
         virtual void OnPollHangUp()
         {
             g_WaitableLog.errorf( "IWaitable hung up. Aborting." );
@@ -39,6 +40,8 @@ namespace gamescope
                 this->OnPollIn();
             if ( nEvents & EPOLLOUT )
                 this->OnPollOut();
+            if ( nEvents & EPOLLPRI )
+                this->OnPollPri();
             if ( nEvents & EPOLLHUP )
                 this->OnPollHangUp();
         }

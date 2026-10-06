@@ -33,7 +33,11 @@ struct focus_t
 	steamcompmgr_win_t				*externalOverlayWindow = nullptr;
 	steamcompmgr_win_t				*notificationWindow = nullptr;
 	steamcompmgr_win_t				*overrideWindow = nullptr;
+	// Earlier overrides still mapped beneath the current one, oldest first. Global focus only.
+	std::vector<steamcompmgr_win_t*>	overrideUnderlayWindows;
 	steamcompmgr_win_t				*overrideWindowMouse = nullptr;
+	// Same-app helpers from other processes (eg. Xalia's highlight), painted above the override.
+	std::vector<steamcompmgr_win_t*>	decorationWindows;
 	bool			outdatedInteractiveFocus = false;
 	bool			bResetToCorner = false;
 	bool			bResetToCenter = false;
@@ -95,7 +99,7 @@ struct xwayland_ctx_t final : public gamescope::IWaitable
 
 	bool force_windows_fullscreen = false;
 
-	bool bTouchPointerEmulation = false;
+	std::optional<bool> obTouchPointerEmulation;
 
 	std::vector< steamcompmgr_win_t* > GetPossibleFocusWindows();
 	void DetermineAndApplyFocus( const std::vector< steamcompmgr_win_t* > &vecPossibleFocusWindows );
@@ -105,6 +109,7 @@ struct xwayland_ctx_t final : public gamescope::IWaitable
 		Atom gameAtom;
 		Atom overlayAtom;
 		Atom externalOverlayAtom;
+		Atom mangoappMsgTypeAtom;
 		Atom gamesRunningAtom;
 		Atom screenZoomAtom;
 		Atom screenScaleAtom;
@@ -166,6 +171,8 @@ struct xwayland_ctx_t final : public gamescope::IWaitable
 		Atom gamescopeXWaylandModeControl;
 
 		Atom gamescopeFPSLimit;
+		Atom gamescopeKeyboardLayout;
+		Atom gamescopeLimiterFeedback;
 		Atom gamescopeDynamicRefresh[gamescope::GAMESCOPE_SCREEN_TYPE_COUNT];
 		Atom gamescopeLowLatency;
 

@@ -46,4 +46,11 @@ TEST_CASE("ConVar", "[convar]") {
 		ConVar<bool>* cv = proxy;
 		REQUIRE(cv == nullptr);
 	}
+
+	{
+		// The trailing space leaves the token not null-terminated.
+		REQUIRE(cv_bool_var.Get() == false);
+		cv_bool_var.CallWithArgString("true ");
+		REQUIRE(cv_bool_var.Get() == true);
+	}
 }

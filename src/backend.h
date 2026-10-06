@@ -119,6 +119,10 @@ namespace gamescope
         // but don't want to expose HDR there as it is not good.
         bool bExposeHDRSupport = false;
         bool bAlwaysPatchEdid = false;
+        // Only drive a panel in HDR while an HDR app is running.
+        bool bContentDrivenHDR = false;
+        // Panel ignores hardware backlight control in PQ, follow it in software.
+        bool bSoftwareBacklight = false;
 
         // The output encoding to use for HDR output.
         // For typical HDR10 displays, this will be PQ.
@@ -146,13 +150,6 @@ namespace gamescope
             // If that assumption changes, update me.
             return bExposeHDRSupport && eOutputEncodingEOTF == EOTF_PQ;
         }
-    };
-
-    struct BackendMode
-    {
-        uint32_t uWidth;
-        uint32_t uHeight;
-        uint32_t uRefresh; // Hz
     };
 
     struct BackendPresentFeedback
@@ -207,6 +204,9 @@ namespace gamescope
         virtual BackendPresentFeedback& PresentationFeedback() = 0;
 
         virtual uint64_t GetVirtualConnectorKey() const = 0;
+
+        // A stand-in connector with no display behind it, e.g. the DRM headless virtual screen.
+        virtual bool IsHeadless() const { return false; }
 
         virtual INestedHints *GetNestedHints() = 0;
 
@@ -400,8 +400,6 @@ namespace gamescope
 
         virtual bool NewlyInitted() = 0;
 
-        virtual bool ShouldFitWindows() = 0;
-
         virtual void OnEndFrame() = 0;
 
         static IBackend *Get();
@@ -438,8 +436,6 @@ namespace gamescope
         virtual void ForwardFramebuffer( std::shared_ptr<IBackendPlane> &pPlane, IBackendFb *pFramebuffer, const void *pData ) override {}
 
         virtual bool NewlyInitted() override { return false; }
-
-        virtual bool ShouldFitWindows() override { return true; }
 
         virtual void OnEndFrame() override {}
     };

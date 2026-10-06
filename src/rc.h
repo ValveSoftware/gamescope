@@ -60,7 +60,7 @@ namespace gamescope
             return bool( m_uRefCount.load() | ( m_uRefPrivate.load() & 0x7FFFFFFF ) );
         }
 
-    private:
+    protected:
         std::atomic<uint32_t> m_uRefCount{ 0u };
         std::atomic<uint32_t> m_uRefPrivate{ 0u };
     };

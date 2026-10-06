@@ -11,7 +11,7 @@
             "id" : "device_password",
             "description" : "'steamos' user's password",
             "type" : "promptString",
-            "password": true,
+            "password": false,
         },
     ],
     "tasks": [
@@ -150,6 +150,32 @@
             "label": "Reset to system Gamescope (remote)",
             "type": "shell",
             "command": "./tools/reset_to_system_gamescope_remote.sh '${input:device_ip}' '${input:device_password}'",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated"
+            }
+        },
+        {
+            "label": "Remove this source copy from a SteamOS Device (remote)",
+            "type": "shell",
+            "command": "./tools/clean_steamos_device_remote.sh tree '${input:device_ip}' '${input:device_password}'",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated"
+            }
+        },
+        {
+            "label": "Remove all source copies from a SteamOS Device (remote)",
+            "type": "shell",
+            "command": "./tools/clean_steamos_device_remote.sh all '${input:device_ip}' '${input:device_password}'",
             "group": {
                 "kind": "build",
                 "isDefault": true

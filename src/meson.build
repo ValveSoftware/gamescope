@@ -14,7 +14,6 @@ drm_dep = dependency('libdrm', version: '>= 2.4.113', required: get_option('drm_
 eis_dep = dependency('libeis-1.0', required : get_option('input_emulation'))
 
 wayland_server = dependency('wayland-server', version: '>=1.21')
-wayland_protos = dependency('wayland-protocols', version: '>=1.17')
 xkbcommon = dependency('xkbcommon')
 thread_dep = dependency('threads')
 cap_dep = dependency('libcap', required: get_option('rt_cap'))
@@ -25,15 +24,15 @@ pixman_dep = dependency('pixman-1')
 udev_dep = dependency('libudev')
 
 wlroots_dep = dependency(
-  'wlroots-0.19',
-  version: ['>= 0.19.0', '< 0.20.0'],
+  'wlroots-0.20',
+  version: ['>= 0.20.0', '< 0.21.0'],
   fallback: 'wlroots',
   default_options: ['default_library=static', 'examples=false', 'xwayland=enabled', 'backends=libinput', 'renderers=[]', 'allocators=[]', 'session=enabled'],
 )
 
 displayinfo_dep = dependency(
   'libdisplay-info',
-  version: ['>= 0.0.0', '< 0.4.0'],
+  version: ['>= 0.0.0', '< 0.5.0'],
   fallback: 'libdisplay-info',
   default_options: ['default_library=static'],
 )
@@ -64,12 +63,14 @@ shader_src = [
   'shaders/cs_composite_blur.comp',
   'shaders/cs_composite_blur_cond.comp',
   'shaders/cs_composite_rcas.comp',
+  'shaders/cs_composite_rcas_1px.comp',
   'shaders/cs_easu.comp',
   'shaders/cs_easu_fp16.comp',
   'shaders/cs_gaussian_blur_horizontal.comp',
   'shaders/cs_nis.comp',
   'shaders/cs_nis_fp16.comp',
   'shaders/cs_rgb_to_nv12.comp',
+  'shaders/cs_sgsr.comp',
 ]
 
 spirv_shaders = glsl_generator.process(shader_src)
@@ -110,6 +111,7 @@ src = [
   'color_helpers.cpp',
   'main.cpp',
   'edid.cpp',
+  'mode_list_file.cpp',
   'wlserver.cpp',
   'vblankmanager.cpp',
   'rendervulkan.cpp',
@@ -223,7 +225,7 @@ executable('gamescope_color_microbench', ['color_bench.cpp', 'color_helpers.cpp'
 
 executable('gamescope_color_tests', ['color_tests.cpp', 'color_helpers.cpp'], gamescope_core_src, gamescope_version, dependencies:[glm_dep, cap_dep])
 
-executable('gamescopectl', ['Apps/gamescopectl.cpp'], gamescope_core_src, gamescope_version, protocols_client_src, dependencies: [dep_wayland, cap_dep], install:true )
+executable('gamescopectl', ['Apps/gamescopectl.cpp'], gamescope_core_src, gamescope_version, protocols_client_src, dependencies: [dep_wayland, cap_dep], install: true, cpp_args: ['-Werror=switch-enum'])
 
 executable('gamescope-type', ['Apps/gamescope_type.c'], protocols_client_src, dependencies: [dep_wayland, cap_dep], install:true )
 

@@ -69,14 +69,6 @@ void commit_t::Signal()
     uint64_t now = get_time_in_nanos();
     present_time = now;
 
-    uint64_t frametime;
-    if ( m_bMangoNudge )
-    {
-        static uint64_t lastFrameTime = now;
-        frametime = now - lastFrameTime;
-        lastFrameTime = now;
-    }
-
     // TODO: Move this so it's called in the main loop.
     // Instead of looping over all the windows like before.
     // When we get the new IWaitable stuff in there.
@@ -91,7 +83,9 @@ void commit_t::Signal()
     }
 
     if ( m_bMangoNudge )
-        mangoapp_update( uint64_t(~0ull), frametime, uint64_t(~0ull) );
+        mangoapp_nudge_app_frame( k_uMangoappLegacyMsgType, now );
+    if ( m_uMangoMsgType != 0 )
+        mangoapp_nudge_app_frame( m_uMangoMsgType, now );
 }
 
 void commit_t::OnPollHangUp()
@@ -118,19 +112,21 @@ bool commit_t::CloseFenceInternal()
     return true;
 }
 
-void commit_t::SetFence( int nFence, bool bMangoNudge, CommitDoneList_t *pDoneCommits )
+void commit_t::SetFence( int nFence, bool bMangoNudge, uint32_t uMangoMsgType, CommitDoneList_t *pDoneCommits )
 {
     std::unique_lock lock( m_WaitableCommitStateMutex );
     CloseFenceInternal();
 
     m_nCommitFence = nFence;
     m_bMangoNudge = bMangoNudge;
+    m_uMangoMsgType = uMangoMsgType;
     m_pDoneCommits = pDoneCommits;
 }
 
-void calc_scale_factor(float &out_scale_x, float &out_scale_y, float sourceWidth, float sourceHeight);
+void calc_scale_factor(GamescopeUpscaleScaler eScaler, float &out_scale_x, float &out_scale_y, float sourceWidth, float sourceHeight);
+void calc_scale_factor_scaler(GamescopeUpscaleScaler eScaler, float &out_scale_x, float &out_scale_y, float sourceWidth, float sourceHeight);
 
-bool commit_t::ShouldPreemptivelyUpscale()
+bool commit_t::ShouldPreemptivelyUpscale( GamescopeUpscaleFilter eFilter, GamescopeUpscaleScaler eScaler )
 {
     // Don't pre-emptively upscale if we are not a FIFO commit.
     // Don't want to FSR upscale 1000fps content.
@@ -139,7 +135,7 @@ bool commit_t::ShouldPreemptivelyUpscale()
 
     // If we support the upscaling filter in hardware, don't
     // pre-emptively do it via shaders.
-    if ( DoesHardwareSupportUpscaleFilter( g_upscaleFilter ) )
+    if ( DoesHardwareSupportUpscaleFilter( eFilter ) )
         return false;
 
     if ( !vulkanTex )
@@ -149,7 +145,17 @@ bool commit_t::ShouldPreemptivelyUpscale()
     float flScaleY = 1.0f;
     // I wish this function was more programatic with its inputs, but it does do exactly what we want right now...
     // It should also return a std::pair or a glm uvec
-    calc_scale_factor( flScaleX, flScaleY, vulkanTex->width(), vulkanTex->height() );
+    calc_scale_factor( eScaler, flScaleX, flScaleY, vulkanTex->width(), vulkanTex->height() );
+
+    // The pre-emptive paint forces the global scale to one, so judge magnification without it and on both axes like the paint path.
+    if ( ResolveUpscaleFilter( eFilter, colorspace(), vulkanTex->isYcbcr() ) == GamescopeUpscaleFilter::SGSR )
+    {
+        float flUpscaleX = 1.0f;
+        float flUpscaleY = 1.0f;
+        calc_scale_factor_scaler( eScaler, flUpscaleX, flUpscaleY, vulkanTex->width(), vulkanTex->height() );
+        if ( flUpscaleX <= 1.0f || flUpscaleY <= 1.0f )
+            return false;
+    }
 
     return !close_enough( flScaleX, 1.0f ) || !close_enough( flScaleY, 1.0f );
 }

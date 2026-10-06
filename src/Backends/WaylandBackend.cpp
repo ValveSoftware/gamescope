@@ -147,10 +147,16 @@ namespace gamescope
         uint32_t uFractionalScale;
     };
 
-    inline WaylandPlaneState ClipPlane( const WaylandPlaneState &state )
+    inline std::optional<WaylandPlaneState> ClipPlane( const WaylandPlaneState &state )
     {
         int32_t nClippedDstWidth  = std::min<int32_t>( g_nOutputWidth,  state.nDstWidth  + state.nDestX ) - state.nDestX;
         int32_t nClippedDstHeight = std::min<int32_t>( g_nOutputHeight, state.nDstHeight + state.nDestY ) - state.nDestY;
+
+        // A plane that starts past the edge of the output clips away to nothing.
+        // Viewport source and destination sizes must be positive, so present no buffer at all.
+        if ( nClippedDstWidth <= 0 || nClippedDstHeight <= 0 )
+            return std::nullopt;
+
         double flClippedSrcWidth  = state.flSrcWidth  * ( nClippedDstWidth  / double( state.nDstWidth ) );
         double flClippedSrcHeight = state.flSrcHeight * ( nClippedDstHeight / double( state.nDstHeight ) );
 
@@ -292,6 +298,8 @@ namespace gamescope
         libdecor_window_state m_eWindowState = LIBDECOR_WINDOW_STATE_NONE;
         std::vector<wl_output *> m_pOutputs;
         bool m_bNeedsDecorCommit = false;
+        bool m_bUnmappedAwaitingConfigure = false;
+        bool m_bHasAttachedBuffer = false;
         uint32_t m_uFractionalScale = 120;
         bool m_bHasRecievedScale = false;
 
@@ -471,7 +479,8 @@ namespace gamescope
 
         CWaylandBackend *m_pBackend = nullptr;
 
-        CWaylandPlane m_Planes[8];
+        // One backing plane plus every layer steamcompmgr can hand us.
+        CWaylandPlane m_Planes[k_nMaxLayers + 1];
         bool m_bVisible = true;
         std::atomic<bool> m_bDesiredFullscreenState = { false };
 
@@ -971,6 +980,9 @@ namespace gamescope
 
         xdg_log.debugf( "buffer_release: %p", pBuffer );
 
+        if ( this == m_pBackend->GetBlackFb() )
+            return;
+
         OnCompositorRelease();
     }
 
@@ -981,7 +993,7 @@ namespace gamescope
     CWaylandConnector::CWaylandConnector( CWaylandBackend *pBackend, uint64_t ulVirtualConnectorKey )
         : CBaseBackendConnector{ ulVirtualConnectorKey }
         , m_pBackend( pBackend )
-        , m_Planes{ this, this, this, this, this, this, this, this }
+        , m_Planes{ this, this, this, this, this, this, this, this, this }
     {
         m_HDRInfo.bAlwaysPatchEdid = true;
     }
@@ -1000,7 +1012,7 @@ namespace gamescope
 
     bool CWaylandConnector::Init()
     {
-        for ( uint32_t i = 0; i < 8; i++ )
+        for ( uint32_t i = 0; i < std::size( m_Planes ); i++ )
         {
             bool bSuccess = m_Planes[i].Init( i == 0 ? nullptr : &m_Planes[0], i == 0 ? nullptr : &m_Planes[ i - 1 ] );
             if ( !bSuccess )
@@ -1052,20 +1064,22 @@ namespace gamescope
 
         if ( !m_bVisible )
         {
-            uint32_t uCurrentPlane = 0;
-            for ( int i = 0; i < 8 && uCurrentPlane < 8; i++ )
-                m_Planes[uCurrentPlane++].Present( nullptr );
+            for ( CWaylandPlane &plane : m_Planes )
+                plane.Present( nullptr );
         }
         else
         {
             // TODO: Dedupe some of this composite check code between us and drm.cpp
-            bool bLayer0ScreenSize = close_enough(pFrameInfo->layers[0].scale.x, 1.0f) && close_enough(pFrameInfo->layers[0].scale.y, 1.0f);
+            bool bLayer0ScreenSize = close_enough(pFrameInfo->layers.get( 0 ).scale.x, 1.0f) && close_enough(pFrameInfo->layers.get( 0 ).scale.y, 1.0f);
 
-            bool bNeedsCompositeFromFilter = (g_upscaleFilter == GamescopeUpscaleFilter::NEAREST || g_upscaleFilter == GamescopeUpscaleFilter::PIXEL) && !bLayer0ScreenSize;
+            GamescopeUpscaleFilter eLayer0Filter = pFrameInfo->layers.get( 0 ).filter;
+            bool bNeedsCompositeFromFilter = ( eLayer0Filter == GamescopeUpscaleFilter::NEAREST ||
+                                               eLayer0Filter == GamescopeUpscaleFilter::PIXEL ) && !bLayer0ScreenSize;
 
             bNeedsFullComposite |= cv_composite_force;
             bNeedsFullComposite |= pFrameInfo->useFSRLayer0;
             bNeedsFullComposite |= pFrameInfo->useNISLayer0;
+            bNeedsFullComposite |= pFrameInfo->useSGSRLayer0;
             bNeedsFullComposite |= pFrameInfo->blurLayer0;
             bNeedsFullComposite |= bNeedsCompositeFromFilter;
             bNeedsFullComposite |= g_bColorSliderInUse;
@@ -1076,24 +1090,25 @@ namespace gamescope
                 bNeedsFullComposite |= g_bHDRItmEnable;
 
             if ( !m_pBackend->SupportsColorManagement() )
-                bNeedsFullComposite |= ColorspaceIsHDR( pFrameInfo->layers[0].colorspace );
+                bNeedsFullComposite |= ColorspaceIsHDR( pFrameInfo->layers.get( 0 ).colorspace );
 
             bNeedsFullComposite |= !!(g_uCompositeDebug & CompositeDebugFlag::Heatmap);
 
             if ( !bNeedsFullComposite )
             {
                 bool bNeedsBacking = true;
-                if ( pFrameInfo->layerCount >= 1 )
+                if ( pFrameInfo->layers.count() >= 1 )
                 {
-                    if ( pFrameInfo->layers[0].isScreenSize() && !pFrameInfo->layers[0].hasAlpha() )
+                    if ( pFrameInfo->layers.get( 0 ).isScreenSize() &&
+                         close_enough( pFrameInfo->layers.get( 0 ).offset.x, 0.0f ) &&
+                         close_enough( pFrameInfo->layers.get( 0 ).offset.y, 0.0f ) &&
+                         !pFrameInfo->layers.get( 0 ).hasAlpha() )
                         bNeedsBacking = false;
                 }
 
                 uint32_t uCurrentPlane = 0;
                 if ( bNeedsBacking )
                 {
-                    m_pBackend->GetBlackFb()->OnCompositorAcquire();
-
                     CWaylandPlane *pPlane = &m_Planes[uCurrentPlane++];
                     pPlane->Present(
                         WaylandPlaneState
@@ -1109,8 +1124,8 @@ namespace gamescope
                         } );
                 }
 
-                for ( int i = 0; i < 8 && uCurrentPlane < 8; i++ )
-                    m_Planes[uCurrentPlane++].Present( i < pFrameInfo->layerCount ? &pFrameInfo->layers[i] : nullptr );
+                for ( int i = 0; uCurrentPlane < std::size( m_Planes ); i++ )
+                    m_Planes[uCurrentPlane++].Present( i < pFrameInfo->layers.count() ? &pFrameInfo->layers.get( i ) : nullptr );
             }
             else
             {
@@ -1139,12 +1154,12 @@ namespace gamescope
 
                 m_Planes[0].Present( &compositeLayer );
 
-                for ( int i = 1; i < 8; i++ )
+                for ( size_t i = 1; i < std::size( m_Planes ); i++ )
                     m_Planes[i].Present( nullptr );
             }
         }
 
-        for ( int i = 7; i >= 0; i-- )
+        for ( int i = int( std::size( m_Planes ) ) - 1; i >= 0; i-- )
             m_Planes[i].Commit();
 
         wl_display_flush( m_pBackend->GetDisplay() );
@@ -1547,7 +1562,7 @@ namespace gamescope
                     default:
                     case GAMESCOPE_APP_TEXTURE_COLORSPACE_PASSTHRU:
                         frog_color_managed_surface_set_known_container_color_volume( m_pFrogColorManagedSurface, FROG_COLOR_MANAGED_SURFACE_PRIMARIES_UNDEFINED );
-                        frog_color_managed_surface_set_known_container_color_volume( m_pFrogColorManagedSurface, FROG_COLOR_MANAGED_SURFACE_TRANSFER_FUNCTION_UNDEFINED );
+                        frog_color_managed_surface_set_known_transfer_function( m_pFrogColorManagedSurface, FROG_COLOR_MANAGED_SURFACE_TRANSFER_FUNCTION_UNDEFINED );
                         break;
                     case GAMESCOPE_APP_TEXTURE_COLORSPACE_LINEAR:
                     case GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB:
@@ -1588,6 +1603,11 @@ namespace gamescope
             }
             // The x/y here does nothing? Why? What is it for...
             // Use the subsurface set_position thing instead.
+            if ( m_pFrame && m_bUnmappedAwaitingConfigure )
+                return;
+
+            m_bHasAttachedBuffer = true;
+
             wl_surface_attach( m_pSurface, oState->pBuffer, 0, 0 );
             wl_surface_damage( m_pSurface, 0, 0, INT32_MAX, INT32_MAX );
             wl_surface_set_opaque_region( m_pSurface, oState->bOpaque ? m_pBackend->GetFullRegion() : nullptr );
@@ -1595,6 +1615,12 @@ namespace gamescope
         }
         else
         {
+            // Attaching NULL only unmaps (and so requires a new configure) if a buffer was mapped.
+            if ( m_pFrame && m_bHasAttachedBuffer )
+                m_bUnmappedAwaitingConfigure = true;
+
+            m_bHasAttachedBuffer = false;
+
             wl_surface_attach( m_pSurface, nullptr, 0, 0 );
             wl_surface_damage( m_pSurface, 0, 0, INT32_MAX, INT32_MAX );
         }
@@ -1729,6 +1755,8 @@ namespace gamescope
         }
         g_nOutputWidth  = WaylandScaleToPhysical( nWidth, uScale );
         g_nOutputHeight = WaylandScaleToPhysical( nHeight, uScale );
+
+        m_bUnmappedAwaitingConfigure = false;
 
         CommitLibDecor( pConfiguration );
 
@@ -2237,6 +2265,7 @@ namespace gamescope
         if ( !pImportedBuffer )
         {
             xdg_log.errorf( "Failed to import dmabuf" );
+            zwp_linux_buffer_params_v1_destroy( pBufferParams );
             return nullptr;
         }
 
@@ -2444,29 +2473,22 @@ namespace gamescope
 
     void CWaylandBackend::UpdateCursor()
     {
-        bool bUseHostCursor = false;
-
-        if ( !m_pPointer )
+        // Skip if we don't have a pointer or if the pointer isn't over a gamescope plane (libdecor frame)
+        if ( !m_pPointer || !m_bMouseEntered )
             return;
 
-		if ( cv_wayland_mouse_warp_without_keyboard_focus )
-			bUseHostCursor = m_bPointerLocked && !m_bKeyboardEntered && m_pDefaultCursorSurface;
-		else
-			bUseHostCursor = !m_bKeyboardEntered && m_pDefaultCursorSurface;
+        bool bUseHostCursor = !m_bKeyboardEntered;
+        bool bShowCursor = !m_bPointerLocked;
 
-        if ( bUseHostCursor )
-        {
+        if ( cv_wayland_mouse_warp_without_keyboard_focus )
+            bUseHostCursor &= m_bPointerLocked;
+
+        if ( bUseHostCursor && m_pDefaultCursorSurface )
             wl_pointer_set_cursor( m_pPointer, m_uPointerEnterSerial, m_pDefaultCursorSurface, m_pDefaultCursorInfo->uXHotspot, m_pDefaultCursorInfo->uYHotspot );
-        }
+        else if ( bShowCursor && m_pCursorSurface )
+            wl_pointer_set_cursor( m_pPointer, m_uPointerEnterSerial, m_pCursorSurface, m_pCursorInfo->uXHotspot, m_pCursorInfo->uYHotspot );
         else
-        {
-			bool bHideCursor = m_bPointerLocked || !m_pCursorSurface;
-
-            if ( bHideCursor )
-                wl_pointer_set_cursor( m_pPointer, m_uPointerEnterSerial, nullptr, 0, 0 );
-            else
-                wl_pointer_set_cursor( m_pPointer, m_uPointerEnterSerial, m_pCursorSurface, m_pCursorInfo->uXHotspot, m_pCursorInfo->uYHotspot );
-        }
+            wl_pointer_set_cursor( m_pPointer, m_uPointerEnterSerial, nullptr, 0, 0 );
     }
 
     /////////////////////
@@ -2812,6 +2834,25 @@ namespace gamescope
         return true;
     }
 
+    // The display connection is dead by the time we get here, so say why before we take the process with us.
+    static void LogDisplayError( const char *pszWhat, wl_display *pDisplay )
+    {
+        int nError = wl_display_get_error( pDisplay );
+
+        if ( nError == EPROTO )
+        {
+            const wl_interface *pInterface = nullptr;
+            uint32_t uId = 0;
+            uint32_t uCode = wl_display_get_protocol_error( pDisplay, &pInterface, &uId );
+
+            xdg_log.errorf( "%s: protocol error %u on %s@%u", pszWhat, uCode, pInterface ? pInterface->name : "<unknown>", uId );
+        }
+        else
+        {
+            xdg_log.errorf( "%s: %s", pszWhat, strerror( nError ) );
+        }
+    }
+
     void CWaylandInputThread::ThreadFunc()
     {
         m_bInitted.wait( false );
@@ -2822,6 +2863,7 @@ namespace gamescope
         int nFD = wl_display_get_fd( m_pBackend->GetDisplay() );
         if ( nFD < 0 )
         {
+            xdg_log.errorf( "Couldn't get Wayland display fd for input thread." );
             abort();
         }
 
@@ -2833,6 +2875,7 @@ namespace gamescope
         {
             if ( ( nRet = wl_display_dispatch_queue_pending( m_pBackend->GetDisplay(), m_pQueue ) ) < 0 )
             {
+                LogDisplayError( "Failed to dispatch input thread queue", m_pBackend->GetDisplay() );
                 abort();
             }
 
@@ -2841,6 +2884,7 @@ namespace gamescope
                 if ( errno == EAGAIN || errno == EINTR )
                     continue;
 
+                LogDisplayError( "Failed to prepare read of input thread queue", m_pBackend->GetDisplay() );
                 abort();
             }
 
@@ -2848,7 +2892,10 @@ namespace gamescope
             {
                 wl_display_cancel_read( m_pBackend->GetDisplay() );
                 if ( nRet < 0 )
+                {
+                    xdg_log.errorf_errno( "Input thread poll failed" );
                     abort();
+                }
 
                 assert( nRet == 0 );
                 continue;
@@ -2856,6 +2903,7 @@ namespace gamescope
 
             if ( ( nRet = wl_display_read_events( m_pBackend->GetDisplay() ) ) < 0 )
             {
+                LogDisplayError( "Failed to read events on input thread", m_pBackend->GetDisplay() );
                 abort();
             }
         }
@@ -3058,6 +3106,7 @@ namespace gamescope
 	}
 	void CWaylandInputThread::Wayland_Pointer_Motion( wl_pointer *pPointer, uint32_t uTime, wl_fixed_t fSurfaceX, wl_fixed_t fSurfaceY )
 	{
+		// Ignore any pointer events for which the `enter` event surface didn't pass `IsGamescopeToplevel` (libdecor frame)
 		if ( !m_bMouseEntered )
 			return;
 
@@ -3092,6 +3141,9 @@ namespace gamescope
     }
     void CWaylandInputThread::Wayland_Pointer_Button( wl_pointer *pPointer, uint32_t uSerial, uint32_t uTime, uint32_t uButton, uint32_t uState )
     {
+        // Ignore any pointer events for which the `enter` event surface didn't pass `IsGamescopeToplevel` (libdecor frame)
+        if ( !m_bMouseEntered )
+            return;
         // Don't do any motion/movement stuff if we don't have kb focus
         if ( !cv_wayland_mouse_warp_without_keyboard_focus && !m_bKeyboardEntered )
             return;
@@ -3102,24 +3154,42 @@ namespace gamescope
     }
     void CWaylandInputThread::Wayland_Pointer_Axis( wl_pointer *pPointer, uint32_t uTime, uint32_t uAxis, wl_fixed_t fValue )
     {
+        // Ignore any pointer events for which the `enter` event surface didn't pass `IsGamescopeToplevel` (libdecor frame)
+        if ( !m_bMouseEntered )
+            return;
+      
         if ( !cv_wayland_mouse_warp_without_keyboard_focus && !m_bKeyboardEntered )
             return;
 
         // Collect scroll info from touchpad
-        m_flScrollAccum[ !uAxis ] += wl_fixed_to_double( fValue );
+        m_flScrollAccum[ !uAxis ] += wl_fixed_to_double( fValue ) / 10;
+        
     }
     void CWaylandInputThread::Wayland_Pointer_Axis_Source( wl_pointer *pPointer, uint32_t uAxisSource )
     {
+        // Ignore any pointer events for which the `enter` event surface didn't pass `IsGamescopeToplevel` (libdecor frame)
+        if ( !m_bMouseEntered )
+            return;
+
         m_uAxisSource = uAxisSource;
     }
     void CWaylandInputThread::Wayland_Pointer_Axis_Stop( wl_pointer *pPointer, uint32_t uTime, uint32_t uAxis )
     {
+        // Ignore any pointer events for which the `enter` event surface didn't pass `IsGamescopeToplevel` (libdecor frame)
+        if ( !m_bMouseEntered )
+            return;
     }
     void CWaylandInputThread::Wayland_Pointer_Axis_Discrete( wl_pointer *pPointer, uint32_t uAxis, int32_t nDiscrete )
     {
+        // Ignore any pointer events for which the `enter` event surface didn't pass `IsGamescopeToplevel` (libdecor frame)
+        if ( !m_bMouseEntered )
+            return;
     }
     void CWaylandInputThread::Wayland_Pointer_Axis_Value120( wl_pointer *pPointer, uint32_t uAxis, int32_t nValue120 )
     {
+        // Ignore any pointer events for which the `enter` event surface didn't pass `IsGamescopeToplevel` (libdecor frame)
+        if ( !m_bMouseEntered )
+            return;
         if ( !cv_wayland_mouse_warp_without_keyboard_focus && !m_bKeyboardEntered )
             return;
 

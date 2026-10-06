@@ -20,9 +20,13 @@ void steamcompmgr_main(int argc, char **argv);
 #include "rendervulkan.hpp"
 #include "wlserver.hpp"
 #include "vblankmanager.hpp"
+#include "mangoapp_control.h"
 
 #include <mutex>
 #include <vector>
+#include <memory>
+#include <string>
+#include <unordered_map>
 
 #include <X11/extensions/Xfixes.h>
 
@@ -110,6 +114,7 @@ private:
 	gamescope::OwningRc<CVulkanTexture> m_texture;
 	bool m_dirty;
 	uint64_t m_ulLastConnectorId = 0;
+	uint64_t m_ulImageSerial = 0;
 	bool m_imageEmpty;
 
 	xwayland_ctx_t *m_ctx;
@@ -128,18 +133,57 @@ extern float focusedWindowScaleY;
 extern float focusedWindowOffsetX;
 extern float focusedWindowOffsetY;
 
-extern bool g_bFSRActive;
+extern GamescopeUpscaleFilter g_eActiveUpscaler;
+extern GamescopeUpscaleFilter g_eWantedUpscaler;
+extern int g_nActiveUpscaleSharpness;
 
 extern uint32_t inputCounter;
 extern uint64_t g_lastWinSeq;
 
 void nudge_steamcompmgr( void );
+void MakeFocusDirty();
 void force_repaint( void );
 
-extern void mangoapp_update( uint64_t visible_frametime, uint64_t app_frametime_ns, uint64_t latency_ns );
+// Per-connector stat snapshot for typed mangoapp streams.
+struct MangoappSnapshot_t
+{
+	pid_t nPid = 0;
+	GamescopeUpscaleFilter eActiveUpscaler = GamescopeUpscaleFilter::LINEAR;
+	GamescopeUpscaleFilter eWantedUpscaler = GamescopeUpscaleFilter::LINEAR;
+	uint8_t uFSRSharpness = 0;
+	std::shared_ptr<std::string> pEngineName;
+	bool bSteamFocused = false;
+	bool bAppWantsHDR = false;
+	uint32_t uOutputWidth = 0;
+	uint32_t uOutputHeight = 0;
+	int nOutputRefreshmHz = 0;
+};
+
+static constexpr uint32_t k_uMangoappLegacyMsgType = 1;
+// mangohudctl posts control messages here.
+static constexpr uint32_t k_uMangoappControlMsgType = 2;
+// Per-connector streams allocate upward from here, in stream/control pairs.
+static constexpr uint32_t k_uMangoappFirstConnectorMsgType = 100;
+
+// mangoapp derives the same type, so both sides must agree on it.
+static constexpr uint32_t MangoappControlMsgType( uint32_t uMsgType )
+{
+	return uMsgType + 1;
+}
+static_assert( MangoappControlMsgType( k_uMangoappLegacyMsgType ) == k_uMangoappControlMsgType );
+
+extern void mangoapp_update( uint64_t visible_frametime, uint64_t app_frametime_ns, uint64_t latency_ns, uint32_t uMsgType = k_uMangoappLegacyMsgType );
+extern void mangoapp_nudge_app_frame( uint32_t uMsgType, uint64_t ulNow );
+extern void mangoapp_set_connector_snapshots( std::unordered_map<uint32_t, MangoappSnapshot_t> snapshots );
+extern void mangoapp_drop_stream( uint32_t uMsgType );
+extern uint32_t mangoapp_flush_control( const std::vector<uint32_t> &msgTypes );
+extern MangoappControlRelay_t mangoapp_relay_control( const std::vector<uint32_t> &msgTypes );
+// uNoDisplay in mangohudctl terms, 0 leaves it, 1 hides, 2 shows.
+extern void mangoapp_post_control( uint32_t uMsgType, uint8_t uNoDisplay, bool bStartLogging );
 struct wlr_surface *steamcompmgr_get_server_input_surface( size_t idx );
 wlserver_vk_swapchain_feedback* steamcompmgr_get_base_layer_swapchain_feedback();
 
+Window x11_find_toplevel_for_xid( _XDisplay *dpy, Window xid );
 struct wlserver_x11_surface_info *lookup_x11_surface_info_from_xid( gamescope_xwayland_server_t *xwayland_server, uint32_t xid );
 
 extern gamescope::VBlankTime g_SteamCompMgrVBlankTime;

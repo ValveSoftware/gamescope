@@ -1,11 +1,17 @@
 #include "Process.h"
-#include "../Utils/Algorithm.h"
-#include "../convar.h"
+#include "Algorithm.h"
 #include "../log.hpp"
 #include "../Utils/Defer.h"
+#include "../Utils/Parsers.h"
+#include "../Utils/String.h"
 
-#include <algorithm>
 #include <array>
+#include <cstdio>
+#include <cstring>
+#include <fstream>
+#include <istream>
+#include <string>
+#include <vector>
 
 #include <errno.h>
 #include <pthread.h>
@@ -98,6 +104,42 @@ namespace gamescope::Process
         }
 
         return nPids;
+    }
+
+    bool IsProcessRunning( const char *pszComm )
+    {
+        DIR *pProcDir = opendir( "/proc" );
+        if ( !pProcDir )
+            return false;
+        defer( closedir( pProcDir ) );
+
+        struct dirent *pEntry;
+        while ( ( pEntry = readdir( pProcDir ) ) )
+        {
+            if ( pEntry->d_type != DT_DIR )
+                continue;
+
+            if ( !IsDigit( pEntry->d_name[0] ) )
+                continue;
+
+            char szPath[ PATH_MAX ];
+            snprintf( szPath, sizeof( szPath ), "/proc/%s/comm", pEntry->d_name );
+
+            FILE *pCommFile = fopen( szPath, "r" );
+            if ( !pCommFile )
+                continue;
+            defer( fclose( pCommFile ) );
+
+            char szComm[ 32 ] = {};
+            if ( !fgets( szComm, sizeof( szComm ), pCommFile ) )
+                continue;
+            szComm[ strcspn( szComm, "\n" ) ] = '\0';
+
+            if ( !strcmp( szComm, pszComm ) )
+                return true;
+        }
+
+        return false;
     }
 
     void KillProcessTree( std::vector<pid_t> nPids, int nSignal )
@@ -232,6 +274,12 @@ namespace gamescope::Process
         RestoreFdLimit();
         RestoreNice();
         RestoreRealtime();
+
+#if defined(__linux__)
+        // We don't want to leak caps to children since some programs, such as bwrap, refuse to start
+        // when they have unexpected capabilities.
+        prctl( PR_CAP_AMBIENT, PR_CAP_AMBIENT_CLEAR_ALL, 0, 0, 0 );
+#endif
     }
 
     bool CloseFd( int nFd )
@@ -267,6 +315,83 @@ namespace gamescope::Process
                 s_ProcessLog.errorf_errno( "CloseAllFds failed to close FD %d", nFd );
             }
         }
+    }
+
+    void RemoveSteamOverlayFromPreload()
+    {
+        const char *pszCurrentPreload = getenv( "LD_PRELOAD" );
+        if ( !pszCurrentPreload )
+            return;
+
+        std::vector<std::string_view> svLibraries = Split( pszCurrentPreload, " :" );
+        std::erase_if( svLibraries, []( std::string_view svPreload )
+        {
+            return svPreload.find( "gameoverlayrenderer.so" ) != std::string_view::npos;
+        });
+
+        std::string sNewPreload;
+        bool bFirst = true;
+        for ( std::string_view svLibrary : svLibraries )
+        {
+            if ( !bFirst )
+            {
+                sNewPreload.append( ":" );
+            }
+            bFirst = false;
+            sNewPreload.append( svLibrary );
+        }
+
+        if ( !sNewPreload.empty() )
+            setenv( "LD_PRELOAD", sNewPreload.c_str(), 1 );
+        else
+            unsetenv( "LD_PRELOAD" );
+    }
+
+    // Doubles as the guard that stops us from ever exec'ing twice.
+    static constexpr const char *k_pszStashedOverlayPreload = "GAMESCOPE_STEAM_OVERLAY_LD_PRELOAD";
+
+    void RestartWithoutSteamOverlay( char **argv )
+    {
+        if ( getenv( k_pszStashedOverlayPreload ) )
+            return;
+
+        const char *pszPreload = getenv( "LD_PRELOAD" );
+        if ( !pszPreload || std::string_view( pszPreload ).find( "gameoverlayrenderer.so" ) == std::string_view::npos )
+            return;
+
+        // A pointer from getenv does not survive setenv, so keep our own copy.
+        std::string sPreload = pszPreload;
+
+        if ( setenv( k_pszStashedOverlayPreload, sPreload.c_str(), 1 ) != 0 )
+        {
+            s_ProcessLog.errorf_errno( "Failed to stash the Steam overlay, keeping it loaded" );
+            return;
+        }
+        RemoveSteamOverlayFromPreload();
+
+        s_ProcessLog.infof( "Restarting ourselves to drop the Steam overlay from LD_PRELOAD." );
+        execv( "/proc/self/exe", argv );
+
+        // Still here, so put everything back and carry on with the overlay loaded.
+        s_ProcessLog.errorf_errno( "Failed to restart without the Steam overlay" );
+        setenv( "LD_PRELOAD", sPreload.c_str(), 1 );
+        unsetenv( k_pszStashedOverlayPreload );
+    }
+
+    bool RestoreSteamOverlayPreload()
+    {
+        const char *pszStashedPreload = getenv( k_pszStashedOverlayPreload );
+        if ( !pszStashedPreload )
+            return false;
+
+        std::string sPreload = pszStashedPreload;
+        if ( setenv( "LD_PRELOAD", sPreload.c_str(), 1 ) != 0 )
+            s_ProcessLog.errorf_errno( "Failed to pass the Steam overlay through to the application" );
+        else
+            s_ProcessLog.infof( "Passing the Steam overlay through to the application." );
+
+        unsetenv( k_pszStashedOverlayPreload );
+        return true;
     }
 
     pid_t SpawnProcess( char **argv, std::function<void()> fnPreambleInChild, bool bDoubleFork )
@@ -538,4 +663,143 @@ namespace gamescope::Process
         return __progname;
     }
 
+    uint32_t GetAppIdFromCgroup( std::istream &stream )
+    {
+        std::string line;
+        while ( std::getline( stream, line ) )
+        {
+            // cgroup line format: hierarchy-ID:controller-list:cgroup-path
+            size_t first_colon = line.find( ':' );
+            if ( first_colon == std::string::npos )
+                continue;
+            size_t second_colon = line.find( ':', first_colon + 1 );
+            if ( second_colon == std::string::npos )
+                continue;
+
+            const char *path = line.c_str() + second_colon + 1;
+            const char *last_slash = strrchr( path, '/' );
+            const char *scope = last_slash ? last_slash + 1 : path;
+
+            pid_t reaperpid = 0;
+            uint32_t appid = 0;
+            if ( sscanf( scope, "app-steam-app%u-%d.scope", &appid, &reaperpid ) == 2 && appid != 0 )
+                return appid;
+        }
+        return 0;
+    }
+
+    uint32_t GetAppIdFromReaper( pid_t pid )
+    {
+        uint32_t unFoundAppId = 0;
+
+        char filename[256];
+        pid_t next_pid = pid;
+
+        while ( 1 )
+        {
+            snprintf( filename, sizeof( filename ), "/proc/%i/stat", next_pid );
+            std::ifstream proc_stat_file( filename );
+
+            if (!proc_stat_file.is_open() || proc_stat_file.bad())
+                break;
+
+            std::string proc_stat;
+
+            std::getline( proc_stat_file, proc_stat );
+
+            char *procName = nullptr;
+            char *lastParens = nullptr;
+
+            for ( uint32_t i = 0; i < proc_stat.length(); i++ )
+            {
+                if ( procName == nullptr && proc_stat[ i ] == '(' )
+                {
+                    procName = &proc_stat[ i + 1 ];
+                }
+
+                if ( proc_stat[ i ] == ')' )
+                {
+                    lastParens = &proc_stat[ i ];
+                }
+            }
+
+            if (!lastParens)
+                break;
+
+            *lastParens = '\0';
+            char state;
+            int parent_pid = -1;
+
+            sscanf( lastParens + 1, " %c %d", &state, &parent_pid );
+
+            if ( strcmp( "reaper", procName ) == 0 )
+            {
+                snprintf( filename, sizeof( filename ), "/proc/%i/cmdline", next_pid );
+                std::ifstream proc_cmdline_file( filename );
+                std::string proc_cmdline;
+
+                bool bSteamLaunch = false;
+                uint32_t unAppId = 0;
+
+                std::getline( proc_cmdline_file, proc_cmdline );
+
+                for ( uint32_t j = 0; j < proc_cmdline.length(); j++ )
+                {
+                    if ( proc_cmdline[ j ] == '\0' && j + 1 < proc_cmdline.length() )
+                    {
+                        if ( strcmp( "SteamLaunch", &proc_cmdline[ j + 1 ] ) == 0 )
+                        {
+                            bSteamLaunch = true;
+                        }
+                        else if ( sscanf( &proc_cmdline[ j + 1 ], "AppId=%u", &unAppId ) == 1 && unAppId != 0 )
+                        {
+                            if ( bSteamLaunch == true )
+                            {
+                                unFoundAppId = unAppId;
+                            }
+                        }
+                        else if ( strcmp( "--", &proc_cmdline[ j + 1 ] ) == 0 )
+                        {
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if ( parent_pid == -1 || parent_pid == 0 )
+            {
+                break;
+            }
+            else
+            {
+                next_pid = parent_pid;
+            }
+        }
+
+        return unFoundAppId;
+    }
+
+    uint32_t GetAppIdFromPid( pid_t pid )
+    {
+        uint32_t appid = 0;
+
+        char filename[256];
+        snprintf( filename, sizeof( filename ), "/proc/%i/cgroup", pid );
+        std::ifstream cgroup_file( filename );
+        if ( cgroup_file.is_open() && !cgroup_file.bad() )
+        {
+            appid = GetAppIdFromCgroup( cgroup_file );
+            if ( appid != 0 )
+                s_ProcessLog.debugf( "AppID %u derived from cgroup for pid %d", appid, pid );
+        }
+
+        if ( appid == 0 )
+        {
+            appid = GetAppIdFromReaper( pid );
+            if ( appid != 0 )
+                s_ProcessLog.debugf( "AppID %u derived from process hierarchy for pid %d", appid, pid );
+        }
+
+        return appid;
+    }
 }

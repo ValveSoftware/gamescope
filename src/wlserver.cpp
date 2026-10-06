@@ -21,6 +21,7 @@
 #include "WaylandServer/LinuxDrmSyncobj.h"
 #include "WaylandServer/Reshade.h"
 #include "WaylandServer/GamescopeActionBinding.h"
+#include "WaylandServer/GamescopeLimiter.h"
 
 #include "wlr_begin.hpp"
 #include <wlr/backend.h>
@@ -67,7 +68,7 @@
 #include "InputEmulation.h"
 #include "commit.h"
 #include "Timeline.h"
-#include "Utils/NonCopyable.h"
+#include "Utils/Process.h"
 
 #if HAVE_PIPEWIRE
 #include "pipewire.hpp"
@@ -76,6 +77,7 @@
 #include "gpuvis_trace_utils.h"
 
 #include <algorithm>
+#include <cfloat>
 #include <list>
 #include <set>
 
@@ -131,7 +133,7 @@ std::vector<ResListEntry_t>& gamescope_xwayland_server_t::retrieve_commits()
 
 gamescope::ConVar<bool> cv_drm_debug_syncobj_force_wait_on_commit( "drm_debug_syncobj_force_wait_on_commit", false, "Force a wait on DRM sync objects before committing buffers" );
 
-std::optional<ResListEntry_t> PrepareCommit( struct wlr_surface *surf, struct wlr_buffer *buf )
+ResListEntry_t PrepareCommit( struct wlr_surface *surf, struct wlr_buffer *buf )
 {
 	auto wl_surf = get_wl_surface_info( surf );
 
@@ -153,8 +155,7 @@ std::optional<ResListEntry_t> PrepareCommit( struct wlr_surface *surf, struct wl
 		}
 	}
 
-	auto oNewEntry = std::optional<ResListEntry_t> {
-		std::in_place_t{},
+	ResListEntry_t newEntry = ResListEntry_t {
 		surf,
 		buf,
 		wlserver_surface_is_async(surf),
@@ -164,8 +165,15 @@ std::optional<ResListEntry_t> PrepareCommit( struct wlr_surface *surf, struct wl
 		wl_surf->present_id,
 		wl_surf->desired_present_time,
 		std::move( pAcquirePoint ),
-		std::move( pReleasePoint )
+		std::move( pReleasePoint ),
 	};
+	newEntry.damageExtents = *pixman_region32_extents( &surf->buffer_damage );
+	if ( wl_surf->x11_surface && wl_surf->x11_surface->override_surface && wl_surf->x11_surface->override_surface != surf )
+	{
+		int nDamageRects = 0;
+		pixman_box32_t *pDamageRects = pixman_region32_rectangles( &surf->buffer_damage, &nDamageRects );
+		newEntry.damage.assign( pDamageRects, pDamageRects + nDamageRects );
+	}
 	wl_surf->present_id = std::nullopt;
 	wl_surf->desired_present_time = 0;
 	wl_surf->pending_presentation_feedbacks.clear();
@@ -177,40 +185,26 @@ std::optional<ResListEntry_t> PrepareCommit( struct wlr_surface *surf, struct wl
 	if ( pConstraint && pConstraint->surface == pConstraintSurface )
 		wlserver_update_cursor_constraint();
 
-	return oNewEntry;
+	return newEntry;
 }
 
-void gamescope_xwayland_server_t::wayland_commit(struct wlr_surface *surf, struct wlr_buffer *buf)
+void gamescope_xwayland_server_t::wayland_commit( ResListEntry_t entry )
 {
-	std::optional<ResListEntry_t> oEntry = PrepareCommit( surf, buf );
-	if ( !oEntry )
-		return;
-
 	{
 		std::lock_guard<std::mutex> lock( wayland_commit_lock );
-		wayland_commit_queue.emplace_back( std::move( *oEntry ) );
+		wayland_commit_queue.emplace_back( std::move( entry ) );
 	}
 
 	nudge_steamcompmgr();
 }
 
-struct PendingCommit_t
+std::list<ResListEntry_t> g_PendingCommits;
+
+void wlserver_xdg_commit( ResListEntry_t entry )
 {
-	struct wlr_surface *surf;
-	struct wlr_buffer *buf;
-};
-
-std::list<PendingCommit_t> g_PendingCommits;
-
-void wlserver_xdg_commit(struct wlr_surface *surf, struct wlr_buffer *buf)
-{
-	std::optional<ResListEntry_t> oEntry = PrepareCommit( surf, buf );
-	if ( !oEntry )
-		return;
-
 	{
 		std::lock_guard<std::mutex> lock( wlserver.xdg_commit_lock );
-		wlserver.xdg_commit_queue.push_back( std::move( *oEntry ) );
+		wlserver.xdg_commit_queue.push_back( std::move( entry ) );
 	}
 
 	nudge_steamcompmgr();
@@ -250,18 +244,20 @@ void xwayland_surface_commit(struct wlr_surface *wlr_surface) {
 
 	gpuvis_trace_printf( "xwayland_surface_commit wlr_surface %p", wlr_surface );
 
+	ResListEntry_t entry = PrepareCommit( wlr_surface, buf );
+
 	if (wlserver_x11_surface_info)
 	{
 		assert(wlserver_x11_surface_info->xwayland_server);
-		wlserver_x11_surface_info->xwayland_server->wayland_commit( wlr_surface, buf );
+		wlserver_x11_surface_info->xwayland_server->wayland_commit( std::move( entry ) );
 	}
 	else if (wlserver_xdg_surface_info)
 	{
-		wlserver_xdg_commit(wlr_surface, buf);
+		wlserver_xdg_commit( std::move( entry ) );
 	}
 	else
 	{
-		g_PendingCommits.push_back(PendingCommit_t{ wlr_surface, buf });
+		g_PendingCommits.emplace_back( std::move( entry ) );
 	}
 }
 
@@ -327,6 +323,10 @@ static void wlserver_handle_key(struct wl_listener *listener, void *data)
 		struct wlr_surface *new_kb_surf = steamcompmgr_get_server_input_surface( 0 );
 		if ( new_kb_surf )
 		{
+			// This key skips hotkey processing, so drop any press we
+			// recorded for it or the stale sym would wedge every binding.
+			wlserver.mapPressedHotkeyKeys.erase( { keyboard, keycode } );
+
 			wlserver_keyboardfocus( new_kb_surf, false );
 			wlr_seat_set_keyboard( wlserver.wlr.seat, keyboard );
 			wlr_seat_keyboard_notify_key( wlserver.wlr.seat, event->time_msec, event->keycode, event->state );
@@ -355,6 +355,8 @@ static void wlserver_handle_pointer_motion(struct wl_listener *listener, void *d
 {
 	struct wlr_pointer_motion_event *event = (struct wlr_pointer_motion_event *) data;
 
+	wlserver.physical_cursor_move = true;
+
 	wlserver_mousemotion(event->unaccel_dx, event->unaccel_dy, event->time_msec);
 }
 
@@ -373,12 +375,16 @@ void wlserver_open_steam_menu( bool qam )
 	XTestFakeKeyEvent(server->get_xdisplay(), XKeysymToKeycode( server->get_xdisplay(), XK_Control_L ), False, CurrentTime);
 }
 
+static void wlserver_drag_anchor_release();
+static void wlserver_drag_anchor_forget( struct wlr_surface *surface );
+
 static void wlserver_handle_pointer_button(struct wl_listener *listener, void *data)
 {
 	struct wlserver_pointer *pointer = wl_container_of( listener, pointer, button );
 	struct wlr_pointer_button_event *event = (struct wlr_pointer_button_event *) data;
 
 	wlr_seat_pointer_notify_button( wlserver.wlr.seat, event->time_msec, event->button, event->state );
+	wlserver_drag_anchor_release();
 }
 
 static void wlserver_handle_pointer_axis(struct wl_listener *listener, void *data)
@@ -476,6 +482,25 @@ static void wlserver_handle_touch_motion(struct wl_listener *listener, void *dat
 	wlserver_touchmotion( event->x, event->y, event->touch_id, event->time_msec, false, touch->connector );
 }
 
+struct wlserver_keyboard {
+	struct wlr_keyboard *wlr;
+
+	struct wl_listener destroy;
+};
+
+// The keyboards in wlserver.keyboard_group, kept so a layout change can reach them.
+// wlroots keeps keyboard_group_device private, so we cannot iterate group->devices.
+static std::vector<struct wlserver_keyboard *> s_Keyboards;
+
+static void wlserver_handle_keyboard_destroy(struct wl_listener *listener, void *data)
+{
+	struct wlserver_keyboard *keyboard = wl_container_of( listener, keyboard, destroy );
+
+	std::erase( s_Keyboards, keyboard );
+	wl_list_remove( &keyboard->destroy.link );
+	free( keyboard );
+}
+
 static void wlserver_handle_pointer_destroy(struct wl_listener *listener, void *data)
 {
 	struct wlserver_pointer *pointer = wl_container_of( listener, pointer, destroy );
@@ -513,6 +538,12 @@ static void wlserver_new_input(struct wl_listener *listener, void *data)
 				wl_log.errorf("failed to add physical keyboard %s", device->name);
 				break;
 			}
+
+			struct wlserver_keyboard *pKeyboard = (struct wlserver_keyboard *) calloc( 1, sizeof( struct wlserver_keyboard ) );
+			pKeyboard->wlr = keyboard;
+			pKeyboard->destroy.notify = wlserver_handle_keyboard_destroy;
+			wl_signal_add( &device->events.destroy, &pKeyboard->destroy );
+			s_Keyboards.push_back( pKeyboard );
 			// Sync the state of the modifiers and the state of the LEDs
 			struct wlr_keyboard_modifiers mods = wlserver.keyboard_group->keyboard.modifiers;
 			if (mods.depressed != keyboard->modifiers.depressed ||
@@ -580,6 +611,26 @@ static void handle_wl_surface_commit( struct wl_listener *l, void *data )
 	xwayland_surface_commit(surf->wlr);
 }
 
+static void wlserver_xdg_surface_info_finish( struct wlserver_xdg_surface_info *info )
+{
+	{
+		std::unique_lock lock( g_wlserver_xdg_shell_windows_lock );
+		std::erase_if( wlserver.xdg_wins,
+			[=]( auto win ) { return win.get() == info->win; } );
+	}
+	wlserver.xdg_dirty = true;
+	info->win = nullptr;
+
+	info->xdg_surface = nullptr;
+	info->main_surface = nullptr;
+	info->layer_surface = nullptr;
+	info->mapped = false;
+
+	wl_list_remove( &info->map.link );
+	wl_list_remove( &info->unmap.link );
+	wl_list_remove( &info->destroy.link );
+}
+
 static void handle_wl_surface_destroy( struct wl_listener *l, void *data )
 {
 	wlserver_wl_surface_info *surf = wl_container_of( l, surf, destroy );
@@ -596,8 +647,16 @@ static void handle_wl_surface_destroy( struct wl_listener *l, void *data )
 		wlserver_x11_surface_info_init(x11_surface, x11_surface->xwayland_server, x11_surface->x11_id);
 	}
 
+	if ( surf->xdg_surface )
+	{
+		wlserver_xdg_surface_info_finish( surf->xdg_surface );
+		surf->xdg_surface = nullptr;
+	}
+
 	if ( surf->wlr == wlserver.mouse_focus_surface )
 		wlserver.mouse_focus_surface = nullptr;
+
+	wlserver_drag_anchor_forget( surf->wlr );
 
 	if ( surf->wlr == wlserver.kb_focus_surface )
 		wlserver.kb_focus_surface = nullptr;
@@ -608,8 +667,10 @@ static void handle_wl_surface_destroy( struct wl_listener *l, void *data )
 	{
 		if (it->surf == surf->wlr)
 		{
+			ResListEntry_t pending = std::move( *it );
+
 			// We owned the buffer lock, so unlock it here.
-			wlr_buffer_unlock(it->buf);
+			wlr_buffer_unlock(pending.buf);
 			it = g_PendingCommits.erase(it);
 		}
 		else
@@ -741,6 +802,8 @@ static void gamescope_swapchain_destroy_co( struct wl_resource *resource );
 
 void gamescope_xwayland_server_t::handle_override_window_content( struct wl_client *client, struct wl_resource *gamescope_swapchain_resource, struct wlr_surface *surface, uint32_t x11_window )
 {
+	x11_window = x11_find_toplevel_for_xid( this->ctx->dpy, x11_window );
+
 	wlserver_x11_surface_info *x11_surface = lookup_x11_surface_info_from_xid( this, x11_window );
 	// If we found an x11_surface, go back up to our parent.
 	if ( x11_surface )
@@ -786,12 +849,12 @@ void gamescope_xwayland_server_t::handle_override_window_content( struct wl_clie
         {
             if (it->surf == surface)
             {
-                PendingCommit_t pending = *it;
+				ResListEntry_t pending = std::move( *it );
 
                 // Still have the buffer lock from before...
                 assert(x11_surface);
                 assert(x11_surface->xwayland_server);
-                x11_surface->xwayland_server->wayland_commit( pending.surf, pending.buf );
+                x11_surface->xwayland_server->wayland_commit( std::move( pending ) );
 
                 it = g_PendingCommits.erase(it);
             }
@@ -1075,14 +1138,40 @@ static void create_gamescope_swapchain_factory_v2( void )
 	wl_global_create( wlserver.display, &gamescope_swapchain_factory_v2_interface, version, NULL, gamescope_swapchain_factory_v2_bind );
 }
 
+////////////////////////
+// gamescope_limiter
+////////////////////////
 
+// Written from the steamcompmgr thread, sent from under the wlserver lock.
+static std::atomic<uint32_t> s_uFrameLimiterState = { 0 };
+static std::atomic<bool> s_bFrameLimiterStateDirty = { false };
 
+void wlserver_set_frame_limiter_state( uint32_t uState )
+{
+	if ( s_uFrameLimiterState.exchange( uState ) != uState )
+		s_bFrameLimiterStateDirty = true;
+}
 
+uint32_t wlserver_get_frame_limiter_state( void )
+{
+	return s_uFrameLimiterState;
+}
 
+void wlserver_flush_frame_limiter_state( void )
+{
+	using gamescope::WaylandServer::CGamescopeLimiter;
 
+	if ( !s_bFrameLimiterStateDirty.exchange( false ) )
+		return;
 
-
-
+	wlserver_lock();
+	uint32_t uState = s_uFrameLimiterState;
+	for ( CGamescopeLimiter *pLimiter : CGamescopeLimiter::GetLimiters() )
+	{
+		pLimiter->SendState( uState );
+	}
+	wlserver_unlock();
+}
 
 
 
@@ -1298,6 +1387,19 @@ void wlserver_app_presented( uint32_t app_id, uint64_t frametime_ns )
 	wlserver.app_perf_requests.erase( it );
 }
 
+static void gamescope_control_set_keyboard_layout( struct wl_client *client, struct wl_resource *resource, const char *layout, const char *variant )
+{
+	// A variant with no layout is meaningless, let the empty layout reset through.
+	std::string sLayout = layout;
+	if ( !sLayout.empty() && variant[0] )
+	{
+		sLayout += ":";
+		sLayout += variant;
+	}
+
+	wlserver_set_keyboard_layout( sLayout.c_str() );
+}
+
 static const struct gamescope_control_interface gamescope_control_impl = {
 	.destroy = gamescope_control_handle_destroy,
 	.set_app_target_refresh_cycle = gamescope_control_set_app_target_refresh_cycle,
@@ -1306,6 +1408,7 @@ static const struct gamescope_control_interface gamescope_control_impl = {
 	.set_look = gamescope_control_set_look,
 	.unset_look = gamescope_control_unset_look,
 	.request_app_performance_stats = gamescope_control_request_app_performance_stats,
+	.set_keyboard_layout = gamescope_control_set_keyboard_layout,
 };
 
 static uint32_t get_conn_display_info_flags()
@@ -1376,6 +1479,8 @@ static void gamescope_control_bind( struct wl_client *client, void *data, uint32
 	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_MURA_CORRECTION, 1, 0 );
 	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_LOOK, 1, 0 );
 	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_PERF_QUERY, 1, 0 );
+	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_KEYBOARD_LAYOUT, 1, 0 );
+	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_SGSR_FILTER, 1, 0 );
 	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_DONE, 0, 0 );
 
 	wlserver_send_gamescope_control( resource );
@@ -1385,8 +1490,7 @@ static void gamescope_control_bind( struct wl_client *client, void *data, uint32
 
 static void create_gamescope_control( void )
 {
-	uint32_t version = 6;
-	wl_global_create( wlserver.display, &gamescope_control_interface, version, NULL, gamescope_control_bind );
+	wl_global_create( wlserver.display, &gamescope_control_interface, gamescope_control_interface.version, NULL, gamescope_control_bind );
 }
 
 ////////////////////////
@@ -1549,6 +1653,7 @@ void wlserver_presentation_feedback_discard( struct wlr_surface *surface, std::v
 	for (auto& feedback : presentation_feedbacks)
 	{
 		wp_presentation_feedback_send_discarded(feedback);
+		wl_resource_destroy(feedback);
 	}
 	presentation_feedbacks.clear();
 }
@@ -1601,6 +1706,10 @@ bool wlsession_active()
 
 static void handle_session_active( struct wl_listener *listener, void *data )
 {
+	// Releases delivered while another VT owns input never reach us.
+	if ( !wlserver.wlr.session->active )
+		wlserver.mapPressedHotkeyKeys.clear();
+
 	GetBackend()->DirtyState( wlserver.wlr.session->active, wlserver.wlr.session->active );
 	wl_log.infof( "Session %s", wlserver.wlr.session->active ? "resumed" : "paused" );
 }
@@ -1779,6 +1888,11 @@ gamescope_xwayland_server_t::gamescope_xwayland_server_t(wl_display *display, in
 		.force_xrandr_emulation = true,
 	};
 	xwayland_server = wlr_xwayland_server_create(display, &xwayland_options);
+	if (!xwayland_server)
+	{
+		wl_log.errorf("Failed to create Xwayland server");
+		exit(1);
+	}
 	wl_signal_add(&xwayland_server->events.ready, &xwayland_ready_listener);
 
 	output = wlr_headless_add_output(wlserver.wlr.headless_backend, 1280, 720);
@@ -1871,35 +1985,26 @@ static void waylandy_surface_destroy(struct wl_listener *listener, void *data) {
 	struct wlserver_xdg_surface_info* info =
 		wl_container_of(listener, info, destroy);
 
-	wlserver_wl_surface_info *wlserver_surface = get_wl_surface_info(info->main_surface);
-	if (!wlserver_surface)
-	{
-		wl_log.infof("No base surface info. (destroy)");
-		return;
+	wlserver_wl_surface_info *wlserver_surface = nullptr;
+
+	if (info->main_surface) {
+		if (wlserver.kb_focus_surface == info->main_surface)
+			wlserver.kb_focus_surface = nullptr;
+		if (wlserver.mouse_focus_surface == info->main_surface)
+			wlserver.mouse_focus_surface = nullptr;
+		wlserver_drag_anchor_forget( info->main_surface );
+		wlserver_surface = get_wl_surface_info(info->main_surface);
 	}
 
-	{
-		std::unique_lock lock(g_wlserver_xdg_shell_windows_lock);
-		std::erase_if(wlserver.xdg_wins, [=](auto win) { return win.get() == info->win; });
-	}
-	info->main_surface = nullptr;
-	info->win = nullptr;
-	info->xdg_surface = nullptr;
-	info->layer_surface = nullptr;
-	info->mapped = false;
+	wlserver_xdg_surface_info_finish( info );
 
-	wl_list_remove(&info->map.link);
-	wl_list_remove(&info->unmap.link);
-	wl_list_remove(&info->destroy.link);
-
-	wlserver_surface->xdg_surface = nullptr;
+	if (wlserver_surface)
+		wlserver_surface->xdg_surface = nullptr;
 }
 
 void xdg_toplevel_new(struct wl_listener *listener, void *data)
 {
 }
-
-uint32_t get_appid_from_pid( pid_t pid );
 
 wlserver_xdg_surface_info* waylandy_type_surface_new(struct wl_client *client, struct wlr_surface *surface)
 {
@@ -1922,7 +2027,7 @@ wlserver_xdg_surface_info* waylandy_type_surface_new(struct wl_client *client, s
 	{
 		pid_t nPid = 0;
 		wl_client_get_credentials( client, &nPid, nullptr, nullptr );
-		window->appID = get_appid_from_pid( nPid );
+		window->appID = gamescope::Process::GetAppIdFromPid( nPid );
 	}
 	window->_window_types.emplace<steamcompmgr_xdg_win_t>();
 
@@ -1944,9 +2049,9 @@ wlserver_xdg_surface_info* waylandy_type_surface_new(struct wl_client *client, s
 	{
 		if (it->surf == surface)
 		{
-			PendingCommit_t pending = *it;
+			ResListEntry_t pending = std::move( *it );
 
-			wlserver_xdg_commit(pending.surf, pending.buf);
+			wlserver_xdg_commit( std::move( pending ) );
 
 			it = g_PendingCommits.erase(it);
 		}
@@ -1990,6 +2095,83 @@ static gamescope::CAsyncWaiter g_LibEisWaiter( "gamescope-eis" );
 static std::unique_ptr<gamescope::GamescopeInputServer> g_InputServer;
 #endif
 
+static void wlserver_update_keymap();
+
+// Steam pushes the user's keyboard layout in here, as nothing in the session
+// exports it to us. See gamescope_control.set_keyboard_layout and
+// GAMESCOPE_KEYBOARD_LAYOUT in steamcompmgr.
+static gamescope::ConVar<std::string> cv_xkb_layout( "xkb_layout", "",
+	"XKB layout[:variant] used for physical keyboards, eg. \"es\" or \"fr:bepo\". Empty follows XKB_DEFAULT_LAYOUT and XKB_DEFAULT_VARIANT.",
+	[]( gamescope::ConVar<std::string> & ) { wlserver_update_keymap(); } );
+
+static void wlserver_set_keyboard_keymap( struct wlr_keyboard *pKeyboard, struct xkb_keymap *pKeymap )
+{
+	if ( wlr_keyboard_keymaps_match( pKeyboard->keymap, pKeymap ) )
+		return;
+
+	// A keymap that fails to apply is left alone, wlroots keeps the old one.
+	if ( !wlr_keyboard_set_keymap( pKeyboard, pKeymap ) )
+		wl_log.errorf( "Failed to set the keymap on keyboard %s", pKeyboard->base.name ? pKeyboard->base.name : "(unnamed)" );
+}
+
+static void wlserver_update_keymap()
+{
+	// The layout can be set from the environment before the keyboard group exists.
+	if ( !wlserver.keyboard_group )
+		return;
+
+	struct xkb_rule_names rules = { 0 };
+	rules.rules = getenv("XKB_DEFAULT_RULES");
+	rules.model = getenv("XKB_DEFAULT_MODEL");
+	rules.layout = getenv("XKB_DEFAULT_LAYOUT");
+	rules.variant = getenv("XKB_DEFAULT_VARIANT");
+	rules.options = getenv("XKB_DEFAULT_OPTIONS");
+	std::string strLayout = cv_xkb_layout.Get();
+	std::string strVariant;
+	if ( !strLayout.empty() )
+	{
+		size_t nVariant = strLayout.find( ':' );
+		if ( nVariant != std::string::npos )
+		{
+			strVariant = strLayout.substr( nVariant + 1 );
+			strLayout.resize( nVariant );
+		}
+
+		// The variant from the environment belongs to the layout it shipped with.
+		rules.layout = strLayout.c_str();
+		rules.variant = strVariant.c_str();
+	}
+
+	struct xkb_context *context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+	struct xkb_keymap *keymap = xkb_keymap_new_from_names(context, &rules, XKB_KEYMAP_COMPILE_NO_FLAGS);
+
+	if ( keymap )
+	{
+		// A keyboard left on the old keymap keeps feeding its own modifier masks into
+		// the group, so AltGr would still arrive as the layout it joined with. Each one
+		// is checked on its own, so a keyboard we failed to update is retried next time.
+		wlserver_set_keyboard_keymap( &wlserver.keyboard_group->keyboard, keymap );
+		for ( struct wlserver_keyboard *pKeyboard : s_Keyboards )
+			wlserver_set_keyboard_keymap( pKeyboard->wlr, keymap );
+	}
+	else
+	{
+		// Unsetting the keymap would leave the group without an xkb_state to translate keys with.
+		wl_log.errorf( "Failed to compile keymap for layout \"%s\", keeping the current layout",
+			rules.layout ? rules.layout : "" );
+	}
+
+	xkb_keymap_unref( keymap );
+	xkb_context_unref( context );
+}
+
+void wlserver_set_keyboard_layout( const char *pszLayout )
+{
+	assert( wlserver_is_lock_held() );
+
+	cv_xkb_layout = std::string{ pszLayout };
+}
+
 bool wlserver_init( void ) {
 	assert( wlserver.display != nullptr );
 
@@ -2022,18 +2204,10 @@ bool wlserver_init( void ) {
 
 	// Create a keyboard group to keep all externally connected keyboards
 	// in sync (one single layout and a shared state)
-	struct xkb_context *context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
-	struct xkb_rule_names rules = { 0 };
-	rules.rules = getenv("XKB_DEFAULT_RULES");
-	rules.model = getenv("XKB_DEFAULT_MODEL");
-	rules.layout = getenv("XKB_DEFAULT_LAYOUT");
-	rules.variant = getenv("XKB_DEFAULT_VARIANT");
-	rules.options = getenv("XKB_DEFAULT_OPTIONS");
-	struct xkb_keymap *keymap = xkb_keymap_new_from_names(context, &rules, XKB_KEYMAP_COMPILE_NO_FLAGS);
 	wlserver.keyboard_group = wlr_keyboard_group_create();
 	struct wlr_keyboard *keyboard = &wlserver.keyboard_group->keyboard;
 	wlr_keyboard_set_repeat_info(keyboard, 25, 600);
-	wlr_keyboard_set_keymap(keyboard, keymap);
+	wlserver_update_keymap();
 	wlserver.keyboard_group_modifiers.notify = wlserver_handle_modifiers;
 	wl_signal_add(&keyboard->events.modifiers, &wlserver.keyboard_group_modifiers);
 	wlserver.keyboard_group_key.notify = wlserver_handle_key;
@@ -2056,6 +2230,8 @@ bool wlserver_init( void ) {
 	create_gamescope_xwayland();
 
 	create_gamescope_swapchain_factory_v2();
+
+	new gamescope::WaylandServer::CGamescopeLimiterProtocol( wlserver.display );
 
 #if HAVE_PIPEWIRE
 	create_gamescope_pipewire();
@@ -2277,6 +2453,16 @@ void wlserver_run(void)
 			}
 
 			wlserver_unlock();
+
+			// need to defer these to avoid double-locking with m_mutActiveConnectors.
+			if ( wlserver.physical_cursor_move )
+			{
+				if ( GetBackend() )
+				{
+					GetBackend()->NotifyPhysicalInput( gamescope::InputType::Mouse );
+				}
+				wlserver.physical_cursor_move = false;
+			}
 		}
 	}
 
@@ -2340,13 +2526,23 @@ void wlserver_keyboardfocus( struct wlr_surface *surface, bool bConstrain )
 	assert( wlserver_is_lock_held() );
 
 	if (wlserver.kb_focus_surface != surface) {
-		auto old_wl_surf = get_wl_surface_info( wlserver.kb_focus_surface );
-		if (old_wl_surf && old_wl_surf->xdg_surface && old_wl_surf->xdg_surface->xdg_surface && old_wl_surf->xdg_surface->xdg_surface->toplevel)
-			wlr_xdg_toplevel_set_activated(old_wl_surf->xdg_surface->xdg_surface->toplevel, false);
+		if ( wlserver.kb_focus_surface ) {
+			auto wl_surf = get_wl_surface_info( wlserver.kb_focus_surface );
+			if ( wl_surf && wl_surf->xdg_surface ) {
+				auto old_xdg = wlr_xdg_surface_try_from_wlr_surface( wlserver.kb_focus_surface );
+				if ( old_xdg && old_xdg->toplevel )
+					wlr_xdg_toplevel_set_activated( old_xdg->toplevel, false );
+			}
+		}
 
-		auto new_wl_surf = get_wl_surface_info( surface );
-		if (new_wl_surf && new_wl_surf->xdg_surface && new_wl_surf->xdg_surface->xdg_surface && new_wl_surf->xdg_surface->xdg_surface->toplevel)
-			wlr_xdg_toplevel_set_activated(new_wl_surf->xdg_surface->xdg_surface->toplevel, true);
+		if ( surface ) {
+			auto wl_surf = get_wl_surface_info( surface );
+			if ( wl_surf && wl_surf->xdg_surface ) {
+				auto new_xdg = wlr_xdg_surface_try_from_wlr_surface( surface );
+				if ( new_xdg && new_xdg->toplevel )
+					wlr_xdg_toplevel_set_activated( new_xdg->toplevel, true );
+			}
+		}
 	}
 
 	assert( wlserver.wlr.virtual_keyboard_device != nullptr );
@@ -2370,23 +2566,37 @@ void wlserver_keyboardfocus( struct wlr_surface *surface, bool bConstrain )
 bool wlserver_process_hotkeys( wlr_keyboard *keyboard, uint32_t key, bool press )
 {
 	xkb_keycode_t keycode = key + 8;
-	xkb_keysym_t keysym = xkb_state_key_get_one_sym( keyboard->xkb_state, keycode );
 
-	keysym = NormalizeKeysymForHotkey( keysym );
-
-	static std::unordered_set<xkb_keysym_t> s_setPressedKeySyms;
+	// Remember the sym at press time so a release erases exactly what the press inserted.
 	if ( press )
 	{
-		s_setPressedKeySyms.emplace( keysym );
+		xkb_keysym_t keysym = xkb_state_key_get_one_sym( keyboard->xkb_state, keycode );
+		wlserver.mapPressedHotkeyKeys[ { keyboard, keycode } ] = NormalizeKeysymForHotkey( keysym );
 	}
 	else
 	{
-		s_setPressedKeySyms.erase( keysym );
+		auto it = wlserver.mapPressedHotkeyKeys.find( { keyboard, keycode } );
+
+		// A release we never saw the press for cannot end a binding.
+		if ( it == wlserver.mapPressedHotkeyKeys.end() )
+			return false;
+
+		xkb_keysym_t released = it->second;
+		wlserver.mapPressedHotkeyKeys.erase( it );
+
+		// Two keycodes can resolve to the same sym, so only a release that actually drops the sym can end a binding.
+		for ( const auto &[ deviceKey, uKeySym ] : wlserver.mapPressedHotkeyKeys )
+			if ( uKeySym == released )
+				return false;
 	}
+
+	std::unordered_set<xkb_keysym_t> setPressedKeySyms;
+	for ( const auto &[ deviceKey, uKeySym ] : wlserver.mapPressedHotkeyKeys )
+		setPressedKeySyms.emplace( uKeySym );
 
 	if ( log_binding.Enabled( LOG_DEBUG ) )
 	{
-		std::string sPressedKeySymsDebugName = ComputeDebugName( s_setPressedKeySyms );
+		std::string sPressedKeySymsDebugName = ComputeDebugName( setPressedKeySyms );
 		log_binding.debugf( "Looking for: [%s].", sPressedKeySymsDebugName.c_str() );
 	}
 
@@ -2406,7 +2616,7 @@ bool wlserver_process_hotkeys( wlr_keyboard *keyboard, uint32_t key, bool press 
 				if ( !pBinding->IsArmed() )
 					break;
 
-				if ( s_setPressedKeySyms != keybind.setKeySyms )
+				if ( setPressedKeySyms != keybind.setKeySyms )
 					continue;
 
 				if ( pBinding->Execute() )
@@ -2495,6 +2705,87 @@ void wlserver_oncursorevent()
 	{
 		hasRepaint = true;
 	}
+}
+
+bool wlserver_input_held()
+{
+	assert( wlserver_is_lock_held() );
+
+	return wlserver.wlr.seat->pointer_state.button_count > 0 || !wlserver.touch_down_ids.empty();
+}
+
+// Xwayland adds the window origin to the pointer position, so a dragging
+// client reads its own moves back as motion. Subtract them until the press ends.
+void wlserver_drag_anchor_move( struct wlr_surface *surface, int x, int y, int base_x, int base_y )
+{
+	assert( wlserver_is_lock_held() );
+
+	if ( wlserver.drag_anchor.surface != surface )
+	{
+		wl_log.debugf( "drag anchor: now tracking surface %p", (void *)surface );
+		wlserver.drag_anchor = { .surface = surface, .last_x = base_x, .last_y = base_y };
+	}
+
+	// A new drag supersedes any pending settle.
+	wlserver.drag_settle_surface = nullptr;
+
+	wlserver.drag_anchor.dx += x - wlserver.drag_anchor.last_x;
+	wlserver.drag_anchor.dy += y - wlserver.drag_anchor.last_y;
+	wlserver.drag_anchor.last_x = x;
+	wlserver.drag_anchor.last_y = y;
+}
+
+static void wlserver_drag_anchor_apply( double &x, double &y )
+{
+	assert( wlserver_is_lock_held() );
+
+	if ( wlserver.drag_anchor.surface != wlserver.mouse_focus_surface )
+		return;
+
+	x -= wlserver.drag_anchor.dx;
+	y -= wlserver.drag_anchor.dy;
+}
+
+// The dragged surface is gone, drop the anchor and let the focus pass re-place.
+static void wlserver_drag_anchor_forget( struct wlr_surface *surface )
+{
+	assert( wlserver_is_lock_held() );
+
+	if ( wlserver.drag_settle_surface == surface )
+		wlserver.drag_settle_surface = nullptr;
+
+	if ( wlserver.drag_anchor.surface != surface )
+		return;
+
+	wlserver.drag_anchor = {};
+	MakeFocusDirty();
+	nudge_steamcompmgr();
+}
+
+// Covers the moves a client keeps sending before it sees the release.
+static constexpr int k_nDragSettleBudget = 32;
+
+// Nothing is pressed any more, let the focus pass put the window back on the screen.
+static void wlserver_drag_anchor_release()
+{
+	assert( wlserver_is_lock_held() );
+
+	if ( wlserver_input_held() )
+		return;
+
+	if ( !wlserver.drag_anchor.surface )
+	{
+		// A press without a drag ends any pending settle.
+		wlserver.drag_settle_surface = nullptr;
+		return;
+	}
+
+	wl_log.debugf( "drag anchor: released at %f,%f, placing the window again", wlserver.drag_anchor.dx, wlserver.drag_anchor.dy );
+	wlserver.drag_settle_surface = wlserver.drag_anchor.surface;
+	wlserver.drag_settle_budget = k_nDragSettleBudget;
+	wlserver.drag_anchor = {};
+	MakeFocusDirty();
+	nudge_steamcompmgr();
 }
 
 static std::pair<int, int> wlserver_get_cursor_bounds()
@@ -2636,8 +2927,24 @@ static void wlserver_update_cursor_constraint()
 			pixman_box32_t *boxes = pixman_region32_rectangles(pRegion, &nboxes);
 			if ( nboxes )
 			{
-				wlserver.mouse_surface_cursorx = std::clamp<double>( wlserver.mouse_surface_cursorx, boxes[0].x1, boxes[0].x2);
-				wlserver.mouse_surface_cursory = std::clamp<double>( wlserver.mouse_surface_cursory, boxes[0].y1, boxes[0].y2);
+				double flBestDistSqr = DBL_MAX;
+				int nBestBox = 0;
+				for ( int i = 0; i < nboxes; i++ )
+				{
+					double cx = std::clamp<double>( wlserver.mouse_surface_cursorx, boxes[i].x1, boxes[i].x2 );
+					double cy = std::clamp<double>( wlserver.mouse_surface_cursory, boxes[i].y1, boxes[i].y2 );
+					double dx = cx - wlserver.mouse_surface_cursorx;
+					double dy = cy - wlserver.mouse_surface_cursory;
+					double flDistSqr = dx * dx + dy * dy;
+					if ( flDistSqr < flBestDistSqr )
+					{
+						flBestDistSqr = flDistSqr;
+						nBestBox = i;
+					}
+				}
+
+				wlserver.mouse_surface_cursorx = std::clamp<double>( wlserver.mouse_surface_cursorx, boxes[nBestBox].x1, boxes[nBestBox].x2);
+				wlserver.mouse_surface_cursory = std::clamp<double>( wlserver.mouse_surface_cursory, boxes[nBestBox].y1, boxes[nBestBox].y2);
 
 				wlr_seat_pointer_warp( wlserver.wlr.seat, wlserver.mouse_surface_cursorx, wlserver.mouse_surface_cursory );
 			}
@@ -2668,7 +2975,10 @@ static void wlserver_constrain_cursor( struct wlr_pointer_constraint_v1 *pNewCon
 	wlserver.SetMouseConstraint( pNewConstraint );
 
 	if ( !pNewConstraint )
+	{
+		pixman_region32_clear( &wlserver.confine );
 		return;
+	}
 
 	wlserver.mouse_constraint_requires_warp = true;
 
@@ -2682,7 +2992,8 @@ static void handle_pointer_constraint_set_region(struct wl_listener *listener, v
 	GamescopePointerConstraint *pGamescopeConstraint = wl_container_of(listener, pGamescopeConstraint, set_region);
 
 	// If the region has been updated, we might need to warp again next commit.
-	wlserver.mouse_constraint_requires_warp = true;
+	if ( pGamescopeConstraint->pConstraint == wlserver.GetCursorConstraint() )
+		wlserver.mouse_constraint_requires_warp = true;
 }
 
 void handle_constraint_destroy(struct wl_listener *listener, void *data)
@@ -2698,6 +3009,7 @@ void handle_constraint_destroy(struct wl_listener *listener, void *data)
 		wlserver_warp_to_constraint_hint();
 
 		wlserver.SetMouseConstraint( nullptr );
+		pixman_region32_clear( &wlserver.confine );
 	}
 
 	delete pGamescopeConstraint;
@@ -2775,7 +3087,11 @@ void wlserver_mousemotion( double dx, double dy, uint32_t time )
 
 	wlserver_oncursorevent();
 
-	wlr_seat_pointer_notify_motion( wlserver.wlr.seat, time, wlserver.mouse_surface_cursorx, wlserver.mouse_surface_cursory );
+	double sx = wlserver.mouse_surface_cursorx;
+	double sy = wlserver.mouse_surface_cursory;
+	wlserver_drag_anchor_apply( sx, sy );
+
+	wlr_seat_pointer_notify_motion( wlserver.wlr.seat, time, sx, sy );
 	wlr_seat_pointer_notify_frame( wlserver.wlr.seat );
 }
 
@@ -2794,7 +3110,11 @@ void wlserver_mousewarp( double x, double y, uint32_t time, bool bSynthetic )
 
 	wlserver_oncursorevent();
 
-	wlr_seat_pointer_notify_motion( wlserver.wlr.seat, time, wlserver.mouse_surface_cursorx, wlserver.mouse_surface_cursory );
+	double sx = wlserver.mouse_surface_cursorx;
+	double sy = wlserver.mouse_surface_cursory;
+	wlserver_drag_anchor_apply( sx, sy );
+
+	wlr_seat_pointer_notify_motion( wlserver.wlr.seat, time, sx, sy );
 	wlr_seat_pointer_notify_frame( wlserver.wlr.seat );
 }
 
@@ -2815,6 +3135,7 @@ void wlserver_mousebutton( int button, bool press, uint32_t time )
 
 	wlr_seat_pointer_notify_button( wlserver.wlr.seat, time, button, press ? WL_POINTER_BUTTON_STATE_PRESSED : WL_POINTER_BUTTON_STATE_RELEASED );
 	wlr_seat_pointer_notify_frame( wlserver.wlr.seat );
+	wlserver_drag_anchor_release();
 }
 
 void wlserver_mousewheel( double flX, double flY, uint32_t time )
@@ -2949,7 +3270,9 @@ void wlserver_touchmotion( double x, double y, int touch_id, uint32_t time, bool
 
 		if ( eMode == gamescope::TouchClickModes::Passthrough )
 		{
-			wlr_seat_touch_notify_motion( wlserver.wlr.seat, time, touch_id, tx, ty );
+			double sx = tx, sy = ty;
+			wlserver_drag_anchor_apply( sx, sy );
+			wlr_seat_touch_notify_motion( wlserver.wlr.seat, time, touch_id, sx, sy );
 
 			if ( bAlwaysWarpCursor )
 				wlserver_mousewarp( tx, ty, time, false );
@@ -2998,8 +3321,9 @@ void wlserver_touchdown( double x, double y, int touch_id, uint32_t time, gamesc
 
 		if ( eMode == gamescope::TouchClickModes::Passthrough )
 		{
-			wlr_seat_touch_notify_down( wlserver.wlr.seat, wlserver.mouse_focus_surface, time, touch_id,
-										tx, ty );
+			double sx = tx, sy = ty;
+			wlserver_drag_anchor_apply( sx, sy );
+			wlr_seat_touch_notify_down( wlserver.wlr.seat, wlserver.mouse_focus_surface, time, touch_id, sx, sy );
 
 			wlserver.touch_down_ids.insert( touch_id );
 		}
@@ -3035,37 +3359,36 @@ void wlserver_touchup( int touch_id, uint32_t time )
 {
 	assert( wlserver_is_lock_held() );
 
-	if ( wlserver.mouse_focus_surface != NULL )
+	// Release whatever the touch pressed even if its surface is gone, or the seat keeps the button down.
+	bool bReleasedAny = false;
+	for ( int i = 0; i < WLSERVER_BUTTON_COUNT; i++ )
 	{
-		bool bReleasedAny = false;
-		for ( int i = 0; i < WLSERVER_BUTTON_COUNT; i++ )
+		if ( wlserver.button_held[ i ] == true )
 		{
-			if ( wlserver.button_held[ i ] == true )
+			uint32_t button = TouchClickModeToLinuxButton( (gamescope::TouchClickMode) i );
+
+			if ( button != 0 )
 			{
-				uint32_t button = TouchClickModeToLinuxButton( (gamescope::TouchClickMode) i );
-
-				if ( button != 0 )
-				{
-					wlr_seat_pointer_notify_button( wlserver.wlr.seat, time, button, WL_POINTER_BUTTON_STATE_RELEASED );
-					bReleasedAny = true;
-				}
-
-				wlserver.button_held[ i ] = false;
+				wlr_seat_pointer_notify_button( wlserver.wlr.seat, time, button, WL_POINTER_BUTTON_STATE_RELEASED );
+				bReleasedAny = true;
 			}
-		}
 
-		if ( bReleasedAny == true )
-		{
-			wlr_seat_pointer_notify_frame( wlserver.wlr.seat );
-		}
-
-		if ( wlserver.touch_down_ids.count( touch_id ) > 0 )
-		{
-			wlr_seat_touch_notify_up( wlserver.wlr.seat, time, touch_id );
-			wlserver.touch_down_ids.erase( touch_id );
+			wlserver.button_held[ i ] = false;
 		}
 	}
 
+	if ( bReleasedAny == true )
+	{
+		wlr_seat_pointer_notify_frame( wlserver.wlr.seat );
+	}
+
+	if ( wlserver.touch_down_ids.count( touch_id ) > 0 )
+	{
+		wlr_seat_touch_notify_up( wlserver.wlr.seat, time, touch_id );
+		wlserver.touch_down_ids.erase( touch_id );
+	}
+
+	wlserver_drag_anchor_release();
 	bump_input_counter();
 }
 
@@ -3120,13 +3443,13 @@ static void wlserver_x11_surface_info_set_wlr( struct wlserver_x11_surface_info 
 	{
 		if (it->surf == wlr_surf)
 		{
-			PendingCommit_t pending = *it;
+			ResListEntry_t pending = std::move( *it );
 
 			// Still have the buffer lock from before...
 			wlserver_x11_surface_info *wlserver_x11_surface_info = get_wl_surface_info(wlr_surf)->x11_surface;
 			assert(wlserver_x11_surface_info);
 			assert(wlserver_x11_surface_info->xwayland_server);
-			wlserver_x11_surface_info->xwayland_server->wayland_commit( pending.surf, pending.buf );
+			wlserver_x11_surface_info->xwayland_server->wayland_commit( std::move( pending ) );
 
 			it = g_PendingCommits.erase(it);
 		}
@@ -3182,22 +3505,26 @@ void gamescope_xwayland_server_t::set_wl_id( struct wlserver_x11_surface_info *s
 
 	wl_list_insert( &pending_surfaces, &surf->pending_link );
 
-	struct wlr_surface *wlr_override_surf = nullptr;
-	struct wlr_surface *wlr_surf = nullptr;
-	if ( content_overrides.count( surf->x11_id ) )
-	{
-		wlr_override_surf = content_overrides[ surf->x11_id ]->surface;
-	}
-
+	
 	struct wl_resource *resource = wl_client_get_object( xwayland_server->client, id );
 	if ( resource != nullptr )
-		wlr_surf = wlr_surface_from_resource( resource );
+	{
+		struct wlr_surface *wlr_surf = wlr_surface_from_resource( resource );
 
-	if ( wlr_surf != nullptr )
-		wlserver_x11_surface_info_set_wlr( surf, wlr_surf, false );
+		if ( wlr_surf != nullptr )
+			wlserver_x11_surface_info_set_wlr( surf, wlr_surf, false );
+	}
+}
 
-	if ( wlr_override_surf != nullptr )
-		wlserver_x11_surface_info_set_wlr( surf, wlr_override_surf, true );
+void gamescope_xwayland_server_t::link_override( struct wlserver_x11_surface_info *surf )
+{
+	if ( content_overrides.count( surf->x11_id ) )
+	{
+		struct wlr_surface *wlr_override_surf = content_overrides[ surf->x11_id ]->surface;
+
+		if ( wlr_override_surf != nullptr )
+			wlserver_x11_surface_info_set_wlr( surf, wlr_override_surf, true );
+	}
 }
 
 bool gamescope_xwayland_server_t::is_xwayland_ready() const

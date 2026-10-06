@@ -34,9 +34,9 @@ struct commit_t final : public gamescope::RcObject, public gamescope::IWaitable,
 
 	// Returns true if we had a fence that was closed.
 	bool CloseFenceInternal();
-	void SetFence( int nFence, bool bMangoNudge, CommitDoneList_t *pDoneCommits );
+	void SetFence( int nFence, bool bMangoNudge, uint32_t uMangoMsgType, CommitDoneList_t *pDoneCommits );
 
-	bool ShouldPreemptivelyUpscale();
+	bool ShouldPreemptivelyUpscale( GamescopeUpscaleFilter eFilter, GamescopeUpscaleScaler eScaler );
 
 	struct wlr_buffer *buf = nullptr;
 	gamescope::Rc<CVulkanTexture> vulkanTex;
@@ -65,6 +65,8 @@ struct commit_t final : public gamescope::RcObject, public gamescope::IWaitable,
 	bool is_steam = false;
 	uint32_t appID = 0;
 	std::optional<wlserver_vk_swapchain_feedback> feedback = std::nullopt;
+	std::shared_ptr<gamescope::CAcquireTimelinePoint> pAcquirePoint;
+	bool bOverrideContent = false;
 
 	uint64_t win_seq = 0;
 	struct wlr_surface *surf = nullptr;
@@ -79,5 +81,7 @@ struct commit_t final : public gamescope::RcObject, public gamescope::IWaitable,
 	std::mutex m_WaitableCommitStateMutex;
 	int m_nCommitFence = -1;
 	bool m_bMangoNudge = false;
+	// Typed mangoapp stream to nudge, 0 for none, never the legacy type.
+	uint32_t m_uMangoMsgType = 0;
 	CommitDoneList_t *m_pDoneCommits = nullptr; // I hate this
 };

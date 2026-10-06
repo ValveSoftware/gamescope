@@ -1,0 +1,34 @@
+#version 460
+
+#extension GL_GOOGLE_include_directive : require
+#extension GL_EXT_scalar_block_layout : require
+
+#include "descriptor_set.h"
+
+layout(
+  local_size_x = 16,
+  local_size_y = 16,
+  local_size_z = 1) in;
+
+layout(binding = 0, scalar)
+uniform layers_t {
+    uint u_width;
+    uint u_height;
+};
+
+#include "sgsr1.h"
+
+void sgsrPass(uvec2 pos, vec2 invSize)
+{
+    if (pos.x >= u_width || pos.y >= u_height)
+        return;
+    vec4 color = sampleSgsr1(s_samplers[0], (vec2(pos) + 0.5) * invSize);
+    imageStore(dst, ivec2(pos), vec4(color.rgb, 1));
+}
+
+void main()
+{
+    // One pixel per thread, four as EASU does keeps too many gathers live here.
+    vec2 invSize = 1.0 / vec2(u_width, u_height);
+    sgsrPass(gl_GlobalInvocationID.xy, invSize);
+}
