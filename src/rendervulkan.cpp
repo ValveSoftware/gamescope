@@ -3610,11 +3610,26 @@ bool vulkan_make_output()
 	return true;
 }
 
-static void update_tmp_images( uint32_t width, uint32_t height )
+// scRGB needs FP16 range. PQ needs 10 bits and UNORM clamps filter overshoot below 0 before the PQ decode.
+static uint32_t tmp_image_format( GamescopeAppTextureColorspace colorspace )
+{
+	switch ( colorspace )
+	{
+		case GAMESCOPE_APP_TEXTURE_COLORSPACE_SCRGB:
+			return DRM_FORMAT_ABGR16161616F;
+		case GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ:
+			return DRM_FORMAT_ABGR2101010;
+		default:
+			return DRM_FORMAT_ARGB8888;
+	}
+}
+
+static void update_tmp_images( uint32_t width, uint32_t height, uint32_t uFormat )
 {
 	if ( g_output.tmpOutput != nullptr
 			&& width == g_output.tmpOutput->width()
-			&& height == g_output.tmpOutput->height() )
+			&& height == g_output.tmpOutput->height()
+			&& uFormat == g_output.tmpOutput->drmFormat() )
 	{
 		return;
 	}
@@ -3624,7 +3639,7 @@ static void update_tmp_images( uint32_t width, uint32_t height )
 	createFlags.bStorage = true;
 
 	g_output.tmpOutput = new CVulkanTexture();
-	bool bSuccess = g_output.tmpOutput->BInit( width, height, 1u, DRM_FORMAT_ARGB8888, createFlags, nullptr );
+	bool bSuccess = g_output.tmpOutput->BInit( width, height, 1u, uFormat, createFlags, nullptr );
 
 	if ( !bSuccess )
 	{
@@ -4423,7 +4438,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 		uint32_t tempX = frameInfo->layers.get( 0 ).integerWidth();
 		uint32_t tempY = frameInfo->layers.get( 0 ).integerHeight();
 
-		update_tmp_images(tempX, tempY);
+		update_tmp_images(tempX, tempY, tmp_image_format(frameInfo->layers.get( 0 ).colorspace));
 
 		cmdBuffer->bindPipeline(g_device.pipeline(frameInfo->useSGSRLayer0 ? SHADER_TYPE_SGSR : SHADER_TYPE_EASU));
 		cmdBuffer->bindTarget(g_output.tmpOutput);
@@ -4462,7 +4477,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 		uint32_t tempX = frameInfo->layers.get( 0 ).integerWidth();
 		uint32_t tempY = frameInfo->layers.get( 0 ).integerHeight();
 
-		update_tmp_images(tempX, tempY);
+		update_tmp_images(tempX, tempY, tmp_image_format(frameInfo->layers.get( 0 ).colorspace));
 
 		float nisSharpness = (20 - frameInfo->nUpscaleSharpness) / 20.0f;
 
@@ -4501,7 +4516,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 	}
 	else if ( frameInfo->blurLayer0 )
 	{
-		update_tmp_images(currentOutputWidth, currentOutputHeight);
+		update_tmp_images(currentOutputWidth, currentOutputHeight, tmp_image_format(frameInfo->layers.get( 0 ).colorspace));
 
 		ShaderType type = SHADER_TYPE_BLUR_FIRST_PASS;
 
