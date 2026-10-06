@@ -648,6 +648,7 @@ bool CVulkanDevice::createDevice()
 		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
 		.pNext = &presentIdFeatures,
 		.features = {
+			.shaderStorageImageWriteWithoutFormat = VK_TRUE,
 			.shaderInt16 = m_bSupportsFp16,
 		},
 	};
