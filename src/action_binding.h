@@ -50,6 +50,9 @@ namespace gamescope
         void SetDescription( std::string sDescription ) { m_sDescription = std::move( sDescription ); }
         const std::string &GetDescription() const { return m_sDescription; }
 
+        void SetNestedOnly( bool bNestedOnly ) { m_bNestedOnly = bNestedOnly; }
+        bool IsNestedOnly() const { return m_bNestedOnly; }
+
         void AddKeyboardTrigger( std::unordered_set<xkb_keysym_t> setKeySyms );
         void ClearTriggers();
 
@@ -67,6 +70,7 @@ namespace gamescope
         std::string m_sDescription;
         std::vector<Keybind_t> m_KeyboardTriggers;
         std::optional<uint32_t> m_ouArmFlags;
+        bool m_bNestedOnly = false;
 
         static std::vector<CServerActionBinding *> s_Bindings;
     };
