@@ -212,6 +212,7 @@ TEST_CASE("RegisterHotkeysFromScript", "[action_binding]") {
 		comboTable["keys"] = keysArray;
 		comboTable["action"] = "test_fs_action";
 		comboTable["description"] = "Custom Grab";
+		comboTable["nested_only"] = true;
 		hotkeysTable["CustomGrab"] = comboTable;
 	}
 
@@ -234,6 +235,7 @@ TEST_CASE("RegisterHotkeysFromScript", "[action_binding]") {
 			REQUIRE(triggers.size() == 1);
 			REQUIRE(triggers[0].setKeySyms.contains(XKB_KEY_Super_L));
 			REQUIRE(triggers[0].setKeySyms.contains(XKB_KEY_F));
+			REQUIRE(pBinding->IsNestedOnly() == false);
 
 			s_bLuaFsRan = false;
 			REQUIRE(pBinding->Execute() == true);
@@ -244,6 +246,7 @@ TEST_CASE("RegisterHotkeysFromScript", "[action_binding]") {
 			REQUIRE(triggers.size() == 1);
 			REQUIRE(triggers[0].setKeySyms.contains(XKB_KEY_Control_L));
 			REQUIRE(triggers[0].setKeySyms.contains(XKB_KEY_1));
+			REQUIRE(pBinding->IsNestedOnly() == false);
 
 			s_bLuaCallbackRan = false;
 			REQUIRE(pBinding->Execute() == true);
@@ -254,6 +257,7 @@ TEST_CASE("RegisterHotkeysFromScript", "[action_binding]") {
 			REQUIRE(triggers.size() == 1);
 			REQUIRE(triggers[0].setKeySyms.contains(XKB_KEY_Super_L));
 			REQUIRE(triggers[0].setKeySyms.contains(XKB_KEY_G));
+			REQUIRE(pBinding->IsNestedOnly() == true);
 
 			s_bLuaFsRan = false;
 			REQUIRE(pBinding->Execute() == true);

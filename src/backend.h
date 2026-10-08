@@ -404,6 +404,7 @@ namespace gamescope
 
         virtual void ToggleFullscreen() {}
         virtual void ToggleGrab() {}
+        virtual bool IsNested() const { return false; }
 
         static IBackend *Get();
         template <typename T>
@@ -444,6 +445,7 @@ namespace gamescope
 
         virtual void ToggleFullscreen() override {}
         virtual void ToggleGrab() override {}
+        virtual bool IsNested() const override { return false; }
     };
 
     // This is a blob of data that may be associated with

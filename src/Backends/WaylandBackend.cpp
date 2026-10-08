@@ -749,6 +749,8 @@ namespace gamescope
         }
 
 
+        virtual bool IsNested() const override { return true; }
+
     private:
 
         void Wayland_Registry_Global( wl_registry *pRegistry, uint32_t uName, const char *pInterface, uint32_t uVersion );

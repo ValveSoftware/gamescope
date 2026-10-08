@@ -283,6 +283,7 @@ namespace gamescope
             sol::function luaFn;
             bool bHasCmd = false;
             bool bHasFn = false;
+            bool bNestedOnly = false;
 
             if ( val.is<std::string>() )
             {
@@ -300,6 +301,7 @@ namespace gamescope
             {
                 sol::table tbl = val.as<sol::table>();
                 sDesc = tbl.get_or<std::string>( "description", sKeyCombo );
+                bNestedOnly = tbl.get_or( "nested_only", false );
 
                 sol::object keysObj = tbl["keys"];
                 if ( keysObj.is<sol::table>() )
@@ -353,6 +355,7 @@ namespace gamescope
             {
                 auto pBinding = std::make_unique<CNativeActionBinding>( std::move( sDesc ), std::move( sCmd ) );
                 pBinding->AddKeyboardTrigger( std::move( *oKeysyms ) );
+                pBinding->SetNestedOnly( bNestedOnly );
                 pBinding->Arm( 0 );
                 RegisterNativeBinding( std::move( pBinding ) );
             }
@@ -360,6 +363,7 @@ namespace gamescope
             {
                 auto pBinding = std::make_unique<CNativeActionBinding>( std::move( sDesc ), std::move( luaFn ) );
                 pBinding->AddKeyboardTrigger( std::move( *oKeysyms ) );
+                pBinding->SetNestedOnly( bNestedOnly );
                 pBinding->Arm( 0 );
                 RegisterNativeBinding( std::move( pBinding ) );
             }

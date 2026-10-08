@@ -2625,6 +2625,9 @@ bool wlserver_process_hotkeys( wlr_keyboard *keyboard, uint32_t key, bool press 
 			if ( !pBinding->IsArmed() )
 				continue;
 
+			if ( pBinding->IsNestedOnly() && ( !GetBackend() || !GetBackend()->IsNested() ) )
+				continue;
+
 			std::span<const Keybind_t> pKeybinds = pBinding->GetKeyboardTriggers();
 			for ( const Keybind_t &keybind : pKeybinds )
 			{

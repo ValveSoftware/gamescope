@@ -4,14 +4,14 @@
 --   gamescope.config.input.hotkeys["Super+F"] = nil               -- disable hotkey
 --   gamescope.config.input.hotkeys["Ctrl+Alt+F"] = "fullscreen"  -- custom combo
 
-gamescope.config.input.hotkeys["Super+F"] = "fullscreen"
-gamescope.config.input.hotkeys["Super+G"] = "toggle_grab"
-gamescope.config.input.hotkeys["Super+S"] = "screenshot_hotkey"
+gamescope.config.input.hotkeys["Super+F"] = { action = "fullscreen", nested_only = true }
+gamescope.config.input.hotkeys["Super+G"] = { action = "toggle_grab", nested_only = true }
+gamescope.config.input.hotkeys["Super+S"] = { action = "screenshot_hotkey", nested_only = true }
 
 -- Scaling and filter controls (upstream parity)
-gamescope.config.input.hotkeys["Super+N"] = "filter_pixel"
-gamescope.config.input.hotkeys["Super+B"] = "filter_linear"
-gamescope.config.input.hotkeys["Super+U"] = "toggle_fsr"
-gamescope.config.input.hotkeys["Super+Y"] = "toggle_nis"
-gamescope.config.input.hotkeys["Super+I"] = "increase_sharpness"
-gamescope.config.input.hotkeys["Super+O"] = "decrease_sharpness"
+gamescope.config.input.hotkeys["Super+N"] = { action = "filter_pixel", nested_only = true }
+gamescope.config.input.hotkeys["Super+B"] = { action = "filter_linear", nested_only = true }
+gamescope.config.input.hotkeys["Super+U"] = { action = "toggle_fsr", nested_only = true }
+gamescope.config.input.hotkeys["Super+Y"] = { action = "toggle_nis", nested_only = true }
+gamescope.config.input.hotkeys["Super+I"] = { action = "increase_sharpness", nested_only = true }
+gamescope.config.input.hotkeys["Super+O"] = { action = "decrease_sharpness", nested_only = true }

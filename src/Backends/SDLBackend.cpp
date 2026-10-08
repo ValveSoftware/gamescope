@@ -174,6 +174,7 @@ namespace gamescope
 
 		virtual void ToggleFullscreen() override;
 		virtual void ToggleGrab() override;
+		virtual bool IsNested() const override { return true; }
 
 		////////////////////////
 		// INestedHints Compat
