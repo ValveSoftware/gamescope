@@ -712,6 +712,10 @@ char **g_argv;
 
 extern char **environ;
 
+#if HAVE_SYSTEMD
+void logind_sleep_init();
+#endif
+
 int main(int argc, char **argv)
 {
 	g_argc = argc;
@@ -1097,6 +1101,10 @@ int main(int argc, char **argv)
 	{
 		fprintf( stderr, "Warning: failed to setup PipeWire, screen capture won't be available\n" );
 	}
+#endif
+
+#if HAVE_SYSTEMD
+	logind_sleep_init();
 #endif
 
 	std::thread steamCompMgrThread( steamCompMgrThreadRun, argc, argv );
