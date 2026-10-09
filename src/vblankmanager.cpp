@@ -7,6 +7,8 @@
 #include <chrono>
 #include <atomic>
 #include <condition_variable>
+#include <filesystem>
+#include <fstream>
 
 #include <assert.h>
 #include <fcntl.h>
@@ -27,6 +29,27 @@ namespace gamescope
 {
 	ConVar<bool> vblank_debug( "vblank_debug", false, "Enable vblank debug spew to stderr." );
 
+	// Target residency of the deepest idle state a CPU may enter, zero without cpuidle.
+	static uint64_t GetDeepestIdleResidency()
+	{
+		uint64_t ulResidency = 0;
+		std::error_code ec;
+		for ( const auto &cpu : std::filesystem::directory_iterator( "/sys/devices/system/cpu", ec ) )
+		{
+			std::error_code ecStates;
+			for ( const auto &state : std::filesystem::directory_iterator( cpu.path() / "cpuidle", ecStates ) )
+			{
+				int nDisabled = 1;
+				uint64_t ulStateResidency = 0;
+				std::ifstream( state.path() / "disable" ) >> nDisabled;
+				std::ifstream( state.path() / "residency" ) >> ulStateResidency;
+				if ( !nDisabled )
+					ulResidency = std::max( ulResidency, ulStateResidency * 1'000 );
+			}
+		}
+		return ulResidency;
+	}
+
 	CVBlankTimer::CVBlankTimer()
 	{
 		m_ulTargetVBlank = get_time_in_nanos();
@@ -37,6 +60,8 @@ namespace gamescope
 			// Majority of backends fall down this optimal
 			// timerfd path, vs nudge thread.
 			g_VBlankLog.infof( "Using timerfd." );
+
+			m_ulPreWakeLead = GetDeepestIdleResidency();
 		}
 		else
 		{
@@ -275,7 +300,15 @@ namespace gamescope
 		{
 			m_TimerFDSchedule = CalcNextWakeupTime( bPreemptive );
 
-			ITimerWaitable::ArmTimer( m_TimerFDSchedule.ulScheduledWakeupPoint );
+			// VRR only delays a late flip, a fixed refresh misses the vblank.
+			const uint64_t ulWakeup = m_TimerFDSchedule.ulScheduledWakeupPoint;
+			const bool bVRR = GetBackend()->GetCurrentConnector() && GetBackend()->GetCurrentConnector()->IsVRRActive();
+			// Within the lead already reserved before vblank, so deep idle stays available for most of a frame.
+			m_bPreWake = !bVRR && m_ulPreWakeLead && m_ulPreWakeLead <= m_TimerFDSchedule.ulTargetVBlank - ulWakeup &&
+				ulWakeup > get_time_in_nanos() + m_ulPreWakeLead;
+
+			m_ulTimerFDArmedPoint = m_bPreWake ? ulWakeup - m_ulPreWakeLead : ulWakeup;
+			ITimerWaitable::ArmTimer( m_ulTimerFDArmedPoint );
 		}
 	}
 
@@ -295,9 +328,20 @@ namespace gamescope
 		{
 			std::unique_lock lock( m_ScheduleMutex );
 
-			// Disarm the timer if it was armed.
-			if ( !m_bArmed.exchange( false ) )
+			// Readiness from before another thread rearmed the timer is stale.
+			if ( !m_bArmed || get_time_in_nanos() < m_ulTimerFDArmedPoint )
 				return;
+
+			// A late pre-wake counts as the real wakeup.
+			if ( std::exchange( m_bPreWake, false ) && get_time_in_nanos() < m_TimerFDSchedule.ulScheduledWakeupPoint )
+			{
+				m_ulTimerFDArmedPoint = m_TimerFDSchedule.ulScheduledWakeupPoint;
+				ITimerWaitable::ArmTimer( m_ulTimerFDArmedPoint );
+				return;
+			}
+
+			// Disarm the timer if it was armed.
+			m_bArmed = false;
 
 
 			m_PendingVBlank = VBlankTime
