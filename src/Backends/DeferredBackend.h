@@ -239,6 +239,12 @@ namespace gamescope
             return m_pChild->SupportsExplicitSync();
 		}
 
+		virtual bool SupportsScreenSleep() const override
+		{
+			// Doesn't need to be 'initted' for this check.
+			return m_pChild->SupportsScreenSleep();
+		}
+
 		virtual bool IsPaused() const override
 		{
             {

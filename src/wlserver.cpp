@@ -1311,10 +1311,10 @@ static void gamescope_control_display_sleep( struct wl_client *client, struct wl
 	{
 		const bool sleep = !!( flags & GAMESCOPE_CONTROL_DISPLAY_SLEEP_FLAGS_SLEEP );
 		if ( display_type_flags & GAMESCOPE_CONTROL_DISPLAY_TYPE_FLAGS_EXTERNAL_DISPLAY )
-			drm_sleep_screen( gamescope::GAMESCOPE_SCREEN_TYPE_EXTERNAL, sleep );
+			GetBackend()->SleepScreen( gamescope::GAMESCOPE_SCREEN_TYPE_EXTERNAL, sleep );
 
 		if ( display_type_flags & GAMESCOPE_CONTROL_DISPLAY_TYPE_FLAGS_INTERNAL_DISPLAY )
-			drm_sleep_screen( gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL, sleep );
+			GetBackend()->SleepScreen( gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL, sleep );
 	}
 }
 
