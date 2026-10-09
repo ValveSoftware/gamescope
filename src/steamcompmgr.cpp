@@ -6751,6 +6751,9 @@ init_runtime_info()
 	update_runtime_info();
 }
 
+// How early a VRR limiter pass may release a frame callback.
+static constexpr uint64_t k_ulVRRScheduleFudge = 200'000; // 0.2ms
+
 static void
 steamcompmgr_flush_frame_done( steamcompmgr_win_t *w )
 {
@@ -6767,7 +6770,11 @@ steamcompmgr_flush_frame_done( steamcompmgr_win_t *w )
 		w->unlockedForFrameCallback = false;
 		w->receivedDoneCommit = false;
 
-		w->last_commit_first_latch_time = timespec_to_nanos(now);
+		// Step from the schedule a pass met, so wakeup latency does not accumulate into the limited rate.
+		const uint64_t ulNow = timespec_to_nanos( now );
+		const uint64_t ulSchedule = w->last_commit_first_latch_time + g_SteamCompMgrLimitedAppRefreshCycle;
+		const bool bOnSchedule = ulNow + k_ulVRRScheduleFudge >= ulSchedule && ulNow < ulSchedule + g_SteamCompMgrAppRefreshCycle;
+		w->last_commit_first_latch_time = bOnSchedule ? ulSchedule : ulNow;
 
 		// Acknowledge commit once.
 		wlserver_lock();
@@ -6806,7 +6813,6 @@ static bool steamcompmgr_should_vblank_window( bool bShouldLimitFPS, uint64_t vb
 		{
 			uint64_t schedule = w->last_commit_first_latch_time + g_SteamCompMgrLimitedAppRefreshCycle;
 
-			static constexpr uint64_t k_ulVRRScheduleFudge = 200'000; // 0.2ms
 			if ( now + k_ulVRRScheduleFudge < schedule )
 			{
 				bSendCallback = false;
