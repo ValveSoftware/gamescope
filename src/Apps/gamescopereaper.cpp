@@ -84,13 +84,6 @@ namespace gamescope
         // Mirror some of the busy work we do in ProcessPreSpawn,
         // in case someone else wants to use this utility.
         Process::ResetSignals();
-        std::array<int, 3> nExcludedFds =
-        {{
-            STDIN_FILENO,
-            STDOUT_FILENO,
-            STDERR_FILENO,
-        }};
-        Process::CloseAllFds( nExcludedFds );
 
         // We typically don't make a new sid, as we want to keep the same stdin/stdout
         // Don't really care about it for pgroup reasons, as processes can leave those.
