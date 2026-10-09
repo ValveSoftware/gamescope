@@ -6788,6 +6788,9 @@ steamcompmgr_flush_frame_done( steamcompmgr_win_t *w )
 
 static std::optional<uint64_t> s_oLowestFPSLimitScheduleVRR;
 
+// Display vblank index of the previous vblank pass. The limiter opens when a pass crosses a divisor boundary.
+static uint64_t s_ulPrevVBlankIdx = 0;
+
 static bool steamcompmgr_should_vblank_window( bool bShouldLimitFPS, uint64_t vblank_idx, steamcompmgr_win_t *w = nullptr, uint64_t now = 0 )
 {
 	bool bSendCallback = true;
@@ -6821,7 +6824,7 @@ static bool steamcompmgr_should_vblank_window( bool bShouldLimitFPS, uint64_t vb
 		{
 			int nVblankDivisor = nRefreshHz / nTargetFPS;
 
-			if ( vblank_idx % nVblankDivisor != 0 )
+			if ( vblank_idx / nVblankDivisor == s_ulPrevVBlankIdx / nVblankDivisor )
 				bSendCallback = false;
 		}
 	}
@@ -10475,6 +10478,14 @@ steamcompmgr_main(int argc, char **argv)
 		static uint64_t vblank_idx = 0;
 		if ( vblank )
 		{
+			// Count display vblanks, so a skipped or repeated pass cannot shift the limiter's phase.
+			static uint64_t s_ulLastPassVBlank = 0;
+			const uint64_t ulPassVBlank = g_SteamCompMgrVBlankTime.schedule.ulTargetVBlank;
+			s_ulPrevVBlankIdx = vblank_idx;
+			if ( ulPassVBlank > s_ulLastPassVBlank )
+				vblank_idx += ( ulPassVBlank - s_ulLastPassVBlank + g_SteamCompMgrAppRefreshCycle / 2 ) / g_SteamCompMgrAppRefreshCycle;
+			s_ulLastPassVBlank = ulPassVBlank;
+
 			{
 				uint64_t now = get_time_in_nanos();
 
@@ -10523,8 +10534,6 @@ steamcompmgr_main(int argc, char **argv)
 
 		if ( vblank )
 		{
-			vblank_idx++;
-
 			int nRealRefreshmHz = g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh;
 			g_SteamCompMgrAppRefreshCycle = gamescope::mHzToRefreshCycle( nRealRefreshmHz );
 			g_SteamCompMgrLimitedAppRefreshCycle = g_SteamCompMgrAppRefreshCycle;
