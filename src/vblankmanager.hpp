@@ -82,6 +82,12 @@ namespace gamescope
         // Does not cover m_ulLastVBlank, this is just atomic.
         std::mutex m_ScheduleMutex;
         VBlankScheduleTime m_TimerFDSchedule{};
+        // The timerfd is armed for the pre-wake ahead of m_TimerFDSchedule.
+        bool m_bPreWake = false;
+        // When the timerfd is armed to fire.
+        uint64_t m_ulTimerFDArmedPoint = 0;
+        // How far ahead of a fixed refresh wakeup to leave deep idle.
+        uint64_t m_ulPreWakeLead = 0;
 
         std::thread m_NudgeThread;
         int m_nNudgePipe[2] = { -1, -1 };
