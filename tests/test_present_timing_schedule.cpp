@@ -20,6 +20,56 @@ TEST_CASE( "Only nearest-cycle targets may present early", "[present_timing_sche
 	REQUIRE( PresentTargetThreshold( 0, k_uPresentTimingNearest, 16'666'667 ) == 0 );
 }
 
+TEST_CASE( "Relative targets count refreshes across re-anchored vblanks", "[present_timing_schedule]" )
+{
+	constexpr uint64_t anchor = 1'000'000'000, cycle = 16'666'667;
+	// Two refreshes after an anchor whose flip timestamp lost its sub-microsecond part.
+	REQUIRE( PresentTargetReached( 1'033'333'334, 1'033'332'999, anchor, cycle, cycle ) );
+	REQUIRE( PresentTargetReached( 1'033'333'334, 1'033'334'001, anchor, cycle, cycle ) );
+	REQUIRE_FALSE( PresentTargetReached( 1'033'333'334, 1'016'666'000, anchor, cycle, cycle ) );
+	// A target between vblanks still waits for the first one at or after it.
+	REQUIRE_FALSE( PresentTargetReached( 1'025'000'000, 1'016'666'667, anchor, cycle, cycle ) );
+	REQUIRE( PresentTargetReached( 1'025'000'000, 1'033'333'334, anchor, cycle, cycle ) );
+	REQUIRE( PresentTargetReached( 900'000'000, 0, anchor, cycle, cycle ) );
+	REQUIRE_FALSE( PresentTargetReached( UINT64_MAX, UINT64_MAX - 1, anchor, cycle, cycle ) );
+}
+
+TEST_CASE( "Counted targets keep the nearest-cycle allowance", "[present_timing_schedule]" )
+{
+	constexpr uint64_t anchor = 1'000'000'000, cycle = 16'666'667;
+	// Two refreshes with NEAREST still need both. Half a refresh only absorbs the re-anchor.
+	const uint64_t nearest = PresentTargetThreshold( anchor + 2 * cycle, k_uPresentTimingNearest, cycle );
+	REQUIRE( PresentTargetReached( nearest, anchor + 2 * cycle - 335, anchor, cycle, cycle ) );
+	REQUIRE_FALSE( PresentTargetReached( nearest, anchor + cycle, anchor, cycle, cycle ) );
+	// Under a 30 fps limit on 60 Hz, half the limited cycle is a whole base refresh and the tie keeps the later vblank.
+	const uint64_t limited = PresentTargetThreshold( anchor + 4 * cycle, k_uPresentTimingNearest, 2 * cycle );
+	REQUIRE( PresentTargetReached( limited, anchor + 4 * cycle - 335, anchor, cycle, cycle ) );
+	REQUIRE_FALSE( PresentTargetReached( limited, anchor + 3 * cycle - 300, anchor, cycle, cycle ) );
+}
+
+TEST_CASE( "Counting rounds a re-phased grid to the nearest refresh", "[present_timing_schedule]" )
+{
+	constexpr uint64_t anchor = 1'000'000'000, cycle = 16'666'667;
+	// A same-rate re-phase under half a refresh releases early. Past half it holds a refresh.
+	REQUIRE( PresentTargetReached( anchor + 2 * cycle, anchor + 2 * cycle - 7'000'000, anchor, cycle, cycle ) );
+	REQUIRE_FALSE( PresentTargetReached( anchor + 2 * cycle, anchor + 2 * cycle - 9'000'000, anchor, cycle, cycle ) );
+	// Exactly half a refresh rounds up.
+	REQUIRE( PresentTargetReached( 120, 115, 100, 10, 10 ) );
+	REQUIRE_FALSE( PresentTargetReached( 120, 114, 100, 10, 10 ) );
+}
+
+TEST_CASE( "Targets compare times when the anchor is off the current grid", "[present_timing_schedule]" )
+{
+	constexpr uint64_t anchor = 1'000'000'000;
+	// Anchored at 40 Hz, now at 60 Hz: two old refreshes must not release on the third new one.
+	REQUIRE_FALSE( PresentTargetReached( 1'050'000'000, 1'041'666'667, anchor, 25'000'000, 16'666'667 ) );
+	REQUIRE( PresentTargetReached( 1'050'000'000, 1'058'333'334, anchor, 25'000'000, 16'666'667 ) );
+	// VRR has no grid, and absolute targets have no anchor.
+	REQUIRE_FALSE( PresentTargetReached( 1'033'333'334, 1'033'332'999, anchor, 16'666'667, 0 ) );
+	REQUIRE_FALSE( PresentTargetReached( 1'033'333'334, 1'033'332'999, 0, 0, 16'666'667 ) );
+	REQUIRE( PresentTargetReached( 1'033'333'334, 1'033'333'334, 0, 0, 16'666'667 ) );
+}
+
 TEST_CASE( "VRR prediction and wakes cannot reuse a stale vblank", "[present_timing_schedule]" )
 {
 	REQUIRE( PredictPresentTime( 100, 5, 10, 16 ) == 105 );

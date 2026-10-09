@@ -11,6 +11,8 @@ namespace gamescope
 		wl_resource *resource = nullptr;
 		// Predicted scanout of this swapchain's last latched frame. steamcompmgr only.
 		uint64_t last_expected_present_time = 0;
+		// Vblank spacing of the grid that prediction sits on, zero under VRR. steamcompmgr only.
+		uint64_t last_expected_refresh_grid = 0;
 		const bool timing_events = false;
 
 		bool SendPresentTiming( uint64_t serial, uint64_t queueEnd, uint64_t dequeued, uint64_t pixelOut ) const

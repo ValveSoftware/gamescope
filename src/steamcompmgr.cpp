@@ -7905,6 +7905,8 @@ register_systray(xwayland_ctx_t *ctx)
 // iteration, before any done commit is handled.
 static uint64_t s_PredictedPresentTime = 0;
 static uint64_t s_PredictedTearingPresentTime = 0;
+// Vblank spacing of those predictions, zero under VRR.
+static uint64_t s_PredictedRefreshGrid = 0;
 
 static uint64_t predicted_present_time( const commit_t &commit )
 {
@@ -7926,21 +7928,24 @@ static bool hold_done_commit( CommitDoneEntry_t &entry, steamcompmgr_win_t *w, c
 	{
 		entry.earliestPresentTime = predicted;
 		entry.earliestLatchTime = now;
+		entry.presentAnchor = entry.timingFlags & gamescope::k_uPresentTimingRelative && entry.route
+			? entry.route->last_expected_present_time : 0;
+		entry.presentAnchorGrid = entry.presentAnchor ? entry.route->last_expected_refresh_grid : 0;
 		entry.desiredPresentTime = gamescope::ResolvePresentTarget( entry.desiredPresentTime,
-			entry.timingFlags, entry.route ? entry.route->last_expected_present_time : 0 );
+			entry.timingFlags, entry.presentAnchor );
 	}
 
 	// Only FIFO is paced by the limiter, mailbox frames can land on any vblank.
 	const uint64_t cycle = entry.fifo ? window_refresh_cycle( w ) : g_SteamCompMgrAppRefreshCycle;
 	uint64_t target = gamescope::PresentTargetThreshold( entry.desiredPresentTime, entry.timingFlags, cycle );
-	if ( target <= predicted )
+	if ( gamescope::PresentTargetReached( target, predicted, entry.presentAnchor, entry.presentAnchorGrid, s_PredictedRefreshGrid ) )
 		return false;
 
 	// A pass that does not hold latches the commit, so log only the first.
 	if ( first )
 		present_timing_log.debugf( "hold commit %lu until %lu, next scanout %lu", entry.commitID, target, predicted );
 
-	if ( GetBackend()->GetCurrentConnector() && GetBackend()->GetCurrentConnector()->IsVRRActive() )
+	if ( !s_PredictedRefreshGrid )
 	{
 		auto wake = gamescope::PresentTargetWake( target, GetVBlankTimer().VRRWakeupOffset() );
 		if ( wake && ( !s_oLowestFPSLimitScheduleVRR || *wake < *s_oLowestFPSLimitScheduleVRR ) )
@@ -7970,7 +7975,10 @@ static gamescope::CommitQueue::SelectionResult handle_done_commit( steamcompmgr_
 	(*selected)->latch_time = now;
 	(*selected)->predicted_present_time = predicted_present_time( **selected );
 	if ( entry.route )
+	{
 		entry.route->last_expected_present_time = (*selected)->predicted_present_time;
+		entry.route->last_expected_refresh_grid = s_PredictedRefreshGrid;
+	}
 
 	// Window just got a new available commit, determine if that's worth a repaint
 
@@ -10523,6 +10531,8 @@ steamcompmgr_main(int argc, char **argv)
 		const gamescope::VBlankScheduleTime &latch = armed ? *armed : schedule;
 		s_PredictedPresentTime = gamescope::PredictFixedLatchPresentTime( ulNow, latch.ulTargetVBlank,
 			latch.ulScheduledWakeupPoint, g_SteamCompMgrAppRefreshCycle, bIsVBlankFromTimer || armed );
+		// The armed schedule can carry a new refresh before this loop's cycles catch up.
+		s_PredictedRefreshGrid = bVRR ? 0 : latch.ulRefreshCycle ? latch.ulRefreshCycle : g_SteamCompMgrAppRefreshCycle;
 		if ( bVRR )
 			s_PredictedPresentTime = s_PredictedTearingPresentTime = gamescope::PredictPresentTime( ulNow,
 				GetVBlankTimer().VRRWakeupOffset(), GetVBlankTimer().GetLastVBlank(),
