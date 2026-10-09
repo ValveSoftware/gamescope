@@ -228,6 +228,7 @@ namespace gamescope
 		{
 			.ulTargetVBlank = ulTargetVBlank,
 			.ulScheduledWakeupPoint = ulScheduledWakeupPoint,
+			.ulRefreshCycle = mHzToRefreshCycle( GetRefresh() ),
 		};
 		return schedule;
 	}

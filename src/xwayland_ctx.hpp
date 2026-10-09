@@ -55,6 +55,8 @@ struct CommitDoneEntry_t
 	uint64_t desiredPresentTime;
 	uint32_t timingFlags;
 	std::shared_ptr<gamescope::PresentTimingRoute> route;
+	uint64_t presentAnchor;
+	uint64_t presentAnchorGrid;
 	uint64_t earliestPresentTime;
 	uint64_t earliestLatchTime;
 	bool fifo;

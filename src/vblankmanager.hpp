@@ -12,6 +12,8 @@ namespace gamescope
         // The vblank offset by the redzone/scheduling calculation.
         // This is when we want to wake-up by to meet that vblank time above.
         uint64_t ulScheduledWakeupPoint = 0;
+        // Refresh period the target was stepped with, zero when unknown.
+        uint64_t ulRefreshCycle = 0;
     };
 
     struct VBlankTime

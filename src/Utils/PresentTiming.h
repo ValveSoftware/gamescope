@@ -28,6 +28,19 @@ namespace gamescope
         return target > tolerance ? target - tolerance : 0;
     }
 
+    // Each flip re-anchors the vblank grid, so count refreshes from an anchor on the same grid.
+    inline bool PresentTargetReached( uint64_t threshold, uint64_t predicted, uint64_t anchor, uint64_t anchorGrid, uint64_t grid )
+    {
+        if ( !anchor || !grid || anchorGrid != grid )
+            return threshold <= predicted;
+        if ( threshold <= anchor )
+            return true;
+        const uint64_t span = threshold - anchor;
+        const uint64_t required = span / grid + ( span % grid != 0 );
+        const uint64_t elapsed = predicted > anchor ? predicted - anchor : 0;
+        return elapsed / grid + ( elapsed % grid >= ( grid + 1 ) / 2 ) >= required;
+    }
+
     inline uint64_t PredictFixedPresentTime( uint64_t now, uint64_t target, uint64_t interval )
     {
         if ( target >= now )
