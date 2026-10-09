@@ -367,6 +367,25 @@ namespace gamescope
 
         virtual bool SupportsExplicitSync() const = 0;
 
+        virtual bool SupportsScreenSleep() const
+        {
+            return false;
+        }
+
+        virtual void SleepScreen( gamescope::GamescopeScreenType eType, bool bSleep )
+        {
+        }
+
+        virtual bool ScreenAsleep( gamescope::GamescopeScreenType eType )
+        {
+            return false;
+        }
+
+        virtual bool WaitForScreenAsleep( gamescope::GamescopeScreenType eType, uint32_t uTimeoutMs )
+        {
+            return false;
+        }
+
         // Dumb helper we should remove to support multi display someday.
         gamescope::GamescopeScreenType GetScreenType()
         {
