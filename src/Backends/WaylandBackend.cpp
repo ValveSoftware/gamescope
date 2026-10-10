@@ -740,6 +740,17 @@ namespace gamescope
             m_pFocusConnector.compare_exchange_strong( pConnector, nullptr );
         }
 
+        virtual void ToggleFullscreen() override
+        {
+            if ( auto pConnector = static_cast< CWaylandConnector * >( GetCurrentConnector() ) )
+            {
+                pConnector->SetFullscreen( !g_bFullscreen );
+            }
+        }
+
+
+        virtual bool IsNested() const override { return true; }
+
     private:
 
         void Wayland_Registry_Global( wl_registry *pRegistry, uint32_t uName, const char *pInterface, uint32_t uVersion );
@@ -2942,89 +2953,6 @@ namespace gamescope
 
     void CWaylandInputThread::HandleKey( uint32_t uKey, bool bPressed )
     {
-        if ( m_uKeyModifiers & m_uModMask[ GAMESCOPE_WAYLAND_MOD_META ] )
-        {
-            switch ( uKey )
-            {
-                case KEY_F:
-                {
-                    if ( !bPressed )
-                    {
-                        static_cast< CWaylandConnector * >( m_pBackend->GetCurrentConnector() )->SetFullscreen( !g_bFullscreen );
-                    }
-                    return;
-                }
-
-                case KEY_N:
-                {
-                    if ( !bPressed )
-                    {
-                        g_wantedUpscaleFilter = GamescopeUpscaleFilter::PIXEL;
-                    }
-                    return;
-                }
-
-                case KEY_B:
-                {
-                    if ( !bPressed )
-                    {
-                        g_wantedUpscaleFilter = GamescopeUpscaleFilter::LINEAR;
-                    }
-                    return;
-                }
-
-                case KEY_U:
-                {
-                    if ( !bPressed )
-                    {
-                        g_wantedUpscaleFilter = ( g_wantedUpscaleFilter == GamescopeUpscaleFilter::FSR ) ?
-                            GamescopeUpscaleFilter::LINEAR : GamescopeUpscaleFilter::FSR;
-                    }
-                    return;
-                }
-
-                case KEY_Y:
-                {
-                    if ( !bPressed )
-                    {
-                        g_wantedUpscaleFilter = ( g_wantedUpscaleFilter == GamescopeUpscaleFilter::NIS ) ?
-                            GamescopeUpscaleFilter::LINEAR : GamescopeUpscaleFilter::NIS;
-                    }
-                    return;
-                }
-
-                case KEY_I:
-                {
-                    if ( !bPressed )
-                    {
-                        g_upscaleFilterSharpness = std::min( 20, g_upscaleFilterSharpness + 1 );
-                    }
-                    return;
-                }
-
-                case KEY_O:
-                {
-                    if ( !bPressed )
-                    {
-                        g_upscaleFilterSharpness = std::max( 0, g_upscaleFilterSharpness - 1 );
-                    }
-                    return;
-                }
-
-                case KEY_S:
-                {
-                    if ( !bPressed )
-                    {
-                        gamescope::CScreenshotManager::Get().TakeScreenshot( true );
-                    }
-                    return;
-                }
-
-                default:
-                    break;
-            }
-        }
-
         wlserver_lock();
         wlserver_key( uKey, bPressed, ++m_uFakeTimestamp );
         wlserver_unlock();
