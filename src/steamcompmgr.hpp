@@ -36,11 +36,12 @@ struct xwayland_ctx_t;
 class gamescope_xwayland_server_t;
 
 static const uint32_t g_zposBase = 0;
-static const uint32_t g_zposOverride = 1;
-static const uint32_t g_zposExternalOverlay = 2;
-static const uint32_t g_zposOverlay = 3;
-static const uint32_t g_zposCursor = 4;
-static const uint32_t g_zposMuraCorrection = 5;
+static const uint32_t g_zposSubsurface = 1;
+static const uint32_t g_zposOverride = 2;
+static const uint32_t g_zposExternalOverlay = 3;
+static const uint32_t g_zposOverlay = 4;
+static const uint32_t g_zposCursor = 5;
+static const uint32_t g_zposMuraCorrection = 6;
 
 extern bool g_bHDRItmEnable;
 extern bool g_bForceHDRSupportDebug;
