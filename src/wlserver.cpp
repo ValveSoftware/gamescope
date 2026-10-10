@@ -3142,8 +3142,11 @@ void wlserver_mousewheel( double flX, double flY, uint32_t time )
 {
 	assert( wlserver_is_lock_held() );
 
-	wlr_seat_pointer_notify_axis( wlserver.wlr.seat, time, WL_POINTER_AXIS_HORIZONTAL_SCROLL, flX, flX * WLR_POINTER_AXIS_DISCRETE_STEP, WL_POINTER_AXIS_SOURCE_WHEEL, WL_POINTER_AXIS_RELATIVE_DIRECTION_IDENTICAL );
-	wlr_seat_pointer_notify_axis( wlserver.wlr.seat, time, WL_POINTER_AXIS_VERTICAL_SCROLL, flY, flY * WLR_POINTER_AXIS_DISCRETE_STEP, WL_POINTER_AXIS_SOURCE_WHEEL, WL_POINTER_AXIS_RELATIVE_DIRECTION_IDENTICAL );
+	// Wayland compositors use a de-facto convention of 10 coordinate units per scroll detent.
+	static constexpr double k_flWheelAxisStepDistance = 10.0;
+
+	wlr_seat_pointer_notify_axis( wlserver.wlr.seat, time, WL_POINTER_AXIS_HORIZONTAL_SCROLL, flX * k_flWheelAxisStepDistance, flX * WLR_POINTER_AXIS_DISCRETE_STEP, WL_POINTER_AXIS_SOURCE_WHEEL, WL_POINTER_AXIS_RELATIVE_DIRECTION_IDENTICAL );
+	wlr_seat_pointer_notify_axis( wlserver.wlr.seat, time, WL_POINTER_AXIS_VERTICAL_SCROLL, flY * k_flWheelAxisStepDistance, flY * WLR_POINTER_AXIS_DISCRETE_STEP, WL_POINTER_AXIS_SOURCE_WHEEL, WL_POINTER_AXIS_RELATIVE_DIRECTION_IDENTICAL );
 	wlr_seat_pointer_notify_frame( wlserver.wlr.seat );
 }
 
