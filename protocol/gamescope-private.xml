@@ -29,12 +29,24 @@
     No stable ABI is guaranteed for this protocol, it is versioned with gamescope.
   </description>
 
-  <interface name="gamescope_private" version="1">
+  <interface name="gamescope_private" version="2">
     <request name="destroy" type="destructor"></request>
 
     <request name="execute">
       <arg name="cvar_name" type="string" summary="Convar name"></arg>
       <arg name="value" type="string" summary="Convar value (as a string)"></arg>
+    </request>
+
+    <request name="print" since="2">
+      <description summary="Print a convar's value">
+        Runs a command with no arguments. For a convar that prints its
+        current value and description through the log event, instead of
+        setting it.
+
+        execute with an empty value is still a set, so it cannot be used
+        to read a convar without overwriting it.
+      </description>
+      <arg name="command" type="string" summary="Convar or command name"></arg>
     </request>
 
     <event name="log">
