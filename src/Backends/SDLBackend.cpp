@@ -163,6 +163,7 @@ namespace gamescope
 
         virtual bool SupportsTearing() const override;
 		virtual bool UsesVulkanSwapchain() const override;
+		virtual bool SupportsIndependentRefresh() const override { return true; }
 
 		virtual bool IsSessionBased() const override;
 		virtual bool SupportsExplicitSync() const override;

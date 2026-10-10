@@ -385,6 +385,8 @@ namespace gamescope
         virtual void HackUpdatePatchedEdid() = 0;
 
         virtual bool NeedsFrameSync() const = 0;
+        // Desktop-nested backends can pace a requested rate independently of host scanout.
+        virtual bool SupportsIndependentRefresh() const = 0;
 
         virtual TouchClickMode GetTouchClickMode() = 0;
 
@@ -422,6 +424,7 @@ namespace gamescope
         virtual void HackUpdatePatchedEdid() override {}
 
         virtual bool NeedsFrameSync() const override;
+        virtual bool SupportsIndependentRefresh() const override { return false; }
 
         virtual TouchClickMode GetTouchClickMode() override;
 

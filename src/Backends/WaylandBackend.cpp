@@ -679,6 +679,7 @@ namespace gamescope
 
         virtual bool SupportsTearing() const override;
         virtual bool UsesVulkanSwapchain() const override;
+        virtual bool SupportsIndependentRefresh() const override { return true; }
 
         virtual bool IsSessionBased() const override;
         virtual bool SupportsExplicitSync() const override;
@@ -2912,6 +2913,9 @@ namespace gamescope
                 LogDisplayError( "Failed to read events on input thread", m_pBackend->GetDisplay() );
                 abort();
             }
+
+            // Reading also queues releases and presentation feedback for steamcompmgr.
+            nudge_steamcompmgr();
         }
     }
 
