@@ -13,7 +13,12 @@ layout(
 layout(binding = 0, scalar)
 uniform layers_t {
     uvec4 c1, c2, c3, c4;
+    mat3x4 u_ctm;
+    float u_linearToNits;
+    float u_nitsToLinear;
 };
+
+#include "colorimetry.h"
 
 #define A_GPU 1
 #define A_GLSL 1
@@ -24,11 +29,20 @@ AF4 FsrEasuGF(AF2 p){return AF4(textureGather(s_samplers[0], p, 1));}
 AF4 FsrEasuBF(AF2 p){return AF4(textureGather(s_samplers[0], p, 2));}
 #include "ffx_fsr1.h"
 
+// RCAS limits its peak to 1.0, so scRGB leaves EASU as PQ like HDR10 content.
+vec3 easuOutput(vec3 color)
+{
+    if (get_layer_colorspace(0) != colorspace_scRGB)
+        return color;
+
+    return scRGBEncodingToPQ((vec4(color, 1.0f) * u_ctm).rgb);
+}
+
 void easuPass(uvec2 pos)
 {
     vec3 color;
     FsrEasuF(color, pos, c1, c2, c3, c4);
-    imageStore(dst, ivec2(pos), vec4(color, 1));
+    imageStore(dst, ivec2(pos), vec4(easuOutput(color), 1));
 }
 
 void main()

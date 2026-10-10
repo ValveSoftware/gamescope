@@ -87,6 +87,13 @@ void compositing_debug(uvec2 coord, uint rotation) {
     }
 }
 
+// Takes a value already in the shaper LUT's encoding.
+vec3 apply_layer_luts(vec3 color, uint plane_eotf) {
+    color = perform_1dlut(color, s_shaperLut[plane_eotf]);
+    color = perform_3dlut(color, s_lut3D[plane_eotf]);
+    return colorspace_blend_tf(color, c_output_eotf);
+}
+
 // Takes in a scRGB/Linear encoded value and applies color management
 // based on the input colorspace.
 //
@@ -125,12 +132,21 @@ vec3 apply_layer_color_mgmt(vec3 color, uint layer, uint colorspace) {
     if (lut3d_enabled)
     {
         color = colorspace_plane_shaper_tf(color, colorspace);
-        color = perform_1dlut(color, s_shaperLut[plane_eotf]);
-        color = perform_3dlut(color, s_lut3D[plane_eotf]);
-        color = colorspace_blend_tf(color, c_output_eotf);
+        color = apply_layer_luts(color, plane_eotf);
     }
 
     return color;
+}
+
+// Takes a PQ value that already went through the layer CTM, which is what the PQ shaper LUT expects.
+vec3 apply_layer_color_mgmt_pq(vec3 pq, uint layer, uint colorspace) {
+    bool direct = textureQueryLevels(s_shaperLut[EOTF_PQ]) != 0 &&
+                  !c_itm_enable &&
+                  !(layer == 0 && checkDebugFlag(compositedebug_Heatmap));
+    if (direct)
+        return apply_layer_luts(pq, EOTF_PQ);
+
+    return apply_layer_color_mgmt(pqToScRGBEncoding(pq), layer, colorspace);
 }
 
 vec4 sampleBilinear(sampler2D tex, vec2 coord, uint colorspace, bool unnormalized) {
