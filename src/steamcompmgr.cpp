@@ -9590,7 +9590,13 @@ void LaunchNestedChildren( char **ppPrimaryChildArgv )
 	{
 		char *ppMangoappArgv[] = { (char *)"mangoapp", NULL };
 		// The Steam overlay would latch onto mangoapp's own swapchain as if it were the game.
-		gamescope::Process::SpawnProcessInWatchdog( ppMangoappArgv, true, gamescope::Process::RemoveSteamOverlayFromPreload );
+		gamescope::Process::SpawnProcessInWatchdog( ppMangoappArgv, true, []()
+		{
+			gamescope::Process::RemoveSteamOverlayFromPreload();
+			// mangoapp is an X11 app
+			unsetenv( "WAYLAND_DISPLAY" );
+			setenv( "XDG_SESSION_TYPE", "x11", 1 );
+		});
 	}
 }
 
@@ -9755,6 +9761,9 @@ static void UpdateMangoappInstances()
 		pid_t nPid = gamescope::Process::SpawnProcessInWatchdog( ppMangoappArgv, true, [ uMsgType ]()
 		{
 			gamescope::Process::RemoveSteamOverlayFromPreload();
+			// mangoapp is an X11 app
+			unsetenv( "WAYLAND_DISPLAY" );
+			setenv( "XDG_SESSION_TYPE", "x11", 1 );
 			char szMsgType[ 16 ];
 			snprintf( szMsgType, sizeof( szMsgType ), "%u", uMsgType );
 			setenv( "MANGOAPP_MSG_TYPE", szMsgType, 1 );
