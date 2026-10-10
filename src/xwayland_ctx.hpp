@@ -36,7 +36,7 @@ struct focus_t
 	// Earlier overrides still mapped beneath the current one, oldest first. Global focus only.
 	std::vector<steamcompmgr_win_t*>	overrideUnderlayWindows;
 	steamcompmgr_win_t				*overrideWindowMouse = nullptr;
-	// Same-app helpers from other processes (eg. Xalia's highlight), painted above the override.
+	// Auxiliary windows (same-app decorations and input method popups), painted above the override.
 	std::vector<steamcompmgr_win_t*>	decorationWindows;
 	bool			outdatedInteractiveFocus = false;
 	bool			bResetToCorner = false;
@@ -119,6 +119,7 @@ struct xwayland_ctx_t final : public gamescope::IWaitable
 		Atom winDockAtom;
 		Atom winToolbarAtom;
 		Atom winMenuAtom;
+		Atom winComboAtom;
 		Atom winUtilAtom;
 		Atom winSplashAtom;
 		Atom winDialogAtom;

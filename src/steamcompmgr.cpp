@@ -3939,27 +3939,26 @@ get_prop(xwayland_ctx_t *ctx, Window win, Atom prop, unsigned int def, bool *fou
 
 // vectored version, return value is whether anything was found
 __attribute__((__no_sanitize_address__)) // x11 broken :(
-bool get_prop( xwayland_ctx_t *ctx, Window win, Atom prop, std::vector< uint32_t > &vecResult )
+bool get_prop( xwayland_ctx_t *ctx, Window win, Atom prop, std::vector< uint32_t > &vecResult, Atom type = XA_CARDINAL )
 {
 	Atom actual;
 	int format;
 	unsigned long n, left;
 
 	vecResult.clear();
-	uint64_t *data;
+	unsigned long *data = nullptr;
 	int result = XGetWindowProperty(ctx->dpy, win, prop, 0L, ~0UL, false,
-									XA_CARDINAL, &actual, &format,
+									type, &actual, &format,
 									&n, &left, ( unsigned char** )&data);
-	if (result == Success && data != NULL)
+	bool found = result == Success && actual == type && format == 32 && data != nullptr;
+	if ( found )
 	{
-		for ( uint32_t i = 0; i < n; i++ )
-		{
+		for ( unsigned long i = 0; i < n; i++ )
 			vecResult.push_back( data[ i ] );
-		}
-		XFree((void *) data);
-		return true;
 	}
-	return false;
+	if ( data )
+		XFree( data );
+	return found;
 }
 
 std::optional<uint64_t> get_u64_prop( xwayland_ctx_t *ctx, Window win, Atom prop )
@@ -4226,10 +4225,36 @@ static bool is_good_override_candidate( steamcompmgr_win_t *override, steamcompm
 	return override != focus && (rect.nX + rect.nWidth) > 0 && (rect.nY + rect.nHeight) > 0;
 }
 
-// Same-app override-redirect windows from another process (eg. Xalia's
-// highlight overlay) are decorations, not dropdowns. Paint them on top of
-// the focused window so they coexist with its popups instead of fighting
-// them for the override slot.
+static bool is_external_combo_popup( steamcompmgr_win_t *candidate, steamcompmgr_win_t *focus )
+{
+	if ( !focus || candidate == focus || candidate->type != steamcompmgr_win_type_t::XWAYLAND ||
+		 focus->type != steamcompmgr_win_type_t::XWAYLAND || candidate->xwayland().ctx != focus->xwayland().ctx ||
+		 candidate->xwayland().ctx->focus.focusWindow != focus )
+		return false;
+
+	// Input methods such as Fcitx use an override-redirect COMBO window, but
+	// need not know the application's XID (eg. when using a DBus frontend).
+	// Only show these with the context's current application; other virtual
+	// connectors must not inherit an unassociated popup. Respect explicit
+	// ownership and leave application-owned dropdowns alone.
+	if ( !win_is_override_redirect( candidate ) || !candidate->isComboPopup ||
+		 candidate->xwayland().transientFor || candidate->steamAppID ||
+		 ( steamMode && candidate->appID ) ||
+		 ( candidate->pid > 0 && candidate->pid == focus->pid ) )
+		return false;
+
+	if ( candidate->IsAnyOverlay() || candidate->isSysTrayIcon || candidate->oulTargetVROverlay ||
+		 candidate->xwayland().a.map_state != IsViewable || candidate->xwayland().a.c_class != InputOutput ||
+		 candidate->opacity <= TRANSLUCENT )
+		return false;
+
+	auto rect = candidate->GetGeometry();
+	return rect.nX + rect.nWidth > 0 && rect.nY + rect.nHeight > 0;
+}
+
+// Paint auxiliary windows above the focused application's dropdowns without
+// making them keyboard focus targets. This includes same-app decorations
+// (eg. Xalia's highlight) and input method candidate popups.
 static void pick_decoration_windows( focus_t *pFocus )
 {
 	pFocus->decorationWindows.clear();
@@ -4240,7 +4265,8 @@ static void pick_decoration_windows( focus_t *pFocus )
 	xwayland_ctx_t *pFocusCtx = pFocus->focusWindow->xwayland().ctx;
 	for ( steamcompmgr_win_t *w = pFocusCtx->list; w; w = w->xwayland().next )
 	{
-		if ( !is_same_app_override_decoration( w, pFocus->focusWindow ) || w == pFocus->overrideWindow )
+		if ( ( !is_same_app_override_decoration( w, pFocus->focusWindow ) &&
+			   !is_external_combo_popup( w, pFocus->focusWindow ) ) || w == pFocus->overrideWindow )
 			continue;
 
 		if ( w->isOverlay || w->isExternalOverlay )
@@ -4868,8 +4894,40 @@ void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win
 			XRestackWindows( ctx->dpy, order.data(), order.size() );
 		}
 	}
-	else if ( pFirstMapped != inputFocus )
-		inputFocus->Raise();
+	else
+	{
+		// Keep input method popups above the mouse target as well as painting
+		// them above it. Raising only the application would make a visible
+		// candidate window unclickable. Preserve the popups' stacking order.
+		std::vector<Window> order;
+		for ( steamcompmgr_win_t *pWindow = ctx->list; pWindow; pWindow = pWindow->xwayland().next )
+		{
+			if ( is_external_combo_popup( pWindow, w ) )
+				order.push_back( pWindow->xwayland().id );
+		}
+		order.push_back( inputFocus->xwayland().id );
+
+		bool bNeedsRestack = false;
+		steamcompmgr_win_t *pWindow = ctx->list;
+		for ( Window id : order )
+		{
+			while ( pWindow && pWindow->xwayland().a.map_state != IsViewable )
+				pWindow = pWindow->xwayland().next;
+			if ( !pWindow || pWindow->xwayland().id != id )
+			{
+				bNeedsRestack = true;
+				break;
+			}
+			pWindow = pWindow->xwayland().next;
+		}
+
+		if ( bNeedsRestack )
+		{
+			XRaiseWindow( ctx->dpy, order.front() );
+			if ( order.size() > 1 )
+				XRestackWindows( ctx->dpy, order.data(), order.size() );
+		}
+	}
 
 	wlserver_lock();
 	bool bDragging = wlserver.drag_anchor.surface && wlserver.drag_anchor.surface == w->main_surface();
@@ -5556,12 +5614,15 @@ static void
 get_win_type(xwayland_ctx_t *ctx, steamcompmgr_win_t *w)
 {
 	w->is_dialog = !!w->xwayland().transientFor;
+	w->isComboPopup = false;
 
 	std::vector<unsigned int> atoms;
-	if ( get_prop( ctx, w->xwayland().id, ctx->atoms.winTypeAtom, atoms ) )
+	if ( get_prop( ctx, w->xwayland().id, ctx->atoms.winTypeAtom, atoms, XA_ATOM ) )
 	{
 		for ( unsigned int atom : atoms )
 		{
+			if ( atom == ctx->atoms.winComboAtom )
+				w->isComboPopup = true;
 			if ( atom == ctx->atoms.winDialogAtom )
 			{
 				w->is_dialog = true;
@@ -9057,6 +9118,7 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 	ctx->atoms.winDockAtom = XInternAtom(ctx->dpy, "_NET_WM_WINDOW_TYPE_DOCK", false);
 	ctx->atoms.winToolbarAtom = XInternAtom(ctx->dpy, "_NET_WM_WINDOW_TYPE_TOOLBAR", false);
 	ctx->atoms.winMenuAtom = XInternAtom(ctx->dpy, "_NET_WM_WINDOW_TYPE_MENU", false);
+	ctx->atoms.winComboAtom = XInternAtom(ctx->dpy, "_NET_WM_WINDOW_TYPE_COMBO", false);
 	ctx->atoms.winUtilAtom = XInternAtom(ctx->dpy, "_NET_WM_WINDOW_TYPE_UTILITY", false);
 	ctx->atoms.winSplashAtom = XInternAtom(ctx->dpy, "_NET_WM_WINDOW_TYPE_SPLASH", false);
 	ctx->atoms.winDialogAtom = XInternAtom(ctx->dpy, "_NET_WM_WINDOW_TYPE_DIALOG", false);
