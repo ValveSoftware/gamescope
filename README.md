@@ -67,7 +67,11 @@ gamescope -w 1920 -h 1080 -W 3440 -H 1440 -b -- %command%
 
 See `gamescope --help` for a full list of options.
 
-* `-W`, `-H`: set the resolution used by gamescope. Resizing the gamescope window will update these settings. Ignored in embedded mode. If `-H` is specified but `-W` isn't, a 16:9 aspect ratio is assumed. Defaults to 1280×720.
+* `-W`, `-H`: set the resolution used by gamescope. In nested mode, resizing
+  the gamescope window will update these settings and defaults to 1280×720. In
+  embedded mode, if the display does not advertise the given resolution, its
+  native resolution is used instead. If `-H` is specified but `-W` isn't, a
+  16:9 aspect ratio is assumed.
 * `-w`, `-h`: set the resolution used by the game. If `-h` is specified but `-w` isn't, a 16:9 aspect ratio is assumed. Defaults to the values specified in `-W` and `-H`.
 * `-r`: set a frame-rate limit for the game. Specified in frames per second. Defaults to unlimited.
 * `-o`: set a frame-rate limit for the game when unfocused. Specified in frames per second. Defaults to unlimited.
