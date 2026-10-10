@@ -437,7 +437,7 @@ static void wlserver_touch_associate_connector(struct wlserver_touch *touch)
 	if (touch->connector != nullptr) return;
 
 	// Heuristic to associate a monitor to a touch input device:
-	//  - if a touchscreen's bus is I²C, it can very likely be associated to an internal monitor.
+	//  - if a touchscreen's bus is I²C or SPI, it can very likely be associated to an internal monitor.
 	//  - if its bus is USB, it can be associated to an external monitor.
 	// This isn't perfect, but we can't rely on the physical sizes reported by both devices,
 	// because it's not uncommon for touchscreens to report wildly incorrect sizes.
@@ -448,7 +448,7 @@ static void wlserver_touch_associate_connector(struct wlserver_touch *touch)
 	while (parent) {
 		const char *subsystem = udev_device_get_subsystem(parent);
 		if (subsystem) {
-			if (strcmp( subsystem, "i2c" ) == 0) {
+			if (strcmp( subsystem, "i2c" ) == 0 || strcmp( subsystem, "spi" ) == 0) {
 				connector = GetBackend()->GetConnector(gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL);
 				break;
 			} else if (strcmp( subsystem, "usb" ) == 0) {
