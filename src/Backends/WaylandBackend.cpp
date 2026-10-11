@@ -483,6 +483,7 @@ namespace gamescope
         CWaylandPlane m_Planes[k_nMaxLayers + 1];
         bool m_bVisible = true;
         std::atomic<bool> m_bDesiredFullscreenState = { false };
+        std::string m_szTitle = "Gamescope";
 
         bool m_bHostCompositorIsCurrentlyVRR = false;
     };
@@ -1266,6 +1267,7 @@ namespace gamescope
         std::string szTitle = pAppTitle ? *pAppTitle : "gamescope";
         if ( g_bGrabbed )
             szTitle += " (grabbed)";
+        m_szTitle = szTitle;
         libdecor_frame_set_title( m_Planes[0].GetFrame(), szTitle.c_str() );
     }
     void CWaylandConnector::SetIcon( std::shared_ptr<std::vector<uint32_t>> uIconPixels )
@@ -1609,6 +1611,12 @@ namespace gamescope
             // Use the subsurface set_position thing instead.
             if ( m_pFrame && m_bUnmappedAwaitingConfigure )
                 return;
+
+            if ( m_pFrame && !m_bHasAttachedBuffer )
+            {
+                libdecor_frame_set_app_id( m_pFrame, "gamescope" );
+                libdecor_frame_set_title( m_pFrame, m_pConnector->m_szTitle.c_str() );
+            }
 
             m_bHasAttachedBuffer = true;
 
