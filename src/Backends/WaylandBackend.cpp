@@ -299,6 +299,7 @@ namespace gamescope
         std::vector<wl_output *> m_pOutputs;
         bool m_bNeedsDecorCommit = false;
         bool m_bUnmappedAwaitingConfigure = false;
+        bool m_bToplevelStateReset = false;
         bool m_bHasAttachedBuffer = false;
         uint32_t m_uFractionalScale = 120;
         bool m_bHasRecievedScale = false;
@@ -1616,7 +1617,10 @@ namespace gamescope
         {
             // Attaching NULL only unmaps (and so requires a new configure) if a buffer was mapped.
             if ( m_pFrame && m_bHasAttachedBuffer )
+            {
                 m_bUnmappedAwaitingConfigure = true;
+                m_bToplevelStateReset = true;
+            }
 
             m_bHasAttachedBuffer = false;
 
@@ -1644,6 +1648,15 @@ namespace gamescope
         }
 
         wl_surface_commit( m_pSurface );
+
+        // Unmapping resets the toplevel, so restore it before the next initial commit.
+        if ( m_bToplevelStateReset )
+        {
+            libdecor_frame_set_app_id( m_pFrame, "gamescope" );
+            // libdecor skips a title it already sent.
+            xdg_toplevel_set_title( GetXdgToplevel(), libdecor_frame_get_title( m_pFrame ) );
+            m_bToplevelStateReset = false;
+        }
     }
 
     xdg_toplevel *CWaylandPlane::GetXdgToplevel() const
