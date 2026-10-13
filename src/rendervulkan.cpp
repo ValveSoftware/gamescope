@@ -3215,7 +3215,8 @@ gamescope::OwningRc<CVulkanTexture> vulkan_create_flat_texture( uint32_t width, 
 
 	gamescope::OwningRc<CVulkanTexture> texture = new CVulkanTexture();
 	bool bRes = texture->BInit( width, height, 1u, VulkanFormatToDRM( VK_FORMAT_B8G8R8A8_UNORM ), flags );
-	assert( bRes );
+	if ( !bRes )
+		return nullptr;
 
 	auto [_dst, offset] = g_device.uploadBufferData( width * height * 4 );
 	uint8_t *dst = (uint8_t *)_dst;
