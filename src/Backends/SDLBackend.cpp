@@ -401,6 +401,8 @@ namespace gamescope
 	}
 
 	CSDLBackend::~CSDLBackend() {
+		vulkan_present_wait_shutdown();
+
 		SDL_Event event = { .type = SDL_QUIT };
 		SDL_PushEvent(&event);
 		if (m_SDLThread.joinable())
