@@ -13,6 +13,10 @@
 
 namespace {
 
+// Non-dispatchable handles are uint64_t rather than pointers on 32-bit targets.
+template <typename T>
+T fakeHandle(uint64_t value) { return T(value); }
+
 uint32_t destroyedInstances = 0;
 uint32_t destroyedDevices = 0;
 
@@ -190,8 +194,8 @@ PFN_vkVoidFunction VKAPI_CALL getCalibrationInstanceProc(VkInstance instance, co
   return getInstanceProc(instance, name);
 }
 
-const VkSwapchainKHR layerSwapchain = reinterpret_cast<VkSwapchainKHR>(uintptr_t(1));
-const VkSwapchainKHR driverSwapchain = reinterpret_cast<VkSwapchainKHR>(uintptr_t(2));
+const VkSwapchainKHR layerSwapchain = fakeHandle<VkSwapchainKHR>(1);
+const VkSwapchainKHR driverSwapchain = fakeHandle<VkSwapchainKHR>(2);
 
 struct Calibration {
   VkSwapchainCalibratedTimestampInfoEXT local = {
@@ -335,7 +339,7 @@ TEST_CASE("Timestamp lookup preserves enabled aliases for Zink fallback", "[pres
   auto *instanceDispatch = vkroots::tables::InstanceDispatches.create(instance, getInstanceProc, instance, getInstanceProc);
   REQUIRE(instanceDispatch != nullptr);
   REQUIRE(vkroots::tables::DeviceDispatches.create(device, getCalibrationProc, device,
-    VK_NULL_HANDLE, nullptr, &createInfo) != nullptr);
+    nullptr, nullptr, &createInfo) != nullptr);
   struct Cleanup {
     VkDevice device;
     VkInstance instance;
@@ -480,10 +484,10 @@ TEST_CASE("A refused present keeps every image acquired and reports each", "[pre
   VkDeviceCreateInfo createInfo{ .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
   vkroots::VkDeviceDispatch dispatch(getDeviceProc, VK_NULL_HANDLE, VK_NULL_HANDLE, nullptr, &createInfo);
   vkroots::VkQueueDispatch queueDispatch(VK_NULL_HANDLE, &dispatch);
-  std::array<VkSwapchainKHR, 2> swapchains{reinterpret_cast<VkSwapchainKHR>(uintptr_t(1)), reinterpret_cast<VkSwapchainKHR>(uintptr_t(2))};
+  std::array<VkSwapchainKHR, 2> swapchains{fakeHandle<VkSwapchainKHR>(1), fakeHandle<VkSwapchainKHR>(2)};
   std::array<uint32_t, 2> images{0, 1};
   std::array<VkResult, 2> results{};
-  VkSemaphore semaphore = reinterpret_cast<VkSemaphore>(uintptr_t(5));
+  VkSemaphore semaphore = fakeHandle<VkSemaphore>(5);
   VkPresentInfoKHR info{ VK_STRUCTURE_TYPE_PRESENT_INFO_KHR, nullptr, 1, &semaphore, 2,
     swapchains.data(), images.data(), results.data() };
 
@@ -511,7 +515,7 @@ TEST_CASE("Layer device teardown does not read the erased dispatch", "[present_t
   VkDevice device = reinterpret_cast<VkDevice>(uintptr_t(102));
   VkDeviceCreateInfo createInfo{ .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
   auto *dispatch = vkroots::tables::DeviceDispatches.create(device, getDeviceProc, device,
-    VK_NULL_HANDLE, nullptr, &createInfo);
+    nullptr, nullptr, &createInfo);
   REQUIRE(dispatch != nullptr);
   GamescopeWSILayer::VkDeviceOverrides::DestroyDevice(*dispatch, device, nullptr);
   REQUIRE(destroyedDevices == 1);
@@ -539,13 +543,13 @@ struct PresentBatch {
   wl_registry *registry;
   wl_event_queue *globalsQueue;
   gamescope_swapchain_factory_v2 *factory;
-  std::array<VkSwapchainKHR, 2> swapchains{reinterpret_cast<VkSwapchainKHR>(uintptr_t(501)), reinterpret_cast<VkSwapchainKHR>(uintptr_t(502))};
-  std::array<VkSurfaceKHR, 2> surfaces{reinterpret_cast<VkSurfaceKHR>(uintptr_t(601)), reinterpret_cast<VkSurfaceKHR>(uintptr_t(602))};
+  std::array<VkSwapchainKHR, 2> swapchains{fakeHandle<VkSwapchainKHR>(501), fakeHandle<VkSwapchainKHR>(502)};
+  std::array<VkSurfaceKHR, 2> surfaces{fakeHandle<VkSurfaceKHR>(601), fakeHandle<VkSurfaceKHR>(602)};
   std::array<GamescopeWSILayer::GamescopeSwapchainData *, 2> states{};
   std::array<wl_surface *, 2> wlSurfaces{};
   std::array<uint32_t, 2> images{2, 1};
   std::array<uint64_t, 2> ids{71, 92};
-  std::array<VkFence, 2> fences{reinterpret_cast<VkFence>(uintptr_t(701)), reinterpret_cast<VkFence>(uintptr_t(702))};
+  std::array<VkFence, 2> fences{fakeHandle<VkFence>(701), fakeHandle<VkFence>(702)};
   std::array<VkPresentTimingInfoEXT, 2> timings{{
     {.sType = VK_STRUCTURE_TYPE_PRESENT_TIMING_INFO_EXT, .presentStageQueries = VK_PRESENT_STAGE_IMAGE_FIRST_PIXEL_OUT_BIT_EXT},
     {.sType = VK_STRUCTURE_TYPE_PRESENT_TIMING_INFO_EXT, .targetTime = 9000, .presentStageQueries = VK_PRESENT_STAGE_IMAGE_FIRST_PIXEL_OUT_BIT_EXT},
@@ -554,7 +558,7 @@ struct PresentBatch {
   VkPresentTimingsInfoEXT timingInfo{VK_STRUCTURE_TYPE_PRESENT_TIMINGS_INFO_EXT, nullptr, 2, timings.data()};
   VkPresentId2KHR idInfo{VK_STRUCTURE_TYPE_PRESENT_ID_2_KHR, &timingInfo, 2, ids.data()};
   VkSwapchainPresentFenceInfoEXT fenceInfo{VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_FENCE_INFO_EXT, &idInfo, 2, fences.data()};
-  VkSemaphore semaphore = reinterpret_cast<VkSemaphore>(uintptr_t(801));
+  VkSemaphore semaphore = fakeHandle<VkSemaphore>(801);
   VkPresentInfoKHR info{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR, &fenceInfo, 1, &semaphore, 2, swapchains.data(), images.data(), results.data()};
   VkDeviceCreateInfo createInfo{.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
   vkroots::VkDeviceDispatch device{getDeviceProc, VK_NULL_HANDLE, VK_NULL_HANDLE, nullptr, &createInfo};
@@ -847,7 +851,7 @@ TEST_CASE("A rejected last swapchain still ends the frame", "[present_timing_lay
 
 TEST_CASE("A failing middle present marks the remaining swapchains lost", "[present_timing_layer][present_batch]") {
   PresentBatch batch(true);
-  std::array<VkSwapchainKHR, 3> swapchains{batch.swapchains[0], batch.swapchains[1], reinterpret_cast<VkSwapchainKHR>(uintptr_t(503))};
+  std::array<VkSwapchainKHR, 3> swapchains{batch.swapchains[0], batch.swapchains[1], fakeHandle<VkSwapchainKHR>(503)};
   std::array<uint32_t, 3> images{2, 1, 0};
   std::array<uint64_t, 3> ids{71, 92, 93};
   std::array<VkPresentTimingInfoEXT, 3> timings{{batch.timings[0], batch.timings[1], batch.timings[1]}};
@@ -896,7 +900,7 @@ std::vector<VkSurfaceKHR> destroyedSurfaces;
 VkResult VKAPI_CALL createTestSurface(VkInstance, const VkWaylandSurfaceCreateInfoKHR *,
                                     const VkAllocationCallbacks *, VkSurfaceKHR *surface) {
   if (surfaceResult == VK_SUCCESS)
-    *surface = reinterpret_cast<VkSurfaceKHR>(++surfaceSerial);
+    *surface = fakeHandle<VkSurfaceKHR>(++surfaceSerial);
   return surfaceResult;
 }
 bool destroyedWhileTracked = false;
@@ -980,7 +984,7 @@ TEST_CASE("Retiring an old swapchain preserves its surface globals and successor
   VkDeviceCreateInfo createInfo{.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
   vkroots::VkDeviceDispatch dispatch(getSurfaceDeviceProc, VK_NULL_HANDLE, VK_NULL_HANDLE, nullptr, &createInfo);
   const std::array<VkSwapchainKHR, 2> handles{
-    reinterpret_cast<VkSwapchainKHR>(uintptr_t(2001)), reinterpret_cast<VkSwapchainKHR>(uintptr_t(2002))};
+    fakeHandle<VkSwapchainKHR>(2001), fakeHandle<VkSwapchainKHR>(2002)};
   std::array<GamescopeSwapchainData *, 2> states;
   for (size_t i = 0; i < states.size(); ++i) {
     auto *queue = wl_display_create_queue(peer.display);
@@ -1020,8 +1024,8 @@ TEST_CASE("A timed present round-trips through the gamescope protocol", "[presen
   auto owner = GamescopeWaylandObjects::get(peer.display);
   REQUIRE(owner.valid());
   auto *appSurface = peer.CreateSurface();
-  const auto surface = reinterpret_cast<VkSurfaceKHR>(uintptr_t(2101));
-  const auto handle = reinterpret_cast<VkSwapchainKHR>(uintptr_t(2102));
+  const auto surface = fakeHandle<VkSurfaceKHR>(2101);
+  const auto handle = fakeHandle<VkSwapchainKHR>(2102);
   REQUIRE(gamescopeSurfaces.create(surface, GamescopeSurfaceData{}));
   auto *eventQueue = wl_display_create_queue(peer.display);
   auto *wrapper = static_cast<gamescope_swapchain_factory_v2 *>(wl_proxy_create_wrapper(owner.gamescopeSwapchainFactory.get()));
