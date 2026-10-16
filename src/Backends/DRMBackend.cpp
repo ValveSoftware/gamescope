@@ -53,7 +53,6 @@
 #include <wlr/types/wlr_buffer.h>
 #include "libdisplay-info/info.h"
 #include "libdisplay-info/edid.h"
-#include "libdisplay-info/cta.h"
 #include "wlr_end.hpp"
 
 #include "gamescope-control-protocol.h"
@@ -2754,38 +2753,11 @@ namespace gamescope
 		/////////////////////
 		if ( !bHasKnownHDRInfo || !ofScriptMaxCLL || !ofScriptMaxFALL || !ofScriptMinCLL )
 		{
-			const di_cta_hdr_static_metadata_block *pHDRStaticMetadata = nullptr;
-			const di_cta_colorimetry_block *pColorimetry = nullptr;
+			// libdisplay-info 0.4.0 and newer also find these in DisplayID 2 CTA-861 data blocks.
+			const di_hdr_static_metadata *pHDRStaticMetadata = di_info_get_hdr_static_metadata( pInfo );
+			const di_supported_signal_colorimetry *pColorimetry = di_info_get_supported_signal_colorimetry( pInfo );
 
-			const di_edid_cta* pCTA = NULL;
-			const di_edid_ext *const *ppExts = di_edid_get_extensions( pEdid );
-			for ( ; *ppExts != nullptr; ppExts++ )
-			{
-				if ( ( pCTA = di_edid_ext_get_cta( *ppExts ) ) )
-					break;
-			}
-
-			if ( pCTA )
-			{
-				const di_cta_data_block *const *ppBlocks = di_edid_cta_get_data_blocks( pCTA );
-				for ( ; *ppBlocks != nullptr; ppBlocks++ )
-				{
-					if ( di_cta_data_block_get_tag( *ppBlocks ) == DI_CTA_DATA_BLOCK_HDR_STATIC_METADATA )
-					{
-						pHDRStaticMetadata = di_cta_data_block_get_hdr_static_metadata( *ppBlocks );
-						continue;
-					}
-
-					if ( di_cta_data_block_get_tag( *ppBlocks ) == DI_CTA_DATA_BLOCK_COLORIMETRY )
-					{
-						pColorimetry = di_cta_data_block_get_colorimetry( *ppBlocks );
-						continue;
-					}
-				}
-			}
-
-			if ( pColorimetry && pColorimetry->bt2020_rgb &&
-				 pHDRStaticMetadata && pHDRStaticMetadata->eotfs && pHDRStaticMetadata->eotfs->pq )
+			if ( pColorimetry->bt2020_rgb && pHDRStaticMetadata->pq )
 			{
 				if ( !bHasKnownHDRInfo )
 				{
