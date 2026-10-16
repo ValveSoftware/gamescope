@@ -41,7 +41,7 @@ namespace GamescopeWSILayer {
   static const size_t MaxPastPresentationTimes = 16;
 
   static uint64_t timespecToNanos(struct timespec& spec) {
-    return spec.tv_sec * 1'000'000'000ul + spec.tv_nsec;
+    return uint64_t(spec.tv_sec) * 1'000'000'000 + spec.tv_nsec;
   }
 
   [[maybe_unused]] static uint64_t getTimeMonotonic() {

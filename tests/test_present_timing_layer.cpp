@@ -479,6 +479,11 @@ TEST_CASE("Present calibration deviation saturates", "[present_timing_layer]") {
   REQUIRE(calibration.deviation == std::numeric_limits<uint64_t>::max());
 }
 
+TEST_CASE("timespecToNanos does not wrap on 32-bit", "[present_timing_layer]") {
+  timespec spec{5, 1};
+  CHECK(GamescopeWSILayer::timespecToNanos(spec) == 5'000'000'001);
+}
+
 TEST_CASE("A refused present keeps every image acquired and reports each", "[present_timing_layer]") {
   refused = {};
   VkDeviceCreateInfo createInfo{ .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
