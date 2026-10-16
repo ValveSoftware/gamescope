@@ -605,6 +605,9 @@ struct VulkanOutput_t
 	// NIS and FSR
 	gamescope::OwningRc<CVulkanTexture> tmpOutput;
 
+	// post reshade target
+	gamescope::OwningRc<CVulkanTexture> postOutput;
+
 	// NIS
 	gamescope::OwningRc<CVulkanTexture> nisScalerImage;
 	gamescope::OwningRc<CVulkanTexture> nisUsmImage;
