@@ -18,6 +18,8 @@ gamescope.config.known_displays.rogallyx20_oled = {
         force_enabled = false,
         eotf = gamescope.eotf.pq,
         content_driven = true,
+        -- The panel ignores hardware backlight control while in PQ mode.
+        software_backlight = true,
         -- From the EDID's DisplayID 2 HDR block, which libdisplay-info before 0.4.0 cannot find.
         max_content_light_level = 1405,
         max_frame_average_luminance = 800,
