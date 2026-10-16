@@ -3049,23 +3049,36 @@ bool acquire_next_image( void )
 
 static std::atomic<uint64_t> g_currentPresentWaitId = {0u};
 static std::mutex present_wait_lock;
+static std::jthread g_presentWaitThread;
+static constexpr uint64_t k_uPresentWaitShutdownId = ~0ull;
 
 extern void mangoapp_output_update( uint64_t vblanktime );
-static void present_wait_thread_func( void )
+static void present_wait_thread_func( std::stop_token stopToken )
 {
+	pthread_setname_np( pthread_self(), "gamescope-prsnt" );
 	uint64_t present_wait_id = 0;
 
-	while (true)
+	std::stop_callback stopCallback( stopToken, []
 	{
-		g_currentPresentWaitId.wait(present_wait_id);
+		std::unique_lock lock( present_wait_lock );
+		g_currentPresentWaitId = k_uPresentWaitShutdownId;
+		g_currentPresentWaitId.notify_all();
+	} );
+
+	while ( !stopToken.stop_requested() )
+	{
+		g_currentPresentWaitId.wait( present_wait_id );
 
 		// Lock to make sure swapchain destruction is waited on and that
 		// it's for this swapchain.
 		{
-			std::unique_lock lock(present_wait_lock);
+			std::unique_lock lock( present_wait_lock );
 			present_wait_id = g_currentPresentWaitId.load();
 
-			if (present_wait_id != 0)
+			if ( stopToken.stop_requested() )
+				break;
+
+			if ( present_wait_id != 0 )
 			{
 				g_device.vk.WaitForPresentKHR( g_device.device(), g_output.swapChain, present_wait_id, 1'000'000'000lu );
 				uint64_t vblanktime = get_time_in_nanos();
@@ -3074,6 +3087,15 @@ static void present_wait_thread_func( void )
 			}
 		}
 	}
+}
+
+void vulkan_present_wait_shutdown( void )
+{
+	if ( !g_presentWaitThread.joinable() )
+		return;
+
+	g_presentWaitThread.request_stop();
+	g_presentWaitThread.join();
 }
 
 void vulkan_update_swapchain_hdr_metadata( VulkanOutput_t *pOutput )
@@ -3734,8 +3756,7 @@ bool vulkan_init( VkInstance instance, VkSurfaceKHR surface )
 
 	if ( GetBackend()->UsesVulkanSwapchain() )
 	{
-		std::thread present_wait_thread( present_wait_thread_func );
-		present_wait_thread.detach();
+		g_presentWaitThread = std::jthread( present_wait_thread_func );
 	}
 
 	s_bInitted = true;

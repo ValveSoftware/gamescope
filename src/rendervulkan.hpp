@@ -476,6 +476,7 @@ gamescope::Rc<CVulkanTexture> vulkan_acquire_capture_texture(uint32_t width, uin
 uint32_t vulkan_get_rgb10_capture_format( void );
 
 void vulkan_present_to_window( void );
+void vulkan_present_wait_shutdown( void );
 
 void vulkan_garbage_collect( void );
 bool vulkan_remake_swapchain( void );
