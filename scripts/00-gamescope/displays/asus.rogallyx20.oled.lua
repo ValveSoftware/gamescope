@@ -18,6 +18,8 @@ gamescope.config.known_displays.rogallyx20_oled = {
         force_enabled = false,
         eotf = gamescope.eotf.pq,
         content_driven = true,
+        -- The panel ignores hardware backlight control while in PQ mode.
+        software_backlight = true,
         -- Luminance and colorimetry come from the panel's EDID.
     },
     dynamic_refresh_rates = rogallyx20_oled_refresh_rates,
