@@ -2549,6 +2549,7 @@ namespace PaintWindowFlag
 	static const uint32_t NoFilter = 1u << 5;
 	static const uint32_t CoverageMode = 1u << 6;
 	static const uint32_t ClampToOutput = 1u << 7;
+	static const uint32_t SubpixelOffsets = 1u << 8;
 }
 using PaintWindowFlags = uint32_t;
 
@@ -2576,7 +2577,7 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
 {
 	int32_t sourceWidth, sourceHeight;
 	int32_t baseWidth, baseHeight;
-	int drawXOffset = 0, drawYOffset = 0;
+	float drawXOffset = 0, drawYOffset = 0;
 	float currentScaleRatio_x = 1.0;
 	float currentScaleRatio_y = 1.0;
 	float baseScaleRatio_x = 1.0;
@@ -2690,19 +2691,22 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
 	{
 		calc_scale_factor(frameInfo->eUpscaleScaler, currentScaleRatio_x, currentScaleRatio_y, sourceWidth, sourceHeight);
 
-		drawXOffset = ((int)currentOutputWidth - (int)sourceWidth * currentScaleRatio_x) / 2.0f;
-		drawYOffset = ((int)currentOutputHeight - (int)sourceHeight * currentScaleRatio_y) / 2.0f;
+		// The display keeps layers on whole pixels, a rescaled screenshot needs the fractions.
+		auto snap = [flags]( float flOffset ) { return ( flags & PaintWindowFlag::SubpixelOffsets ) ? flOffset : truncf( flOffset ); };
+
+		drawXOffset = snap( ((int)currentOutputWidth - (int)sourceWidth * currentScaleRatio_x) / 2.0f );
+		drawYOffset = snap( ((int)currentOutputHeight - (int)sourceHeight * currentScaleRatio_y) / 2.0f );
 
 		if ( w != scaleW )
 		{
-			drawXOffset += winOffsetX * currentScaleRatio_x;
-			drawYOffset += winOffsetY * currentScaleRatio_y;
+			drawXOffset = snap( drawXOffset + winOffsetX * currentScaleRatio_x );
+			drawYOffset = snap( drawYOffset + winOffsetY * currentScaleRatio_y );
 		}
 
 		if ( zoomScaleRatio != 1.0 )
 		{
-			drawXOffset += (((int)baseWidth / 2) - (cursor ? cursor->x() : 0)) * baseScaleRatio_x;
-			drawYOffset += (((int)baseHeight / 2) - (cursor ? cursor->y() : 0)) * baseScaleRatio_y;
+			drawXOffset = snap( drawXOffset + (((int)baseWidth / 2) - (cursor ? cursor->x() : 0)) * baseScaleRatio_x );
+			drawYOffset = snap( drawYOffset + (((int)baseHeight / 2) - (cursor ? cursor->y() : 0)) * baseScaleRatio_y );
 		}
 	}
 
@@ -2847,12 +2851,12 @@ static void update_touch_scaling( const struct FrameInfo_t *frameInfo )
 // Paint the ancestors nearest the pick that fit the layer budget, the override included.
 static void
 paint_override_underlays( global_focus_t *pFocus, steamcompmgr_win_t *scaleW, struct FrameInfo_t *frameInfo,
-						  MouseCursor *cursor, int nReservedLayers )
+						  MouseCursor *cursor, int nReservedLayers, PaintWindowFlags flags = 0 )
 {
 	const int nAvailable = k_nMaxLayers - nReservedLayers - frameInfo->layers.count() - ( pFocus->overrideWindow ? 1 : 0 );
 	const int nUnderlays = int( pFocus->overrideUnderlayWindows.size() );
 	for ( int i = std::max( nUnderlays - nAvailable, 0 ); i < nUnderlays; i++ )
-		paint_window( pFocus, pFocus->overrideUnderlayWindows[i], scaleW, frameInfo, cursor, PaintWindowFlag::NoFilter, 1.0f, pFocus->overrideWindow );
+		paint_window( pFocus, pFocus->overrideUnderlayWindows[i], scaleW, frameInfo, cursor, PaintWindowFlag::NoFilter | flags, 1.0f, pFocus->overrideWindow );
 }
 
 #if HAVE_PIPEWIRE
@@ -3525,13 +3529,16 @@ paint_all( global_focus_t *pFocus, bool async )
 			xwm_log.errorf( "Unsupported extension for a screenshot: %s", path.extension().string().c_str() );
 
 		// Repaint base-plane-only screenshots at the game's render resolution to preserve supersampling.
-		const bool bRenderSizeScreenshot =
-			oScreenshotInfo->eScreenshotType == GAMESCOPE_CONTROL_SCREENSHOT_TYPE_BASE_PLANE_ONLY &&
-			drmCaptureFormat != DRM_FORMAT_NV12 &&
-			pFocus->focusWindow != nullptr;
+		commit_t *pFocusCommit = nullptr;
+		if ( oScreenshotInfo->eScreenshotType == GAMESCOPE_CONTROL_SCREENSHOT_TYPE_BASE_PLANE_ONLY &&
+			 drmCaptureFormat != DRM_FORMAT_NV12 &&
+			 pFocus->focusWindow != nullptr )
+			pFocusCommit = get_window_last_done_commit_peek( pFocus->focusWindow );
 
-		const uint32_t uScreenshotWidth = bRenderSizeScreenshot ? g_nNestedWidth : g_nOutputWidth;
-		const uint32_t uScreenshotHeight = bRenderSizeScreenshot ? g_nNestedHeight : g_nOutputHeight;
+		const bool bRenderSizeScreenshot = pFocusCommit && pFocusCommit->vulkanTex;
+
+		const uint32_t uScreenshotWidth = bRenderSizeScreenshot ? pFocusCommit->vulkanTex->width() : g_nOutputWidth;
+		const uint32_t uScreenshotHeight = bRenderSizeScreenshot ? pFocusCommit->vulkanTex->height() : g_nOutputHeight;
 
 		gamescope::Rc<CVulkanTexture> pScreenshotTexture;
 		if ( drmCaptureFormat != DRM_FORMAT_INVALID )
@@ -3623,25 +3630,38 @@ paint_all( global_focus_t *pFocus, bool async )
 					screenshotFrameInfo.shaperLut[nInputEOTF] = luts[nInputEOTF].vk_lut1d;
 				}
 
-				const uint32_t uBackupWidth = currentOutputWidth;
-				const uint32_t uBackupHeight = currentOutputHeight;
-				currentOutputWidth = uScreenshotWidth;
-				currentOutputHeight = uScreenshotHeight;
-
-				paint_window( pFocus, pFocus->focusWindow, pFocus->focusWindow, &screenshotFrameInfo, nullptr, 0, 1.0f, pFocus->overrideWindow );
+				paint_window( pFocus, pFocus->focusWindow, pFocus->focusWindow, &screenshotFrameInfo, nullptr, PaintWindowFlag::SubpixelOffsets, 1.0f, pFocus->overrideWindow );
 				if ( !pFocus->focusWindow->isSteamStreamingClient )
-					paint_override_underlays( pFocus, pFocus->focusWindow, &screenshotFrameInfo, nullptr, 0 );
+					paint_override_underlays( pFocus, pFocus->focusWindow, &screenshotFrameInfo, nullptr, 0, PaintWindowFlag::SubpixelOffsets );
 				if ( pFocus->overrideWindow && !pFocus->focusWindow->isSteamStreamingClient )
 					paint_window( pFocus, pFocus->overrideWindow, pFocus->focusWindow, &screenshotFrameInfo, nullptr,
-						PaintWindowFlag::NoFilter | PaintWindowFlag::ClampToOutput, 1.0f, pFocus->overrideWindow );
+						PaintWindowFlag::NoFilter | PaintWindowFlag::ClampToOutput | PaintWindowFlag::SubpixelOffsets, 1.0f, pFocus->overrideWindow );
 				if ( !pFocus->focusWindow->isSteamStreamingClient )
 				{
 					for ( steamcompmgr_win_t *decoration : pFocus->decorationWindows )
 					{
 						if ( decoration->opacity )
-							paint_window( pFocus, decoration, pFocus->focusWindow, &screenshotFrameInfo, nullptr, PaintWindowFlag::NoFilter, 1.0f, decoration );
+							paint_window( pFocus, decoration, pFocus->focusWindow, &screenshotFrameInfo, nullptr,
+								PaintWindowFlag::NoFilter | PaintWindowFlag::SubpixelOffsets, 1.0f, decoration );
 					}
 				}
+
+				// Scale the displayed layout so the focus buffer lands 1:1 in the capture.
+				const vec2_t focusOffset = screenshotFrameInfo.layers.get( 0 ).offset;
+				const vec2_t focusScale = screenshotFrameInfo.layers.get( 0 ).scale;
+				for ( int i = 0; i < screenshotFrameInfo.layers.count(); i++ )
+				{
+					FrameInfo_t::Layer_t &layer = screenshotFrameInfo.layers.get( i );
+					layer.offset.x = ( layer.offset.x - focusOffset.x ) * focusScale.x;
+					layer.offset.y = ( layer.offset.y - focusOffset.y ) * focusScale.y;
+					layer.scale.x /= focusScale.x;
+					layer.scale.y /= focusScale.y;
+				}
+
+				const uint32_t uBackupWidth = currentOutputWidth;
+				const uint32_t uBackupHeight = currentOutputHeight;
+				currentOutputWidth = uScreenshotWidth;
+				currentOutputHeight = uScreenshotHeight;
 
 				oScreenshotSeq = vulkan_screenshot( &screenshotFrameInfo, pScreenshotTexture, nullptr );
 
