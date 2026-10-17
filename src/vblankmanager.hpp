@@ -33,6 +33,7 @@ namespace gamescope
 
         CVBlankTimer();
         ~CVBlankTimer();
+        void Shutdown();
 
         int GetRefresh() const;
         uint64_t GetLastVBlank() const;
@@ -140,4 +141,6 @@ namespace gamescope
 }
 
 gamescope::CVBlankTimer &GetVBlankTimer();
+// Does not construct the timer on initialization failure paths.
+void StopVBlankTimer();
 

@@ -3043,30 +3043,66 @@ bool acquire_next_image( void )
 
 static std::atomic<uint64_t> g_currentPresentWaitId = {0u};
 static std::mutex present_wait_lock;
+static constexpr uint64_t k_PresentWaitStopped = UINT64_MAX;
+static std::jthread g_presentWaitThread;
+
+static void publish_present_wait_id( uint64_t id )
+{
+	// Do not overwrite the shutdown wakeup, including during swapchain recreation.
+	uint64_t current = g_currentPresentWaitId.load();
+	while ( current != k_PresentWaitStopped &&
+		!g_currentPresentWaitId.compare_exchange_weak( current, id ) ) {}
+	g_currentPresentWaitId.notify_all();
+}
+
+void vulkan_stop_present_wait_thread()
+{
+	// Called by the backend owner, without holding present_wait_lock.
+	if ( g_presentWaitThread.joinable() )
+	{
+		g_presentWaitThread.request_stop();
+		g_presentWaitThread.join();
+	}
+}
 
 extern void mangoapp_output_update( uint64_t vblanktime );
-static void present_wait_thread_func( void )
+static void present_wait_thread_func( std::stop_token stop )
 {
+	// notify_all alone cannot release atomic::wait if its value is unchanged.
+	std::stop_callback wakeOnStop( stop, [] {
+		g_currentPresentWaitId = k_PresentWaitStopped;
+		g_currentPresentWaitId.notify_all();
+	} );
 	uint64_t present_wait_id = 0;
 
-	while (true)
+	while ( !stop.stop_requested() )
 	{
 		g_currentPresentWaitId.wait(present_wait_id);
 
 		// Lock to make sure swapchain destruction is waited on and that
 		// it's for this swapchain.
+		std::unique_lock lock(present_wait_lock);
+		uint64_t id = g_currentPresentWaitId.load();
+		if ( stop.stop_requested() )
+			return;
+		if ( id == 0 )
 		{
-			std::unique_lock lock(present_wait_lock);
-			present_wait_id = g_currentPresentWaitId.load();
-
-			if (present_wait_id != 0)
-			{
-				g_device.vk.WaitForPresentKHR( g_device.device(), g_output.swapChain, present_wait_id, 1'000'000'000lu );
-				uint64_t vblanktime = get_time_in_nanos();
-				GetVBlankTimer().MarkVBlank( vblanktime, true );
-				mangoapp_output_update( vblanktime );
-			}
+			present_wait_id = 0;
+			continue;
 		}
+
+		// Retry timeouts in bounded slices, releasing the swapchain lock between attempts.
+		VkResult result = g_device.vk.WaitForPresentKHR( g_device.device(), g_output.swapChain, id, 50'000'000lu );
+		if ( stop.stop_requested() )
+			return;
+		if ( result == VK_TIMEOUT )
+			continue;
+		present_wait_id = id;
+		if ( result != VK_SUCCESS )
+			continue;
+		uint64_t vblanktime = get_time_in_nanos();
+		GetVBlankTimer().MarkVBlank( vblanktime, true );
+		mangoapp_output_update( vblanktime );
 	}
 }
 
@@ -3142,8 +3178,7 @@ void vulkan_present_to_window( void )
 
 	if ( g_device.vk.QueuePresentKHR( g_device.queue(), &presentInfo ) == VK_SUCCESS )
 	{
-		g_currentPresentWaitId = presentId;
-		g_currentPresentWaitId.notify_all();
+		publish_present_wait_id( presentId );
 	}
 	else
 		vulkan_remake_swapchain();
@@ -3368,8 +3403,7 @@ bool vulkan_make_swapchain( VulkanOutput_t *pOutput )
 bool vulkan_remake_swapchain( void )
 {
 	std::unique_lock lock(present_wait_lock);
-	g_currentPresentWaitId = 0;
-	g_currentPresentWaitId.notify_all();
+	publish_present_wait_id( 0 );
 
 	VulkanOutput_t *pOutput = &g_output;
 	g_device.waitIdle();
@@ -3702,22 +3736,23 @@ bool vulkan_init( VkInstance instance, VkSurfaceKHR surface )
 	if ( s_bInitted )
 	{
 		g_output.surface = surface;
-		return true;
 	}
-
-	if (!g_device.BInit(instance, surface))
-		return false;
-
-	if (!init_nis_data())
-		return false;
-
-	if ( GetBackend()->UsesVulkanSwapchain() )
+	else
 	{
-		std::thread present_wait_thread( present_wait_thread_func );
-		present_wait_thread.detach();
+		if (!g_device.BInit(instance, surface))
+			return false;
+
+		if (!init_nis_data())
+			return false;
+
+		s_bInitted = true;
 	}
 
-	s_bInitted = true;
+	if ( GetBackend()->UsesVulkanSwapchain() && !g_presentWaitThread.joinable() )
+	{
+		g_currentPresentWaitId = 0;
+		g_presentWaitThread = std::jthread( present_wait_thread_func );
+	}
 
 	return true;
 }
