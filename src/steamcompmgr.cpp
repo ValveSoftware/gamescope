@@ -456,8 +456,8 @@ create_color_mgmt_luts(const gamescope_color_mgmt_t& newColorMgmt, gamescope_col
 			}
 		}
 
-		outColorMgmtLuts[nInputEOTF].bHasLut1D = true;
-		outColorMgmtLuts[nInputEOTF].bHasLut3D = true;
+		outColorMgmtLuts[nInputEOTF].bHasLut1D = outColorMgmtLuts[nInputEOTF].vk_lut1d != nullptr;
+		outColorMgmtLuts[nInputEOTF].bHasLut3D = outColorMgmtLuts[nInputEOTF].vk_lut3d != nullptr;
 
 		vulkan_update_luts(outColorMgmtLuts[nInputEOTF].vk_lut1d, outColorMgmtLuts[nInputEOTF].vk_lut3d, outColorMgmtLuts[nInputEOTF].lut1d, outColorMgmtLuts[nInputEOTF].lut3d);
 	}
