@@ -1918,6 +1918,23 @@ void CVulkanCmdBuffer::copyBufferToImage(VkBuffer buffer, VkDeviceSize offset, u
 	m_textureRefs.emplace_back(std::move(dst));
 }
 
+void CVulkanCmdBuffer::clearImage(gamescope::Rc<CVulkanTexture> dst, const VkClearColorValue &color)
+{
+	prepareDestImage(dst.get());
+	insertBarrier();
+	VkImageSubresourceRange range = {
+		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+		.levelCount = 1,
+		.layerCount = 1,
+	};
+
+	m_device->vk.CmdClearColorImage(m_cmdBuffer, dst->vkImage(), VK_IMAGE_LAYOUT_GENERAL, &color, 1, &range);
+
+	markDirty(dst.get());
+
+	m_textureRefs.emplace_back(std::move(dst));
+}
+
 void CVulkanCmdBuffer::prepareSrcImage(CVulkanTexture *image)
 {
 	auto result = m_textureState.emplace(image, TextureState());
@@ -3218,18 +3235,10 @@ gamescope::OwningRc<CVulkanTexture> vulkan_create_flat_texture( uint32_t width, 
 	if ( !bRes )
 		return nullptr;
 
-	auto [_dst, offset] = g_device.uploadBufferData( width * height * 4 );
-	uint8_t *dst = (uint8_t *)_dst;
-	for ( uint32_t i = 0; i < width * height * 4; i += 4 )
-	{
-		dst[i + 0] = b;
-		dst[i + 1] = g;
-		dst[i + 2] = r;
-		dst[i + 3] = a;
-	}
+	VkClearColorValue color = { .float32 = { r / 255.0f, g / 255.0f, b / 255.0f, a / 255.0f } };
 
 	auto cmdBuffer = g_device.commandBuffer();
-	cmdBuffer->copyBufferToImage(g_device.uploadBuffer(), offset, 0, texture.get());
+	cmdBuffer->clearImage(texture.get(), color);
 	g_device.submit(std::move(cmdBuffer));
 	g_device.waitIdle();
 
