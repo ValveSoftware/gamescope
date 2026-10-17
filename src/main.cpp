@@ -48,6 +48,16 @@ using namespace std::literals;
 EStreamColorspace g_ForcedNV12ColorSpace = k_EStreamColorspace_Unknown;
 extern gamescope::ConVar<bool> cv_adaptive_sync;
 extern gamescope::ConVar<bool> cv_shutdown_on_primary_child_death;
+extern gamescope::ConVar<bool> cv_pointer_tap_to_click;
+extern gamescope::ConVar<bool> cv_pointer_tap_and_drag;
+extern gamescope::ConVar<bool> cv_pointer_drag_lock;
+extern gamescope::ConVar<bool> cv_pointer_middle_emulation;
+extern gamescope::ConVar<bool> cv_pointer_left_handed;
+extern gamescope::ConVar<bool> cv_pointer_disable_while_typing;
+extern gamescope::ConVar<bool> cv_pointer_disable_while_trackpointing;
+extern gamescope::ConVar<std::string> cv_pointer_natural_scrolling;
+extern gamescope::ConVar<std::string> cv_pointer_accel_profile;
+extern gamescope::ConVar<float> cv_pointer_accel_speed;
 
 const char *gamescope_optstring = nullptr;
 const char *g_pOriginalDisplay = nullptr;
@@ -160,6 +170,17 @@ const struct option *gamescope_options = (struct option[]){
 
 	{ "allow-deferred-backend", no_argument, nullptr, 0 },
 	{ "keep-alive", no_argument, nullptr, 0 },
+	// Libinput options
+	{ "tap-to-click", no_argument, nullptr, 0 },
+	{ "tap-and-drag", no_argument, nullptr, 0 },
+	{ "drag-lock", no_argument, nullptr, 0 },
+	{ "middle-emulation", no_argument, nullptr, 0 },
+	{ "disable-while-typing", no_argument, nullptr, 0 },
+	{ "disable-while-trackpointing", no_argument, nullptr, 0 },
+	{ "left-handed", no_argument, nullptr, 0 },
+	{ "natural-scrolling", required_argument, nullptr, 0 },
+	{ "pointer-accel-profile", required_argument, nullptr, 0 },
+	{ "pointer-accel-speed", required_argument, nullptr, 0 },
 
 	{} // keep last
 };
@@ -280,6 +301,25 @@ const char usage[] =
 	"Platform options:\n"
 	"  --allow-deferred-backend       Allows initting the backend in a deferred way, if it doesn't work immediately. (Note: This has some very minor correctness compromises that you should consider wrt. your platform with modifiers, etc).\n"
 	"  --keep-alive                   Keep Gamescope alive even when the primary process has died.\n"
+	"Libinput Pointer options:\n"
+	"  --tap-to-click                 enable tap-to-click feature for pointer devices\n"
+	"  --tap-and-drag                 enable tap-and-drag feature for pointer devices\n"
+	"  --drag-lock                    enable drag-lock feature for pointer devices\n"
+	"  --middle-emulation             enable middle button emulation for pointer devices\n"
+	"  --left-handed                  enable left handed mode for pointer devices\n"
+	"  --disable-while-typing         disable pointer devices while typing\n"
+	"  --disable-while-trackpointing  disable pointer devices while trackpointing\n"
+	"  --natural-scrolling            enable natural scrolling for ...\n"
+	"                                     none => No pointer device (default)\n"
+	"                                     touchpad => Only touchpad\n"
+	"                                     mouse => Only mouse\n"
+	"                                     all => All pointer device\n"
+	"  --pointer-accel-profile        set acceleration profile for pointer devices to ...\n"
+	"                                     adaptive => takes the current speed of the device into account when deciding on acceleration (default)\n"
+	"                                     flat => simply a constant factor applied to all device deltas, regardless of the speed of motion\n"
+	"  --pointer-accel-speed          set acceleration speed for pointer devices within [-1, 1] (default 0)\n"
+	"  These options are also exposed as the pointer_* convars, so they can be set from a Lua config\n"
+	"  (e.g. $XDG_CONFIG_HOME/gamescope/scripts/input.lua) or changed at runtime with gamescopectl.\n"
 	"\n"
 	"Keyboard shortcuts:\n"
 	"  Super + F                      toggle fullscreen\n"
@@ -495,7 +535,6 @@ static gamescope::ConCommand cc_shutdown( "shutdown", "Cleanly shutdown gamescop
 	console_log.infof( "Shutting down..." );
 	ShutdownGamescope();
 });
-
 static void handle_signal( int sig )
 {
 	switch ( sig ) {
@@ -859,6 +898,26 @@ int main(int argc, char **argv)
 								
 						}
 					}
+				} else if (strcmp(opt_name, "tap-to-click") == 0) {
+					cv_pointer_tap_to_click = true;
+				} else if (strcmp(opt_name, "tap-and-drag") == 0) {
+					cv_pointer_tap_and_drag = true;
+				} else if (strcmp(opt_name, "drag-lock") == 0) {
+					cv_pointer_drag_lock = true;
+				} else if (strcmp(opt_name, "middle-emulation") == 0) {
+					cv_pointer_middle_emulation = true;
+				} else if (strcmp(opt_name, "left-handed") == 0) {
+					cv_pointer_left_handed = true;
+				} else if (strcmp(opt_name, "disable-while-typing") == 0) {
+					cv_pointer_disable_while_typing = true;
+				} else if (strcmp(opt_name, "disable-while-trackpointing") == 0) {
+					cv_pointer_disable_while_trackpointing = true;
+				} else if (strcmp(opt_name, "natural-scrolling") == 0) {
+					cv_pointer_natural_scrolling = optarg;
+				} else if (strcmp(opt_name, "pointer-accel-profile") == 0) {
+					cv_pointer_accel_profile = optarg;
+				} else if (strcmp(opt_name, "pointer-accel-speed") == 0) {
+					cv_pointer_accel_speed = strtof( optarg, nullptr );
 				}
 				break;
 			case '?':

@@ -235,6 +235,8 @@ namespace gamescope
                 return "Keyboard Layout";
             case GAMESCOPE_CONTROL_FEATURE_SGSR_FILTER:
                 return "SGSR Filter";
+            case GAMESCOPE_CONTROL_FEATURE_POINTER_SETTINGS:
+                return "Pointer Settings";
             default:
                 return "Unknown";
         }
