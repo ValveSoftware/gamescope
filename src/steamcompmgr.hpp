@@ -137,7 +137,7 @@ extern GamescopeUpscaleFilter g_eActiveUpscaler;
 extern GamescopeUpscaleFilter g_eWantedUpscaler;
 extern int g_nActiveUpscaleSharpness;
 
-extern uint32_t inputCounter;
+extern std::atomic<uint32_t> inputCounter;
 extern uint64_t g_lastWinSeq;
 
 void nudge_steamcompmgr( void );
