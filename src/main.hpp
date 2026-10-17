@@ -13,6 +13,7 @@ extern const char *gamescope_optstring;
 extern const struct option *gamescope_options;
 
 extern std::atomic< bool > g_bRun;
+void ShutdownGamescope();
 
 extern int g_nNestedWidth;
 extern int g_nNestedHeight;
