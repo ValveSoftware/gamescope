@@ -137,6 +137,31 @@ namespace gamescope
         }
     }
 
+    // A broken config file should cost the user their setting, not their
+    // session: log the error and carry on to the next script.
+    static void LogScriptError( const sol::protected_function_result &oResult, std::string_view svSource )
+    {
+        if ( oResult.valid() )
+            return;
+
+        // A runtime error has already been through the default error handler,
+        // which logs the message and leaves nothing here; a load error brings
+        // its message with it.
+        sol::error oError = oResult;
+        std::string_view svMessage = oError.what();
+        if ( !svMessage.empty() )
+        {
+            s_ScriptLog.errorf( "Failed to run '%.*s': %.*s",
+                int( svSource.length() ), svSource.data(),
+                int( svMessage.length() ), svMessage.data() );
+        }
+        else
+        {
+            s_ScriptLog.errorf( "Failed to run '%.*s', skipping it",
+                int( svSource.length() ), svSource.data() );
+        }
+    }
+
     void CScriptManager::RunScriptText( std::string_view svContents )
     {
         uint32_t uScriptId = s_nNextScriptId++;
@@ -145,7 +170,8 @@ namespace gamescope
             int32_t nPreviousScriptId = m_nCurrentScriptId;
 
             m_nCurrentScriptId = uScriptId;
-            State().script( svContents );
+            sol::protected_function_result oResult = State().safe_script( svContents, sol::script_pass_on_error );
+            LogScriptError( oResult, "<text>"sv );
             m_nCurrentScriptId = nPreviousScriptId;
         }
     }
@@ -163,7 +189,8 @@ namespace gamescope
             int32_t nPreviousScriptId = m_nCurrentScriptId;
 
             m_nCurrentScriptId = uScriptId;
-            State().script_file( std::move( sPath ) );
+            sol::protected_function_result oResult = State().safe_script_file( sPath, sol::script_pass_on_error );
+            LogScriptError( oResult, svPath );
             m_nCurrentScriptId = nPreviousScriptId;
         }
     }
