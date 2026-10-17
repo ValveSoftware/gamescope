@@ -10404,6 +10404,7 @@ steamcompmgr_main(int argc, char **argv)
 			gamescope::IBackendConnector *pConn = GetBackend()->GetCurrentConnector();
 			const bool bContentDriven = bOutputHDRCapable && !g_bForceHDR10OutputDebug &&
 				( cv_hdr_content_driven ||
+				  !GetBackend()->SupportsColorManagement() ||
 				  ( pConn && pConn->GetHDRInfo().bContentDrivenHDR ) );
 
 			bool bOutputHDRActive = bOutputHDRCapable;
