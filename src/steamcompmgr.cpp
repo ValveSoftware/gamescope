@@ -3613,9 +3613,7 @@ paint_all( global_focus_t *pFocus, bool async )
 			else if ( bRenderSizeScreenshot )
 			{
 				FrameInfo_t screenshotFrameInfo{};
-				screenshotFrameInfo.eUpscaleFilter = frameInfo.eUpscaleFilter;
 				screenshotFrameInfo.eUpscaleScaler = frameInfo.eUpscaleScaler;
-				screenshotFrameInfo.nUpscaleSharpness = frameInfo.nUpscaleSharpness;
 				screenshotFrameInfo.applyOutputColorMgmt = true;
 				screenshotFrameInfo.outputEncodingEOTF = bHDRScreenshot ? EOTF_PQ : EOTF_Gamma22;
 				for ( uint32_t nInputEOTF = 0; nInputEOTF < EOTF_Count; nInputEOTF++ )
