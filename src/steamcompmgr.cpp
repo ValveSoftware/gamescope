@@ -7812,6 +7812,8 @@ steamcompmgr_exit(void)
 
 	g_VirtualConnectorFocuses.clear();
 
+	vulkan_present_wait_shutdown();
+
     gamescope::IBackend::Set( nullptr );
 
     wlserver_lock();
