@@ -3082,27 +3082,19 @@ static void present_wait_thread_func( std::stop_token stop )
 		// Lock to make sure swapchain destruction is waited on and that
 		// it's for this swapchain.
 		std::unique_lock lock(present_wait_lock);
-		uint64_t id = g_currentPresentWaitId.load();
-		if ( stop.stop_requested() )
-			return;
-		if ( id == 0 )
-		{
-			present_wait_id = 0;
-			continue;
-		}
+		present_wait_id = g_currentPresentWaitId.load();
 
-		// Retry timeouts in bounded slices, releasing the swapchain lock between attempts.
-		VkResult result = g_device.vk.WaitForPresentKHR( g_device.device(), g_output.swapChain, id, 50'000'000lu );
+		// The stop sentinel is not a present id, so never wait on it.
 		if ( stop.stop_requested() )
 			return;
-		if ( result == VK_TIMEOUT )
-			continue;
-		present_wait_id = id;
-		if ( result != VK_SUCCESS )
-			continue;
-		uint64_t vblanktime = get_time_in_nanos();
-		GetVBlankTimer().MarkVBlank( vblanktime, true );
-		mangoapp_output_update( vblanktime );
+
+		if (present_wait_id != 0)
+		{
+			g_device.vk.WaitForPresentKHR( g_device.device(), g_output.swapChain, present_wait_id, 1'000'000'000lu );
+			uint64_t vblanktime = get_time_in_nanos();
+			GetVBlankTimer().MarkVBlank( vblanktime, true );
+			mangoapp_output_update( vblanktime );
+		}
 	}
 }
 

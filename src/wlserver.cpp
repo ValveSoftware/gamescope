@@ -2557,9 +2557,6 @@ void wlserver_run(void)
 		}
 	}
 
-	g_bRun = false;
-	nudge_steamcompmgr();
-
 #if HAVE_LIBEIS
 	g_LibEisWaiter.Shutdown();
 #endif
