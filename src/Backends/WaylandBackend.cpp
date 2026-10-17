@@ -226,6 +226,9 @@ namespace gamescope
         libdecor_frame *GetFrame() const { return m_pFrame; }
         xdg_toplevel *GetXdgToplevel() const;
 
+        bool HasAttachedBuffer() const { return m_bHasAttachedBuffer; }
+        bool IsAwaitingConfigure() const { return m_pParent ? m_pParent->IsAwaitingConfigure() : m_bUnmappedAwaitingConfigure; }
+
         std::optional<WaylandPlaneState> GetCurrentState() { std::unique_lock lock( m_PlaneStateLock ); return m_oCurrentPlaneState; }
 
         void UpdateVRRRefreshRate();
@@ -1087,8 +1090,15 @@ namespace gamescope
 
         if ( !m_bVisible )
         {
+            bool bHadAttachedBuffer = false;
             for ( CWaylandPlane &plane : m_Planes )
+            {
+                bHadAttachedBuffer |= plane.HasAttachedBuffer();
                 plane.Present( nullptr );
+            }
+
+            if ( !bHadAttachedBuffer )
+                return 0;
         }
         else
         {
@@ -1478,6 +1488,9 @@ namespace gamescope
 
     void CWaylandPlane::Present( std::optional<WaylandPlaneState> oState )
     {
+        if ( oState && IsAwaitingConfigure() )
+            return;
+
         {
             std::unique_lock lock( m_PlaneStateLock );
             m_oCurrentPlaneState = oState;
@@ -1626,9 +1639,6 @@ namespace gamescope
             }
             // The x/y here does nothing? Why? What is it for...
             // Use the subsurface set_position thing instead.
-            if ( m_pFrame && m_bUnmappedAwaitingConfigure )
-                return;
-
             m_bHasAttachedBuffer = true;
 
             wl_surface_attach( m_pSurface, oState->pBuffer, 0, 0 );
@@ -1638,17 +1648,19 @@ namespace gamescope
         }
         else
         {
-            // Attaching NULL only unmaps (and so requires a new configure) if a buffer was mapped.
-            if ( m_pFrame && m_bHasAttachedBuffer )
+            if ( m_bHasAttachedBuffer )
             {
-                m_bUnmappedAwaitingConfigure = true;
-                m_bToplevelStateReset = true;
+                if ( m_pFrame )
+                {
+                    m_bUnmappedAwaitingConfigure = true;
+                    m_bToplevelStateReset = true;
+                }
+
+                m_bHasAttachedBuffer = false;
+
+                wl_surface_attach( m_pSurface, nullptr, 0, 0 );
+                wl_surface_damage( m_pSurface, 0, 0, INT32_MAX, INT32_MAX );
             }
-
-            m_bHasAttachedBuffer = false;
-
-            wl_surface_attach( m_pSurface, nullptr, 0, 0 );
-            wl_surface_damage( m_pSurface, 0, 0, INT32_MAX, INT32_MAX );
         }
     }
 
@@ -1664,7 +1676,7 @@ namespace gamescope
 
     void CWaylandPlane::Commit()
     {
-        if ( m_bNeedsDecorCommit )
+        if ( m_bNeedsDecorCommit && m_bHasAttachedBuffer )
         {
             CommitLibDecor( nullptr );
             m_bNeedsDecorCommit = false;
@@ -1697,6 +1709,9 @@ namespace gamescope
 
         if ( pBuffer )
         {
+            if ( IsAwaitingConfigure() )
+                return;
+
             pWaylandFb->OnCompositorAcquire();
 
             Present(
@@ -1791,11 +1806,12 @@ namespace gamescope
         g_nOutputWidth  = WaylandScaleToPhysical( nWidth, uScale );
         g_nOutputHeight = WaylandScaleToPhysical( nHeight, uScale );
 
-        m_bUnmappedAwaitingConfigure = false;
-
-        CommitLibDecor( pConfiguration );
-
-        force_repaint();
+        if ( m_pConnector->m_bVisible || ( !m_bHasAttachedBuffer && !m_bUnmappedAwaitingConfigure ) )
+        {
+            m_bUnmappedAwaitingConfigure = false;
+            CommitLibDecor( pConfiguration );
+            force_repaint();
+        }
 	}
     void CWaylandPlane::LibDecor_Frame_Close( libdecor_frame *pFrame )
     {
