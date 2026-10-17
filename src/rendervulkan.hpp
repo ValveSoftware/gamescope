@@ -459,6 +459,7 @@ namespace CompositeDebugFlag
 
 VkInstance vulkan_get_instance(void);
 bool vulkan_init(VkInstance instance, VkSurfaceKHR surface);
+void vulkan_stop_present_wait_thread();
 bool vulkan_init_formats(void);
 bool vulkan_make_output();
 
