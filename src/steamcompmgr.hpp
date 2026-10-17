@@ -143,6 +143,7 @@ extern uint64_t g_lastWinSeq;
 void nudge_steamcompmgr( void );
 void MakeFocusDirty();
 void force_repaint( void );
+void steamcompmgr_request_close( void );
 
 // Per-connector stat snapshot for typed mangoapp streams.
 struct MangoappSnapshot_t

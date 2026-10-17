@@ -1799,7 +1799,7 @@ namespace gamescope
 	}
     void CWaylandPlane::LibDecor_Frame_Close( libdecor_frame *pFrame )
     {
-        raise( SIGTERM );
+        steamcompmgr_request_close();
     }
     void CWaylandPlane::LibDecor_Frame_Commit( libdecor_frame *pFrame )
     {

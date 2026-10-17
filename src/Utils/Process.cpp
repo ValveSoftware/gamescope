@@ -97,8 +97,22 @@ namespace gamescope::Process
                 continue;
             defer( fclose( pStatFile ) );
 
+            char szLine[ 1024 ];
+            if ( !fgets( szLine, sizeof( szLine ), pStatFile ) )
+                continue;
+
+            char *pLastParen = strrchr( szLine, ')' );
+            if ( !pLastParen )
+                continue;
+
+            char chState = 0;
             pid_t nParentPid = -1;
-            fscanf( pStatFile, "%*d %*s %*c %d", &nParentPid );
+            if ( sscanf( pLastParen + 1, " %c %d", &chState, &nParentPid ) != 2 )
+                continue;
+
+            if ( chState == 'Z' )
+                continue;
+
             if ( nParentPid > 0 && nParentPid == nPid )
                 nPids.push_back( *Parse<pid_t>( pEntry->d_name ) );
         }

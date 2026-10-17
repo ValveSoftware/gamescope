@@ -223,3 +223,25 @@ TEST_CASE("GetAppIdFromReaper", "[process]") {
         REQUIRE(gamescope::Process::GetAppIdFromReaper(std::numeric_limits<pid_t>::max()) == 0u);
     }
 }
+
+TEST_CASE("GetChildPids", "[process]") {
+    SECTION("finds child process whose comm contains spaces") {
+        pid_t pid = fork();
+        REQUIRE(pid >= 0);
+        if (pid == 0) {
+            pthread_setname_np(pthread_self(), "comm with space");
+            usleep(200'000);
+            _exit(0);
+        }
+        usleep(50'000);
+        auto children = gamescope::Process::GetChildPids(getpid());
+        bool found = false;
+        for (pid_t c : children) {
+            if (c == pid)
+                found = true;
+        }
+        int status = 0;
+        waitpid(pid, &status, 0);
+        REQUIRE(found);
+    }
+}

@@ -6,6 +6,7 @@
 #include <format>
 #include <thread>
 #include <mutex>
+#include <poll.h>
 #include <vector>
 #include <cstring>
 #include <string>
@@ -480,6 +481,10 @@ static float parse_float(const char *str, const char *optionName)
 	}
 }
 
+static int s_nSignalPipe[2] = { -1, -1 };
+static std::atomic<bool> s_bShutdownRequested{ false };
+static std::atomic<bool> s_bForcedShutdown{ false };
+
 struct sigaction handle_signal_action = {};
 
 void ShutdownGamescope()
@@ -489,30 +494,49 @@ void ShutdownGamescope()
 	nudge_steamcompmgr();
 }
 
+static void GracefulShutdown( int sig )
+{
+	if ( !g_bRun )
+		return;
+
+	// If a shutdown was already requested, a second signal forces immediate termination.
+	if ( s_bShutdownRequested.exchange( true ) )
+	{
+		if ( !s_bForcedShutdown.exchange( true ) )
+		{
+			fprintf( stderr, "gamescope: Forced shutdown requested, killing all children immediately.\n" );
+			gamescope::Process::KillAllChildren( getpid(), SIGKILL );
+			ShutdownGamescope();
+		}
+		return;
+	}
+
+	std::vector<pid_t> childPids = gamescope::Process::GetChildPids( getpid() );
+	if ( childPids.empty() )
+	{
+		fprintf( stderr, "gamescope: Shutdown requested (no child processes), exiting.\n" );
+		ShutdownGamescope();
+		return;
+	}
+
+	fprintf( stderr, "gamescope: Shutdown requested, notifying %zu child process(es) with signal %d...\n",
+		childPids.size(), sig );
+	gamescope::Process::KillAllChildren( getpid(), sig );
+}
+
 static gamescope::ConCommand cc_shutdown( "shutdown", "Cleanly shutdown gamescope",
 []( std::span<std::string_view> svArgs )
 {
 	console_log.infof( "Shutting down..." );
-	ShutdownGamescope();
+	raise( SIGTERM );
 });
 
 static void handle_signal( int sig )
 {
-	switch ( sig ) {
-	case SIGUSR2:
-		gamescope::CScreenshotManager::Get().TakeScreenshot( true );
-		break;
-	case SIGHUP:
-	case SIGQUIT:
-	case SIGTERM:
-	case SIGINT:
-		ShutdownGamescope();
-		break;
-	case SIGUSR1:
-		fprintf( stderr, "gamescope: hi :3\n" );
-		break;
-	default:
-		assert( false ); // unreachable
+	if ( s_nSignalPipe[1] >= 0 )
+	{
+		ssize_t ret = write( s_nSignalPipe[1], &sig, sizeof(sig) );
+		(void)ret;
 	}
 }
 
@@ -1099,6 +1123,73 @@ int main(int argc, char **argv)
 	}
 #endif
 
+	if ( pipe2( s_nSignalPipe, O_CLOEXEC ) != 0 )
+	{
+		fprintf( stderr, "Failed to create signal pipe\n" );
+		return 1;
+	}
+
+	std::thread signalThread([]()
+	{
+		pthread_setname_np( pthread_self(), "gamescope-sig" );
+
+		struct pollfd pfd = {
+			.fd = s_nSignalPipe[0],
+			.events = POLLIN,
+		};
+
+		while ( true )
+		{
+			int nTimeout = s_bShutdownRequested ? 3000 : -1;
+			int ret = poll( &pfd, 1, nTimeout );
+			if ( ret < 0 )
+			{
+				if ( errno == EINTR )
+					continue;
+				break;
+			}
+
+			if ( ret == 0 )
+			{
+				if ( g_bRun )
+				{
+					fprintf( stderr, "gamescope: Children did not exit within 3000ms grace period, killing.\n" );
+					gamescope::Process::KillAllChildren( getpid(), SIGKILL );
+					ShutdownGamescope();
+				}
+				continue;
+			}
+
+			if ( pfd.revents & POLLIN )
+			{
+				int sig = 0;
+				if ( read( s_nSignalPipe[0], &sig, sizeof(sig) ) != sizeof(sig) )
+					break;
+
+				switch ( sig ) {
+				case SIGUSR1:
+					fprintf( stderr, "gamescope: hi :3\n" );
+					break;
+				case SIGUSR2:
+					gamescope::CScreenshotManager::Get().TakeScreenshot( true );
+					break;
+				case SIGHUP:
+				case SIGQUIT:
+				case SIGTERM:
+				case SIGINT:
+					GracefulShutdown( sig );
+					break;
+				default:
+					break;
+				}
+			}
+			else if ( pfd.revents & ( POLLHUP | POLLERR ) )
+			{
+				break;
+			}
+		}
+	});
+
 	std::thread steamCompMgrThread( steamCompMgrThreadRun, argc, argv );
 
 	handle_signal_action.sa_handler = handle_signal;
@@ -1112,6 +1203,20 @@ int main(int argc, char **argv)
 	wlserver_run();
 
 	steamCompMgrThread.join();
+
+	if ( s_nSignalPipe[1] >= 0 )
+	{
+		close( s_nSignalPipe[1] );
+		s_nSignalPipe[1] = -1;
+	}
+
+	signalThread.join();
+
+	if ( s_nSignalPipe[0] >= 0 )
+	{
+		close( s_nSignalPipe[0] );
+		s_nSignalPipe[0] = -1;
+	}
 
 	gamescope::Process::KillAllChildren( getpid(), SIGTERM );
 	gamescope::Process::WaitForAllChildren();
