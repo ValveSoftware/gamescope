@@ -213,7 +213,8 @@ struct wlserver_t {
 	std::vector<wl_resource*> gamescope_controls;
 	std::unordered_map< uint32_t, std::vector<wl_resource*> > app_perf_requests;
 
-	std::atomic<bool> bWaylandServerRunning = { false };
+	std::atomic<bool> bWaylandServerStarted = { false };
+	std::atomic<bool> bWaylandServerStopped = { false };
 
     // Share one single keymap and state between all connected physical keyboards
     struct wlr_keyboard_group *keyboard_group;

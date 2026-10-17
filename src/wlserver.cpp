@@ -2178,9 +2178,9 @@ void layer_shell_surface_new(struct wl_listener *listener, void *data)
 }
 
 #if HAVE_LIBEIS
-static gamescope::CAsyncWaiter g_LibEisWaiter( "gamescope-eis" );
 // TODO: Move me into some ownership of eg. wlserver.
 static std::unique_ptr<gamescope::GamescopeInputServer> g_InputServer;
+static gamescope::CAsyncWaiter g_LibEisWaiter( "gamescope-eis" );
 #endif
 
 static void wlserver_update_keymap();
@@ -2493,11 +2493,14 @@ void wlserver_run(void)
 {
 	pthread_setname_np( pthread_self(), "gamescope-wl" );
 
+	wlserver_lock();
 	if ( pipe2( g_wlserverNudgePipe, O_CLOEXEC | O_NONBLOCK ) != 0 )
 	{
 		wl_log.errorf_errno( "wlserver: pipe2 failed" );
+		wlserver_unlock(false);
 		exit( 1 );
 	}
+	wlserver_unlock(false);
 
 	struct pollfd pollfds[2] = {
         {
@@ -2510,8 +2513,8 @@ void wlserver_run(void)
         },
     };
 
-	wlserver.bWaylandServerRunning = true;
-	wlserver.bWaylandServerRunning.notify_all();
+	wlserver.bWaylandServerStarted = true;
+	wlserver.bWaylandServerStarted.notify_all();
 
 	while ( !g_bShutdownWLServer )
 	{
@@ -2554,8 +2557,12 @@ void wlserver_run(void)
 		}
 	}
 
-	wlserver.bWaylandServerRunning = false;
-	wlserver.bWaylandServerRunning.notify_all();
+	g_bRun = false;
+	nudge_steamcompmgr();
+
+#if HAVE_LIBEIS
+	g_LibEisWaiter.Shutdown();
+#endif
 
 	{
 		wlserver_lock();
@@ -2576,6 +2583,9 @@ void wlserver_run(void)
 #if HAVE_LIBEIS
 	g_InputServer = nullptr;
 #endif
+
+	wlserver.bWaylandServerStopped = true;
+	wlserver.bWaylandServerStopped.notify_all();
 
 	// Released when steamcompmgr closes.
 	std::unique_lock<std::mutex> xwayland_server_guard(g_SteamCompMgrXWaylandServerMutex);
@@ -2608,7 +2618,7 @@ void wlserver_shutdown()
 
 	g_bShutdownWLServer = true;
 
-    if (wlserver.display)
+    if (wlserver.display && g_wlserverNudgePipe[ 1 ] >= 0)
     {
         if ( write( g_wlserverNudgePipe[ 1 ], "\n", 1 ) < 0 )
             wl_log.errorf_errno( "wlserver_force_shutdown: write failed" );
