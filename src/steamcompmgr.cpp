@@ -7771,10 +7771,18 @@ error(Display *dpy, XErrorEvent *ev)
 	return 0;
 }
 
+#ifdef HAVE_SYSTEMD
+void logind_sleep_stop();
+#endif
+
 static void
 steamcompmgr_exit(void)
 {
 	g_ImageWaiter.Shutdown();
+
+#ifdef HAVE_SYSTEMD
+	logind_sleep_stop();
+#endif
 
 	// Clean up any commits.
 	{
