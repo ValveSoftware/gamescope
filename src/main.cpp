@@ -154,6 +154,8 @@ const struct option *gamescope_options = (struct option[]){
 
 	{ "reshade-effect", required_argument, nullptr, 0 },
 	{ "reshade-technique-idx", required_argument, nullptr, 0 },
+	{ "reshade-post-effect", required_argument, nullptr, 0 },
+	{ "reshade-post-technique-idx", required_argument, nullptr, 0 },
 
 	// Steam Deck options
 	{ "mura-map", required_argument, nullptr, 0 },
@@ -273,6 +275,8 @@ const char usage[] =
 	"Reshade shader options:\n"
 	"  --reshade-effect               sets the name of a reshade shader to use in either /usr/share/gamescope/reshade/Shaders or ~/.local/share/gamescope/reshade/Shaders\n"
 	"  --reshade-technique-idx        sets technique idx to use from the reshade effect\n"
+	"  --reshade-post-effect          sets the name of a reshade shader to use after upscaling e.g. CRT shaders that need display resolution input for the shadow mask\n"
+	"  --reshade-post-technique-idx   sets technique idx to use from the reshade post effect\n"
 	"\n"
 	"Steam Deck options:\n"
 	"  --mura-map                     Set the mura compensation map to use for the display. Takes in a path to the mura map.\n"
