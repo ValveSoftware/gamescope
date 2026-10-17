@@ -125,6 +125,8 @@ namespace gamescope
 
     gamescope::ConVar<float> cv_wayland_hdr10_saturation_scale( "wayland_hdr10_saturation_scale", 1.0, "Saturation scale for HDR10 content by gamut expansion. 1.0 - 1.2 is a good range to play with." );
 
+    static constexpr double k_flWaylandPixelsPerScrollNotch = 10.0;
+
     class CWaylandConnector;
     class CWaylandPlane;
     class CWaylandBackend;
@@ -569,6 +571,8 @@ namespace gamescope
         uint32_t m_uModMask[ GAMESCOPE_WAYLAND_MOD_COUNT ];
 
         double m_flScrollAccum[2] = { 0.0, 0.0 };
+        double m_flContinuousAccum[2] = { 0.0, 0.0 };
+        bool m_bHasValue120[2] = { false, false };
         uint32_t m_uAxisSource = WL_POINTER_AXIS_SOURCE_WHEEL;
 
 		wl_surface *m_pCurrentCursorSurface = nullptr;
@@ -3181,6 +3185,13 @@ namespace gamescope
 
 		m_pCurrentCursorSurface = nullptr;
 		m_bMouseEntered = false;
+
+		m_flScrollAccum[0] = 0.0;
+		m_flScrollAccum[1] = 0.0;
+		m_flContinuousAccum[0] = 0.0;
+		m_flContinuousAccum[1] = 0.0;
+		m_bHasValue120[0] = false;
+		m_bHasValue120[1] = false;
 	}
 	void CWaylandInputThread::Wayland_Pointer_Motion( wl_pointer *pPointer, uint32_t uTime, wl_fixed_t fSurfaceX, wl_fixed_t fSurfaceY )
 	{
@@ -3235,6 +3246,13 @@ namespace gamescope
         // Ignore any pointer events for which the `enter` event surface didn't pass `IsGamescopeToplevel` (libdecor frame)
         if ( !m_bMouseEntered )
             return;
+        if ( !cv_wayland_mouse_warp_without_keyboard_focus && !m_bKeyboardEntered )
+            return;
+
+        assert( uAxis == WL_POINTER_AXIS_VERTICAL_SCROLL || uAxis == WL_POINTER_AXIS_HORIZONTAL_SCROLL );
+
+        // Vertical is first in the wl_pointer_axis enum, flip y,x -> x,y
+        m_flContinuousAccum[ !uAxis ] += wl_fixed_to_double( fValue ) / k_flWaylandPixelsPerScrollNotch;
     }
     void CWaylandInputThread::Wayland_Pointer_Axis_Source( wl_pointer *pPointer, uint32_t uAxisSource )
     {
@@ -3249,6 +3267,11 @@ namespace gamescope
         // Ignore any pointer events for which the `enter` event surface didn't pass `IsGamescopeToplevel` (libdecor frame)
         if ( !m_bMouseEntered )
             return;
+
+        assert( uAxis == WL_POINTER_AXIS_VERTICAL_SCROLL || uAxis == WL_POINTER_AXIS_HORIZONTAL_SCROLL );
+
+        m_flContinuousAccum[ !uAxis ] = 0.0;
+        m_bHasValue120[ !uAxis ] = false;
     }
     void CWaylandInputThread::Wayland_Pointer_Axis_Discrete( wl_pointer *pPointer, uint32_t uAxis, int32_t nDiscrete )
     {
@@ -3267,20 +3290,28 @@ namespace gamescope
         assert( uAxis == WL_POINTER_AXIS_VERTICAL_SCROLL || uAxis == WL_POINTER_AXIS_HORIZONTAL_SCROLL );
 
         // Vertical is first in the wl_pointer_axis enum, flip y,x -> x,y
+        m_bHasValue120[ !uAxis ] = true;
         m_flScrollAccum[ !uAxis ] += nValue120 / 120.0;
     }
     void CWaylandInputThread::Wayland_Pointer_Frame( wl_pointer *pPointer )
     {
         defer( m_uAxisSource = WL_POINTER_AXIS_SOURCE_WHEEL );
+
+        for ( int i = 0; i < 2; i++ )
+        {
+            if ( !m_bHasValue120[ i ] )
+                m_flScrollAccum[ i ] += m_flContinuousAccum[ i ];
+
+            m_bHasValue120[ i ] = false;
+            m_flContinuousAccum[ i ] = 0.0;
+        }
+
         double flX = m_flScrollAccum[0];
         double flY = m_flScrollAccum[1];
         m_flScrollAccum[0] = 0.0;
         m_flScrollAccum[1] = 0.0;
 
         if ( !cv_wayland_mouse_warp_without_keyboard_focus && !m_bKeyboardEntered )
-            return;
-
-        if ( m_uAxisSource != WL_POINTER_AXIS_SOURCE_WHEEL )
             return;
 
         if ( flX == 0.0 && flY == 0.0 )
