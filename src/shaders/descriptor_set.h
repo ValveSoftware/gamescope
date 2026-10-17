@@ -44,10 +44,12 @@ uint get_layer_colorspace(uint layerIdx) {
     return bitfieldExtract(c_colorspaceMask, int(layerIdx) * colorspace_max_bits, colorspace_max_bits);
 }
 
+#if defined(NV12_EXPORT)
+layout(binding = 1, r8) writeonly uniform image2D dst_luma;
+layout(binding = 2, rg8) writeonly uniform image2D dst_chroma;
+#else
 layout(binding = 1, rgba8) writeonly uniform image2D dst;
-// alias
-layout(binding = 1, rgba8) writeonly uniform image2D dst_luma;
-layout(binding = 2, rgba8) writeonly uniform image2D dst_chroma;
+#endif
 
 layout(binding = 3) uniform sampler2D s_samplers[VKR_SAMPLER_SLOTS];
 layout(binding = 4) uniform sampler2D s_ycbcr_samplers[VKR_SAMPLER_SLOTS];
