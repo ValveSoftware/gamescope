@@ -9,6 +9,7 @@
 #include <vector>
 #include <cstring>
 #include <string>
+#include <algorithm>
 #if HAVE_LIBCAP
 #include <sys/capability.h>
 #endif
@@ -36,6 +37,7 @@
 
 #include "backends.h"
 #include "refresh_rate.h"
+#include "action_binding.h"
 
 #if HAVE_PIPEWIRE
 #include "pipewire.hpp"
@@ -496,6 +498,57 @@ static gamescope::ConCommand cc_shutdown( "shutdown", "Cleanly shutdown gamescop
 	ShutdownGamescope();
 });
 
+static gamescope::ConCommand cc_filter_pixel( "filter_pixel", "Set nearest/pixel upscale filter",
+[]( std::span<std::string_view> )
+{
+	g_wantedUpscaleFilter = GamescopeUpscaleFilter::PIXEL;
+});
+
+static gamescope::ConCommand cc_filter_linear( "filter_linear", "Set linear upscale filter",
+[]( std::span<std::string_view> )
+{
+	g_wantedUpscaleFilter = GamescopeUpscaleFilter::LINEAR;
+});
+
+static gamescope::ConCommand cc_toggle_fsr( "toggle_fsr", "Toggle FSR upscaling",
+[]( std::span<std::string_view> )
+{
+	g_wantedUpscaleFilter = ( g_wantedUpscaleFilter == GamescopeUpscaleFilter::FSR ) ?
+		GamescopeUpscaleFilter::LINEAR : GamescopeUpscaleFilter::FSR;
+});
+
+static gamescope::ConCommand cc_toggle_nis( "toggle_nis", "Toggle NIS upscaling",
+[]( std::span<std::string_view> )
+{
+	g_wantedUpscaleFilter = ( g_wantedUpscaleFilter == GamescopeUpscaleFilter::NIS ) ?
+		GamescopeUpscaleFilter::LINEAR : GamescopeUpscaleFilter::NIS;
+});
+
+static gamescope::ConCommand cc_increase_sharpness( "increase_sharpness", "Increase upscale sharpness",
+[]( std::span<std::string_view> )
+{
+	g_upscaleFilterSharpness = std::min( 20, g_upscaleFilterSharpness + 1 );
+});
+
+static gamescope::ConCommand cc_toggle_nearest( "toggle_nearest", "Toggle nearest neighbor upscaling",
+[]( std::span<std::string_view> )
+{
+	g_wantedUpscaleFilter = ( g_wantedUpscaleFilter == GamescopeUpscaleFilter::NEAREST ) ?
+		GamescopeUpscaleFilter::LINEAR : GamescopeUpscaleFilter::NEAREST;
+});
+
+static gamescope::ConCommand cc_decrease_sharpness( "decrease_sharpness", "Decrease upscale sharpness",
+[]( std::span<std::string_view> )
+{
+	g_upscaleFilterSharpness = std::max( 0, g_upscaleFilterSharpness - 1 );
+});
+
+static gamescope::ConCommand cc_screenshot_hotkey( "screenshot_hotkey", "Take a screenshot",
+[]( std::span<std::string_view> )
+{
+	gamescope::CScreenshotManager::Get().TakeScreenshot( true );
+});
+
 static void handle_signal( int sig )
 {
 	switch ( sig ) {
@@ -933,6 +986,8 @@ int main(int argc, char **argv)
 			free( envvar );
 		}
 	}
+
+	gamescope::RegisterHotkeysFromScript();
 
 	XInitThreads();
 	g_mainThread = pthread_self();

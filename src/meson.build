@@ -96,6 +96,7 @@ sol2_include = include_directories(['../thirdparty'])
 required_wlroots_features = ['xwayland']
 
 src = [
+  'action_binding.cpp',
   'Backends/HeadlessBackend.cpp',
   'Backends/WaylandBackend.cpp',
   'Utils/DirHelpers.cpp',

@@ -1,5 +1,6 @@
 #include "Script.h"
 #include "convar.h"
+#include "action_binding.h"
 #include "color_helpers.h"
 #include "../log.hpp"
 #include "Utils/DirHelpers.h"
@@ -98,6 +99,8 @@ namespace gamescope
         );
         m_Gamescope.Base["log"] = []( LogPriority ePriority, std::string_view svText ) { s_ScriptLog.log( ePriority, svText ); };
 
+        m_Gamescope.Base["command"] = []( std::string_view svCommand ) { ConCommand::Exec( svCommand ); };
+
         m_Gamescope.Convars.Base = m_State.create_table();
         m_Gamescope.Base.set( "convars", m_Gamescope.Convars.Base );
 
@@ -106,6 +109,12 @@ namespace gamescope
 
         m_Gamescope.Config.KnownDisplays = m_State.create_table();
         m_Gamescope.Config.Base.set( "known_displays", m_Gamescope.Config.KnownDisplays );
+
+        m_Gamescope.Config.Input = m_State.create_table();
+        m_Gamescope.Config.Base.set( "input", m_Gamescope.Config.Input );
+
+        m_Gamescope.Config.Hotkeys = m_State.create_table();
+        m_Gamescope.Config.Input.set( "hotkeys", m_Gamescope.Config.Hotkeys );
     }
 
     void CScriptManager::RunDefaultScripts()
