@@ -5036,6 +5036,9 @@ static std::vector< steamcompmgr_win_t* > GetGlobalPossibleFocusWindows()
 static void
 steamcompmgr_xdg_determine_and_apply_focus( const std::vector< steamcompmgr_win_t* > &vecPossibleFocusWindows )
 {
+	g_steamcompmgr_xdg_focus.overlayWindow = nullptr;
+	g_steamcompmgr_xdg_focus.externalOverlayWindow = nullptr;
+
 	for ( auto &window : g_steamcompmgr_xdg_wins )
 	{
 		if (window->isOverlay)
@@ -9474,6 +9477,8 @@ void steamcompmgr_check_xdg(bool vblank, uint64_t vblank_idx)
 				pFocus->inputFocusWindow = nullptr;
 			if (pFocus->overlayWindow && pFocus->overlayWindow->type == steamcompmgr_win_type_t::XDG)
 				pFocus->overlayWindow = nullptr;
+			if (pFocus->externalOverlayWindow && pFocus->externalOverlayWindow->type == steamcompmgr_win_type_t::XDG)
+				pFocus->externalOverlayWindow = nullptr;
 			if (pFocus->notificationWindow && pFocus->notificationWindow->type == steamcompmgr_win_type_t::XDG)
 				pFocus->notificationWindow = nullptr;
 			if (pFocus->overrideWindow && pFocus->overrideWindow->type == steamcompmgr_win_type_t::XDG)
@@ -9488,6 +9493,13 @@ void steamcompmgr_check_xdg(bool vblank, uint64_t vblank_idx)
 		if (s_PipewireFocus.focusWindow && s_PipewireFocus.focusWindow->type == steamcompmgr_win_type_t::XDG)
 			s_PipewireFocus.focusWindow = nullptr;
 #endif
+		if (g_steamcompmgr_xdg_focus.focusWindow && g_steamcompmgr_xdg_focus.focusWindow->type == steamcompmgr_win_type_t::XDG)
+			g_steamcompmgr_xdg_focus.focusWindow = nullptr;
+		if (g_steamcompmgr_xdg_focus.overlayWindow && g_steamcompmgr_xdg_focus.overlayWindow->type == steamcompmgr_win_type_t::XDG)
+			g_steamcompmgr_xdg_focus.overlayWindow = nullptr;
+		if (g_steamcompmgr_xdg_focus.externalOverlayWindow && g_steamcompmgr_xdg_focus.externalOverlayWindow->type == steamcompmgr_win_type_t::XDG)
+			g_steamcompmgr_xdg_focus.externalOverlayWindow = nullptr;
+
 		g_steamcompmgr_xdg_wins = wlserver_get_xdg_shell_windows();
 		MakeFocusDirty();
 	}
