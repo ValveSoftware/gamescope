@@ -4190,6 +4190,11 @@ is_focus_priority_greater( steamcompmgr_win_t *a, steamcompmgr_win_t *b )
 		a->is_dialog != b->is_dialog )
 		return !a->is_dialog;
 
+	// Mixed X11/XDG comparison: prefer the XDG window. The tie-breaks below
+	// read xwayland() state and must not run with an XDG window on either side.
+	if ( a->type != b->type )
+		return a->type != steamcompmgr_win_type_t::XWAYLAND;
+
 	if (a->type != steamcompmgr_win_type_t::XWAYLAND)
 	{
 		return true;
