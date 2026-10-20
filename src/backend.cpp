@@ -34,6 +34,8 @@ namespace gamescope
     {
         if ( s_pBackend )
         {
+            vulkan_stop_present_wait_thread();
+            StopVBlankTimer();
             delete s_pBackend;
             s_pBackend = nullptr;
         }
@@ -45,20 +47,18 @@ namespace gamescope
             {
                 if ( g_bAllowDeferredBackend )
                 {
+                    // Init may have started the worker before a later step failed.
+                    vulkan_stop_present_wait_thread();
                     s_pBackend = new CDeferredBackend( pBackend );
-                    if ( !s_pBackend->Init() )
-                    {
-                        delete s_pBackend;
-                        s_pBackend = nullptr;
-                        return false;
-                    }
+                    if ( s_pBackend->Init() )
+                        return true;
                 }
-                else
-                {
-                    delete s_pBackend;
-                    s_pBackend = nullptr;
-                    return false;
-                }
+
+                vulkan_stop_present_wait_thread();
+                StopVBlankTimer();
+                delete s_pBackend;
+                s_pBackend = nullptr;
+                return false;
             }
         }
 

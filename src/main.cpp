@@ -25,6 +25,7 @@
 #include "main.hpp"
 #include "steamcompmgr.hpp"
 #include "rendervulkan.hpp"
+#include "vblankmanager.hpp"
 #include "wlserver.hpp"
 #include "convar.h"
 #include "gpuvis_trace_utils.h"
@@ -973,6 +974,9 @@ int main(int argc, char **argv)
 	}
 
 	g_ForcedNV12ColorSpace = parse_colorspace_string( getenv( "GAMESCOPE_NV12_COLORSPACE" ) );
+
+	// Also stop workers on returns after partial initialization.
+	defer( vulkan_stop_present_wait_thread(); StopVBlankTimer() );
 
 	switch ( eCurrentBackend )
 	{

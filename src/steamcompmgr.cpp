@@ -7783,6 +7783,12 @@ error(Display *dpy, XErrorEvent *ev)
 static void
 steamcompmgr_exit(void)
 {
+	wlserver_lock();
+	wlserver_shutdown();
+	wlserver_unlock(false);
+	// Finish dispatch and input callbacks before releasing their backend and windows.
+	wlserver.bWaylandServerStopped.wait( false );
+
 	g_ImageWaiter.Shutdown();
 
 	// Clean up any commits.
@@ -7822,10 +7828,6 @@ steamcompmgr_exit(void)
 	g_VirtualConnectorFocuses.clear();
 
     gamescope::IBackend::Set( nullptr );
-
-    wlserver_lock();
-    wlserver_shutdown();
-    wlserver_unlock(false);
 }
 
 [[noreturn]] static int
@@ -10172,7 +10174,10 @@ steamcompmgr_main(int argc, char **argv)
 	XFlush(root_ctx->dpy);
 
 	if ( !GetBackend()->PostInit() )
+	{
+		steamcompmgr_exit();
 		return;
+	}
 
 	if ( g_pVROverlayKey )
 	{

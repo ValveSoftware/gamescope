@@ -25,6 +25,8 @@ LogScope g_VBlankLog("vblank");
 
 extern gamescope::ConVar<bool> cv_adaptive_sync_uncapped;
 
+static std::atomic<gamescope::CVBlankTimer *> s_pVBlankTimer = nullptr;
+
 namespace gamescope
 {
 	ConVar<bool> vblank_debug( "vblank_debug", false, "Enable vblank debug spew to stderr." );
@@ -73,19 +75,19 @@ namespace gamescope
 				abort();
 			}
 
-			std::thread vblankThread( [this]() { this->NudgeThread(); } );
-			vblankThread.detach();
+			m_NudgeThread = std::thread( [this]() { this->NudgeThread(); } );
 		}
+
+		s_pVBlankTimer = this;
 	}
 
 	CVBlankTimer::~CVBlankTimer()
 	{
-		std::unique_lock lock( m_ScheduleMutex );
-
-		m_bRunning = false;
-
-		m_bArmed = true;
-		m_bArmed.notify_all();
+		// exit() can bypass main's scope cleanup. The present worker must
+		// also stop before this function-local static timer is destroyed.
+		vulkan_stop_present_wait_thread();
+		Shutdown();
+		s_pVBlankTimer = nullptr;
 
 		for ( int i = 0; i < 2; i++ )
 		{
@@ -95,6 +97,23 @@ namespace gamescope
 				m_nNudgePipe[ i ] = -1;
 			}
 		}
+	}
+
+	void CVBlankTimer::Shutdown()
+	{
+		{
+			std::unique_lock lock( m_ScheduleMutex );
+			m_bRunning = false;
+			// Change the waited-on value, and prevent the nudge thread from
+			// clearing it again after an in-flight FrameSync returns.
+			m_bArmed = true;
+			m_bArmed.notify_all();
+			ITimerWaitable::DisarmTimer();
+		}
+
+		// FrameSync can take m_ScheduleMutex; never join while holding it.
+		if ( m_NudgeThread.joinable() )
+			m_NudgeThread.join();
 	}
 
 	int CVBlankTimer::GetRefresh() const
@@ -289,6 +308,8 @@ namespace gamescope
 	void CVBlankTimer::ArmNextVBlank( bool bPreemptive )
 	{
 		std::unique_lock lock( m_ScheduleMutex );
+		if ( !m_bRunning )
+			return;
 
 		// If we're pre-emptively re-arming, don't
 		// do anything if we are already armed.
@@ -482,6 +503,8 @@ namespace gamescope
 				std::unique_lock lock( m_ScheduleMutex );
 
 				// Unarm, we are processing now!
+				if ( !m_bRunning )
+					return;
 				m_bArmed = false;
 
 				VBlankTime timeInfo =
@@ -508,5 +531,11 @@ gamescope::CVBlankTimer &GetVBlankTimer()
 {
     static gamescope::CVBlankTimer s_VBlankTimer;
     return s_VBlankTimer;
+}
+
+void StopVBlankTimer()
+{
+    if ( auto *pTimer = s_pVBlankTimer.load() )
+        pTimer->Shutdown();
 }
 
