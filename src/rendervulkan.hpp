@@ -877,7 +877,7 @@ public:
 	{
 		assert(size <= upload_buffer_size);
 
-		m_uploadBufferOffset = align(m_uploadBufferOffset, 16);
+		m_uploadBufferOffset = align(m_uploadBufferOffset, m_uUploadAlignment);
 		if (m_uploadBufferOffset + size > upload_buffer_size)
 		{
 			fprintf(stderr, "Exceeded uploadBufferData\n");
@@ -934,6 +934,7 @@ protected:
 
 	bool m_bSupportsFp16 = false;
 	uint32_t m_uVendorID = 0;
+	uint32_t m_uUploadAlignment = 16;
 	bool m_bHasDrmPrimaryDevId = false;
 	bool m_bSupportsModifiers = false;
 	bool m_bInitialized = false;

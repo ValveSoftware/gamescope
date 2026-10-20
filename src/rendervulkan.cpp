@@ -537,6 +537,7 @@ bool CVulkanDevice::createDevice()
 		VkPhysicalDeviceProperties deviceProperties;
 		vk.GetPhysicalDeviceProperties( physDev(), &deviceProperties );
 		m_uVendorID = deviceProperties.vendorID;
+		m_uUploadAlignment = std::max<uint32_t>( 16, deviceProperties.limits.minUniformBufferOffsetAlignment );
 	}
 
 	float queuePriorities = 1.0f;
