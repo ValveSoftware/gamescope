@@ -768,6 +768,7 @@ static bool have_overlay_planes(struct drm_t *drm)
 }
 
 extern void mangoapp_output_update( uint64_t vblanktime );
+extern std::atomic<uint32_t> g_uScanoutRefreshmHz;
 static void page_flip_handler(int fd, unsigned int frame, unsigned int sec, unsigned int usec, unsigned int crtc_id, void *data)
 {
 	DRMPresentCtx *pCtx = reinterpret_cast<DRMPresentCtx *>( data );
@@ -794,6 +795,22 @@ static void page_flip_handler(int fd, unsigned int frame, unsigned int sec, unsi
 	gpuvis_trace_printf("page_flip_handler %" PRIu64, pCtx->ulPendingFlipCount);
 
 	ulLastVBlankTime = vblanktime;
+
+	// frame is the vblank count, so its delta includes refreshes VRR scanned out without a flip.
+	static unsigned int s_uRateFrame = 0;
+	static uint64_t s_ulRateTime = 0;
+	static unsigned int s_uRateCRTC = 0;
+	if ( crtc_id != s_uRateCRTC || vblanktime < s_ulRateTime )
+		s_ulRateTime = 0;
+	if ( !s_ulRateTime || vblanktime - s_ulRateTime >= 500'000'000ul )
+	{
+		g_uScanoutRefreshmHz = s_ulRateTime
+			? uint32_t( uint64_t( frame - s_uRateFrame ) * 1'000'000'000'000ul / ( vblanktime - s_ulRateTime ) )
+			: 0;
+		s_uRateFrame = frame;
+		s_ulRateTime = vblanktime;
+		s_uRateCRTC = crtc_id;
+	}
 
 	{
 		std::scoped_lock lock{ g_DRM.m_QueuedFbIdsMutex, g_DRM.m_mutVisibleFbIds };
