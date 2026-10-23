@@ -48,6 +48,7 @@ using namespace std::literals;
 EStreamColorspace g_ForcedNV12ColorSpace = k_EStreamColorspace_Unknown;
 extern gamescope::ConVar<bool> cv_adaptive_sync;
 extern gamescope::ConVar<bool> cv_shutdown_on_primary_child_death;
+extern gamescope::ConVar<bool> cv_ignore_mouse_acceleration;
 
 const char *gamescope_optstring = nullptr;
 const char *g_pOriginalDisplay = nullptr;
@@ -85,6 +86,7 @@ const struct option *gamescope_options = (struct option[]){
 	{ "fullscreen", no_argument, nullptr, 'f' },
 	{ "grab", no_argument, nullptr, 'g' },
 	{ "force-grab-cursor", no_argument, nullptr, 0 },
+	{ "ignore-mouse-acceleration", no_argument, nullptr, 0 },
 	{ "display-index", required_argument, nullptr, 0 },
 
 	// embedded mode options
@@ -228,6 +230,7 @@ const char usage[] =
 	"  -f, --fullscreen               make the window fullscreen\n"
 	"  -g, --grab                     grab the keyboard\n"
 	"  --force-grab-cursor            always use relative mouse mode instead of flipping dependent on cursor visibility.\n"
+	"  --ignore-mouse-acceleration    ignore host mouse acceleration and scaling in relative mode (legacy behavior).\n"
 	"  --display-index                forces gamescope to use a specific display in nested mode."
 	"\n"
 	"Embedded mode options:\n"
@@ -832,6 +835,8 @@ int main(int argc, char **argv)
 					cv_tearing_enabled = true;
 				} else if (strcmp(opt_name, "force-grab-cursor") == 0) {
 					g_bForceRelativeMouse = true;
+				} else if (strcmp(opt_name, "ignore-mouse-acceleration") == 0) {
+					cv_ignore_mouse_acceleration = true;
 				} else if (strcmp(opt_name, "display-index") == 0) {
 					g_nNestedDisplayIndex = parse_integer( optarg, opt_name );
 				} else if (strcmp(opt_name, "adaptive-sync") == 0) {
