@@ -4349,7 +4349,7 @@ namespace gamescope
 		uint32_t m_uNextPresentCtx = 0;
 		DRMPresentCtx m_PresentCtxs[3];
 
-		bool SupportsColorManagement() const
+		virtual bool SupportsColorManagement() const override
 		{
 			return drm_supports_color_mgmt( &g_DRM );
 		}
