@@ -326,6 +326,7 @@ bool CVulkanDevice::BInit(VkInstance instance, VkSurfaceKHR surface)
 	m_pipelineThread = std::jthread([this](std::stop_token st){compileAllPipelines(st);});
 
 	g_reshadeManager.init(this);
+	g_reshadePostManager.init(this);
 
 	return true;
 }
@@ -3676,6 +3677,32 @@ static void update_tmp_images( uint32_t width, uint32_t height, uint32_t uFormat
 }
 
 
+static void update_post_images( uint32_t width, uint32_t height , uint32_t drmFormat )
+{
+	if ( g_output.postOutput != nullptr
+		&& width == g_output.postOutput->width()
+		&& height == g_output.postOutput->height()
+		&& drmFormat == g_output.postOutput->drmFormat() )
+	{
+		return;
+	}
+
+	CVulkanTexture::createFlags createFlags;
+	createFlags.bSampled = true;
+	createFlags.bStorage = true;
+
+	g_output.postOutput = new CVulkanTexture();
+	bool bSuccess = g_output.postOutput->BInit( width, height, 1u, drmFormat, createFlags, nullptr );
+
+	if ( !bSuccess )
+	{
+		vk_log.errorf( "failed to create post reshade output" );
+		g_output.postOutput = nullptr;
+		return;
+	}
+}
+
+
 static bool init_nis_data()
 {
 	// Create the NIS images
@@ -4238,6 +4265,8 @@ std::optional<uint64_t> vulkan_screenshot( const struct FrameInfo_t *frameInfo, 
 
 extern std::string g_reshade_effect;
 extern uint32_t g_reshade_technique_idx;
+extern std::string g_reshade_post_effect;
+extern uint32_t g_reshade_post_technique_idx;
 
 // GPU timestamps around each composite, read back a few submits later and
 // averaged per filter so a diagnostic never stalls the queue.
@@ -4414,6 +4443,7 @@ namespace
 }
 
 ReshadeEffectPipeline *g_pLastReshadeEffect = nullptr;
+ReshadeEffectPipeline *g_pLastReshadePostEffect = nullptr;
 
 std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamescope::Rc<CVulkanTexture> pPipewireTexture, bool partial, gamescope::Rc<CVulkanTexture> pOutputOverride, bool increment, std::unique_ptr<CVulkanCmdBuffer> pInCommandBuffer )
 {
@@ -4455,10 +4485,18 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 		return std::nullopt;
 
 	gamescope::Rc<CVulkanTexture> compositeImage;
+	gamescope::Rc<CVulkanTexture> postSource = nullptr;
 	if ( pOutputOverride )
 		compositeImage = pOutputOverride;
 	else
 		compositeImage = partial ? g_output.outputImagesPartialOverlay[ g_output.nOutImage ] : g_output.outputImages[ g_output.nOutImage ];
+
+	// post shader target
+	if (!g_reshade_post_effect.empty()) {
+		update_post_images(compositeImage->width(), compositeImage->height(), compositeImage->drmFormat());
+		compositeImage = g_output.postOutput;
+		postSource = compositeImage;
+	}
 
 	// Overrides (screenshots, upscale cache) are logical-sized, so never rotated.
 	const uint32_t uOutputRotation = pOutputOverride ? 0u : g_uOutputRotation;
@@ -4690,6 +4728,49 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 	uint64_t sequence = g_device.submit(std::move(cmdBuffer));
 	if ( oTimingSlot )
 		g_CompositeTiming.pending.back().ulSeqNo = sequence;
+
+	g_pLastReshadePostEffect = nullptr;
+	if (postSource != nullptr)
+	{
+		// wait for previous processing
+		g_device.wait(sequence);
+
+		compositeImage = nullptr;
+
+		ReshadeEffectKey key
+		{
+			.path             = g_reshade_post_effect,
+			.bufferWidth      = postSource->width(),
+			.bufferHeight     = postSource->height(),
+			.bufferColorSpace = frameInfo->layers.get( 0 ).colorspace,
+			.bufferFormat     = postSource->format(),
+			.techniqueIdx     = g_reshade_post_technique_idx,
+		};
+
+		ReshadeEffectPipeline* postPipeline = g_reshadePostManager.pipeline(key);
+		g_pLastReshadePostEffect = postPipeline;
+
+		if (postPipeline != nullptr)
+		{
+			sequence = postPipeline->execute(postSource, &compositeImage);
+
+			// compositeImage now points to the pipeline's internal m_rt.
+			// Blit it back into the real display buffer.
+			gamescope::Rc<CVulkanTexture> realOutput = partial ? g_output.outputImagesPartialOverlay[g_output.nOutImage] : g_output.outputImages[g_output.nOutImage];
+
+			if (realOutput && compositeImage.get() != realOutput.get())
+			{
+				auto copyCmd = g_device.commandBuffer();
+				copyCmd->copyImage(compositeImage, realOutput);
+				sequence = g_device.submit(std::move(copyCmd));
+			}
+
+		}
+	}
+	else
+	{
+		g_reshadePostManager.clear();
+	}
 
 	if ( !GetBackend()->UsesVulkanSwapchain() && pOutputOverride == nullptr && increment )
 	{
