@@ -1304,18 +1304,16 @@ static void gamescope_control_take_screenshot( struct wl_client *client, struct 
 	} );
 }
 
-void drm_sleep_screen( gamescope::GamescopeScreenType eType, bool bSleep );
-
 static void gamescope_control_display_sleep( struct wl_client *client, struct wl_resource *resource, uint32_t display_type_flags, uint32_t flags )
 {
 	if ( flags & ( GAMESCOPE_CONTROL_DISPLAY_SLEEP_FLAGS_SLEEP | GAMESCOPE_CONTROL_DISPLAY_SLEEP_FLAGS_WAKE ) )
 	{
 		const bool sleep = !!( flags & GAMESCOPE_CONTROL_DISPLAY_SLEEP_FLAGS_SLEEP );
 		if ( display_type_flags & GAMESCOPE_CONTROL_DISPLAY_TYPE_FLAGS_EXTERNAL_DISPLAY )
-			drm_sleep_screen( gamescope::GAMESCOPE_SCREEN_TYPE_EXTERNAL, sleep );
+			GetBackend()->SleepScreen( gamescope::GAMESCOPE_SCREEN_TYPE_EXTERNAL, sleep );
 
 		if ( display_type_flags & GAMESCOPE_CONTROL_DISPLAY_TYPE_FLAGS_INTERNAL_DISPLAY )
-			drm_sleep_screen( gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL, sleep );
+			GetBackend()->SleepScreen( gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL, sleep );
 	}
 }
 

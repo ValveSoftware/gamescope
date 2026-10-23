@@ -231,6 +231,11 @@ namespace gamescope
 			return true;
 		}
 
+		virtual bool SupportsScreenSleep() const override
+		{
+			return false;
+		}
+
 		virtual bool IsPaused() const override
 		{
 			return false;

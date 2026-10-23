@@ -13,9 +13,11 @@
 #include <atomic>
 #include <cassert>
 #include <cinttypes>
+#include <chrono>
 #include <climits>
 #include <cstddef>
 #include <cstdio>
+#include <condition_variable>
 #include <cstring>
 #include <map>
 #include <mutex>
@@ -598,6 +600,7 @@ static std::unordered_map< std::string, std::string > pnps = {};
 
 static void drm_unset_mode( struct drm_t *drm, bool force );
 static void drm_unset_connector( struct drm_t *drm );
+static void drm_update_screen_disabled( struct drm_t *drm );
 
 static constexpr uint32_t s_kSteamDeckLCDRates[] =
 {
@@ -949,6 +952,8 @@ static bool refresh_state( drm_t *drm )
 
 	for ( std::unique_ptr< gamescope::CDRMPlane > &pPlane : drm->planes )
 		pPlane->RefreshState();
+
+	drm_update_screen_disabled( drm );
 
 	return true;
 }
@@ -1714,12 +1719,26 @@ gamescope::ConVar<bool> cv_drm_sleep_screens[] =
 	{ "drm_sleep_external_screen", false, "Force the external screen to be asleep", OnSleepScreenChanged },
 };
 
-void drm_sleep_screen( gamescope::GamescopeScreenType eType, bool bSleep )
-{
-	if ( cv_drm_sleep_screens[ eType ] == bSleep )
-		return;
+static std::mutex s_ScreenSleepMutex;
+static std::condition_variable s_ScreenSleepCV;
+static bool s_bScreenDisabled[ gamescope::GAMESCOPE_SCREEN_TYPE_COUNT ] = {};
 
-	cv_drm_sleep_screens[ eType ] = bSleep;
+static void drm_update_screen_disabled( struct drm_t *drm )
+{
+	{
+		std::lock_guard lock( s_ScreenSleepMutex );
+		for ( bool &bDisabled : s_bScreenDisabled )
+			bDisabled = true;
+
+		for ( auto &iter : drm->connectors )
+		{
+			gamescope::CDRMConnector *pConnector = &iter.second;
+			if ( pConnector->GetModeConnector()->connection == DRM_MODE_CONNECTED &&
+			     pConnector->GetProperties().CRTC_ID->GetCurrentValue() != 0 )
+				s_bScreenDisabled[ pConnector->GetScreenType() ] = false;
+		}
+	}
+	s_ScreenSleepCV.notify_all();
 }
 
 
@@ -3268,6 +3287,10 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 
 		if ( bCurrentlyAsleep != bSleep )
 			needs_modeset = true;
+
+		// Make screen sleep commits synchronous so we can easily wait for them
+		if ( bSleep && bCurrentlyAsleep != bSleep )
+			flags &= ~DRM_MODE_ATOMIC_NONBLOCK;
 	}
 
 	if ( !bSleep )
@@ -4301,6 +4324,30 @@ namespace gamescope
 			return g_bSupportsSyncObjs && !cv_drm_debug_disable_explicit_sync;
 		}
 
+		virtual bool SupportsScreenSleep() const override
+		{
+			return true;
+		}
+
+		void SleepScreen( gamescope::GamescopeScreenType eType, bool bSleep ) override
+		{
+			if ( cv_drm_sleep_screens[ eType ] == bSleep )
+				return;
+
+			cv_drm_sleep_screens[ eType ] = bSleep;
+		}
+
+		bool ScreenAsleep( gamescope::GamescopeScreenType eType ) override
+		{
+			return cv_drm_sleep_screens[ eType ];
+		}
+
+		bool WaitForScreenAsleep( gamescope::GamescopeScreenType eType, uint32_t uTimeoutMs ) override
+		{
+			std::unique_lock lock( s_ScreenSleepMutex );
+			return s_ScreenSleepCV.wait_for( lock, std::chrono::milliseconds( uTimeoutMs ), [ eType ]{ return s_bScreenDisabled[ eType ]; } );
+		}
+
 		virtual bool IsPaused() const override
 		{
 			return g_DRM.paused;
@@ -4451,6 +4498,8 @@ namespace gamescope
 							oProperty->OnCommit();
 					}
 				}
+
+				drm_update_screen_disabled( drm );
 			}
 
 			// Update the draw time

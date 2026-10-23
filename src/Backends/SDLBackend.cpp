@@ -168,6 +168,11 @@ namespace gamescope
 		virtual bool IsSessionBased() const override;
 		virtual bool SupportsExplicitSync() const override;
 
+		virtual bool SupportsScreenSleep() const override
+		{
+			return false;
+		}
+
 		virtual bool IsPaused() const override;
 		virtual bool IsVisible() const override;
 
