@@ -8478,7 +8478,7 @@ void update_wayland_res(const std::shared_ptr<CommitDoneList_t> &doneCommits, st
 		wlserver_presentation_feedback_discard( reslistentry.presentation_feedbacks );
 		wlr_buffer_unlock( buf );
 		wlserver_unlock();
-		xwm_log.errorf( "waylandres but no win" );
+		xwm_log.warnf( "waylandres but no win" );
 		return;
 	}
 
