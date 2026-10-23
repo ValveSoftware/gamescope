@@ -47,6 +47,7 @@ meson install -C build/ --skip-subprojects
 * **Super + O** : Decrease FSR sharpness by 1
 * **Super + S** : Take screenshot (currently goes to `/tmp/gamescope_$DATE.png`)
 * **Super + G** : Toggle keyboard grab
+* **Super + M** : Toggle forced mouse grab; turning it off restores automatic cursor grabbing
 
 ## Examples
 

@@ -192,6 +192,7 @@ namespace gamescope
 		void PushUserEvent( SDLCustomEvents eEvent );
 
 		bool m_bShown = false;
+		bool m_bMouseGrabHotkeyHeld = false;
 		CSDLConnector m_Connector; // Window.
 		uint32_t m_uUserEventIdBase = 0u;
 		std::vector<const char *> m_pszInstanceExtensions;
@@ -741,6 +742,13 @@ namespace gamescope
 
 				case SDL_KEYDOWN:
 				{
+					if ( event.key.keysym.scancode == SDL_SCANCODE_M &&
+						( m_bMouseGrabHotkeyHeld || ( !event.key.repeat && ( event.key.keysym.mod & KMOD_GUI ) ) ) )
+					{
+						m_bMouseGrabHotkeyHeld = true;
+						break;
+					}
+
 					// If this keydown event is super + one of the shortcut keys, consume the keydown event, since the corresponding keyup
 					// event will be consumed by the next case statement when the user releases the key
 					if ( event.key.keysym.mod & KMOD_LGUI )
@@ -758,6 +766,14 @@ namespace gamescope
 				case SDL_KEYUP:
 				{
 					uint32_t key = SDLScancodeToLinuxKey( event.key.keysym.scancode );
+
+					if ( event.type == SDL_KEYUP && key == KEY_M && m_bMouseGrabHotkeyHeld )
+					{
+						m_bMouseGrabHotkeyHeld = false;
+						g_bForceRelativeMouse = !g_bForceRelativeMouse;
+						force_repaint();
+						break;
+					}
 
 					if ( event.type == SDL_KEYUP && ( event.key.keysym.mod & KMOD_LGUI ) )
 					{
@@ -854,6 +870,7 @@ namespace gamescope
 							}
 							break;
 						case SDL_WINDOWEVENT_FOCUS_LOST:
+							m_bMouseGrabHotkeyHeld = false;
 							g_nNestedRefresh = g_nNestedUnfocusedRefresh;
 							g_bWindowFocused = false;
 							break;
