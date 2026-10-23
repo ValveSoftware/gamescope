@@ -508,6 +508,7 @@ namespace gamescope
 
 	private:
 		void ParseEDID();
+		void CollectRefreshRatesFromModes();
 
 
 		CDRMBackend *m_pBackend = nullptr;
@@ -2486,6 +2487,10 @@ namespace gamescope
 
 		ParseEDID();
 
+		// ParseEDID() returns early without an EDID, before it collects the refresh rates.
+		if ( m_Mutable.EdidData.empty() )
+			CollectRefreshRatesFromModes();
+
 		if ( m_Mutable.EdidData != oldEdid )
 		{
 			m_Mutable.bEdidChanged = true;
@@ -2538,6 +2543,31 @@ namespace gamescope
 				m_ChosenOrientation = GAMESCOPE_PANEL_ORIENTATION_0;
 			}
 		}
+	}
+
+	void CDRMConnector::CollectRefreshRatesFromModes()
+	{
+		if ( GetScreenType() != GAMESCOPE_SCREEN_TYPE_INTERNAL && !cv_drm_allow_dynamic_modes_for_external_display )
+			return;
+
+		const drmModeModeInfo *pPreferredMode = find_mode( m_pConnector.get(), 0, 0, 0 );
+		if ( !pPreferredMode )
+			return;
+
+		for (int i = 0; i < m_pConnector->count_modes; i++)
+		{
+			const drmModeModeInfo *pMode = &m_pConnector->modes[i];
+
+			if ( pMode->hdisplay != pPreferredMode->hdisplay || pMode->vdisplay != pPreferredMode->vdisplay )
+				continue;
+
+			if ( !Algorithm::Contains( m_Mutable.ValidDynamicRefreshRates, pMode->vrefresh ) )
+			{
+				m_Mutable.ValidDynamicRefreshRates.push_back( pMode->vrefresh );
+			}
+		}
+
+		std::sort( m_Mutable.ValidDynamicRefreshRates.begin(), m_Mutable.ValidDynamicRefreshRates.end() );
 	}
 
 	void CDRMConnector::ParseEDID()
@@ -2709,31 +2739,8 @@ namespace gamescope
 			}
 			else
 			{
-				// Unknown display, see if there are any other refresh rates in the EDID we can get.
-				if ( GetScreenType() == GAMESCOPE_SCREEN_TYPE_INTERNAL || cv_drm_allow_dynamic_modes_for_external_display )
-				{
-					const drmModeModeInfo *pPreferredMode = find_mode( m_pConnector.get(), 0, 0, 0 );
-
-					if ( pPreferredMode )
-					{
-						// See if the EDID has any modes for us.
-						for (int i = 0; i < m_pConnector->count_modes; i++)
-						{
-							const drmModeModeInfo *pMode = &m_pConnector->modes[i];
-
-							if ( pMode->hdisplay != pPreferredMode->hdisplay || pMode->vdisplay != pPreferredMode->vdisplay )
-								continue;
-
-							
-							if ( !Algorithm::Contains( m_Mutable.ValidDynamicRefreshRates, pMode->vrefresh ) )
-							{
-								m_Mutable.ValidDynamicRefreshRates.push_back( pMode->vrefresh );
-							}
-						}
-
-						std::sort( m_Mutable.ValidDynamicRefreshRates.begin(), m_Mutable.ValidDynamicRefreshRates.end() );
-					}
-				}
+				// Unknown display, collect refresh rates from the connector modes.
+				CollectRefreshRatesFromModes();
 			}
 		}
 
