@@ -125,6 +125,8 @@ namespace gamescope
 
     gamescope::ConVar<float> cv_wayland_hdr10_saturation_scale( "wayland_hdr10_saturation_scale", 1.0, "Saturation scale for HDR10 content by gamut expansion. 1.0 - 1.2 is a good range to play with." );
 
+    static constexpr double k_flWaylandPixelsPerScrollNotch = 10.0;
+
     class CWaylandConnector;
     class CWaylandPlane;
     class CWaylandBackend;
@@ -568,8 +570,8 @@ namespace gamescope
         uint32_t m_uKeyModifiers = 0;
         uint32_t m_uModMask[ GAMESCOPE_WAYLAND_MOD_COUNT ];
 
-        double m_flScrollAccum[2] = { 0.0, 0.0 };
-        uint32_t m_uAxisSource = WL_POINTER_AXIS_SOURCE_WHEEL;
+        double m_flScroll120[2] = { 0.0, 0.0 };
+        double m_flScrollContinuous[2] = { 0.0, 0.0 };
 
 		wl_surface *m_pCurrentCursorSurface = nullptr;
 
@@ -3181,6 +3183,11 @@ namespace gamescope
 
 		m_pCurrentCursorSurface = nullptr;
 		m_bMouseEntered = false;
+
+		m_flScroll120[0] = 0.0;
+		m_flScroll120[1] = 0.0;
+		m_flScrollContinuous[0] = 0.0;
+		m_flScrollContinuous[1] = 0.0;
 	}
 	void CWaylandInputThread::Wayland_Pointer_Motion( wl_pointer *pPointer, uint32_t uTime, wl_fixed_t fSurfaceX, wl_fixed_t fSurfaceY )
 	{
@@ -3235,6 +3242,11 @@ namespace gamescope
         // Ignore any pointer events for which the `enter` event surface didn't pass `IsGamescopeToplevel` (libdecor frame)
         if ( !m_bMouseEntered )
             return;
+
+        assert( uAxis == WL_POINTER_AXIS_VERTICAL_SCROLL || uAxis == WL_POINTER_AXIS_HORIZONTAL_SCROLL );
+
+        // Vertical is first in the wl_pointer_axis enum, flip y,x -> x,y
+        m_flScrollContinuous[ !uAxis ] += wl_fixed_to_double( fValue ) / k_flWaylandPixelsPerScrollNotch;
     }
     void CWaylandInputThread::Wayland_Pointer_Axis_Source( wl_pointer *pPointer, uint32_t uAxisSource )
     {
@@ -3242,13 +3254,17 @@ namespace gamescope
         if ( !m_bMouseEntered )
             return;
 
-        m_uAxisSource = uAxisSource;
+        // Intentionally unused: discrete v120 priority in Wayland_Pointer_Frame handles source disambiguation.
     }
     void CWaylandInputThread::Wayland_Pointer_Axis_Stop( wl_pointer *pPointer, uint32_t uTime, uint32_t uAxis )
     {
         // Ignore any pointer events for which the `enter` event surface didn't pass `IsGamescopeToplevel` (libdecor frame)
         if ( !m_bMouseEntered )
             return;
+
+        assert( uAxis == WL_POINTER_AXIS_VERTICAL_SCROLL || uAxis == WL_POINTER_AXIS_HORIZONTAL_SCROLL );
+
+        m_flScrollContinuous[ !uAxis ] = 0.0;
     }
     void CWaylandInputThread::Wayland_Pointer_Axis_Discrete( wl_pointer *pPointer, uint32_t uAxis, int32_t nDiscrete )
     {
@@ -3261,26 +3277,22 @@ namespace gamescope
         // Ignore any pointer events for which the `enter` event surface didn't pass `IsGamescopeToplevel` (libdecor frame)
         if ( !m_bMouseEntered )
             return;
-        if ( !cv_wayland_mouse_warp_without_keyboard_focus && !m_bKeyboardEntered )
-            return;
 
         assert( uAxis == WL_POINTER_AXIS_VERTICAL_SCROLL || uAxis == WL_POINTER_AXIS_HORIZONTAL_SCROLL );
 
         // Vertical is first in the wl_pointer_axis enum, flip y,x -> x,y
-        m_flScrollAccum[ !uAxis ] += nValue120 / 120.0;
+        m_flScroll120[ !uAxis ] += nValue120 / 120.0;
     }
     void CWaylandInputThread::Wayland_Pointer_Frame( wl_pointer *pPointer )
     {
-        defer( m_uAxisSource = WL_POINTER_AXIS_SOURCE_WHEEL );
-        double flX = m_flScrollAccum[0];
-        double flY = m_flScrollAccum[1];
-        m_flScrollAccum[0] = 0.0;
-        m_flScrollAccum[1] = 0.0;
+        double flX = m_flScroll120[0] != 0.0 ? m_flScroll120[0] : m_flScrollContinuous[0];
+        double flY = m_flScroll120[1] != 0.0 ? m_flScroll120[1] : m_flScrollContinuous[1];
+        m_flScroll120[0] = 0.0;
+        m_flScroll120[1] = 0.0;
+        m_flScrollContinuous[0] = 0.0;
+        m_flScrollContinuous[1] = 0.0;
 
         if ( !cv_wayland_mouse_warp_without_keyboard_focus && !m_bKeyboardEntered )
-            return;
-
-        if ( m_uAxisSource != WL_POINTER_AXIS_SOURCE_WHEEL )
             return;
 
         if ( flX == 0.0 && flY == 0.0 )
