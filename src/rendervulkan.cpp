@@ -2161,6 +2161,8 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 	VkImageDrmFormatModifierExplicitCreateInfoEXT modifierInfo = {};
 	VkSubresourceLayout modifierPlaneLayouts[4] = {};
 	VkImageDrmFormatModifierListCreateInfoEXT modifierListInfo = {};
+	VkImageFormatListCreateInfo formatList = {};
+	std::vector<VkFormat> formats;
 	
 	VkImageCreateInfo imageInfo = {
 		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
@@ -2181,21 +2183,31 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 
 	assert( imageInfo.format != VK_FORMAT_UNDEFINED );
 
-	std::array<VkFormat, 2> formats = {
+	bool bYcbcr = imageInfo.format == VK_FORMAT_G8_B8R8_2PLANE_420_UNORM;
+
+	formats = {
 		DRMFormatToVulkan(drmFormat, false),
 		DRMFormatToVulkan(drmFormat, true),
 	};
 
-	VkImageFormatListCreateInfo formatList = {
+	if ( bYcbcr )
+	{
+		formats.push_back( VK_FORMAT_R8_UNORM );
+		formats.push_back( VK_FORMAT_R8G8_UNORM );
+	}
+
+	formatList = {
 		.sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO,
 		.viewFormatCount = (uint32_t)formats.size(),
 		.pViewFormats = formats.data(),
 	};
 
-	if ( formats[0] != formats[1] )
+	if ( formats[0] != formats[1] || bYcbcr )
 	{
 		formatList.pNext = std::exchange(imageInfo.pNext, &formatList);
 		imageInfo.flags |= VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
+		if ( bYcbcr && flags.bStorage )
+			imageInfo.flags |= VK_IMAGE_CREATE_EXTENDED_USAGE_BIT;
 	}
 
 	if ( pDMA != nullptr )
@@ -3891,6 +3903,32 @@ uint32_t vulkan_get_rgb10_capture_format( void )
 		return DRM_FORMAT_XBGR2101010;
 	}();
 	return s_uFormat;
+}
+
+bool vulkan_supports_nv12_storage( void )
+{
+	static bool s_bSupported = []()
+	{
+		VkFormatProperties nv12Props = {};
+		g_device.vk.GetPhysicalDeviceFormatProperties( g_device.physDev(), VK_FORMAT_G8_B8R8_2PLANE_420_UNORM, &nv12Props );
+		constexpr VkFormatFeatureFlags uNeeded = VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT;
+		if ( ( nv12Props.optimalTilingFeatures & uNeeded ) ||
+		     ( nv12Props.linearTilingFeatures & uNeeded ) )
+			return true;
+
+		VkFormatProperties r8Props = {};
+		VkFormatProperties r8g8Props = {};
+		g_device.vk.GetPhysicalDeviceFormatProperties( g_device.physDev(), VK_FORMAT_R8_UNORM, &r8Props );
+		g_device.vk.GetPhysicalDeviceFormatProperties( g_device.physDev(), VK_FORMAT_R8G8_UNORM, &r8g8Props );
+
+		bool bR8Storage = ( r8Props.optimalTilingFeatures & uNeeded ) ||
+		                  ( r8Props.linearTilingFeatures & uNeeded );
+		bool bR8G8Storage = ( r8g8Props.optimalTilingFeatures & uNeeded ) ||
+		                    ( r8g8Props.linearTilingFeatures & uNeeded );
+
+		return bR8Storage && bR8G8Storage;
+	}();
+	return s_bSupported;
 }
 
 // Internal display's native brightness.
