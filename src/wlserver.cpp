@@ -2261,6 +2261,12 @@ void wlserver_set_keyboard_layout( const char *pszLayout )
 	cv_xkb_layout = std::string{ pszLayout };
 }
 
+static void handle_request_set_cursor( struct wl_listener *listener, void *data )
+{
+	auto *event = (struct wlr_seat_pointer_request_set_cursor_event *)data;
+	wlserver.bXdgClientCursorEmpty.store( event->surface == nullptr, std::memory_order_relaxed );
+}
+
 bool wlserver_init( void ) {
 	assert( wlserver.display != nullptr );
 
@@ -2398,6 +2404,8 @@ bool wlserver_init( void ) {
 
 	wlserver.wlr.seat = wlr_seat_create(wlserver.display, "seat0");
 	wlr_seat_set_capabilities( wlserver.wlr.seat, WL_SEAT_CAPABILITY_POINTER | WL_SEAT_CAPABILITY_KEYBOARD | WL_SEAT_CAPABILITY_TOUCH );
+	wlserver.request_set_cursor.notify = handle_request_set_cursor;
+	wl_signal_add( &wlserver.wlr.seat->events.request_set_cursor, &wlserver.request_set_cursor );
 
 	wl_log.infof("Running compositor on wayland display '%s'", wlserver.wl_display_name);
 
@@ -3089,6 +3097,8 @@ static void wlserver_constrain_cursor( struct wlr_pointer_constraint_v1 *pNewCon
 	}
 
 	wlserver.SetMouseConstraint( pNewConstraint );
+	wlserver.bMouseConstraintLocked.store( pNewConstraint != nullptr &&
+		pNewConstraint->type == WLR_POINTER_CONSTRAINT_V1_LOCKED, std::memory_order_relaxed );
 
 	if ( !pNewConstraint )
 	{
