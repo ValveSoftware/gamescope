@@ -57,7 +57,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <fcntl.h>
-#include <sys/poll.h>
+#include <poll.h>
 #include <sys/inotify.h>
 #include <sys/time.h>
 #include <sys/wait.h>
