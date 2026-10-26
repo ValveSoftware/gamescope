@@ -76,6 +76,12 @@ static inline uint32_t WaylandScaleToPhysical( uint32_t pValue, uint32_t pFactor
 static inline uint32_t WaylandScaleToLogical( uint32_t pValue, uint32_t pFactor ) {
     return div_roundup( pValue * WL_FRACTIONAL_SCALE_DENOMINATOR, pFactor );
 }
+static inline int32_t WaylandScalePositionToLogical( int32_t nValue, uint32_t uFactor ) {
+    int64_t nScaled = int64_t( nValue ) * WL_FRACTIONAL_SCALE_DENOMINATOR;
+    if ( nScaled >= 0 )
+        return int32_t( ( nScaled + uFactor - 1 ) / uFactor );
+    return -int32_t( ( -nScaled ) / uFactor );
+}
 
 [[maybe_unused]] static bool IsGamescopeProxy( void *pProxy ) {
 	// HACK: this probably should never be called with a null pointer, but it
@@ -1621,8 +1627,8 @@ namespace gamescope
             {
                 wl_subsurface_set_position(
                     m_pSubsurface,
-                    WaylandScaleToLogical( oState->nDestX, uScale ),
-                    WaylandScaleToLogical( oState->nDestY, uScale ) );
+                    WaylandScalePositionToLogical( oState->nDestX, uScale ),
+                    WaylandScalePositionToLogical( oState->nDestY, uScale ) );
             }
             // The x/y here does nothing? Why? What is it for...
             // Use the subsurface set_position thing instead.
