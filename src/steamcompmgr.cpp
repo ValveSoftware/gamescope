@@ -2180,6 +2180,14 @@ int MouseCursor::y() const
 	return m_y;
 }
 
+static bool cursor_layer_is_hotspot_point()
+{
+	gamescope::IBackendConnector *pMouseConnector = GetBackend()->GetCurrentMouseConnector();
+	if ( !pMouseConnector || !pMouseConnector->GetNestedHints() )
+		return false;
+	return pMouseConnector->GetNestedHints()->CursorLayerIsHotspotPoint();
+}
+
 bool MouseCursor::getTexture()
 {
 	uint64_t ulConnectorId = 0;
@@ -2225,7 +2233,7 @@ bool MouseCursor::getTexture()
 
 	int nDesiredWidth = image->width;
 	int nDesiredHeight = image->height;
-	if ( g_nCursorScaleHeight > 0 && !bNested )
+	if ( g_nCursorScaleHeight > 0 && !cursor_layer_is_hotspot_point() )
 	{
 		GetDesiredSize( nDesiredWidth, nDesiredHeight );
 	}
@@ -2422,8 +2430,7 @@ void MouseCursor::paint(steamcompmgr_win_t *window, steamcompmgr_win_t *fit, str
 		scaledY += ((sourceHeight / 2) - winY) * currentScaleRatio_y;
 	}
 
-	bool bNested = GetBackend()->GetCurrentMouseConnector() && GetBackend()->GetCurrentMouseConnector()->GetNestedHints();
-	if ( !bNested )
+	if ( !cursor_layer_is_hotspot_point() )
 	{
 		// Apply the cursor offset inside the texture using the display scale
 		scaledX = scaledX - (m_hotspotX * cursor_scale);

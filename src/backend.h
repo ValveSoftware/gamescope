@@ -273,6 +273,7 @@ namespace gamescope
         virtual void SetSelection( std::shared_ptr<std::string> szContents, GamescopeSelection eSelection ) = 0;
 
         virtual bool ShouldPaintCursor() { return false; }
+        virtual bool CursorLayerIsHotspotPoint() { return false; }
     };
 
     class IBackendFb : public IRcObject
