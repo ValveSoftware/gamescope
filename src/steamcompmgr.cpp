@@ -104,6 +104,7 @@
 
 #include "wlr_begin.hpp"
 #include "wlr/types/wlr_pointer_constraints_v1.h"
+#include "wlr/types/wlr_xdg_shell.h"
 #include "wlr_end.hpp"
 
 #if HAVE_AVIF
@@ -945,6 +946,73 @@ void close_virtual_connector_key(gamescope::VirtualConnectorKey_t eKey)
 {
 	std::unique_lock lock{ s_KeysToCloseMutex };
 	s_KeysToClose.push_back( eKey );
+}
+
+static std::atomic<bool> s_bWindowCloseRequested{ false };
+
+void steamcompmgr_request_close( void )
+{
+	s_bWindowCloseRequested = true;
+	nudge_steamcompmgr();
+}
+
+static void send_window_close( steamcompmgr_win_t *pWindow )
+{
+	if ( !pWindow )
+		return;
+
+	if ( pWindow->type == steamcompmgr_win_type_t::XWAYLAND )
+	{
+		xwayland_ctx_t *ctx = pWindow->xwayland().ctx;
+		Window id = pWindow->xwayland().id;
+
+		bool bSupportsDelete = false;
+		Atom *pProtocols = nullptr;
+		int nProtocols = 0;
+		if ( XGetWMProtocols( ctx->dpy, id, &pProtocols, &nProtocols ) )
+		{
+			for ( int i = 0; i < nProtocols; i++ )
+			{
+				if ( pProtocols[i] == ctx->atoms.wm_delete_window )
+				{
+					bSupportsDelete = true;
+					break;
+				}
+			}
+			XFree( pProtocols );
+		}
+
+		if ( bSupportsDelete )
+		{
+			xwm_log.infof( "Window close requested: sending WM_DELETE_WINDOW to window 0x%lx", (unsigned long)id );
+
+			XEvent event = {0};
+			event.xclient.type = ClientMessage;
+			event.xclient.window = id;
+			event.xclient.message_type = ctx->atoms.wm_protocols;
+			event.xclient.format = 32;
+			event.xclient.data.l[0] = ctx->atoms.wm_delete_window;
+			event.xclient.data.l[1] = CurrentTime;
+
+			XSendEvent( ctx->dpy, id, False, NoEventMask, &event );
+		}
+		else
+		{
+			xwm_log.infof( "Window close requested: killing client for window 0x%lx (WM_DELETE_WINDOW not supported)", (unsigned long)id );
+			XKillClient( ctx->dpy, id );
+		}
+		XFlush( ctx->dpy );
+	}
+	else if ( pWindow->type == steamcompmgr_win_type_t::XDG )
+	{
+		xwm_log.infof( "Window close requested: sending close to focused XDG window" );
+		wlserver_lock();
+		if ( pWindow->xdg().surface.xdg_surface && pWindow->xdg().surface.xdg_surface->role == WLR_XDG_SURFACE_ROLE_TOPLEVEL )
+		{
+			wlr_xdg_toplevel_send_close( pWindow->xdg().surface.xdg_surface->toplevel );
+		}
+		wlserver_unlock();
+	}
 }
 
 struct ignore {
@@ -9614,8 +9682,6 @@ static bool mangoapp_per_connector()
 	return g_bLaunchMangoapp && GetBackend()->UsesVirtualConnectors() && cv_mangoapp_per_connector;
 }
 
-extern void ShutdownGamescope();
-
 gamescope::ConVar<bool> cv_shutdown_on_primary_child_death( "shutdown_on_primary_child_death", true, "Should gamescope shutdown when the primary application launched in it was shut down?" );
 static LogScope s_LaunchLogScope( "launch" );
 
@@ -10369,6 +10435,42 @@ steamcompmgr_main(int argc, char **argv)
 		}
 #endif
 
+		if ( s_bWindowCloseRequested.exchange( false ) )
+		{
+			static uint64_t s_ulLastCloseRequestTime = 0;
+			uint64_t ulNow = get_time_in_nanos();
+			bool bForceClose = ( s_ulLastCloseRequestTime != 0 && ( ulNow - s_ulLastCloseRequestTime ) < 2'000'000'000ul );
+			s_ulLastCloseRequestTime = ulNow;
+
+			steamcompmgr_win_t *pCloseTarget = nullptr;
+			global_focus_t *pFocus = GetCurrentFocus();
+			if ( pFocus && pFocus->focusWindow && !win_is_useless( pFocus->focusWindow ) )
+				pCloseTarget = pFocus->focusWindow;
+			else if ( pFocus && pFocus->inputFocusWindow && !win_is_useless( pFocus->inputFocusWindow ) )
+				pCloseTarget = pFocus->inputFocusWindow;
+			else
+			{
+				for ( steamcompmgr_win_t *pWindow : GetGlobalPossibleFocusWindows() )
+				{
+					if ( !win_is_useless( pWindow ) &&
+						 !( pWindow->type == steamcompmgr_win_type_t::XWAYLAND && pWindow->xwayland().a.override_redirect && !pWindow->isSteamLegacyBigPicture ) )
+					{
+						pCloseTarget = pWindow;
+						break;
+					}
+				}
+			}
+
+			if ( pCloseTarget && !bForceClose )
+			{
+				send_window_close( pCloseTarget );
+			}
+			else
+			{
+				raise( SIGTERM );
+			}
+		}
+
 		std::vector<gamescope::VirtualConnectorKey_t> keysToClose;
 		{
 			std::unique_lock lock{ s_KeysToCloseMutex };
@@ -10402,22 +10504,7 @@ steamcompmgr_main(int argc, char **argv)
 
 					if ( gamescope::Algorithm::Contains( keysToClose, ulKey ) )
 					{
-						if ( pWindow->type == steamcompmgr_win_type_t::XWAYLAND )
-						{
-							XEvent event = {0};
-							event.xclient.type = ClientMessage;
-							event.xclient.window = pWindow->xwayland().id;
-							event.xclient.message_type = pWindow->xwayland().ctx->atoms.wm_protocols;
-							event.xclient.format = 32;
-							event.xclient.data.l[0] = pWindow->xwayland().ctx->atoms.wm_delete_window;
-							event.xclient.data.l[1] = CurrentTime;
-
-							XSendEvent(pWindow->xwayland().ctx->dpy, pWindow->xwayland().id, False, NoEventMask, &event);
-						}
-						else
-						{
-							xwm_log.errorf( "Closing Wayland windows not supported yet." );
-						}
+						send_window_close( pWindow );
 					}
 
 					if ( !gamescope::Algorithm::Contains( newKeys, ulKey ) )
