@@ -1544,15 +1544,15 @@ namespace gamescope
                             const hdr_metadata_infoframe *pInfoframe = &m_ColorState->pHDRMetadata->View<hdr_output_metadata>().hdmi_metadata_type1;
 
                             wp_image_description_creator_params_v1_set_mastering_display_primaries( pParams,
-                                // Rescale...
-                                (((int32_t)pInfoframe->display_primaries[0].x) * 1'000'000) / 0xC350,
-                                (((int32_t)pInfoframe->display_primaries[0].y) * 1'000'000) / 0xC350,
-                                (((int32_t)pInfoframe->display_primaries[1].x) * 1'000'000) / 0xC350,
-                                (((int32_t)pInfoframe->display_primaries[1].y) * 1'000'000) / 0xC350,
-                                (((int32_t)pInfoframe->display_primaries[2].x) * 1'000'000) / 0xC350,
-                                (((int32_t)pInfoframe->display_primaries[2].y) * 1'000'000) / 0xC350,
-                                (((int32_t)pInfoframe->white_point.x) * 1'000'000) / 0xC350,
-                                (((int32_t)pInfoframe->white_point.y) * 1'000'000) / 0xC350);
+                                // Rescale from 0.00002 units to 1e-6 units, in 64-bit to avoid overflow.
+                                (int32_t)((((int64_t)pInfoframe->display_primaries[0].x) * 1'000'000) / 0xC350),
+                                (int32_t)((((int64_t)pInfoframe->display_primaries[0].y) * 1'000'000) / 0xC350),
+                                (int32_t)((((int64_t)pInfoframe->display_primaries[1].x) * 1'000'000) / 0xC350),
+                                (int32_t)((((int64_t)pInfoframe->display_primaries[1].y) * 1'000'000) / 0xC350),
+                                (int32_t)((((int64_t)pInfoframe->display_primaries[2].x) * 1'000'000) / 0xC350),
+                                (int32_t)((((int64_t)pInfoframe->display_primaries[2].y) * 1'000'000) / 0xC350),
+                                (int32_t)((((int64_t)pInfoframe->white_point.x) * 1'000'000) / 0xC350),
+                                (int32_t)((((int64_t)pInfoframe->white_point.y) * 1'000'000) / 0xC350));
 
                             wp_image_description_creator_params_v1_set_mastering_luminance( pParams,
                                 pInfoframe->min_display_mastering_luminance,
