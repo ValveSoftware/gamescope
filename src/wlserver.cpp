@@ -2093,6 +2093,8 @@ void xdg_toplevel_new(struct wl_listener *listener, void *data)
 {
 }
 
+extern bool steamMode;
+
 wlserver_xdg_surface_info* waylandy_type_surface_new(struct wl_client *client, struct wlr_surface *surface)
 {
 	wlserver_wl_surface_info *wlserver_surface = get_wl_surface_info(surface);
@@ -2120,6 +2122,13 @@ wlserver_xdg_surface_info* waylandy_type_surface_new(struct wl_client *client, s
 
 	static uint32_t s_window_serial = 0;
 	window->xdg().id = ++s_window_serial;
+
+	// Outside Steam mode steamcompmgr gives every X11 window a synthetic appID
+	// (its window id) and focus selection prefers windows that have one. Give
+	// XDG windows the same treatment, or a native Wayland game is permanently
+	// out-focused by any X11 window of its launcher that stays mapped behind it.
+	if ( !steamMode && window->appID == 0 )
+		window->appID = 0x7FFF0000u + window->xdg().id;
 
 	wlserver_xdg_surface_info* xdg_surface_info = &window->xdg().surface;
 	xdg_surface_info->main_surface = surface;
