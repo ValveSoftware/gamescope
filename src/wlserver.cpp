@@ -2408,6 +2408,17 @@ void wlserver_set_keyboard_layout( const char *pszLayout )
 	cv_xkb_layout = std::string{ pszLayout };
 }
 
+void wlserver_set_keyboard_repeat_info( int32_t nRate, int32_t nDelay )
+{
+	assert( wlserver_is_lock_held() );
+
+	if ( nRate >= 0 && (int)cv_keyboard_repeat_rate != nRate )
+		cv_keyboard_repeat_rate = nRate;
+
+	if ( nDelay >= 0 && (int)cv_keyboard_repeat_delay != nDelay )
+		cv_keyboard_repeat_delay = nDelay;
+}
+
 bool wlserver_init( void ) {
 	assert( wlserver.display != nullptr );
 
