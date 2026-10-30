@@ -14,7 +14,10 @@ struct pipewire_state {
 	bool running;
 
 	struct pw_stream *stream;
-	uint32_t stream_node_id;
+	// Read by the wlserver thread, rewritten when the stream reconnects.
+	std::atomic<uint32_t> stream_node_id;
+	bool needs_reconnect;
+	int reconnect_attempts;
 	std::atomic<bool> streaming;
 	struct spa_video_info_raw video_info;
 	struct spa_gamescope gamescope_info;
