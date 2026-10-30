@@ -263,7 +263,8 @@ namespace gamescope
             uint32_t uMaxFullFrameLuminance );
         static const frog_color_managed_surface_listener s_FrogColorManagedSurfaceListener;
 
-        void Wayland_WPColorManagementSurfaceFeedback_PreferredChanged( wp_color_management_surface_feedback_v1 *pColorManagementSurface, unsigned int data );
+        void Wayland_WPColorManagementSurfaceFeedback_PreferredChanged( wp_color_management_surface_feedback_v1 *pColorManagementSurface, uint32_t identity );
+        void Wayland_WPColorManagementSurfaceFeedback_PreferredChanged2( wp_color_management_surface_feedback_v1 *pColorManagementSurface, uint32_t identity_hi, uint32_t identity_lo );
         static const wp_color_management_surface_feedback_v1_listener s_WPColorManagementSurfaceListener;
         void UpdateWPPreferredColorManagement();
 
@@ -339,6 +340,7 @@ namespace gamescope
     const wp_color_management_surface_feedback_v1_listener CWaylandPlane::s_WPColorManagementSurfaceListener =
     {
         .preferred_changed = WAYLAND_USERDATA_TO_THIS( CWaylandPlane, Wayland_WPColorManagementSurfaceFeedback_PreferredChanged ),
+        .preferred_changed2 = WAYLAND_USERDATA_TO_THIS( CWaylandPlane, Wayland_WPColorManagementSurfaceFeedback_PreferredChanged2 ),
     };
     const wp_image_description_info_v1_listener CWaylandPlane::s_ImageDescriptionInfoListener =
     {
@@ -717,6 +719,7 @@ namespace gamescope
         wl_surface *CursorInfoToSurface( const std::shared_ptr<INestedHints::CursorInfo> &info );
 
         bool SupportsColorManagement() const;
+        bool SupportsWindowsBT2100() const;
 
         void SetCursorImage( std::shared_ptr<INestedHints::CursorInfo> info );
         void SetRelativeMouseMode( wl_surface *pSurface, bool bRelative );
@@ -851,6 +854,7 @@ namespace gamescope
             std::vector<wp_color_manager_v1_feature> eFeatures;
 
             bool bSupportsGamescopeColorManagement = false; // Has everything we want and need?
+            bool bSupportsWindowsBT2100 = false;
         } m_WPColorManagerFeatures;
 
         std::unordered_map<wl_output *, WaylandOutputInfo> m_pOutputs;
@@ -1518,6 +1522,10 @@ namespace gamescope
                     {
                         m_pCurrentImageDescription = wp_color_manager_v1_create_windows_scrgb( m_pBackend->GetWPColorManager() );
                     }
+                    else if ( oState->eColorspace == GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ && m_pBackend->SupportsWindowsBT2100() )
+                    {
+                        m_pCurrentImageDescription = wp_color_manager_v1_create_windows_bt2100( m_pBackend->GetWPColorManager() );
+                    }
                     else if ( oState->eColorspace == GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ )
                     {
                         wp_image_description_creator_params_v1 *pParams = wp_color_manager_v1_create_parametric_creator( m_pBackend->GetWPColorManager() );
@@ -1895,6 +1903,11 @@ namespace gamescope
         UpdateWPPreferredColorManagement();
     }
 
+    void CWaylandPlane::Wayland_WPColorManagementSurfaceFeedback_PreferredChanged2( wp_color_management_surface_feedback_v1 *pColorManagementSurface, uint32_t identity_hi, uint32_t identity_lo )
+    {
+        UpdateWPPreferredColorManagement();
+    }
+
     void CWaylandPlane::UpdateWPPreferredColorManagement()
     {
         if ( m_pParent )
@@ -2105,7 +2118,13 @@ namespace gamescope
 
             if ( m_WPColorManagerFeatures.bSupportsGamescopeColorManagement )
             {
+                m_WPColorManagerFeatures.bSupportsWindowsBT2100 = Algorithm::Contains(m_WPColorManagerFeatures.eFeatures, WP_COLOR_MANAGER_V1_FEATURE_WINDOWS_BT2100);
                 // HDR10.
+                if ( m_WPColorManagerFeatures.bSupportsWindowsBT2100 )
+                {
+                    m_pWPImageDescriptions[ GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ ] = wp_color_manager_v1_create_windows_bt2100( m_pWPColorManager );
+                }
+                else
                 {
                     wp_image_description_creator_params_v1 *pParams = wp_color_manager_v1_create_parametric_creator( m_pWPColorManager );
                     wp_image_description_creator_params_v1_set_primaries_named( pParams, WP_COLOR_MANAGER_V1_PRIMARIES_BT2020 );
@@ -2455,6 +2474,11 @@ namespace gamescope
         return m_pFrogColorMgmtFactory != nullptr || ( m_pWPColorManager != nullptr && m_WPColorManagerFeatures.bSupportsGamescopeColorManagement );
     }
 
+    bool CWaylandBackend::SupportsWindowsBT2100() const
+    {
+        return m_WPColorManagerFeatures.bSupportsWindowsBT2100;
+    }
+
     void CWaylandBackend::SetCursorImage( std::shared_ptr<INestedHints::CursorInfo> info )
     {
         m_pCursorInfo = info;
@@ -2591,7 +2615,7 @@ namespace gamescope
         }
         else if ( !strcmp( pInterface, wp_color_manager_v1_interface.name ) )
         {
-            m_pWPColorManager = (wp_color_manager_v1 *)wl_registry_bind( pRegistry, uName, &wp_color_manager_v1_interface, 1u );
+            m_pWPColorManager = (wp_color_manager_v1 *)wl_registry_bind( pRegistry, uName, &wp_color_manager_v1_interface, std::min(3u, uVersion) );
             wp_color_manager_v1_add_listener( m_pWPColorManager, &s_WPColorManagerListener, this );
         }
         else if ( !strcmp( pInterface, zwp_pointer_constraints_v1_interface.name ) )
