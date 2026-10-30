@@ -88,10 +88,15 @@ reshade_src = [
   'reshade/source/effect_symbol_table.cpp',
 ]
 
+spirv_include_path = '../thirdparty/SPIRV-Headers/include/spirv/unified1'
+if get_option('system_spirv_headers')
+  spirv_include_path = '/usr/include/spirv/unified1'
+endif
+
 reshade_include = include_directories([
   'reshade/source',
   'reshade/include',
-  '../thirdparty/SPIRV-Headers/include/spirv/unified1'
+  spirv_include_path
 ])
 
 sol2_include = include_directories(['../thirdparty'])
