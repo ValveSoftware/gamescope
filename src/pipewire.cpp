@@ -165,7 +165,8 @@ static std::vector<const struct spa_pod *> build_format_params(struct spa_pod_bu
 	std::vector<const struct spa_pod *> params;
 
 	build_format_params(builder, SPA_VIDEO_FORMAT_BGRx, params);
-	build_format_params(builder, SPA_VIDEO_FORMAT_NV12, params);
+	if ( vulkan_supports_nv12_storage() )
+		build_format_params(builder, SPA_VIDEO_FORMAT_NV12, params);
 
 	return params;
 }
