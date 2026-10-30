@@ -1,7 +1,8 @@
 #include <cstdio>
+#include <cstdlib>
 #include <cerrno>
 #include <cstring>
-#include <cerrno>
+#include <unistd.h>
 
 #include <format>
 
@@ -10,16 +11,25 @@
 #include "convar.h"
 #include "log.hpp"
 
-static constexpr std::string_view GetLogPriorityText( LogPriority ePriority )
+static bool ShouldColorLog()
+{
+	static bool s_bColor = []() {
+		const char *pNoColor = getenv( "NO_COLOR" );
+		return (!pNoColor || pNoColor[0] == '\0') && isatty( STDERR_FILENO );
+	}();
+	return s_bColor;
+}
+
+static constexpr std::string_view GetLogPriorityText( LogPriority ePriority, bool bColor )
 {
 	switch ( ePriority )
 	{
-		case LOG_SILENT:	return "[\e[0;37m" "Shh.." "\e[0m]";
-		case LOG_ERROR:		return "[\e[0;31m" "Error" "\e[0m]";
-		case LOG_WARNING:	return "[\e[0;33m" "Warn" "\e[0m] ";
-		case LOG_DEBUG:		return "[\e[0;35m" "Debug" "\e[0m]";
+		case LOG_SILENT:	return bColor ? "[\e[0;37mShh..\e[0m]" : "[Shh..]";
+		case LOG_ERROR:		return bColor ? "[\e[0;31mError\e[0m]"  : "[Error]";
+		case LOG_WARNING:	return bColor ? "[\e[0;33mWarn\e[0m] "  : "[Warn] ";
+		case LOG_DEBUG:		return bColor ? "[\e[0;35mDebug\e[0m]"  : "[Debug]";
 		default:
-		case LOG_INFO:		return "[\e[0;34m" "Info" "\e[0m] ";
+		case LOG_INFO:		return bColor ? "[\e[0;34mInfo\e[0m] "  : "[Info] ";
 	}
 }
 
@@ -116,13 +126,20 @@ void LogScope::log(enum LogPriority priority, std::string_view psvText)
 	for (auto& listener : m_LoggingListeners)
 		listener.second( priority, m_psvPrefix, psvText );
 
-	std::string_view psvLogName = GetLogPriorityText( priority );
+	const bool bColor = ShouldColorLog();
+	std::string_view psvLogName = GetLogPriorityText( priority, bColor );
 	if ( bPrefixEnabled )
-		fprintf(stderr, "[%s] %.*s \e[0;37m%.*s:\e[0m %.*s\n",
-		gamescope::Process::GetProcessName(),
-		(int)psvLogName.size(), psvLogName.data(),
-		(int)this->m_psvPrefix.size(), this->m_psvPrefix.data(),
-		(int)psvText.size(), psvText.data());
+	{
+		const char *pszFormat = bColor
+			? "[%s] %.*s \e[0;37m%.*s:\e[0m %.*s\n"
+			: "[%s] %.*s %.*s: %.*s\n";
+
+		fprintf(stderr, pszFormat,
+			gamescope::Process::GetProcessName(),
+			(int)psvLogName.size(), psvLogName.data(),
+			(int)this->m_psvPrefix.size(), this->m_psvPrefix.data(),
+			(int)psvText.size(), psvText.data());
+	}
 	else
 	 	fprintf(stderr, "%.*s\n", (int)psvText.size(), psvText.data());
 }
