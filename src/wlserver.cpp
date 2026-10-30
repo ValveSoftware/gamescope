@@ -393,6 +393,21 @@ static void wlserver_handle_pointer_motion(struct wl_listener *listener, void *d
 	wlserver_mousemotion(event->unaccel_dx, event->unaccel_dy, event->time_msec);
 }
 
+static void wlserver_handle_pointer_motion_absolute(struct wl_listener *listener, void *data)
+{
+	struct wlr_pointer_motion_absolute_event *event = (struct wlr_pointer_motion_absolute_event *) data;
+
+	if ( !g_nOutputWidth || !g_nOutputHeight )
+		return;
+
+	wlserver.physical_cursor_move = true;
+
+	double tx = ( event->x * g_nOutputWidth  + focusedWindowOffsetX ) * focusedWindowScaleX;
+	double ty = ( event->y * g_nOutputHeight + focusedWindowOffsetY ) * focusedWindowScaleY;
+
+	wlserver_mousewarp( tx, ty, event->time_msec, false );
+}
+
 void wlserver_open_steam_menu( bool qam )
 {
 	gamescope_xwayland_server_t *server = wlserver_get_xwayland_server( 0 );
@@ -539,6 +554,7 @@ static void wlserver_handle_pointer_destroy(struct wl_listener *listener, void *
 	struct wlserver_pointer *pointer = wl_container_of( listener, pointer, destroy );
 
 	wl_list_remove( &pointer->motion.link );
+	wl_list_remove( &pointer->motion_absolute.link );
 	wl_list_remove( &pointer->button.link );
 	wl_list_remove( &pointer->axis.link );
 	wl_list_remove( &pointer->frame.link );
@@ -596,6 +612,8 @@ static void wlserver_new_input(struct wl_listener *listener, void *data)
 
 			pointer->motion.notify = wlserver_handle_pointer_motion;
 			wl_signal_add( &pointer->wlr->events.motion, &pointer->motion );
+			pointer->motion_absolute.notify = wlserver_handle_pointer_motion_absolute;
+			wl_signal_add( &pointer->wlr->events.motion_absolute, &pointer->motion_absolute );
 			pointer->button.notify = wlserver_handle_pointer_button;
 			wl_signal_add( &pointer->wlr->events.button, &pointer->button );
 			pointer->axis.notify = wlserver_handle_pointer_axis;
