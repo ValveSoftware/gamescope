@@ -233,6 +233,11 @@ namespace gamescope
             return m_pChild->IsSessionBased();
 		}
 
+        virtual bool IsNested() const override
+		{
+            return m_pChild ? m_pChild->IsNested() : false;
+		}
+
 		virtual bool SupportsExplicitSync() const override
 		{
             // Doesn't need to be 'initted' for this check.

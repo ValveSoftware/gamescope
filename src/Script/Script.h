@@ -29,6 +29,8 @@ namespace gamescope
             sol::table Base;
 
             sol::table KnownDisplays;
+            sol::table Input;
+            sol::table Hotkeys;
 
             std::optional<std::pair<std::string_view, sol::table>> LookupDisplay( CScriptScopedLock &script, std::string_view psvVendor, uint16_t uProduct, std::string_view psvModel, std::string_view psvDataString );
         } Config;
