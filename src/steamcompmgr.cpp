@@ -11272,11 +11272,12 @@ steamcompmgr_main(int argc, char **argv)
 			hasRepaintNonBasePlane = false;
 			hasCursorRepaint = false;
 			nIgnoredOverlayRepaints = 0;
-
+#if HAVE_SCRIPTING
 			{
 				gamescope::CScriptScopedLock script;
 				script.Manager().CallHook( "OnPostPaint" );
 			}
+#endif
 		}
 
 		publish_mangoapp_snapshot();
