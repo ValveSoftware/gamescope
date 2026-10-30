@@ -13,6 +13,7 @@
 #include "main.hpp"
 #include "pipewire.hpp"
 #include "log.hpp"
+#include "steamcompmgr.hpp"
 
 #include <spa/debug/format.h>
 
@@ -199,7 +200,7 @@ static void copy_buffer(struct pipewire_state *state, struct pipewire_buffer *bu
 
 	struct spa_meta_header *header = (struct spa_meta_header *) spa_buffer_find_meta_data(spa_buffer, SPA_META_Header, sizeof(*header));
 	if (header != nullptr) {
-		header->pts = -1;
+		header->pts = get_time_in_nanos();
 		header->flags = needs_reneg ? SPA_META_HEADER_FLAG_CORRUPTED : 0;
 		header->seq = state->seq++;
 		header->dts_offset = 0;
@@ -310,6 +311,8 @@ static void dispatch_nudge(struct pipewire_state *state, int fd)
 			int ret = pw_stream_queue_buffer(state->stream, buffer->buffer);
 			if (ret < 0) {
 				pwr_log.errorf("pw_stream_queue_buffer failed");
+			} else {
+				pw_stream_trigger_process(state->stream);
 			}
 		} else {
 			destroy_buffer(buffer);
@@ -700,6 +703,10 @@ bool init_pipewire(void)
 	state->stream = pw_stream_new(state->core, "gamescope",
 		pw_properties_new(
 			PW_KEY_MEDIA_CLASS, "Video/Source",
+			PW_KEY_MEDIA_ROLE, "Camera",
+			PW_KEY_NODE_NAME, "gamescope",
+			PW_KEY_NODE_DESCRIPTION, "Gamescope Screen Capture",
+			PW_KEY_DEVICE_DESCRIPTION, "Gamescope",
 			nullptr));
 	if (!state->stream) {
 		pwr_log.errorf("pw_stream_new failed");
