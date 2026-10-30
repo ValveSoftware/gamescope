@@ -195,6 +195,8 @@ namespace gamescope
 				m_ulRollingMaxDrawTime = ulNewRollingDrawTime;
 
 			ulOffset = ulNewRollingDrawTime + ulRedZone;
+			// The wake must land after the anchoring vblank is reported, or Next() slips it a whole refresh.
+			ulOffset = std::min( ulOffset, ulRefreshInterval - std::min( ulRedZone, ulRefreshInterval / 2 ) );
 
 			if ( vblank_debug && !bPreemptive )
 				VBlankDebugSpew( ulOffset, ulDrawTime, ulRedZone );
