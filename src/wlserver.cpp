@@ -3183,9 +3183,11 @@ static void handle_pointer_constraint_set_region(struct wl_listener *listener, v
 {
 	GamescopePointerConstraint *pGamescopeConstraint = wl_container_of(listener, pGamescopeConstraint, set_region);
 
-	// If the region has been updated, we might need to warp again next commit.
 	if ( pGamescopeConstraint->pConstraint == wlserver.GetCursorConstraint() )
+	{
 		wlserver.mouse_constraint_requires_warp = true;
+		wlserver_update_cursor_constraint();
+	}
 }
 
 void handle_constraint_destroy(struct wl_listener *listener, void *data)
@@ -3239,6 +3241,35 @@ static bool wlserver_apply_constraint( double *dx, double *dy )
 
 		double sx = wlserver.mouse_surface_cursorx;
 		double sy = wlserver.mouse_surface_cursory;
+
+		if ( !pixman_region32_contains_point( &wlserver.confine, floor(sx), floor(sy), NULL ) )
+		{
+			int nboxes;
+			pixman_box32_t *boxes = pixman_region32_rectangles( &wlserver.confine, &nboxes );
+			if ( nboxes )
+			{
+				double flBestDistSqr = DBL_MAX;
+				int nBestBox = 0;
+				for ( int i = 0; i < nboxes; i++ )
+				{
+					double cx = std::clamp<double>( sx, boxes[i].x1, std::max<double>( boxes[i].x1, boxes[i].x2 - 1 ) );
+					double cy = std::clamp<double>( sy, boxes[i].y1, std::max<double>( boxes[i].y1, boxes[i].y2 - 1 ) );
+					double ddx = cx - sx;
+					double ddy = cy - sy;
+					double flDistSqr = ddx * ddx + ddy * ddy;
+					if ( flDistSqr < flBestDistSqr )
+					{
+						flBestDistSqr = flDistSqr;
+						nBestBox = i;
+					}
+				}
+
+				sx = std::clamp<double>( sx, boxes[nBestBox].x1, std::max<double>( boxes[nBestBox].x1, boxes[nBestBox].x2 - 1 ) );
+				sy = std::clamp<double>( sy, boxes[nBestBox].y1, std::max<double>( boxes[nBestBox].y1, boxes[nBestBox].y2 - 1 ) );
+				wlserver.mouse_surface_cursorx = sx;
+				wlserver.mouse_surface_cursory = sy;
+			}
+		}
 
 		double sx_confined, sy_confined;
 		if ( !wlr_region_confine( &wlserver.confine, sx, sy, sx + *dx, sy + *dy, &sx_confined, &sy_confined ) )
