@@ -327,16 +327,23 @@ static void stream_handle_state_changed(void *data, enum pw_stream_state old_str
 	case PW_STREAM_STATE_PAUSED:
 		if (state->stream_node_id == SPA_ID_INVALID) {
 			state->stream_node_id = pw_stream_get_node_id(state->stream);
+			pwr_log.infof("stream available on node ID: %u", state->stream_node_id.load());
 		}
 		state->streaming = false;
 		state->seq = 0;
+		state->reconnect_attempts = 0;
 		break;
 	case PW_STREAM_STATE_STREAMING:
 		state->streaming = true;
 		break;
 	case PW_STREAM_STATE_ERROR:
 	case PW_STREAM_STATE_UNCONNECTED:
-		state->running = false;
+		// The node is gone (destroyed by the session manager or pw-cli, or
+		// a consumer failed to negotiate). Don't take the whole capture down
+		// with it: run_pipewire() reconnects the stream from the main loop,
+		// since we can't do that from inside a stream callback.
+		state->streaming = false;
+		state->needs_reconnect = true;
 		break;
 	default:
 		break;
@@ -611,6 +618,30 @@ static const struct pw_stream_events stream_events = {
 	.process = nullptr,
 };
 
+static bool connect_stream(struct pipewire_state *state)
+{
+	// A new connection means a new consumer: forget the size the previous
+	// one asked for.
+	s_nRequestedWidth = 0;
+	s_nRequestedHeight = 0;
+	s_nOutputWidth = g_nOutputWidth;
+	s_nOutputHeight = g_nOutputHeight;
+	calculate_capture_size();
+
+	uint8_t buf[4096];
+	struct spa_pod_builder builder = SPA_POD_BUILDER_INIT(buf, sizeof(buf));
+	std::vector<const struct spa_pod *> format_params = build_format_params(&builder);
+
+	enum pw_stream_flags flags = (enum pw_stream_flags)(PW_STREAM_FLAG_DRIVER | PW_STREAM_FLAG_ALLOC_BUFFERS);
+	int ret = pw_stream_connect(state->stream, PW_DIRECTION_OUTPUT, PW_ID_ANY, flags, format_params.data(), format_params.size());
+	if (ret != 0) {
+		pwr_log.errorf("pw_stream_connect failed");
+		return false;
+	}
+
+	return true;
+}
+
 enum pipewire_event_type {
 	EVENT_PIPEWIRE,
 	EVENT_NUDGE,
@@ -658,6 +689,29 @@ static void run_pipewire(struct pipewire_state *state)
 
 		if (pollfds[EVENT_NUDGE].revents & POLLIN) {
 			dispatch_nudge(state, nudgePipe[0]);
+		}
+
+		if (state->needs_reconnect) {
+			// Give up if the stream keeps failing before it ever reaches
+			// PAUSED again, rather than spinning.
+			if (state->reconnect_attempts >= 3) {
+				pwr_log.errorf("stream keeps failing, giving up");
+				break;
+			}
+			state->reconnect_attempts++;
+
+			pwr_log.infof("stream lost, reconnecting");
+			// Keep the same pw_stream object: the steamcompmgr thread may
+			// call pw_stream_dequeue_buffer() on it concurrently, which
+			// just returns no buffer while it's disconnected.
+			pw_stream_disconnect(state->stream);
+			// Disconnecting reports UNCONNECTED synchronously and sets
+			// needs_reconnect again, so clear it only afterwards.
+			state->needs_reconnect = false;
+			state->stream_node_id = SPA_ID_INVALID;
+			if (!connect_stream(state)) {
+				break;
+			}
 		}
 	}
 
@@ -709,25 +763,12 @@ bool init_pipewire(void)
 	static struct spa_hook stream_hook;
 	pw_stream_add_listener(state->stream, &stream_hook, &stream_events, state);
 
-	s_nRequestedWidth = 0;
-	s_nRequestedHeight = 0;
-	s_nOutputWidth = g_nOutputWidth;
-	s_nOutputHeight = g_nOutputHeight;
-	calculate_capture_size();
-
-	uint8_t buf[4096];
-	struct spa_pod_builder builder = SPA_POD_BUILDER_INIT(buf, sizeof(buf));
-	std::vector<const struct spa_pod *> format_params = build_format_params(&builder);
-
-	enum pw_stream_flags flags = (enum pw_stream_flags)(PW_STREAM_FLAG_DRIVER | PW_STREAM_FLAG_ALLOC_BUFFERS);
-	int ret = pw_stream_connect(state->stream, PW_DIRECTION_OUTPUT, PW_ID_ANY, flags, format_params.data(), format_params.size());
-	if (ret != 0) {
-		pwr_log.errorf("pw_stream_connect failed");
+	if (!connect_stream(state)) {
 		return false;
 	}
 
 	state->running = true;
-	ret = 0;
+	int ret = 0;
 	pw_loop_enter(state->loop);
 	while (state->stream_node_id == SPA_ID_INVALID) {
 		ret = pw_loop_iterate(state->loop, -1);
@@ -740,8 +781,6 @@ bool init_pipewire(void)
 		pwr_log.errorf("pw_loop_iterate failed");
 		return false;
 	}
-
-	pwr_log.infof("stream available on node ID: %u", state->stream_node_id);
 
 	std::thread thread(run_pipewire, state);
 	thread.detach();
