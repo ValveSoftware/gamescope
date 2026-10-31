@@ -9,4 +9,5 @@ option('enable_gamescope_wsi_layer', type : 'boolean', value : true, description
 option('enable_openvr_support',      type : 'boolean', value : true, description: 'OpenVR Integrations')
 option('enable_tests',               type : 'boolean', value : true, description: 'Build unit tests')
 option('enable_zenity',              type : 'boolean', value : true, description: 'Build with zenity support in the WSI layers error handling')
+option('system_spirv_headers',       type : 'boolean', value : false, description: 'Use system SPIR-V headers instead of bundled ones')
 option('benchmark', type: 'feature', description: 'Benchmark tools')
