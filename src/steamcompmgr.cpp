@@ -10801,6 +10801,10 @@ steamcompmgr_main(int argc, char **argv)
 				wlserver_unlock();
 			}
 
+			// A nested output resizes with its window, so its mode list follows.
+			if ( currentOutputWidth != g_nOutputWidth || currentOutputHeight != g_nOutputHeight )
+				update_mode_atoms( root_ctx, &flush_root );
+
 			// XXX(JoshA): Remake this. It sucks.
 			if ( GetBackend()->UsesVulkanSwapchain() )
 			{
