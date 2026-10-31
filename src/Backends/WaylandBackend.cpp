@@ -300,6 +300,7 @@ namespace gamescope
         bool m_bNeedsDecorCommit = false;
         bool m_bUnmappedAwaitingConfigure = false;
         bool m_bToplevelStateReset = false;
+        bool m_bNeedsUnmapLockRecreate = false;
         bool m_bHasAttachedBuffer = false;
         uint32_t m_uFractionalScale = 120;
         bool m_bHasRecievedScale = false;
@@ -720,6 +721,7 @@ namespace gamescope
 
         void SetCursorImage( std::shared_ptr<INestedHints::CursorInfo> info );
         void SetRelativeMouseMode( wl_surface *pSurface, bool bRelative );
+        void RecreateLockedPointer( wl_surface *pSurface );
         void UpdateCursor();
 
         friend CWaylandConnector;
@@ -1643,6 +1645,7 @@ namespace gamescope
             {
                 m_bUnmappedAwaitingConfigure = true;
                 m_bToplevelStateReset = true;
+                m_bNeedsUnmapLockRecreate = true;
             }
 
             m_bHasAttachedBuffer = false;
@@ -1679,6 +1682,12 @@ namespace gamescope
             // libdecor skips a title it already sent.
             xdg_toplevel_set_title( GetXdgToplevel(), libdecor_frame_get_title( m_pFrame ) );
             m_bToplevelStateReset = false;
+        }
+
+        if ( m_bNeedsUnmapLockRecreate )
+        {
+            m_bNeedsUnmapLockRecreate = false;
+            m_pBackend->RecreateLockedPointer( m_pSurface );
         }
     }
 
@@ -2502,6 +2511,22 @@ namespace gamescope
 
             m_InputThread.SetRelativePointer( bRelative );
 
+            UpdateCursor();
+        }
+    }
+
+    void CWaylandBackend::RecreateLockedPointer( wl_surface *pSurface )
+    {
+        if ( !m_pPointer || !m_pPointerConstraints )
+            return;
+
+        // Workaround for Mutter recreating its window on unmap without transferring pointer constraint listeners
+        if ( m_pLockedPointer && m_pLockedSurface == pSurface )
+        {
+            zwp_locked_pointer_v1_destroy( m_pLockedPointer );
+            m_pLockedPointer = zwp_pointer_constraints_v1_lock_pointer( m_pPointerConstraints, pSurface, m_pPointer, nullptr, ZWP_POINTER_CONSTRAINTS_V1_LIFETIME_PERSISTENT );
+            zwp_locked_pointer_v1_add_listener( m_pLockedPointer, &s_LockedPointerListener, this );
+            m_bPointerLocked = false;
             UpdateCursor();
         }
     }
