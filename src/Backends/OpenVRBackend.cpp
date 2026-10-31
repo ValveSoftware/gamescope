@@ -1742,10 +1742,11 @@ namespace gamescope
             vHotspot.v[ 1 ] = static_cast< float >( pCursorInfo->uYHotspot ) / pCursorInfo->uHeight;
             vr::VROverlay()->SetOverlayTransformCursor( m_CursorPlane.GetOverlay(), &vHotspot );
 
+            // The layer is placed by its top-left corner, add the hotspot back to get the pointer.
             vr::HmdVector2_t vMousePos =
             {
-                static_cast<float>( -pCursorLayer->offset.x ),
-                static_cast<float>( static_cast<float>( g_nOutputHeight ) + pCursorLayer->offset.y ),
+                static_cast<float>( -pCursorLayer->offset.x + pCursorInfo->uXHotspot / pCursorLayer->scale.x ),
+                static_cast<float>( static_cast<float>( g_nOutputHeight ) + pCursorLayer->offset.y - pCursorInfo->uYHotspot / pCursorLayer->scale.y ),
             };
 
             FrameInfo_t::Layer_t textureLayer = *pCursorLayer;
