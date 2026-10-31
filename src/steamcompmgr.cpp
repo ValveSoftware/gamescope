@@ -181,6 +181,9 @@ std::string primarySelection;
 std::string g_reshade_effect{};
 extern ReshadeEffectPipeline *g_pLastReshadeEffect;
 uint32_t g_reshade_technique_idx = 0;
+std::string g_reshade_post_effect{};
+extern ReshadeEffectPipeline *g_pLastReshadePostEffect;
+uint32_t g_reshade_post_technique_idx = 0;
 
 bool g_bSteamIsActiveWindow = false;
 bool g_bForceInternal = false;
@@ -6835,6 +6838,17 @@ void gamescope_clear_reshade_effect() {
 	clear_prop(server->ctx.get(), server->ctx->atoms.gamescopeReshadeEffect);
 }
 
+void gamescope_set_reshade_post_effect(std::string effect_path)
+{
+	gamescope_xwayland_server_t *server = wlserver_get_xwayland_server(0);
+	set_string_prop(server->ctx.get(), server->ctx->atoms.gamescopeReshadePostEffect, effect_path);
+}
+
+void gamescope_clear_reshade_post_effect() {
+	gamescope_xwayland_server_t *server = wlserver_get_xwayland_server(0);
+	clear_prop(server->ctx.get(), server->ctx->atoms.gamescopeReshadePostEffect);
+}
+
 static void
 handle_selection_request(xwayland_ctx_t *ctx, XSelectionRequestEvent *ev)
 {
@@ -7949,6 +7963,16 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 	{
 		std::string path = get_string_prop( ctx, ctx->root, ctx->atoms.gamescopeReshadeEffect );
 		g_reshade_effect = path;
+	}
+	if (ev->atom == ctx->atoms.gamescopeReshadePostEffect)
+	{
+		std::string path = get_string_prop( ctx, ctx->root, ctx->atoms.gamescopeReshadePostEffect );
+		g_reshade_post_effect = path;
+	}
+	if (ev->atom == ctx->atoms.gamescopeReshadePostTechniqueIdx)
+	{
+		uint32_t technique_idx = get_prop(ctx, ctx->root, ctx->atoms.gamescopeReshadePostTechniqueIdx, 0);
+		g_reshade_post_technique_idx = technique_idx;
 	}
 	if (ev->atom == ctx->atoms.gamescopeDisplayDynamicRefreshBasedOnGamePresence)
 	{
@@ -9552,6 +9576,8 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 
 	ctx->atoms.gamescopeReshadeEffect = XInternAtom( ctx->dpy, "GAMESCOPE_RESHADE_EFFECT", false );
 	ctx->atoms.gamescopeReshadeTechniqueIdx = XInternAtom( ctx->dpy, "GAMESCOPE_RESHADE_TECHNIQUE_IDX", false );
+	ctx->atoms.gamescopeReshadePostEffect = XInternAtom( ctx->dpy, "GAMESCOPE_RESHADE_POST_EFFECT", false );
+	ctx->atoms.gamescopeReshadePostTechniqueIdx = XInternAtom( ctx->dpy, "GAMESCOPE_RESHADE_POST_TECHNIQUE_IDX", false );
 
 	ctx->atoms.gamescopeDisplayRefreshRateFeedback = XInternAtom( ctx->dpy, "GAMESCOPE_DISPLAY_REFRESH_RATE_FEEDBACK", false );
 	ctx->atoms.gamescopeDisplayDynamicRefreshBasedOnGamePresence = XInternAtom( ctx->dpy, "GAMESCOPE_DISPLAY_DYNAMIC_REFRESH_BASED_ON_GAME_PRESENCE", false );
@@ -10405,6 +10431,10 @@ steamcompmgr_main(int argc, char **argv)
 					g_reshade_effect = optarg;
 				} else if (strcmp(opt_name, "reshade-technique-idx") == 0) {
 					g_reshade_technique_idx = atoi(optarg);
+				} else if (strcmp(opt_name, "reshade-post-effect") == 0) {
+					g_reshade_post_effect = optarg;
+				} else if (strcmp(opt_name, "reshade-post-technique-idx") == 0) {
+					g_reshade_post_technique_idx = atoi(optarg);
 				} else if (strcmp(opt_name, "mura-map") == 0) {
 					set_mura_overlay(optarg);
 				}

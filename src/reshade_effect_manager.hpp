@@ -104,6 +104,7 @@ private:
 };
 
 extern ReshadeEffectManager g_reshadeManager;
+extern ReshadeEffectManager g_reshadePostManager;
 
 
 void reshade_effect_manager_set_uniform_variable(const char *key, uint8_t* value);
