@@ -3205,10 +3205,11 @@ gamescope::Rc<CVulkanTexture> vulkan_create_1d_lut(uint32_t size)
 	flags.bTransferDst = true;
 	flags.imageType = VK_IMAGE_TYPE_1D;
 
-	auto texture = new CVulkanTexture();
+	gamescope::Rc<CVulkanTexture> texture = new CVulkanTexture();
 	auto drmFormat = VulkanFormatToDRM( VK_FORMAT_R16G16B16A16_UNORM );
 	bool bRes = texture->BInit( size, 1u, 1u, drmFormat, flags );
-	assert( bRes );
+	if ( !bRes )
+		return nullptr;
 
 	return texture;
 }
@@ -3220,16 +3221,20 @@ gamescope::Rc<CVulkanTexture> vulkan_create_3d_lut(uint32_t width, uint32_t heig
 	flags.bTransferDst = true;
 	flags.imageType = VK_IMAGE_TYPE_3D;
 
-	auto texture = new CVulkanTexture();
+	gamescope::Rc<CVulkanTexture> texture = new CVulkanTexture();
 	auto drmFormat = VulkanFormatToDRM( VK_FORMAT_R16G16B16A16_UNORM );
 	bool bRes = texture->BInit( width, height, depth, drmFormat, flags );
-	assert( bRes );
+	if ( !bRes )
+		return nullptr;
 
 	return texture;
 }
 
 void vulkan_update_luts(const gamescope::Rc<CVulkanTexture>& lut1d, const gamescope::Rc<CVulkanTexture>& lut3d, void* lut1d_data, void* lut3d_data)
 {
+	if ( !lut1d || !lut3d )
+		return;
+
 	size_t lut1d_size = lut1d->width() * sizeof(uint16_t) * 4;
 	size_t lut3d_size = lut3d->width() * lut3d->height() * lut3d->depth() * sizeof(uint16_t) * 4;
 
