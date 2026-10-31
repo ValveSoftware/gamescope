@@ -716,7 +716,7 @@ namespace gamescope
 
         wl_surface *CursorInfoToSurface( const std::shared_ptr<INestedHints::CursorInfo> &info );
 
-        bool SupportsColorManagement() const;
+        virtual bool SupportsColorManagement() const override;
 
         void SetCursorImage( std::shared_ptr<INestedHints::CursorInfo> info );
         void SetRelativeMouseMode( wl_surface *pSurface, bool bRelative );

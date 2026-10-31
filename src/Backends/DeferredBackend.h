@@ -210,6 +210,11 @@ namespace gamescope
             return m_pChild->SupportsPlaneHardwareCursor();
 		}
 
+		virtual bool SupportsColorManagement() const override
+		{
+            return m_pChild->SupportsColorManagement();
+		}
+
 		virtual bool SupportsTearing() const override
 		{
             {
