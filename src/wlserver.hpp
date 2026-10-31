@@ -178,6 +178,17 @@ struct wlserver_t {
 		return mouse_constraint.load( std::memory_order_relaxed ) != nullptr;
 	}
 
+	// Set under the wlserver lock whenever the active pointer constraint
+	// changes: true while it is a zwp_locked_pointer_v1 (what GLFW/SDL use for
+	// GLFW_CURSOR_DISABLED / relative mode), false for a confine or none.
+	std::atomic<bool> bMouseConstraintLocked = { false };
+
+	// Set from wl_seat.request_set_cursor: the pointer-focused Wayland client
+	// asked for no cursor image. X11 clients report this through XFixes; XDG
+	// clients have no other way to tell us.
+	std::atomic<bool> bXdgClientCursorEmpty = { false };
+	struct wl_listener request_set_cursor;
+
 	uint64_t ulLastMovedCursorTime = 0;
 	bool bCursorHidden = true;
 	bool bCursorHasImage = true;

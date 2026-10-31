@@ -11100,11 +11100,26 @@ steamcompmgr_main(int argc, char **argv)
 
 			if ( pPaintFocus->GetNestedHints() && !g_bForceRelativeMouse )
 			{
-				const bool bImageEmpty =
-					( pPaintFocus->cursor && pPaintFocus->cursor->imageEmpty() ) &&
-					( !window_is_steam( pPaintFocus->inputFocusWindow ) );
+				// There is no cursor object for an XDG input focus (see the
+				// "NO CURSOR IMPL XDG" TODO), so the X11 cursor image and its
+				// constraint state say nothing about a native Wayland client.
+				// Use what the client told the seat instead: a set_cursor with
+				// no surface, or a locked pointer (GLFW_CURSOR_DISABLED), each
+				// combined with the live pointer constraint. The locked check
+				// matters because GLFW re-sends a cursor image every frame for
+				// animated cursor themes even while the pointer is locked.
+				const bool bXdgInputFocus = pPaintFocus->inputFocusWindow &&
+					pPaintFocus->inputFocusWindow->type == steamcompmgr_win_type_t::XDG;
 
-				const bool bHasPointerConstraint = pPaintFocus->cursor && pPaintFocus->cursor->IsConstrained();
+				const bool bImageEmpty = bXdgInputFocus
+					? ( wlserver.bXdgClientCursorEmpty.load( std::memory_order_relaxed ) ||
+					    wlserver.bMouseConstraintLocked.load( std::memory_order_relaxed ) )
+					: ( pPaintFocus->cursor && pPaintFocus->cursor->imageEmpty() ) &&
+					  ( !window_is_steam( pPaintFocus->inputFocusWindow ) );
+
+				const bool bHasPointerConstraint = bXdgInputFocus
+					? wlserver.HasMouseConstraint()
+					: pPaintFocus->cursor && pPaintFocus->cursor->IsConstrained();
 
 				uint32_t uAppId = pPaintFocus->inputFocusWindow
 					? pPaintFocus->inputFocusWindow->appID
