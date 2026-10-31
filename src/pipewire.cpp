@@ -504,13 +504,20 @@ static void stream_handle_add_buffer(void *user_data, struct pw_buffer *pw_buffe
 
 	buffer->texture = new CVulkanTexture();
 	CVulkanTexture::createFlags screenshotImageFlags;
-	screenshotImageFlags.bMappable = true;
 	screenshotImageFlags.bTransferDst = true;
 	screenshotImageFlags.bStorage = true;
-	if (is_dmabuf || drmFormat == DRM_FORMAT_NV12)
+	if (!is_dmabuf && vulkan_capture_prefers_readback())
 	{
-		screenshotImageFlags.bExportable = true;
-		screenshotImageFlags.bLinear = true; // TODO: support multi-planar DMA-BUF export via PipeWire
+		screenshotImageFlags.bReadback = true;
+	}
+	else
+	{
+		screenshotImageFlags.bMappable = true;
+		if (is_dmabuf || drmFormat == DRM_FORMAT_NV12)
+		{
+			screenshotImageFlags.bExportable = true;
+			screenshotImageFlags.bLinear = true; // TODO: support multi-planar DMA-BUF export via PipeWire
+		}
 	}
 	bool bImageInitSuccess = buffer->texture->BInit( s_nCaptureWidth, s_nCaptureHeight, 1u, drmFormat, screenshotImageFlags );
 	if ( !bImageInitSuccess )
