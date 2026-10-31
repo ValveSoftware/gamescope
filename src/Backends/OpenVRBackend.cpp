@@ -378,6 +378,7 @@ namespace gamescope
         virtual void SetIcon( std::shared_ptr<std::vector<uint32_t>> uIconPixels ) override;
         virtual void SetSelection( std::shared_ptr<std::string> szContents, GamescopeSelection eSelection ) override;
         virtual bool ShouldPaintCursor() override { return true; }
+        virtual bool CursorLayerIsHotspotPoint() override { return true; }
 
         bool UpdateEdid();
 
