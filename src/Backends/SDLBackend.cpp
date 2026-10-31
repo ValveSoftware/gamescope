@@ -53,6 +53,7 @@ namespace gamescope
 		GAMESCOPE_SDL_EVENT_CURSOR,
 
 		GAMESCOPE_SDL_EVENT_COUNT,
+		GAMESCOPE_SDL_EVENT_REQ_EXIT,
 	};
 
 	class CSDLBackend;
@@ -569,6 +570,12 @@ namespace gamescope
 		// Do nothing.
 	}
 
+	CSDLBackend::~CSDLBackend() 
+	{
+			PushUserEvent(GAMESCOPE_SDL_EVENT_REQ_EXIT);
+			m_SDLThread.join();
+	}
+
 	void CSDLBackend::SDLThreadFunc()
 	{
 		pthread_setname_np( pthread_self(), "gamescope-sdl" );
@@ -966,6 +973,10 @@ namespace gamescope
 						}
 
 						SDL_SetCursor( m_pCursor );
+					}
+					else if ( event.type == GetUserEventIndex( GAMESCOPE_SDL_EVENT_REQ_EXIT ) ) 
+					{
+						return;
 					}
 				}
 				break;
