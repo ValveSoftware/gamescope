@@ -180,7 +180,6 @@ Target *pNextFind(const Base *base, VkStructureType sType)
 }
 
 #define VK_STRUCTURE_TYPE_WSI_IMAGE_CREATE_INFO_MESA (VkStructureType)1000001002
-#define VK_STRUCTURE_TYPE_WSI_MEMORY_ALLOCATE_INFO_MESA (VkStructureType)1000001003
 
 struct wsi_image_create_info {
 	VkStructureType sType;
@@ -189,12 +188,6 @@ struct wsi_image_create_info {
 
 	uint32_t modifier_count;
 	const uint64_t *modifiers;
-};
-
-struct wsi_memory_allocate_info {
-    VkStructureType sType;
-    const void *pNext;
-    bool implicit_sync;
 };
 
 // DRM doesn't always have 32bit floating point formats, so add our own if necessary
@@ -2412,15 +2405,6 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 		VkImportMemoryFdInfoKHR importMemoryInfo = {};
 		VkExportMemoryAllocateInfo memory_export_info = {};
 		VkMemoryDedicatedAllocateInfo memory_dedicated_info = {};
-		struct wsi_memory_allocate_info memory_wsi_info = {};
-
-		if ( flags.bFlippable == true )
-		{
-			memory_wsi_info = {
-				.sType = VK_STRUCTURE_TYPE_WSI_MEMORY_ALLOCATE_INFO_MESA,
-				.pNext = std::exchange(allocInfo.pNext, &memory_wsi_info),
-			};
-		}
 
 		if ( flags.bExportable == true || pDMA != nullptr )
 		{
