@@ -506,6 +506,15 @@ static void wlserver_handle_touch_up(struct wl_listener *listener, void *data)
 	wlserver_touchup( event->touch_id, event->time_msec );
 }
 
+static void wlserver_handle_touch_cancel(struct wl_listener *listener, void *data)
+{
+	struct wlserver_touch *touch = wl_container_of( listener, touch, cancel );
+	struct wlr_touch_cancel_event *event = (struct wlr_touch_cancel_event *) data;
+
+	// A cancelled point never gets an up, end it like one as the nested backend does.
+	wlserver_touchup( event->touch_id, event->time_msec );
+}
+
 static void wlserver_handle_touch_motion(struct wl_listener *listener, void *data)
 {
 	struct wlserver_touch *touch = wl_container_of( listener, touch, motion );
@@ -553,6 +562,7 @@ static void wlserver_handle_touch_destroy(struct wl_listener *listener, void *da
 	wl_list_remove( &touch->down.link );
 	wl_list_remove( &touch->up.link );
 	wl_list_remove( &touch->motion.link );
+	wl_list_remove( &touch->cancel.link );
 	wl_list_remove( &touch->destroy.link );
 	free( touch );
 }
@@ -618,6 +628,8 @@ static void wlserver_new_input(struct wl_listener *listener, void *data)
 			wl_signal_add( &touch->wlr->events.up, &touch->up );
 			touch->motion.notify = wlserver_handle_touch_motion;
 			wl_signal_add( &touch->wlr->events.motion, &touch->motion );
+			touch->cancel.notify = wlserver_handle_touch_cancel;
+			wl_signal_add( &touch->wlr->events.cancel, &touch->cancel );
 			touch->destroy.notify = wlserver_handle_touch_destroy;
 			wl_signal_add( &device->events.destroy, &touch->destroy);
 

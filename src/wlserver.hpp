@@ -261,6 +261,7 @@ struct wlserver_touch {
 	struct wl_listener down;
 	struct wl_listener up;
 	struct wl_listener motion;
+	struct wl_listener cancel;
 	struct wl_listener destroy;
 
     gamescope::IBackendConnector* connector;
