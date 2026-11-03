@@ -662,6 +662,12 @@ static void wlserver_xdg_surface_info_finish( struct wlserver_xdg_surface_info *
 	wl_list_remove( &info->map.link );
 	wl_list_remove( &info->unmap.link );
 	wl_list_remove( &info->destroy.link );
+	if ( info->bToplevelListeners )
+	{
+		wl_list_remove( &info->request_maximize.link );
+		wl_list_remove( &info->request_fullscreen.link );
+		info->bToplevelListeners = false;
+	}
 }
 
 static void handle_wl_surface_destroy( struct wl_listener *l, void *data )
@@ -2201,6 +2207,55 @@ wlserver_xdg_surface_info* waylandy_type_surface_new(struct wl_client *client, s
 	return xdg_surface_info;
 }
 
+static void xdg_toplevel_apply_state( struct wlr_xdg_toplevel *toplevel )
+{
+	const bool bMaximized = toplevel->requested.maximized;
+	const bool bFullscreen = toplevel->requested.fullscreen;
+	const bool bFill = ( bMaximized || bFullscreen ) && g_nNestedWidth > 0 && g_nNestedHeight > 0;
+	const int nWidth = bFill ? g_nNestedWidth : 0;
+	const int nHeight = bFill ? g_nNestedHeight : 0;
+
+	if ( !toplevel->base->initialized )
+	{
+		toplevel->scheduled.maximized = bMaximized;
+		toplevel->scheduled.fullscreen = bFullscreen;
+		toplevel->scheduled.width = nWidth;
+		toplevel->scheduled.height = nHeight;
+		return;
+	}
+
+	wlr_xdg_toplevel_set_maximized( toplevel, bMaximized );
+	wlr_xdg_toplevel_set_fullscreen( toplevel, bFullscreen );
+	wlr_xdg_toplevel_set_size( toplevel, nWidth, nHeight );
+}
+
+static void xdg_toplevel_destroy( struct wl_listener *listener, void *data )
+{
+	wlserver_xdg_surface_info *info = wl_container_of( listener, info, toplevel_destroy );
+
+	if ( info->bToplevelListeners )
+	{
+		wl_list_remove( &info->request_maximize.link );
+		wl_list_remove( &info->request_fullscreen.link );
+		info->bToplevelListeners = false;
+	}
+	wl_list_remove( &info->toplevel_destroy.link );
+}
+
+static void xdg_toplevel_request_maximize( struct wl_listener *listener, void *data )
+{
+	wlserver_xdg_surface_info *info = wl_container_of( listener, info, request_maximize );
+	if ( info->xdg_surface && info->xdg_surface->toplevel )
+		xdg_toplevel_apply_state( info->xdg_surface->toplevel );
+}
+
+static void xdg_toplevel_request_fullscreen( struct wl_listener *listener, void *data )
+{
+	wlserver_xdg_surface_info *info = wl_container_of( listener, info, request_fullscreen );
+	if ( info->xdg_surface && info->xdg_surface->toplevel )
+		xdg_toplevel_apply_state( info->xdg_surface->toplevel );
+}
+
 void xdg_toplevel_new(struct wl_listener *listener, void *data)
 {
 	struct wlr_xdg_toplevel *toplevel = (struct wlr_xdg_toplevel *)data;
@@ -2214,6 +2269,14 @@ void xdg_toplevel_new(struct wl_listener *listener, void *data)
 	wl_signal_add(&xdg_surface->events.destroy, &surface_info->destroy);
 
 	surface_info->xdg_surface = xdg_surface;
+
+	surface_info->request_maximize.notify = xdg_toplevel_request_maximize;
+	wl_signal_add(&toplevel->events.request_maximize, &surface_info->request_maximize);
+	surface_info->request_fullscreen.notify = xdg_toplevel_request_fullscreen;
+	wl_signal_add(&toplevel->events.request_fullscreen, &surface_info->request_fullscreen);
+	surface_info->toplevel_destroy.notify = xdg_toplevel_destroy;
+	wl_signal_add(&toplevel->events.destroy, &surface_info->toplevel_destroy);
+	surface_info->bToplevelListeners = true;
 }
 
 
