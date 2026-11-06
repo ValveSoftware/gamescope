@@ -1584,6 +1584,35 @@ void CVulkanDevice::waitIdle(bool reset)
 	wait(m_submissionSeqNo, reset);
 }
 
+bool CVulkanDevice::Shutdown()
+{
+	if ( !m_bInitialized )
+		return true;
+
+	m_pipelineThread.request_stop();
+	if ( m_pipelineThread.joinable() )
+		m_pipelineThread.join();
+
+	// A submit can wait on a client acquire point that never signals, so
+	// don't block exit on it. Leaking those command buffers at exit is harmless.
+	uint64_t ulSeqNo = m_submissionSeqNo;
+	VkSemaphoreWaitInfo waitInfo = {
+		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
+		.semaphoreCount = 1,
+		.pSemaphores = &m_scratchTimelineSemaphore,
+		.pValues = &ulSeqNo,
+	};
+	bool bIdle = vk.WaitSemaphores( device(), &waitInfo, 1'000'000'000ull ) == VK_SUCCESS;
+	if ( bIdle )
+		m_pendingCmdBufs.clear();
+	else
+		for ( auto &[ ulSeq, pCmdBuf ] : m_pendingCmdBufs )
+			(void) pCmdBuf.release();
+
+	m_unusedCmdBufs.clear();
+	return bIdle;
+}
+
 void CVulkanDevice::resetCmdBuffers(uint64_t sequence)
 {
 	auto last = m_pendingCmdBufs.find(sequence);
@@ -3114,6 +3143,26 @@ void vulkan_present_wait_shutdown( void )
 
 	g_presentWaitThread.request_stop();
 	g_presentWaitThread.join();
+}
+
+void vulkan_shutdown( void )
+{
+	// These globals would otherwise be destroyed from exit(), after the
+	// Vulkan driver's own exit handlers have run.
+	// ~ReshadeEffectPipeline waits for idle without a timeout.
+	if ( g_device.Shutdown() )
+		g_reshadeManager.clear();
+	else
+		g_reshadeManager.leak();
+
+	g_output.outputImages.clear();
+	g_output.outputImagesPartialOverlay.clear();
+	g_output.temporaryHackyBlankImage = nullptr;
+	g_output.pScreenshotTextures = {};
+	g_output.pCaptureTextures = {};
+	g_output.tmpOutput = nullptr;
+	g_output.nisScalerImage = nullptr;
+	g_output.nisUsmImage = nullptr;
 }
 
 void vulkan_update_swapchain_hdr_metadata( VulkanOutput_t *pOutput )

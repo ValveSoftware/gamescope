@@ -1918,6 +1918,12 @@ void ReshadeEffectManager::clear()
     m_lastPipeline = nullptr;
 }
 
+void ReshadeEffectManager::leak()
+{
+    m_lastKey = ReshadeEffectKey{};
+    (void) m_lastPipeline.release();
+}
+
 ReshadeEffectPipeline* ReshadeEffectManager::pipeline(const ReshadeEffectKey &key)
 {
     if (m_lastKey == key)
