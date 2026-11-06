@@ -8052,7 +8052,7 @@ handle_io_error(Display *dpy)
 	if ( !g_bRun )
 	{
 		xwm_log.infof("X11 I/O error while shutting down, exiting.");
-		_exit(0);
+		_exit( g_nPrimaryChildExitCode );
 	}
 
 	xwm_log.errorf("X11 I/O error! This is fatal. Aborting...");
@@ -9959,8 +9959,12 @@ void LaunchNestedChildren( char **ppPrimaryChildArgv )
 		{
 			pthread_setname_np( pthread_self(), "gamescope-wait" );
 
-			gamescope::Process::WaitForChild( nPrimaryChildPid );
+			std::optional<int> oStatus = gamescope::Process::WaitForChild( nPrimaryChildPid );
 			s_LaunchLogScope.infof( "Primary child shut down!" );
+
+			// If gamescope is already shutting down, the child was killed by us: keep 0.
+			if ( oStatus && g_bRun )
+				g_nPrimaryChildExitCode = gamescope::Process::ExitCodeFromWaitStatus( *oStatus );
 
 			if ( cv_shutdown_on_primary_child_death )
 				ShutdownGamescope();

@@ -130,10 +130,12 @@ namespace gamescope
 
         if ( nPrimaryChild > 0 )
         {
+            int nPrimaryStatus = 0;
+
             // Wait for the primary child to die, then forward the death signal to
             // all of the other children, if we aren't in a PID namespace.
             if ( s_bRun )
-                Process::WaitForAllChildren( nPrimaryChild );
+                Process::WaitForAllChildren( nPrimaryChild, &nPrimaryStatus );
 
             if ( bRespawn )
             {
@@ -143,7 +145,7 @@ namespace gamescope
 
                     nPrimaryChild = Process::SpawnProcess( &argv[ nSubCommandArgc ] );
                     if ( s_bRun )
-                        Process::WaitForAllChildren( nPrimaryChild );
+                        Process::WaitForAllChildren( nPrimaryChild, &nPrimaryStatus );
                 }
             }
 
@@ -151,7 +153,7 @@ namespace gamescope
             Process::KillAllChildren( getpid(), SIGTERM );
             Process::WaitForAllChildren();
 
-            return 0;
+            return Process::ExitCodeFromWaitStatus( nPrimaryStatus );
         }
         else
         {

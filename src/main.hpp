@@ -13,6 +13,7 @@ extern const char *gamescope_optstring;
 extern const struct option *gamescope_options;
 
 extern std::atomic< bool > g_bRun;
+extern std::atomic< int > g_nPrimaryChildExitCode;
 
 extern int g_nNestedWidth;
 extern int g_nNestedHeight;
