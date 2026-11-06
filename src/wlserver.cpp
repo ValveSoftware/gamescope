@@ -2005,12 +2005,15 @@ int wlsession_open_kms( const char *device_name ) {
 
 void wlsession_close_kms()
 {
+	// The session's libseat and udev events are dispatched under this lock.
+	wlserver_lock();
 	if ( wlserver.wlr.device )
 	{
 		wl_list_remove( &wlserver.wlr.device_change_listener.link );
 	}
 	wlr_session_close_file( wlserver.wlr.session, wlserver.wlr.device );
 	wlserver.wlr.device = nullptr;
+	wlserver_unlock();
 }
 
 #endif
