@@ -1846,9 +1846,6 @@ import_commit (
 	if (window_is_vr_scene_app( w )) {
 		commit->async = true;
 		commit->fifo = false;
-	} else if (window_is_vr_app( w )) {
-		// Heuristic match keeps vblank-aligned flips, no async tearing.
-		commit->fifo = false;
 	}
 
 	if ( gamescope::OwningRc<CVulkanTexture> pTexture = s_BufferMemos.LookupVulkanTexture( buf ) )
