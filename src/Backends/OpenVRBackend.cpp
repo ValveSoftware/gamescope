@@ -128,6 +128,7 @@ namespace vr
 //
 
 extern std::atomic<uint32_t> g_unCurrentVRSceneAppId;
+extern std::atomic<bool> g_bVRStandby;
 
 ///////////////////////////////////////////////
 // Josh:
@@ -685,6 +686,7 @@ namespace gamescope
 
             // Setup misc. stuff
             g_nOutputRefresh = (int32_t) ConvertHztomHz( roundf( vr::VRSystem()->GetFloatTrackedDeviceProperty( vr::k_unTrackedDeviceIndex_Hmd, vr::Prop_DisplayFrequency_Float ) ) );
+            g_bVRStandby = vr::VRSystem()->GetTrackedDeviceActivityLevel( vr::k_unTrackedDeviceIndex_Hmd ) == vr::k_EDeviceActivityLevel_Standby;
             UpdateFeatures();
 
             m_bRunning = true;
@@ -1233,6 +1235,13 @@ namespace gamescope
                     {
                         close_virtual_connector_key( pConnector->GetVirtualConnectorKey() );
                     }
+                    break;
+                }
+
+                case vr::VREvent_EnterStandbyMode:
+                case vr::VREvent_LeaveStandbyMode:
+                {
+                    g_bVRStandby = vr::VRSystem()->GetTrackedDeviceActivityLevel( vr::k_unTrackedDeviceIndex_Hmd ) == vr::k_EDeviceActivityLevel_Standby;
                     break;
                 }
 
