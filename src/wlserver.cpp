@@ -2311,11 +2311,11 @@ static std::unique_ptr<gamescope::GamescopeInputServer> g_InputServer;
 static void wlserver_update_keymap();
 static void wlserver_update_keyboard_repeat();
 
-static gamescope::ConVar<int> cv_keyboard_repeat_rate( "keyboard_repeat_rate", 25,
+gamescope::ConVar<int> cv_keyboard_repeat_rate( "keyboard_repeat_rate", 25,
 	"Keyboard repeat rate (repeats per second)",
 	[]( gamescope::ConVar<int> & ) { wlserver_update_keyboard_repeat(); } );
 
-static gamescope::ConVar<int> cv_keyboard_repeat_delay( "keyboard_repeat_delay", 600,
+gamescope::ConVar<int> cv_keyboard_repeat_delay( "keyboard_repeat_delay", 600,
 	"Keyboard repeat delay (milliseconds)",
 	[]( gamescope::ConVar<int> & ) { wlserver_update_keyboard_repeat(); } );
 
@@ -2412,10 +2412,10 @@ void wlserver_set_keyboard_repeat_info( int32_t nRate, int32_t nDelay )
 {
 	assert( wlserver_is_lock_held() );
 
-	if ( nRate >= 0 && (int)cv_keyboard_repeat_rate != nRate )
+	if ( nRate >= 0 && !g_bCustomRepeatRateSet && (int)cv_keyboard_repeat_rate != nRate )
 		cv_keyboard_repeat_rate = nRate;
 
-	if ( nDelay >= 0 && (int)cv_keyboard_repeat_delay != nDelay )
+	if ( nDelay >= 0 && !g_bCustomRepeatDelaySet && (int)cv_keyboard_repeat_delay != nDelay )
 		cv_keyboard_repeat_delay = nDelay;
 }
 
