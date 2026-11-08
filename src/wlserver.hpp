@@ -270,6 +270,15 @@ void wlserver_keyboard_release_modifiers();
 void wlserver_set_keyboard_layout( const char *pszLayout );
 void wlserver_set_keyboard_repeat_info( int32_t nRate, int32_t nDelay );
 
+namespace gamescope
+{
+	template <typename T>
+	class ConVar;
+}
+
+extern gamescope::ConVar<int> cv_keyboard_repeat_rate;
+extern gamescope::ConVar<int> cv_keyboard_repeat_delay;
+
 void wlserver_mousefocus( struct wlr_surface *wlrsurface, int x = 0, int y = 0 );
 void wlserver_clear_dropdowns();
 void wlserver_notify_dropdown( struct wlr_surface *wlrsurface, int nX, int nY );
