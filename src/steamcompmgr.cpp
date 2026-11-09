@@ -5752,10 +5752,12 @@ get_win_type(xwayland_ctx_t *ctx, steamcompmgr_win_t *w)
 static void
 get_size_hints(xwayland_ctx_t *ctx, steamcompmgr_win_t *w)
 {
-	XSizeHints hints;
-	long hintsSpecified = 0;
+	XSizeHints hints = {};
+	long hintsSupplied = 0;
 
-	XGetWMNormalHints(ctx->dpy, w->xwayland().id, &hints, &hintsSpecified);
+	// Xlib's supplied mask lists the fields the property can hold, not the ones the client set.
+	XGetWMNormalHints(ctx->dpy, w->xwayland().id, &hints, &hintsSupplied);
+	const long hintsSpecified = hints.flags;
 
 	const bool bHasPositionAndGravityHints = ( hintsSpecified & ( PPosition | PWinGravity ) ) == ( PPosition | PWinGravity );
 	if ( bHasPositionAndGravityHints &&
