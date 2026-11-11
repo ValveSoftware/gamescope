@@ -2113,7 +2113,9 @@ namespace GamescopeWSILayer {
               if (!(gamescopeSurface->flags & GamescopeLayerClient::Flag::NoSuboptimal))
                 UpdateSwapchainResult(VK_SUBOPTIMAL_KHR);
             } else {
-              UpdateSwapchainResult(VK_ERROR_OUT_OF_DATE_KHR);  
+              // Stay out of date like a driver swapchain, zink only recreates on acquire.
+              *gamescopeSwapchain->retired = true;
+              UpdateSwapchainResult(VK_ERROR_OUT_OF_DATE_KHR);
             }
           }
 
