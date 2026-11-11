@@ -640,11 +640,13 @@ namespace GamescopeWSILayer {
       }
 
       auto largestObscuringWindowSize = xcb::getLargestObscuringChildWindowSize(connection, window);
+      auto largestObscuringSiblingSize = xcb::getLargestObscuringSiblingWindowSize(connection, window);
       auto toplevelWindow = xcb::getToplevelWindow(connection, window);
-      if (!largestObscuringWindowSize || !toplevelWindow) {
+      if (!largestObscuringWindowSize || !largestObscuringSiblingSize || !toplevelWindow) {
         fprintf(stderr, "[Gamescope WSI] canBypassXWayland: failed to get window info for window 0x%x.\n", window);
         return false;
       }
+      *largestObscuringWindowSize = xcb::max(*largestObscuringWindowSize, *largestObscuringSiblingSize);
 
       auto toplevelRect = xcb::getWindowRect(connection, *toplevelWindow);
       if (!toplevelRect) {
@@ -659,8 +661,8 @@ namespace GamescopeWSILayer {
       if (!!(flags & GamescopeLayerClient::Flag::ForceBypass))
         return true;
 
-      // If we have any child windows obscuring us bigger than 1x1,
-      // then we cannot flip.
+      // If we have any child windows, or windows stacked above us in our
+      // toplevel, obscuring us bigger than 1x1, then we cannot flip.
       // (There can be dummy composite redirect windows and whatever.)
       if (largestObscuringWindowSize->width > 1 || largestObscuringWindowSize->height > 1) {
 #if GAMESCOPE_WSI_BYPASS_DEBUG

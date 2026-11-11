@@ -170,7 +170,8 @@ namespace xcb {
     };
   }
 
-  static std::optional<VkExtent2D> getLargestObscuringChildWindowSize(xcb_connection_t* connection, xcb_window_t window) {
+  // With `above`, only children stacked above it count.
+  static std::optional<VkExtent2D> getLargestObscuringChildWindowSize(xcb_connection_t* connection, xcb_window_t window, xcb_window_t above = XCB_WINDOW_NONE) {
     VkExtent2D largestExtent = {};
 
     xcb_query_tree_cookie_t cookie = xcb_query_tree(connection, window);
@@ -187,11 +188,18 @@ namespace xcb {
       return std::nullopt;
     }
 
+    // Listed bottom-most first.
     xcb_window_t* children = xcb_query_tree_children(reply.get());
+    uint32_t first = 0;
+    if (above != XCB_WINDOW_NONE) {
+      while (first < reply->children_len && children[first] != above)
+        first++;
+      first++;
+    }
 
     // Send every request before reading a reply so we don't round trip per window.
     std::vector<std::pair<xcb_get_window_attributes_cookie_t, xcb_get_geometry_cookie_t>> cookies;
-    for (uint32_t i = 0; i < reply->children_len; i++)
+    for (uint32_t i = first; i < reply->children_len; i++)
       cookies.emplace_back(xcb_get_window_attributes(connection, children[i]), xcb_get_geometry(connection, children[i]));
 
     for (auto [attributeCookie, geometryCookie] : cookies) {
@@ -202,6 +210,7 @@ namespace xcb {
         attributeReply &&
         geometryReply &&
         attributeReply->map_state == XCB_MAP_STATE_VIEWABLE &&
+        attributeReply->_class == XCB_WINDOW_CLASS_INPUT_OUTPUT &&
         !attributeReply->override_redirect;
 
       if (obscuring) {
@@ -214,6 +223,21 @@ namespace xcb {
         VkRect2D clippedRect = clip(*ourRect, childRect);
         largestExtent = max(largestExtent, clippedRect.extent);
       }
+    }
+
+    return largestExtent;
+  }
+
+  static std::optional<VkExtent2D> getLargestObscuringSiblingWindowSize(xcb_connection_t* connection, xcb_window_t window) {
+    VkExtent2D largestExtent = {};
+
+    while (auto parent = getParentWindow(connection, window)) {
+      auto extent = getLargestObscuringChildWindowSize(connection, *parent, window);
+      if (!extent)
+        return std::nullopt;
+
+      largestExtent = max(largestExtent, *extent);
+      window = *parent;
     }
 
     return largestExtent;
