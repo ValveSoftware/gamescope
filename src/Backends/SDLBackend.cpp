@@ -691,6 +691,7 @@ namespace gamescope
 							event.motion.y / float(g_nOutputHeightPts),
 							0,
 							fake_timestamp );
+						wlserver_touchframe();
 						wlserver_unlock();
 					}
 				}
@@ -719,6 +720,7 @@ namespace gamescope
 				{
 					wlserver_lock();
 					wlserver_touchmotion( event.tfinger.x, event.tfinger.y, event.tfinger.fingerId, fake_timestamp );
+					wlserver_touchframe();
 					wlserver_unlock();
 				}
 				break;
@@ -727,6 +729,7 @@ namespace gamescope
 				{
 					wlserver_lock();
 					wlserver_touchdown( event.tfinger.x, event.tfinger.y, event.tfinger.fingerId, fake_timestamp );
+					wlserver_touchframe();
 					wlserver_unlock();
 				}
 				break;
@@ -735,6 +738,7 @@ namespace gamescope
 				{
 					wlserver_lock();
 					wlserver_touchup( event.tfinger.fingerId, fake_timestamp );
+					wlserver_touchframe();
 					wlserver_unlock();
 				}
 				break;

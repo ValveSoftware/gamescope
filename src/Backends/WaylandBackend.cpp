@@ -615,6 +615,7 @@ namespace gamescope
         void Wayland_Touch_Down( wl_touch *pTouch, uint32_t uSerial, uint32_t uTime, wl_surface *pSurface, int32_t nId, wl_fixed_t fX, wl_fixed_t fY );
         void Wayland_Touch_Up( wl_touch *pTouch, uint32_t uSerial, uint32_t uTime, int32_t nId );
         void Wayland_Touch_Motion( wl_touch *pTouch, uint32_t uTime, int32_t nId, wl_fixed_t fX, wl_fixed_t fY );
+        void Wayland_Touch_Frame( wl_touch *pTouch );
         void Wayland_Touch_Cancel( wl_touch *pTouch );
         static const wl_touch_listener s_TouchListener;
     };
@@ -659,7 +660,7 @@ namespace gamescope
         .down        = WAYLAND_USERDATA_TO_THIS( CWaylandInputThread, Wayland_Touch_Down ),
         .up          = WAYLAND_USERDATA_TO_THIS( CWaylandInputThread, Wayland_Touch_Up ),
         .motion      = WAYLAND_USERDATA_TO_THIS( CWaylandInputThread, Wayland_Touch_Motion ),
-        .frame       = WAYLAND_NULL(),
+        .frame       = WAYLAND_USERDATA_TO_THIS( CWaylandInputThread, Wayland_Touch_Frame ),
         .cancel      = WAYLAND_USERDATA_TO_THIS( CWaylandInputThread, Wayland_Touch_Cancel ),
         .shape       = WAYLAND_NULL(),
         .orientation = WAYLAND_NULL(),
@@ -3215,6 +3216,7 @@ namespace gamescope
 
         wlserver_lock();
         wlserver_touchmotion( flX, flY, 0, ++m_uFakeTimestamp );
+        wlserver_touchframe();
         wlserver_unlock();
     }
     void CWaylandInputThread::Wayland_Pointer_Button( wl_pointer *pPointer, uint32_t uSerial, uint32_t uTime, uint32_t uButton, uint32_t uState )
@@ -3439,11 +3441,18 @@ namespace gamescope
         wlserver_touchmotion( flX, flY, nId, ++m_uFakeTimestamp );
         wlserver_unlock();
     }
+    void CWaylandInputThread::Wayland_Touch_Frame( wl_touch *pTouch )
+    {
+        wlserver_lock();
+        wlserver_touchframe();
+        wlserver_unlock();
+    }
     void CWaylandInputThread::Wayland_Touch_Cancel( wl_touch *pTouch )
     {
         wlserver_lock();
         for ( auto &[ nId, state ] : m_TouchPlaneStates )
             wlserver_touchup( nId, ++m_uFakeTimestamp );
+        wlserver_touchframe();
         wlserver_unlock();
 
         m_TouchPlaneStates.clear();
