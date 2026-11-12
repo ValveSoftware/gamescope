@@ -5720,6 +5720,7 @@ determine_and_apply_focus( global_focus_t *pFocus )
 		wlserver_lock();
 		wlserver_touchdown( 0.5, 0.5, 0, now );
 		wlserver_touchup( 0, now + 1 );
+		wlserver_touchframe();
 		wlserver_mousehide();
 		wlserver_unlock();
 	}
