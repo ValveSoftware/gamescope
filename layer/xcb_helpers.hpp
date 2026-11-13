@@ -150,12 +150,16 @@ namespace xcb {
   }
 
   static VkRect2D clip(VkRect2D parent, VkRect2D child) {
+    const int32_t x0 = std::max<int32_t>(child.offset.x, 0);
+    const int32_t y0 = std::max<int32_t>(child.offset.y, 0);
+    const int32_t x1 = std::min<int32_t>(child.offset.x + int32_t(child.extent.width),  parent.extent.width);
+    const int32_t y1 = std::min<int32_t>(child.offset.y + int32_t(child.extent.height), parent.extent.height);
+    if (x1 <= x0 || y1 <= y0)
+      return VkRect2D {};
+
     return VkRect2D {
-      .offset = child.offset,
-      .extent = VkExtent2D {
-        .width  = std::min<uint32_t>(child.extent.width,  std::max<int32_t>(parent.extent.width  - child.offset.x, 0)),
-        .height = std::min<uint32_t>(child.extent.height, std::max<int32_t>(parent.extent.height - child.offset.y, 0)),
-      },
+      .offset = { x0, y0 },
+      .extent = { uint32_t(x1 - x0), uint32_t(y1 - y0) },
     };
   }
 
@@ -201,9 +205,11 @@ namespace xcb {
         !attributeReply->override_redirect;
 
       if (obscuring) {
+        // x and y are the border's outer corner, the size is the interior.
+        const uint32_t border = 2 * geometryReply->border_width;
         VkRect2D childRect = {
           .offset = { geometryReply->x, geometryReply->y },
-          .extent = { geometryReply->width, geometryReply->height },
+          .extent = { geometryReply->width + border, geometryReply->height + border },
         };
         VkRect2D clippedRect = clip(*ourRect, childRect);
         largestExtent = max(largestExtent, clippedRect.extent);
