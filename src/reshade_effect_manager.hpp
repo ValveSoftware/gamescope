@@ -95,6 +95,7 @@ public:
 
     void init(CVulkanDevice *device);
     void clear();
+    void leak();
     ReshadeEffectPipeline* pipeline(const ReshadeEffectKey &key);
 
 private:
