@@ -4,6 +4,8 @@
 #include <xcb/composite.h>
 #include <cstdio>
 #include <optional>
+#include <utility>
+#include <vector>
 
 namespace xcb {
 
@@ -182,22 +184,29 @@ namespace xcb {
     }
 
     xcb_window_t* children = xcb_query_tree_children(reply.get());
-    for (uint32_t i = 0; i < reply->children_len; i++) {
-      xcb_window_t child = children[i];
 
-      xcb_get_window_attributes_cookie_t attributeCookie = xcb_get_window_attributes(connection, child);
+    // Send every request before reading a reply so we don't round trip per window.
+    std::vector<std::pair<xcb_get_window_attributes_cookie_t, xcb_get_geometry_cookie_t>> cookies;
+    for (uint32_t i = 0; i < reply->children_len; i++)
+      cookies.emplace_back(xcb_get_window_attributes(connection, children[i]), xcb_get_geometry(connection, children[i]));
+
+    for (auto [attributeCookie, geometryCookie] : cookies) {
       auto attributeReply = Reply<xcb_get_window_attributes_reply_t>{ xcb_get_window_attributes_reply(connection, attributeCookie, nullptr) };
+      auto geometryReply = Reply<xcb_get_geometry_reply_t>{ xcb_get_geometry_reply(connection, geometryCookie, nullptr) };
 
       const bool obscuring =
         attributeReply &&
+        geometryReply &&
         attributeReply->map_state == XCB_MAP_STATE_VIEWABLE &&
         !attributeReply->override_redirect;
 
       if (obscuring) {
-        if (auto childRect = getWindowRect(connection, child)) {
-          VkRect2D clippedRect = clip(*ourRect, *childRect);
-          largestExtent = max(largestExtent, clippedRect.extent);
-        }
+        VkRect2D childRect = {
+          .offset = { geometryReply->x, geometryReply->y },
+          .extent = { geometryReply->width, geometryReply->height },
+        };
+        VkRect2D clippedRect = clip(*ourRect, childRect);
+        largestExtent = max(largestExtent, clippedRect.extent);
       }
     }
 
