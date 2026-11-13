@@ -183,6 +183,8 @@ namespace gamescope
         void SetTitle( std::shared_ptr<std::string> szTitle );
         void SetIcon( std::shared_ptr<std::vector<uint32_t>> uIconPixels );
         void SetSelection( std::shared_ptr<std::string> szContents, GamescopeSelection eSelection );
+
+		bool IsWindowShown() const { return m_bShown; }
 	protected:
 		virtual void OnBackendBlobDestroyed( BackendBlob *pBlob ) override;
 	private:
@@ -191,7 +193,7 @@ namespace gamescope
 		uint32_t GetUserEventIndex( SDLCustomEvents eEvent ) const;
 		void PushUserEvent( SDLCustomEvents eEvent );
 
-		bool m_bShown = false;
+		std::atomic<bool> m_bShown = { false };
 		CSDLConnector m_Connector; // Window.
 		uint32_t m_uUserEventIdBase = 0u;
 		std::vector<const char *> m_pszInstanceExtensions;
@@ -342,6 +344,12 @@ namespace gamescope
 
 	int CSDLConnector::Present( const FrameInfo_t *pFrameInfo, bool bAsync )
 	{
+		// The window is shown from the SDL thread. On Wayland, a buffer
+		// committed while SDL_ShowWindow is still giving the surface its
+		// role is a fatal protocol error, so don't present until it is done.
+		if ( !m_pBackend->IsWindowShown() )
+			return 0;
+
 		// TODO: Resolve const crap
 		std::optional oCompositeResult = vulkan_composite( (FrameInfo_t *)pFrameInfo, nullptr, false );
 		if ( !oCompositeResult )
@@ -887,14 +895,17 @@ namespace gamescope
 
 						if ( m_bShown != bVisible )
 						{
-							m_bShown = bVisible;
-
-							if ( m_bShown )
+							if ( bVisible )
 							{
 								SDL_ShowWindow( m_Connector.GetSDLWindow() );
+								m_bShown = true;
+
+								// Presents were skipped while we were hidden.
+								force_repaint();
 							}
 							else
 							{
+								m_bShown = false;
 								SDL_HideWindow( m_Connector.GetSDLWindow() );
 							}
 						}
