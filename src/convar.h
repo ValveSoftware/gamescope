@@ -63,6 +63,7 @@ namespace gamescope
         }
 
         static bool Exec( std::span<std::string_view> args );
+        static bool Exec( std::string_view commandLine );
 
         std::string_view GetName() const { return m_pszName; }
         std::string_view GetDescription() const { return m_pszDescription; }
