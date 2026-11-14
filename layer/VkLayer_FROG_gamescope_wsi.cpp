@@ -581,6 +581,8 @@ namespace GamescopeWSILayer {
 
     // Cached for comparison.
     std::optional<VkRect2D> cachedWindowRect;
+    // Set by canBypassXWayland when the Wine offscreen gate refused.
+    bool cachedWineOffscreen = false;
 
     bool isWayland() const {
       // Is native Wayland?
@@ -607,6 +609,7 @@ namespace GamescopeWSILayer {
       }
 
       cachedWindowRect = *rect;
+      cachedWineOffscreen = false;
 
       if (wl_display_get_error(display))
         return false;
@@ -624,6 +627,7 @@ namespace GamescopeWSILayer {
 #if GAMESCOPE_WSI_BYPASS_DEBUG
             fprintf(stderr, "[Gamescope WSI] Not bypassing: _WINE_ALLOW_FLIP is 0 for window 0x%x.\n", window);
 #endif
+            cachedWineOffscreen = true;
             return false;
           }
         } else if (auto parent = xcb::getParentWindow(connection, window)) {
@@ -634,6 +638,7 @@ namespace GamescopeWSILayer {
 #if GAMESCOPE_WSI_BYPASS_DEBUG
             fprintf(stderr, "[Gamescope WSI] Not bypassing: window 0x%x is parked under Wine dummy parent 0x%x.\n", window, *parent);
 #endif
+            cachedWineOffscreen = true;
             return false;
           }
         }
@@ -710,6 +715,7 @@ namespace GamescopeWSILayer {
     VkSurfaceKHR surface; // Always the Gamescope Surface surface -- so the Wayland one.
     bool isWayland;
     bool isBypassingXWayland;
+    bool forcedBypass;
     bool forceFifo;
     VkPresentModeKHR presentMode;
     VkExtent2D extent;
@@ -816,6 +822,22 @@ namespace GamescopeWSILayer {
 
   static bool hasExtension(const std::vector<VkExtensionProperties> &extensions, std::string_view name) {
     return std::ranges::any_of(extensions, [&](const auto &extension) { return name == extension.extensionName; });
+  }
+
+  static bool isFormatSupportedOnSurface(const vkroots::VkPhysicalDeviceDispatch &dispatch,
+                                         VkPhysicalDevice physicalDevice,
+                                         VkSurfaceKHR surface,
+                                         VkFormat format) {
+    std::vector<VkSurfaceFormatKHR> formats;
+    vkroots::enumerate(
+      std::bind_front(&vkroots::VkPhysicalDeviceDispatch::GetPhysicalDeviceSurfaceFormatsKHR, &dispatch),
+      formats,
+      physicalDevice,
+      surface);
+    return std::ranges::any_of(
+      formats,
+      std::bind_front(std::equal_to{}, format),
+      &VkSurfaceFormatKHR::format);
   }
 
   static bool presentTimingSupported(const vkroots::VkPhysicalDeviceDispatch &dispatch,
@@ -1543,7 +1565,23 @@ namespace GamescopeWSILayer {
       // HDR. Other non-sRGB colorspaces are still SDR content Wine can blit.
       const bool hdrColorspace = pCreateInfo->imageColorSpace == VK_COLOR_SPACE_HDR10_ST2084_EXT ||
                                   pCreateInfo->imageColorSpace == VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT;
-      const bool canBypass = gamescopeSurface->canBypassXWayland(hdrColorspace);
+      bool canBypass = gamescopeSurface->canBypassXWayland(hdrColorspace);
+
+      // Prefer bypass over refusing when only the XCB fallback lacks the format.
+      // The Wine offscreen gate still wins, that content is wrong to flip.
+      bool formatSupported = isFormatSupportedOnSurface(*pDispatch.pPhysicalDeviceDispatch, pDispatch.PhysicalDevice,
+        canBypass ? pCreateInfo->surface : gamescopeSurface->fallbackSurface, pCreateInfo->imageFormat);
+      bool forcedBypass = false;
+      if (!canBypass && !formatSupported && !gamescopeSurface->cachedWineOffscreen &&
+          isFormatSupportedOnSurface(*pDispatch.pPhysicalDeviceDispatch, pDispatch.PhysicalDevice,
+            pCreateInfo->surface, pCreateInfo->imageFormat)) {
+        fprintf(stderr, "[Gamescope WSI] Forcing bypass (format unsupported on fallback) for xid: 0x%0x - format: %s\n",
+          gamescopeSurface->window,
+          vkroots::helpers::enumString(pCreateInfo->imageFormat));
+        canBypass = true;
+        formatSupported = true;
+        forcedBypass = true;
+      }
 
       VkSwapchainCreateInfoKHR swapchainInfo = *pCreateInfo;
       swapchainInfo.flags &= ~VK_SWAPCHAIN_CREATE_PRESENT_TIMING_BIT_EXT;
@@ -1608,28 +1646,14 @@ namespace GamescopeWSILayer {
 
       // Check for VkFormat support and return VK_ERROR_INITIALIZATION_FAILED
       // if that VkFormat is unsupported for the underlying surface.
-      {
-        std::vector<VkSurfaceFormatKHR> supportedSurfaceFormats;
-        vkroots::enumerate(
-          std::bind_front(&vkroots::VkPhysicalDeviceDispatch::GetPhysicalDeviceSurfaceFormatsKHR, pDispatch.pPhysicalDeviceDispatch),
-          supportedSurfaceFormats,
-          pDispatch.PhysicalDevice,
-          swapchainInfo.surface);
+      if (!formatSupported) {
+        fprintf(stderr, "[Gamescope WSI] Refusing to make swapchain (unsupported VkFormat) for xid: 0x%0x - format: %s - colorspace: %s - flip: %s\n",
+          gamescopeSurface->window,
+          vkroots::helpers::enumString(pCreateInfo->imageFormat),
+          vkroots::helpers::enumString(pCreateInfo->imageColorSpace),
+          canBypass ? "true" : "false");
 
-        bool supportedSwapchainFormat = std::ranges::any_of(
-          supportedSurfaceFormats,
-          std::bind_front(std::equal_to{}, swapchainInfo.imageFormat),
-          &VkSurfaceFormatKHR::format)  ;
-
-        if (!supportedSwapchainFormat) {
-          fprintf(stderr, "[Gamescope WSI] Refusing to make swapchain (unsupported VkFormat) for xid: 0x%0x - format: %s - colorspace: %s - flip: %s\n",
-            gamescopeSurface->window,
-            vkroots::helpers::enumString(pCreateInfo->imageFormat),
-            vkroots::helpers::enumString(pCreateInfo->imageColorSpace),
-            canBypass ? "true" : "false");
-
-          return VK_ERROR_INITIALIZATION_FAILED;
-        }
+        return VK_ERROR_INITIALIZATION_FAILED;
       }
 
       uint32_t serverId = ~0u;
@@ -1681,6 +1705,7 @@ namespace GamescopeWSILayer {
           .surface             = pCreateInfo->surface, // Always the Wayland side surface.
           .isWayland           = gamescopeSurface->isWayland(),
           .isBypassingXWayland = canBypass,
+          .forcedBypass        = forcedBypass,
           .forceFifo           = gamescopeIsForcingFifo(gamescopeSurface->waylandObjects), // Were we forcing fifo when this swapchain was made?
           .presentMode         = pCreateInfo->presentMode, // The new present mode.
           .extent              = pCreateInfo->imageExtent,
@@ -2108,12 +2133,16 @@ namespace GamescopeWSILayer {
           }
 
           const bool canBypass = gamescopeSurface->canBypassXWayland(gamescopeSwapchain->isHdrColorspace);
+          // Once geometry allows bypass, the swapchain is no longer forced.
+          if (canBypass)
+            gamescopeSwapchain->forcedBypass = false;
           if (canBypass != gamescopeSwapchain->isBypassingXWayland) {
             if (canBypass) {
               if (!(gamescopeSurface->flags & GamescopeLayerClient::Flag::NoSuboptimal))
                 UpdateSwapchainResult(VK_SUBOPTIMAL_KHR);
-            } else {
-              UpdateSwapchainResult(VK_ERROR_OUT_OF_DATE_KHR);  
+            } else if (!gamescopeSwapchain->forcedBypass || gamescopeSurface->cachedWineOffscreen) {
+              // Recreating would only force bypass again, unless Wine now keeps the window offscreen.
+              UpdateSwapchainResult(VK_ERROR_OUT_OF_DATE_KHR);
             }
           }
 
