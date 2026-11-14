@@ -41,6 +41,7 @@ meson install -C build/ --skip-subprojects
 
 * **Super + F** : Toggle fullscreen
 * **Super + N** : Toggle nearest neighbour filtering
+* **Super + B** : Toggle bilinear filtering
 * **Super + U** : Toggle FSR upscaling
 * **Super + Y** : Toggle NIS upscaling
 * **Super + I** : Increase FSR sharpness by 1
