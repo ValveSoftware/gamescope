@@ -49,6 +49,13 @@ namespace gamescope
         return true;
     }
 
+    bool ConCommand::Exec( std::string_view commandLine )
+    {
+        std::vector<std::string_view> args;
+        Split( args, commandLine, " " );
+        return Exec( args );
+    }
+
     Dict<ConCommand *>& ConCommand::GetCommands()
     {
         static Dict<ConCommand *> s_Commands;
