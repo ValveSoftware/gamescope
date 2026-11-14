@@ -2013,12 +2013,19 @@ int wlsession_open_kms( const char *device_name ) {
 
 void wlsession_close_kms()
 {
+	// Called from steamcompmgr_exit() on the steamcompmgr thread when the
+	// DRM backend is torn down. wlr_session_close_file() makes libseat do a
+	// blocking logind ReleaseDevice call on its sd_bus connection, which the
+	// wlserver thread also dispatches from (under the wlserver lock). sd_bus
+	// isn't thread-safe, so hold the lock to keep the wlserver thread off it.
+	wlserver_lock();
 	if ( wlserver.wlr.device )
 	{
 		wl_list_remove( &wlserver.wlr.device_change_listener.link );
 	}
 	wlr_session_close_file( wlserver.wlr.session, wlserver.wlr.device );
 	wlserver.wlr.device = nullptr;
+	wlserver_unlock();
 }
 
 #endif
