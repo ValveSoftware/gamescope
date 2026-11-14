@@ -908,6 +908,7 @@ int main(int argc, char **argv)
 		fprintf( stderr, "Tracing is enabled\n");
 	}
 
+#if HAVE_SCRIPTING
 	{
 		gamescope::CScriptScopedLock script;
 		script.Manager().RunDefaultScripts();
@@ -937,6 +938,7 @@ int main(int argc, char **argv)
 			free( envvar );
 		}
 	}
+#endif
 
 	XInitThreads();
 	g_mainThread = pthread_self();
