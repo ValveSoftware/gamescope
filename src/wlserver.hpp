@@ -249,6 +249,7 @@ struct wlserver_pointer {
 	struct wlr_pointer *wlr;
 	
 	struct wl_listener motion;
+	struct wl_listener motion_absolute;
 	struct wl_listener button;
 	struct wl_listener axis;
 	struct wl_listener frame;
