@@ -2991,6 +2991,7 @@ namespace gamescope
             case KEY_B:
             case KEY_U:
             case KEY_Y:
+            case KEY_T:
             case KEY_I:
             case KEY_O:
             case KEY_S:
@@ -3052,6 +3053,11 @@ namespace gamescope
             case KEY_Y:
                 g_wantedUpscaleFilter = ( g_wantedUpscaleFilter == GamescopeUpscaleFilter::NIS ) ?
                     GamescopeUpscaleFilter::LINEAR : GamescopeUpscaleFilter::NIS;
+                break;
+
+            case KEY_T:
+                g_wantedUpscaleFilter = ( g_wantedUpscaleFilter == GamescopeUpscaleFilter::SGSR ) ?
+                    GamescopeUpscaleFilter::LINEAR : GamescopeUpscaleFilter::SGSR;
                 break;
 
             case KEY_I:
