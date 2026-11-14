@@ -170,8 +170,8 @@ namespace xcb {
     };
   }
 
-  // With `above`, only children stacked above it count.
-  static std::optional<VkExtent2D> getLargestObscuringChildWindowSize(xcb_connection_t* connection, xcb_window_t window, xcb_window_t above = XCB_WINDOW_NONE) {
+  // `except` is a child to leave out.
+  static std::optional<VkExtent2D> getLargestObscuringChildWindowSize(xcb_connection_t* connection, xcb_window_t window, xcb_window_t except = XCB_WINDOW_NONE) {
     VkExtent2D largestExtent = {};
 
     xcb_query_tree_cookie_t cookie = xcb_query_tree(connection, window);
@@ -188,19 +188,14 @@ namespace xcb {
       return std::nullopt;
     }
 
-    // Listed bottom-most first.
     xcb_window_t* children = xcb_query_tree_children(reply.get());
-    uint32_t first = 0;
-    if (above != XCB_WINDOW_NONE) {
-      while (first < reply->children_len && children[first] != above)
-        first++;
-      first++;
-    }
 
     // Send every request before reading a reply so we don't round trip per window.
     std::vector<std::pair<xcb_get_window_attributes_cookie_t, xcb_get_geometry_cookie_t>> cookies;
-    for (uint32_t i = first; i < reply->children_len; i++)
-      cookies.emplace_back(xcb_get_window_attributes(connection, children[i]), xcb_get_geometry(connection, children[i]));
+    for (uint32_t i = 0; i < reply->children_len; i++) {
+      if (children[i] != except)
+        cookies.emplace_back(xcb_get_window_attributes(connection, children[i]), xcb_get_geometry(connection, children[i]));
+    }
 
     for (auto [attributeCookie, geometryCookie] : cookies) {
       auto attributeReply = Reply<xcb_get_window_attributes_reply_t>{ xcb_get_window_attributes_reply(connection, attributeCookie, nullptr) };

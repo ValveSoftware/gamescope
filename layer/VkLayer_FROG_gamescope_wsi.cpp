@@ -661,8 +661,8 @@ namespace GamescopeWSILayer {
       if (!!(flags & GamescopeLayerClient::Flag::ForceBypass))
         return true;
 
-      // If we have any child windows, or windows stacked above us in our
-      // toplevel, obscuring us bigger than 1x1, then we cannot flip.
+      // If we have any child windows, or other windows in our toplevel,
+      // bigger than 1x1, then we cannot flip.
       // (There can be dummy composite redirect windows and whatever.)
       if (largestObscuringWindowSize->width > 1 || largestObscuringWindowSize->height > 1) {
 #if GAMESCOPE_WSI_BYPASS_DEBUG
