@@ -4,6 +4,8 @@
 #include <xcb/composite.h>
 #include <cstdio>
 #include <optional>
+#include <utility>
+#include <vector>
 
 namespace xcb {
 
@@ -148,12 +150,16 @@ namespace xcb {
   }
 
   static VkRect2D clip(VkRect2D parent, VkRect2D child) {
+    const int32_t x0 = std::max<int32_t>(child.offset.x, 0);
+    const int32_t y0 = std::max<int32_t>(child.offset.y, 0);
+    const int32_t x1 = std::min<int32_t>(child.offset.x + int32_t(child.extent.width),  parent.extent.width);
+    const int32_t y1 = std::min<int32_t>(child.offset.y + int32_t(child.extent.height), parent.extent.height);
+    if (x1 <= x0 || y1 <= y0)
+      return VkRect2D {};
+
     return VkRect2D {
-      .offset = child.offset,
-      .extent = VkExtent2D {
-        .width  = std::min<uint32_t>(child.extent.width,  std::max<int32_t>(parent.extent.width  - child.offset.x, 0)),
-        .height = std::min<uint32_t>(child.extent.height, std::max<int32_t>(parent.extent.height - child.offset.y, 0)),
-      },
+      .offset = { x0, y0 },
+      .extent = { uint32_t(x1 - x0), uint32_t(y1 - y0) },
     };
   }
 
@@ -164,7 +170,8 @@ namespace xcb {
     };
   }
 
-  static std::optional<VkExtent2D> getLargestObscuringChildWindowSize(xcb_connection_t* connection, xcb_window_t window) {
+  // `except` is a child to leave out.
+  static std::optional<VkExtent2D> getLargestObscuringChildWindowSize(xcb_connection_t* connection, xcb_window_t window, xcb_window_t except = XCB_WINDOW_NONE) {
     VkExtent2D largestExtent = {};
 
     xcb_query_tree_cookie_t cookie = xcb_query_tree(connection, window);
@@ -182,23 +189,50 @@ namespace xcb {
     }
 
     xcb_window_t* children = xcb_query_tree_children(reply.get());
-    for (uint32_t i = 0; i < reply->children_len; i++) {
-      xcb_window_t child = children[i];
 
-      xcb_get_window_attributes_cookie_t attributeCookie = xcb_get_window_attributes(connection, child);
+    // Send every request before reading a reply so we don't round trip per window.
+    std::vector<std::pair<xcb_get_window_attributes_cookie_t, xcb_get_geometry_cookie_t>> cookies;
+    for (uint32_t i = 0; i < reply->children_len; i++) {
+      if (children[i] != except)
+        cookies.emplace_back(xcb_get_window_attributes(connection, children[i]), xcb_get_geometry(connection, children[i]));
+    }
+
+    for (auto [attributeCookie, geometryCookie] : cookies) {
       auto attributeReply = Reply<xcb_get_window_attributes_reply_t>{ xcb_get_window_attributes_reply(connection, attributeCookie, nullptr) };
+      auto geometryReply = Reply<xcb_get_geometry_reply_t>{ xcb_get_geometry_reply(connection, geometryCookie, nullptr) };
 
       const bool obscuring =
         attributeReply &&
+        geometryReply &&
         attributeReply->map_state == XCB_MAP_STATE_VIEWABLE &&
+        attributeReply->_class == XCB_WINDOW_CLASS_INPUT_OUTPUT &&
         !attributeReply->override_redirect;
 
       if (obscuring) {
-        if (auto childRect = getWindowRect(connection, child)) {
-          VkRect2D clippedRect = clip(*ourRect, *childRect);
-          largestExtent = max(largestExtent, clippedRect.extent);
-        }
+        // x and y are the border's outer corner, the size is the interior.
+        const uint32_t border = 2 * geometryReply->border_width;
+        VkRect2D childRect = {
+          .offset = { geometryReply->x, geometryReply->y },
+          .extent = { geometryReply->width + border, geometryReply->height + border },
+        };
+        VkRect2D clippedRect = clip(*ourRect, childRect);
+        largestExtent = max(largestExtent, clippedRect.extent);
       }
+    }
+
+    return largestExtent;
+  }
+
+  static std::optional<VkExtent2D> getLargestObscuringSiblingWindowSize(xcb_connection_t* connection, xcb_window_t window) {
+    VkExtent2D largestExtent = {};
+
+    while (auto parent = getParentWindow(connection, window)) {
+      auto extent = getLargestObscuringChildWindowSize(connection, *parent, window);
+      if (!extent)
+        return std::nullopt;
+
+      largestExtent = max(largestExtent, *extent);
+      window = *parent;
     }
 
     return largestExtent;
