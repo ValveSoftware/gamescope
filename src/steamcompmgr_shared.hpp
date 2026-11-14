@@ -149,8 +149,11 @@ struct steamcompmgr_win_t {
 	bool sizeHintsSpecified = false;
 	bool skipTaskbar = false; 
 	bool skipPager = false;
+	bool isMaximized = false;
 	unsigned int requestedWidth = 0;
 	unsigned int requestedHeight = 0;
+	unsigned int restoreWidth = 0;
+	unsigned int restoreHeight = 0;
 	bool is_dialog = false;
 	bool maybe_a_dropdown = false;
 	bool outdatedInteractiveFocus = false;
