@@ -361,6 +361,7 @@ namespace gamescope
 
         virtual bool SupportsPlaneHardwareCursor() const = 0;
         virtual bool SupportsTearing() const = 0;
+        virtual bool SupportsColorManagement() const = 0;
 
         virtual bool UsesVulkanSwapchain() const = 0;
         virtual bool IsSessionBased() const = 0;

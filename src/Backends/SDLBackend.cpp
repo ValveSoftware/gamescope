@@ -160,6 +160,7 @@ namespace gamescope
 		virtual IBackendConnector *GetConnector( GamescopeScreenType eScreenType ) override;
 
 		virtual bool SupportsPlaneHardwareCursor() const override;
+		virtual bool SupportsColorManagement() const override;
 
         virtual bool SupportsTearing() const override;
 		virtual bool UsesVulkanSwapchain() const override;
@@ -482,6 +483,11 @@ namespace gamescope
 			return &m_Connector;
 
 		return nullptr;
+	}
+
+	bool CSDLBackend::SupportsColorManagement() const
+	{
+		return false;
 	}
 
 	bool CSDLBackend::SupportsPlaneHardwareCursor() const
