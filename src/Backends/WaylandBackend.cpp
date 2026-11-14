@@ -3375,6 +3375,9 @@ namespace gamescope
     }
     void CWaylandInputThread::Wayland_Keyboard_RepeatInfo( wl_keyboard *pKeyboard, int32_t nRate, int32_t nDelay )
     {
+        wlserver_lock();
+        wlserver_set_keyboard_repeat_info( nRate, nDelay );
+        wlserver_unlock();
     }
 
     // Relative Pointer

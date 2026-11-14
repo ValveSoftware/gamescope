@@ -119,6 +119,8 @@ const struct option *gamescope_options = (struct option[]){
 	// wlserver options
 	{ "xwayland-count", required_argument, nullptr, 0 },
 	{ "xwayland-force-touch-pointer-emulation", no_argument, nullptr, 0 },
+	{ "keyboard-repeat-rate", required_argument, nullptr, 0 },
+	{ "keyboard-repeat-delay", required_argument, nullptr, 0 },
 
 	// steamcompmgr options
 	{ "cursor", required_argument, nullptr, 0 },
@@ -203,6 +205,8 @@ const char usage[] =
 	"  -C, --hide-cursor-delay        hide cursor image after delay\n"
 	"  -e, --steam                    enable Steam integration\n"
 	"  --xwayland-count               create N xwayland servers\n"
+	"  --keyboard-repeat-rate         keyboard repeat rate (repeats per second, default 25)\n"
+	"  --keyboard-repeat-delay        keyboard repeat delay (milliseconds, default 600)\n"
 	"  --prefer-vk-device             prefer Vulkan device for compositing (ex: 1002:7300)\n"
 	"  --force-composition-rotation   always rotate the output in the compositor instead of at scanout (autodetected otherwise)\n"
 	"  --force-orientation            rotate the internal display (left, right, normal, upsidedown)\n"
@@ -808,6 +812,20 @@ int main(int argc, char **argv)
 					}
 				} else if (strcmp(opt_name, "xwayland-force-touch-pointer-emulation") == 0) {
 					g_bNoTouchPointerEmulation = false;
+				} else if (strcmp(opt_name, "keyboard-repeat-rate") == 0) {
+					int val = parse_integer( optarg, opt_name );
+					if ( val < 0 ) {
+						fprintf( stderr, "gamescope: invalid value for --%s, must be >= 0\n", opt_name );
+						exit(1);
+					}
+					cv_keyboard_repeat_rate = val;
+				} else if (strcmp(opt_name, "keyboard-repeat-delay") == 0) {
+					int val = parse_integer( optarg, opt_name );
+					if ( val < 0 ) {
+						fprintf( stderr, "gamescope: invalid value for --%s, must be >= 0\n", opt_name );
+						exit(1);
+					}
+					cv_keyboard_repeat_delay = val;
 				} else if (strcmp(opt_name, "composite-debug") == 0) {
 					cv_composite_debug |= CompositeDebugFlag::Markers;
 					cv_composite_debug |= CompositeDebugFlag::PlaneBorders;
