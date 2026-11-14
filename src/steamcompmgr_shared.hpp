@@ -180,6 +180,8 @@ struct steamcompmgr_win_t {
 	std::vector<PooledImage_t> overrideBlitImages;
 	size_t uNextOverrideBlitImage = 0;
 	std::vector<pixman_box32_t> overrideBlitPendingDamage;
+	uint64_t ulSubwindowChangeTime = 0;
+	uint32_t uOverrideFramesSinceSubwindowChange = 0;
 
 	steamcompmgr_win_type_t		type;
 
