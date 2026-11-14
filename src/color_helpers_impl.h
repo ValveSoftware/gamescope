@@ -1,4 +1,5 @@
 #pragma once
+
 #include "color_helpers.h"
 
 namespace rendervulkan {
