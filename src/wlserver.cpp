@@ -3010,6 +3010,28 @@ static void wlserver_clampcursor()
 	wlserver.mouse_surface_cursory = std::clamp( wlserver.mouse_surface_cursory, 0.0, double( std::max( nHeight - 1, 0 ) ) );
 }
 
+static struct wlr_surface *wlserver_pointer_surface_at( struct wlr_surface *surface, double x, double y, double *sx, double *sy )
+{
+	if ( !surface )
+		return nullptr;
+
+	if ( struct wlr_xdg_surface *xdg_surface = wlr_xdg_surface_try_from_wlr_surface( surface ) )
+		if ( struct wlr_surface *hit = wlr_xdg_surface_popup_surface_at( xdg_surface, x, y, sx, sy ) )
+			return hit;
+
+	*sx = x;
+	*sy = y;
+	return surface;
+}
+
+static void wlserver_update_pointer_focus( struct wlr_surface *surface, double sx, double sy )
+{
+	if ( !surface || wlserver.wlr.seat->pointer_state.focused_surface == surface )
+		return;
+
+	wlr_seat_pointer_notify_enter( wlserver.wlr.seat, surface, sx, sy );
+}
+
 void wlserver_mousefocus( struct wlr_surface *wlrsurface, int x /* = 0 */, int y /* = 0 */ )
 {
 	assert( wlserver_is_lock_held() );
@@ -3036,9 +3058,12 @@ void wlserver_mousefocus( struct wlr_surface *wlrsurface, int x /* = 0 */, int y
 		}
 	}
 
+	double sx = wlserver.mouse_surface_cursorx;
+	double sy = wlserver.mouse_surface_cursory;
+	struct wlr_surface *focus = wlserver_pointer_surface_at( wlrsurface, sx, sy, &sx, &sy );
+
 	wlserver_oncursorevent();
-	wlr_seat_pointer_warp( wlserver.wlr.seat, wlserver.mouse_surface_cursorx, wlserver.mouse_surface_cursory );
-	wlr_seat_pointer_notify_enter( wlserver.wlr.seat, wlrsurface, wlserver.mouse_surface_cursorx, wlserver.mouse_surface_cursory );
+	wlserver_update_pointer_focus( focus, sx, sy );
 }
 
 void wlserver_clear_dropdowns()
@@ -3291,6 +3316,9 @@ void wlserver_mousemotion( double dx, double dy, uint32_t time )
 	double sy = wlserver.mouse_surface_cursory;
 	wlserver_drag_anchor_apply( sx, sy );
 
+	struct wlr_surface *focus = wlserver_pointer_surface_at( wlserver.mouse_focus_surface, sx, sy, &sx, &sy );
+	wlserver_update_pointer_focus( focus, sx, sy );
+
 	wlr_seat_pointer_notify_motion( wlserver.wlr.seat, time, sx, sy );
 	wlr_seat_pointer_notify_frame( wlserver.wlr.seat );
 }
@@ -3313,6 +3341,9 @@ void wlserver_mousewarp( double x, double y, uint32_t time, bool bSynthetic )
 	double sx = wlserver.mouse_surface_cursorx;
 	double sy = wlserver.mouse_surface_cursory;
 	wlserver_drag_anchor_apply( sx, sy );
+
+	struct wlr_surface *focus = wlserver_pointer_surface_at( wlserver.mouse_focus_surface, sx, sy, &sx, &sy );
+	wlserver_update_pointer_focus( focus, sx, sy );
 
 	wlr_seat_pointer_notify_motion( wlserver.wlr.seat, time, sx, sy );
 	wlr_seat_pointer_notify_frame( wlserver.wlr.seat );
