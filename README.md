@@ -85,6 +85,8 @@ Gamescope supports a subset of Reshade effects/shaders using the `--reshade-effe
 
 This provides an easy way to do shader effects (ie. CRT shader, film grain, debugging HDR with histograms, etc) on top of whatever is being displayed in Gamescope without having to hook into the underlying process.
 
+Use `--reshade-post-effect` and `--reshade-post-technique-idx` if you need display resolution in the shader, e.g. CRT shaders with shadow mask, `--reshade-effect` runs at input resolution.
+
 Uniform/shader options can be modified programmatically via the `gamescope-reshade` wayland interface. Otherwise, they will just use their initializer values.
 
 Using Reshade effects will increase latency as there will be work performed on the general gfx + compute queue as opposed to only using the realtime async compute queue which can run in tandem with the game's gfx work.
