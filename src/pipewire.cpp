@@ -172,13 +172,25 @@ static std::vector<const struct spa_pod *> build_format_params(struct spa_pod_bu
 
 static void request_buffer(struct pipewire_state *state)
 {
-	struct pw_buffer *pw_buffer = pw_stream_dequeue_buffer(state->stream);
-	if (!pw_buffer) {
-		pwr_log.errorf("warning: out of buffers");
-		return;
+	struct pw_buffer *pw_buffer;
+	struct pipewire_buffer *buffer;
+
+	// A buffer whose add_buffer failed has no pipewire_buffer behind it.
+	// Leave it dequeued so it never reach the consumer. Freed at
+	// next renegotiation.
+	while (true) {
+		pw_buffer = pw_stream_dequeue_buffer(state->stream);
+		if (!pw_buffer) {
+			pwr_log.errorf("warning: out of buffers");
+			return;
+		}
+
+		buffer = (struct pipewire_buffer *) pw_buffer->user_data;
+		if (buffer != nullptr)
+			break;
+		pwr_log.errorf("skipping buffer that failed to initialize");
 	}
 
-	struct pipewire_buffer *buffer = (struct pipewire_buffer *) pw_buffer->user_data;
 	buffer->copying = true;
 
 	// Past this exchange, the PipeWire thread shares the buffer with the
@@ -588,12 +600,17 @@ static void stream_handle_add_buffer(void *user_data, struct pw_buffer *pw_buffe
 	return;
 
 error:
+	spa_data->type = SPA_DATA_Invalid;
 	delete buffer;
 }
 
 static void stream_handle_remove_buffer(void *data, struct pw_buffer *pw_buffer)
 {
 	struct pipewire_buffer *buffer = (struct pipewire_buffer *) pw_buffer->user_data;
+
+	// Nothing to free if add_buffer failed for this buffer.
+	if (buffer == nullptr)
+		return;
 
 	buffer->buffer = nullptr;
 
