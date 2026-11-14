@@ -290,6 +290,7 @@ const char usage[] =
 	"  Super + O                      decrease FSR sharpness by 1\n"
 	"  Super + S                      take a screenshot\n"
 	"  Super + G                      toggle keyboard grab\n"
+	"  Super + M                      toggle forced mouse grab (off restores automatic grabbing)\n"
 	"";
 
 std::atomic< bool > g_bRun{true};
@@ -306,7 +307,7 @@ int g_nOutputRefresh = 0;
 bool g_bOutputHDREnabled = false;
 
 bool g_bFullscreen = false;
-bool g_bForceRelativeMouse = false;
+std::atomic<bool> g_bForceRelativeMouse = { false };
 
 bool g_bGrabbed = false;
 
