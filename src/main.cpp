@@ -284,6 +284,7 @@ const char usage[] =
 	"Keyboard shortcuts:\n"
 	"  Super + F                      toggle fullscreen\n"
 	"  Super + N                      toggle nearest neighbour filtering\n"
+	"  Super + B                      toggle bilinear filtering\n"
 	"  Super + U                      toggle FSR upscaling\n"
 	"  Super + Y                      toggle NIS upscaling\n"
 	"  Super + I                      increase FSR sharpness by 1\n"
