@@ -135,8 +135,8 @@ subdir('protocol')
 
 if not get_option('enable_zenity')
   add_project_arguments(
-  '-DDISABLE_ZENITY',
-  language: 'cpp',
+    '-DDISABLE_ZENITY',
+    language: 'cpp',
   )
 endif
 
