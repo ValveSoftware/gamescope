@@ -17,7 +17,14 @@
 #include <spa/param/props.h>
 #include <spa/debug/format.h>
  
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wnan-infinity-disabled"
+#endif
 #include <pipewire/pipewire.h>
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
  
 #define DEFAULT_WIDTH  1280
 #define DEFAULT_HEIGHT 720
