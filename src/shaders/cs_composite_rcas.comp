@@ -73,9 +73,17 @@ void rcasComposite(uvec2 pos)
                 colorspace = colorspace_sRGB;
             }
 
-            outputValue.rgb = colorspace_plane_degamma_tf(outputValue.rgb, colorspace);
-            outputValue.rgb = (vec4(outputValue.rgb, 1.0f) * u_ctm[0]).rgb;
-            outputValue.rgb = apply_layer_color_mgmt(outputValue.rgb, 0, colorspace);
+            if (colorspace == colorspace_scRGB)
+            {
+                // EASU already applied the CTM and encoded scRGB to PQ.
+                outputValue.rgb = apply_layer_color_mgmt_pq(outputValue.rgb, 0, colorspace);
+            }
+            else
+            {
+                outputValue.rgb = colorspace_plane_degamma_tf(outputValue.rgb, colorspace);
+                outputValue.rgb = (vec4(outputValue.rgb, 1.0f) * u_ctm[0]).rgb;
+                outputValue.rgb = apply_layer_color_mgmt(outputValue.rgb, 0, colorspace);
+            }
             outputValue *= u_opacity[0];
         }
     }

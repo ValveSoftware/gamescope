@@ -176,9 +176,10 @@ const char usage[] =
 	"  -r, --nested-refresh           game refresh rate (frames per second)\n"
 	"  -m, --max-scale                maximum scale factor\n"
 	"  -S, --scaler                   upscaler type (auto, integer, fit, fill, stretch)\n"
-	"  -F, --filter                   upscaler filter (linear, nearest, fsr, nis, pixel)\n"
+	"  -F, --filter                   upscaler filter (linear, nearest, fsr, nis, pixel, sgsr)\n"
 	"                                     fsr => AMD FidelityFX™ Super Resolution 1.0\n"
 	"                                     nis => NVIDIA Image Scaling v1.0.3\n"
+	"                                     sgsr => Snapdragon™ Game Super Resolution 1 with RCAS\n"
 	"  --sharpness, --fsr-sharpness   upscaler sharpness from 0 (max) to 20 (min)\n"
 	"  --expose-wayland               support wayland clients using xdg-shell\n"
 	"  -s, --mouse-sensitivity        multiply mouse movement by given decimal number\n"
@@ -406,20 +407,13 @@ static enum GamescopeUpscaleScaler parse_upscaler_scaler(const char *str)
 
 static enum GamescopeUpscaleFilter parse_upscaler_filter(const char *str)
 {
-	if (strcmp(str, "linear") == 0) {
-		return GamescopeUpscaleFilter::LINEAR;
-	} else if (strcmp(str, "nearest") == 0) {
-		return GamescopeUpscaleFilter::NEAREST;
-	} else if (strcmp(str, "fsr") == 0) {
-		return GamescopeUpscaleFilter::FSR;
-	} else if (strcmp(str, "nis") == 0) {
-		return GamescopeUpscaleFilter::NIS;
-	} else if (strcmp(str, "pixel") == 0) {
-		return GamescopeUpscaleFilter::PIXEL;
-	} else {
+	std::optional<GamescopeUpscaleFilter> oFilter = ParseUpscaleFilter( str );
+	if ( !oFilter )
+	{
 		fprintf( stderr, "gamescope: invalid value for --filter\n" );
 		exit(1);
 	}
+	return *oFilter;
 }
 
 static enum gamescope::GamescopeBackend parse_backend_name(const char *str)
@@ -450,7 +444,7 @@ static enum gamescope::GamescopeBackend parse_backend_name(const char *str)
 
 static enum gamescope::GamescopeBackend auto_select_backend()
 {
-	if ( g_pOriginalWaylandDisplay != NULL )
+	if ( getenv( "WAYLAND_DISPLAY" ) != NULL )
 		return gamescope::GamescopeBackend::Wayland;
 	else if ( getenv( "DISPLAY" ) != NULL )
 		return gamescope::GamescopeBackend::SDL;
@@ -718,6 +712,10 @@ char **g_argv;
 
 extern char **environ;
 
+#if HAVE_SYSTEMD
+void logind_sleep_init();
+#endif
+
 int main(int argc, char **argv)
 {
 	g_argc = argc;
@@ -945,9 +943,6 @@ int main(int argc, char **argv)
 
 	g_pOriginalDisplay = getenv("DISPLAY");
 	g_pOriginalWaylandDisplay = getenv("WAYLAND_DISPLAY");
-	// A parent gamescope leaves this set but empty, treat that as absent.
-	if ( g_pOriginalWaylandDisplay && !*g_pOriginalWaylandDisplay )
-		g_pOriginalWaylandDisplay = nullptr;
 
 	// Allow overriding the selected backend (even the backend
 	// requested on the command line) in a startup script.
@@ -1035,8 +1030,8 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
-	// Empty, not unset, so libwayland's wayland-0 fallback can't reach the parent compositor.
-	setenv("WAYLAND_DISPLAY", "", 1);
+	// Prevent our clients from connecting to the parent compositor
+	unsetenv("WAYLAND_DISPLAY");
 
 	// If DRM format modifiers aren't supported, prevent our clients from using
 	// DCC, as this can cause tiling artifacts.
@@ -1108,6 +1103,10 @@ int main(int argc, char **argv)
 	{
 		fprintf( stderr, "Warning: failed to setup PipeWire, screen capture won't be available\n" );
 	}
+#endif
+
+#if HAVE_SYSTEMD
+	logind_sleep_init();
 #endif
 
 	std::thread steamCompMgrThread( steamCompMgrThreadRun, argc, argv );

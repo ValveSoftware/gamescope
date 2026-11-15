@@ -7,6 +7,7 @@
 #include "Utils/Parsers.h"
 
 using namespace gamescope;
+using uint = unsigned int;
 
 TEST_CASE("Utils/Parsers", "[parsers]") {
     SECTION("int") {

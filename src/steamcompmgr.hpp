@@ -38,11 +38,12 @@ struct xwayland_ctx_t;
 class gamescope_xwayland_server_t;
 
 static const uint32_t g_zposBase = 0;
-static const uint32_t g_zposOverride = 1;
-static const uint32_t g_zposExternalOverlay = 2;
-static const uint32_t g_zposOverlay = 3;
-static const uint32_t g_zposCursor = 4;
-static const uint32_t g_zposMuraCorrection = 5;
+static const uint32_t g_zposSubsurface = 1;
+static const uint32_t g_zposOverride = 2;
+static const uint32_t g_zposExternalOverlay = 3;
+static const uint32_t g_zposOverlay = 4;
+static const uint32_t g_zposCursor = 5;
+static const uint32_t g_zposMuraCorrection = 6;
 
 extern bool g_bHDRItmEnable;
 extern bool g_bForceHDRSupportDebug;
@@ -116,6 +117,7 @@ private:
 	gamescope::OwningRc<CVulkanTexture> m_texture;
 	bool m_dirty;
 	uint64_t m_ulLastConnectorId = 0;
+	uint64_t m_ulImageSerial = 0;
 	bool m_imageEmpty;
 
 	xwayland_ctx_t *m_ctx;
@@ -134,7 +136,9 @@ extern float focusedWindowScaleY;
 extern float focusedWindowOffsetX;
 extern float focusedWindowOffsetY;
 
-extern bool g_bFSRActive;
+extern GamescopeUpscaleFilter g_eActiveUpscaler;
+extern GamescopeUpscaleFilter g_eWantedUpscaler;
+extern int g_nActiveUpscaleSharpness;
 
 extern uint32_t inputCounter;
 extern uint64_t g_lastWinSeq;
@@ -147,7 +151,8 @@ void force_repaint( void );
 struct MangoappSnapshot_t
 {
 	pid_t nPid = 0;
-	bool bFSRActive = false;
+	GamescopeUpscaleFilter eActiveUpscaler = GamescopeUpscaleFilter::LINEAR;
+	GamescopeUpscaleFilter eWantedUpscaler = GamescopeUpscaleFilter::LINEAR;
 	uint8_t uFSRSharpness = 0;
 	std::shared_ptr<std::string> pEngineName;
 	bool bSteamFocused = false;

@@ -7,10 +7,20 @@
 #include <wlr/util/box.h>
 
 #include "xwayland_ctx.hpp"
+#include "Timeline.h"
 #include "gamescope-control-protocol.h"
 
 struct commit_t;
 struct wlserver_vk_swapchain_feedback;
+class CVulkanTexture;
+
+struct PooledImage_t
+{
+	gamescope::OwningRc<CVulkanTexture> pTexture;
+	// Tracks imported producer fences and completion of writes to this image.
+	std::shared_ptr<gamescope::CTimeline> pReleaseTimeline;
+	uint64_t ulLastPoint = 0ul;
+};
 
 struct wlserver_x11_surface_info
 {
@@ -117,6 +127,8 @@ struct steamcompmgr_win_t {
 	uint32_t steamAppID = 0;
 	bool isOverlay = false;
 	bool isExternalOverlay = false;
+	// mangoapp keeps the property but zeroes it while hidden.
+	bool bHasExternalOverlayProp = false;
 	// Set by per-connector mangoapp instances.
 	uint32_t uMangoappMsgType = 0;
 
@@ -145,6 +157,7 @@ struct steamcompmgr_win_t {
 
 	uint64_t last_commit_first_latch_time = 0;
 	uint64_t last_commit_present_time = 0;
+	uint64_t presentation_sequence = 0;
 
 	bool hasHwndStyle = false;
 	uint32_t hwndStyle = 0;
@@ -163,6 +176,10 @@ struct steamcompmgr_win_t {
 
 	std::vector< gamescope::Rc<commit_t> > commit_queue;
 	std::shared_ptr<std::vector< uint32_t >> icon;
+
+	std::vector<PooledImage_t> overrideBlitImages;
+	size_t uNextOverrideBlitImage = 0;
+	std::vector<pixman_box32_t> overrideBlitPendingDamage;
 
 	steamcompmgr_win_type_t		type;
 

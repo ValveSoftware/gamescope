@@ -45,10 +45,23 @@ struct ResListEntry_t {
 	bool async;
 	bool fifo;
 	std::shared_ptr<wlserver_vk_swapchain_feedback> feedback;
-	std::vector<struct wl_resource*> presentation_feedbacks;
-	std::optional<uint32_t> present_id;
-	uint64_t desired_present_time;
+	std::vector<wlserver_presentation_feedback_ref> presentation_feedbacks;
+	gamescope::PresentTiming present_timing;
 	std::shared_ptr<gamescope::CAcquireTimelinePoint> pAcquirePoint;
+	std::shared_ptr<gamescope::CReleaseTimelinePoint> pReleasePoint;
+	pixman_box32_t damageExtents;
+	std::vector<pixman_box32_t> damage;
+};
+
+// A commit for a surface that is not a toplevel. These are composited as part
+// of their parent's surface tree.
+struct NonToplevelCommit_t
+{
+	struct wlr_surface *surf;
+	std::shared_ptr<struct wlr_buffer> buf;
+	struct wlr_surface *root;
+	uint64_t sequence;
+	std::vector<wlserver_presentation_feedback_ref> presentation_feedbacks;
 	std::shared_ptr<gamescope::CReleaseTimelinePoint> pReleasePoint;
 };
 
@@ -140,6 +153,7 @@ struct wlserver_t {
 	double mouse_surface_cursorx = 0.0f;
 	double mouse_surface_cursory = 0.0f;
 	bool mouse_constraint_requires_warp = false;
+	bool physical_cursor_move = false;
 	pixman_region32_t confine;
 	std::atomic<struct wlr_pointer_constraint_v1 *> mouse_constraint = { nullptr };
 
@@ -199,7 +213,6 @@ struct wlserver_t {
 	struct wlr_layer_shell_v1 *layer_shell_v1;
 	struct wlr_relative_pointer_manager_v1 *relative_pointer_manager;
 	struct wlr_pointer_constraints_v1 *constraints;
-	struct wl_listener new_xdg_surface;
 	struct wl_listener new_xdg_toplevel;
 	struct wl_listener new_layer_shell_surface;
 	struct wl_listener new_pointer_constraint;
@@ -207,6 +220,10 @@ struct wlserver_t {
 	std::atomic<bool> xdg_dirty;
 	std::mutex xdg_commit_lock;
 	std::vector<ResListEntry_t> xdg_commit_queue;
+
+	std::mutex non_toplevel_commit_lock;
+	std::vector<ResListEntry_t> non_toplevel_commit_queue;
+	std::vector<NonToplevelCommit_t> non_toplevel_deferred_commits;
 
 	std::vector<wl_resource*> gamescope_controls;
 	std::unordered_map< uint32_t, std::vector<wl_resource*> > app_perf_requests;
@@ -225,6 +242,8 @@ struct wlserver_t {
 extern struct wlserver_t wlserver;
 
 std::vector<ResListEntry_t> wlserver_xdg_commit_queue();
+std::vector<ResListEntry_t> wlserver_non_toplevel_commit_queue();
+std::vector<NonToplevelCommit_t> &wlserver_non_toplevel_deferred_commits();
 
 struct wlserver_pointer {
 	struct wlr_pointer *wlr;
@@ -242,6 +261,7 @@ struct wlserver_touch {
 	struct wl_listener down;
 	struct wl_listener up;
 	struct wl_listener motion;
+	struct wl_listener frame;
 	struct wl_listener destroy;
 
     gamescope::IBackendConnector* connector;
@@ -263,6 +283,9 @@ bool wlserver_is_lock_held(void);
 
 void wlserver_keyboardfocus( struct wlr_surface *surface, bool bConstrain = true );
 void wlserver_key( uint32_t key, bool press, uint32_t time );
+void wlserver_keyboard_modifiers( uint32_t depressed, uint32_t latched, uint32_t locked, uint32_t group );
+void wlserver_keyboard_release_modifiers();
+void wlserver_set_keyboard_layout( const char *pszLayout );
 
 void wlserver_mousefocus( struct wlr_surface *wlrsurface, int x = 0, int y = 0 );
 void wlserver_clear_dropdowns();
@@ -278,6 +301,7 @@ void wlserver_drag_anchor_move( struct wlr_surface *surface, int x, int y, int b
 void wlserver_touchmotion( double x, double y, int touch_id, uint32_t time, bool bAlwaysWarpCursor = false, gamescope::IBackendConnector* connector = nullptr );
 void wlserver_touchdown( double x, double y, int touch_id, uint32_t time, gamescope::IBackendConnector* connector = nullptr );
 void wlserver_touchup( int touch_id, uint32_t time );
+void wlserver_touchframe();
 
 void wlserver_send_frame_done( struct wlr_surface *surf, const struct timespec *when );
 
@@ -310,11 +334,14 @@ void wlserver_open_steam_menu( bool qam );
 uint32_t wlserver_make_new_xwayland_server();
 void wlserver_destroy_xwayland_server(gamescope_xwayland_server_t *server);
 
-void wlserver_presentation_feedback_presented( struct wlr_surface *surface, std::vector<struct wl_resource*>& presentation_feedbacks, uint64_t last_refresh_nsec, uint64_t refresh_cycle );
-void wlserver_presentation_feedback_discard( struct wlr_surface *surface, std::vector<struct wl_resource*>& presentation_feedbacks );
+void wlserver_presentation_feedback_presented( std::vector<wlserver_presentation_feedback_ref>& presentation_feedbacks, uint64_t last_refresh_nsec, uint64_t refresh_cycle, uint64_t sequence );
+void wlserver_presentation_feedback_discard( std::vector<wlserver_presentation_feedback_ref>& presentation_feedbacks );
 
-void wlserver_past_present_timing( struct wlr_surface *surface, uint32_t present_id, uint64_t desired_present_time, uint64_t actual_present_time, uint64_t earliest_present_time, uint64_t present_margin );
-void wlserver_refresh_cycle( struct wlr_surface *surface, uint64_t refresh_cycle );
+extern LogScope present_timing_log;
+
+void wlserver_present_timing_report( gamescope::PresentTiming &timing, uint64_t queue_end, uint64_t dequeued, uint64_t pixel_out, uint64_t earliest_present_time, uint64_t earliest_latch_time );
+void wlserver_present_timing_discard( gamescope::PresentTiming &timing );
+void wlserver_refresh_cycle( struct wlr_surface *surface, uint64_t refresh_cycle, uint64_t refresh_interval );
 
 void wlserver_app_presented( uint32_t app_id, uint64_t frametime_ns );
 

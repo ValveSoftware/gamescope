@@ -21,6 +21,7 @@ class gamescope_xwayland_server_t;
 struct ignore;
 struct steamcompmgr_win_t;
 class MouseCursor;
+namespace gamescope { struct PresentTimingRoute; }
 
 extern LogScope xwm_log;
 
@@ -33,8 +34,8 @@ struct focus_t
 	steamcompmgr_win_t				*externalOverlayWindow = nullptr;
 	steamcompmgr_win_t				*notificationWindow = nullptr;
 	steamcompmgr_win_t				*overrideWindow = nullptr;
-	// The previous override, kept painted beneath a new one. Global focus only.
-	steamcompmgr_win_t				*overrideUnderlayWindow = nullptr;
+	// Earlier overrides still mapped beneath the current one, oldest first. Global focus only.
+	std::vector<steamcompmgr_win_t*>	overrideUnderlayWindows;
 	steamcompmgr_win_t				*overrideWindowMouse = nullptr;
 	// Same-app helpers from other processes (eg. Xalia's highlight), painted above the override.
 	std::vector<steamcompmgr_win_t*>	decorationWindows;
@@ -52,6 +53,10 @@ struct CommitDoneEntry_t
 	uint64_t winSeq;
 	uint64_t commitID;
 	uint64_t desiredPresentTime;
+	uint32_t timingFlags;
+	std::shared_ptr<gamescope::PresentTimingRoute> route;
+	uint64_t presentAnchor;
+	uint64_t presentAnchorGrid;
 	uint64_t earliestPresentTime;
 	uint64_t earliestLatchTime;
 	bool fifo;
@@ -92,7 +97,7 @@ struct xwayland_ctx_t final : public gamescope::IWaitable
 
 	std::unique_ptr<MouseCursor> cursor;
 
-	CommitDoneList_t doneCommits;
+	std::shared_ptr<CommitDoneList_t> doneCommits = std::make_shared<CommitDoneList_t>();
 
 	double accum_x = 0.0;
 	double accum_y = 0.0;
@@ -171,6 +176,7 @@ struct xwayland_ctx_t final : public gamescope::IWaitable
 		Atom gamescopeXWaylandModeControl;
 
 		Atom gamescopeFPSLimit;
+		Atom gamescopeKeyboardLayout;
 		Atom gamescopeLimiterFeedback;
 		Atom gamescopeDynamicRefresh[gamescope::GAMESCOPE_SCREEN_TYPE_COUNT];
 		Atom gamescopeLowLatency;

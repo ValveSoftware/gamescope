@@ -2,7 +2,7 @@ project(
   'gamescope',
   'c',
   'cpp',
-  meson_version: '>=0.58.0',
+  meson_version: '>=0.60.0',
   default_options: [
     'cpp_std=c++20',
     'warning_level=2',
@@ -35,6 +35,7 @@ add_project_arguments(cppc.get_supported_arguments([
   '-Wno-deprecated-volatile',
   '-Wno-ignored-qualifiers', # reshade warning
   '-Wno-missing-braces',
+  '-fno-cxx-modules', # reshade error due to a struct named module
 ]), language: 'cpp')
 
 add_project_arguments(cppc.get_supported_arguments([

@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <array>
 #include <bitset>
+#include <deque>
 #include <dlfcn.h>
 #include "vulkan_include.h"
 #include "Utils/Algorithm.h"
@@ -41,12 +42,16 @@
 #include "cs_composite_blur.h"
 #include "cs_composite_blur_cond.h"
 #include "cs_composite_rcas.h"
+#include "cs_composite_rcas_1px.h"
 #include "cs_easu.h"
 #include "cs_easu_fp16.h"
 #include "cs_gaussian_blur_horizontal.h"
 #include "cs_nis.h"
 #include "cs_nis_fp16.h"
+#include "cs_nis_hdr_linear.h"
+#include "cs_nis_hdr_linear_fp16.h"
 #include "cs_rgb_to_nv12.h"
+#include "cs_sgsr.h"
 
 #define A_CPU
 #include "shaders/ffx_a.h"
@@ -138,6 +143,8 @@ std::span<const uint64_t> GetSupportedSampleModifiers( uint32_t uDrmFormat )
 }
 
 static LogScope vk_log("vulkan");
+// Debug verbosity turns the timestamp queries on, so log_composite_timing debug is the switch.
+static LogScope composite_timing_log("composite_timing");
 
 static void vk_errorf(VkResult result, const char *fmt, ...) {
 	static char buf[1024];
@@ -526,6 +533,13 @@ bool CVulkanDevice::createDevice()
 		m_bSupportsFp16 = vulkan12Features.shaderFloat16 && features2.features.shaderInt16;
 	}
 
+	{
+		VkPhysicalDeviceProperties deviceProperties;
+		vk.GetPhysicalDeviceProperties( physDev(), &deviceProperties );
+		m_uVendorID = deviceProperties.vendorID;
+		m_uUploadAlignment = std::max<uint32_t>( 16, deviceProperties.limits.minUniformBufferOffsetAlignment );
+	}
+
 	float queuePriorities = 1.0f;
 
 	VkDeviceQueueGlobalPriorityCreateInfoEXT queueCreateInfoEXT = {
@@ -637,6 +651,7 @@ bool CVulkanDevice::createDevice()
 		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
 		.pNext = &presentIdFeatures,
 		.features = {
+			.shaderStorageImageWriteWithoutFormat = VK_TRUE,
 			.shaderInt16 = m_bSupportsFp16,
 		},
 	};
@@ -953,18 +968,29 @@ bool CVulkanDevice::createShaders()
 	SHADER(BLUR, cs_composite_blur);
 	SHADER(BLUR_COND, cs_composite_blur_cond);
 	SHADER(BLUR_FIRST_PASS, cs_gaussian_blur_horizontal);
-	SHADER(RCAS, cs_composite_rcas);
+	// The one pixel layout is only measured on Adreno, every other vendor keeps the quad swizzle.
+	if (m_uVendorID == 0x5143) /* Qualcomm */
+	{
+		SHADER(RCAS, cs_composite_rcas_1px);
+	}
+	else
+	{
+		SHADER(RCAS, cs_composite_rcas);
+	}
 	if (m_bSupportsFp16)
 	{
 		SHADER(EASU, cs_easu_fp16);
 		SHADER(NIS, cs_nis_fp16);
+		SHADER(NIS_HDR_LINEAR, cs_nis_hdr_linear_fp16);
 	}
 	else
 	{
 		SHADER(EASU, cs_easu);
 		SHADER(NIS, cs_nis);
+		SHADER(NIS_HDR_LINEAR, cs_nis_hdr_linear);
 	}
 	SHADER(RGB_TO_NV12, cs_rgb_to_nv12);
+	SHADER(SGSR, cs_sgsr);
 #undef SHADER
 
 	for (uint32_t i = 0; i < shaderInfos.size(); i++)
@@ -1194,7 +1220,9 @@ void CVulkanDevice::compileAllPipelines(std::stop_token st)
 	SHADER(RCAS, k_nMaxLayers, k_nMaxYcbcrMask_ToPreCompile, 1);
 	SHADER(EASU, 1, 1, 1);
 	SHADER(NIS, 1, 1, 1);
+	SHADER(NIS_HDR_LINEAR, 1, 1, 1);
 	SHADER(RGB_TO_NV12, 1, 1, 1);
+	SHADER(SGSR, 1, 1, 1);
 #undef SHADER
 
 	for (auto& info : pipelineInfos) {
@@ -1385,6 +1413,13 @@ uint64_t CVulkanDevice::submit( std::unique_ptr<CVulkanCmdBuffer> cmdBuffer)
 	return nextSeqNo;
 }
 
+uint64_t CVulkanDevice::completedSeqNo()
+{
+	uint64_t ulSeqNo = 0;
+	vk_check( vk.GetSemaphoreCounterValue( device(), m_scratchTimelineSemaphore, &ulSeqNo ) );
+	return ulSeqNo;
+}
+
 void CVulkanDevice::garbageCollect( void )
 {
 	uint64_t currentSeqNo;
@@ -1521,6 +1556,11 @@ void CVulkanCmdBuffer::AddSignal( std::shared_ptr<VulkanTimelineSemaphore_t> pTi
 	m_ExternalSignals.emplace_back( std::move( pTimelineSemaphore ), ulPoint );
 }
 
+void CVulkanCmdBuffer::AddReleasePoint( std::shared_ptr<gamescope::CReleaseTimelinePoint> pReleasePoint )
+{
+	m_releasePoints.emplace_back( std::move( pReleasePoint ) );
+}
+
 void CVulkanDevice::wait(uint64_t sequence, bool reset)
 {
 	if (m_submissionSeqNo == sequence)
@@ -1575,6 +1615,7 @@ void CVulkanCmdBuffer::reset()
 {
 	vk_check( m_device->vk.ResetCommandBuffer(m_cmdBuffer, 0) );
 	m_textureRefs.clear();
+	m_releasePoints.clear();
 	m_usedDescriptorSets.clear();
 	m_textureState.clear();
 
@@ -1825,9 +1866,6 @@ void CVulkanCmdBuffer::copyImage(gamescope::Rc<CVulkanTexture> src, gamescope::R
 {
 	assert(src->width() == dst->width());
 	assert(src->height() == dst->height());
-	prepareSrcImage(src.get());
-	prepareDestImage(dst.get());
-	insertBarrier();
 
 	VkImageCopy region = {
 		.srcSubresource = {
@@ -1845,7 +1883,17 @@ void CVulkanCmdBuffer::copyImage(gamescope::Rc<CVulkanTexture> src, gamescope::R
 		},
 	};
 
-	m_device->vk.CmdCopyImage(m_cmdBuffer, src->vkImage(), VK_IMAGE_LAYOUT_GENERAL, dst->vkImage(), VK_IMAGE_LAYOUT_GENERAL, 1, &region);
+	copyImageRegions(std::move(src), std::move(dst), std::span<const VkImageCopy>(&region, 1));
+}
+
+void CVulkanCmdBuffer::copyImageRegions(gamescope::Rc<CVulkanTexture> src, gamescope::Rc<CVulkanTexture> dst, std::span<const VkImageCopy> regions)
+{
+	assert(src->format() == dst->format());
+	prepareSrcImage(src.get());
+	prepareDestImage(dst.get());
+	insertBarrier();
+
+	m_device->vk.CmdCopyImage(m_cmdBuffer, src->vkImage(), VK_IMAGE_LAYOUT_GENERAL, dst->vkImage(), VK_IMAGE_LAYOUT_GENERAL, uint32_t(regions.size()), regions.data());
 
 	markDirty(dst.get());
 	m_textureRefs.emplace_back(std::move(src));
@@ -1871,6 +1919,23 @@ void CVulkanCmdBuffer::copyBufferToImage(VkBuffer buffer, VkDeviceSize offset, u
 	};
 
 	m_device->vk.CmdCopyBufferToImage(m_cmdBuffer, buffer, dst->vkImage(), VK_IMAGE_LAYOUT_GENERAL, 1, &region);
+
+	markDirty(dst.get());
+
+	m_textureRefs.emplace_back(std::move(dst));
+}
+
+void CVulkanCmdBuffer::clearImage(gamescope::Rc<CVulkanTexture> dst, const VkClearColorValue &color)
+{
+	prepareDestImage(dst.get());
+	insertBarrier();
+	VkImageSubresourceRange range = {
+		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+		.levelCount = 1,
+		.layerCount = 1,
+	};
+
+	m_device->vk.CmdClearColorImage(m_cmdBuffer, dst->vkImage(), VK_IMAGE_LAYOUT_GENERAL, &color, 1, &range);
 
 	markDirty(dst.get());
 
@@ -2163,6 +2228,12 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 		};
 
 		res = getModifierProps( &imageInfo, pDMA->modifier, &externalImageProperties );
+		if ( res == VK_ERROR_FORMAT_NOT_SUPPORTED && flags.bTransferSrc )
+		{
+			flags.bTransferSrc = false;
+			imageInfo.usage &= ~VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+			res = getModifierProps( &imageInfo, pDMA->modifier, &externalImageProperties );
+		}
 		if ( res != VK_SUCCESS && res != VK_ERROR_FORMAT_NOT_SUPPORTED ) {
 			vk_errorf( res, "getModifierProps failed" );
 			return false;
@@ -2212,25 +2283,40 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 			numPossibleModifiers = modifiers.size();
 		}
 
-		for ( size_t i = 0; i < numPossibleModifiers; i++ )
+		auto CollectModifiers = [&]() -> bool
 		{
-			uint64_t modifier = possibleModifiers[i];
+			modifiers.clear();
+			for ( size_t i = 0; i < numPossibleModifiers; i++ )
+			{
+				uint64_t modifier = possibleModifiers[i];
 
-			VkExternalImageFormatProperties externalFormatProps = {
-				.sType = VK_STRUCTURE_TYPE_EXTERNAL_IMAGE_FORMAT_PROPERTIES,
-			};
-			res = getModifierProps( &imageInfo, modifier, &externalFormatProps );
-			if ( res == VK_ERROR_FORMAT_NOT_SUPPORTED )
-				continue;
-			else if ( res != VK_SUCCESS ) {
-				vk_errorf( res, "getModifierProps failed" );
-				return false;
+				VkExternalImageFormatProperties externalFormatProps = {
+					.sType = VK_STRUCTURE_TYPE_EXTERNAL_IMAGE_FORMAT_PROPERTIES,
+				};
+				res = getModifierProps( &imageInfo, modifier, &externalFormatProps );
+				if ( res == VK_ERROR_FORMAT_NOT_SUPPORTED )
+					continue;
+				else if ( res != VK_SUCCESS ) {
+					vk_errorf( res, "getModifierProps failed" );
+					return false;
+				}
+
+				if ( !( externalFormatProps.externalMemoryProperties.externalMemoryFeatures & VK_EXTERNAL_MEMORY_FEATURE_EXPORTABLE_BIT ) )
+					continue;
+
+				modifiers.push_back( modifier );
 			}
+			return true;
+		};
 
-			if ( !( externalFormatProps.externalMemoryProperties.externalMemoryFeatures & VK_EXTERNAL_MEMORY_FEATURE_EXPORTABLE_BIT ) )
-				continue;
-
-			modifiers.push_back( modifier );
+		if ( !CollectModifiers() )
+			return false;
+		if ( modifiers.empty() && flags.bTransferSrc )
+		{
+			flags.bTransferSrc = false;
+			imageInfo.usage &= ~VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+			if ( !CollectModifiers() )
+				return false;
 		}
 
 		assert( modifiers.size() > 0 );
@@ -2250,6 +2336,20 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 
 		imageInfo.tiling = tiling = VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT;
 	}
+
+	if ( flags.bTransferSrc && tiling != VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT )
+	{
+		VkFormatProperties formatProps = {};
+		g_device.vk.GetPhysicalDeviceFormatProperties( g_device.physDev(), imageInfo.format, &formatProps );
+		const VkFormatFeatureFlags tilingFeatures = tiling == VK_IMAGE_TILING_LINEAR ? formatProps.linearTilingFeatures : formatProps.optimalTilingFeatures;
+		if ( !( tilingFeatures & VK_FORMAT_FEATURE_TRANSFER_SRC_BIT ) )
+		{
+			flags.bTransferSrc = false;
+			imageInfo.usage &= ~VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+		}
+	}
+
+	m_bTransferSrc = flags.bTransferSrc;
 
 	if ( flags.bFlippable == true && tiling != VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT )
 	{
@@ -2967,23 +3067,36 @@ bool acquire_next_image( void )
 
 static std::atomic<uint64_t> g_currentPresentWaitId = {0u};
 static std::mutex present_wait_lock;
+static std::jthread g_presentWaitThread;
+static constexpr uint64_t k_uPresentWaitShutdownId = ~0ull;
 
 extern void mangoapp_output_update( uint64_t vblanktime );
-static void present_wait_thread_func( void )
+static void present_wait_thread_func( std::stop_token stopToken )
 {
+	pthread_setname_np( pthread_self(), "gamescope-prsnt" );
 	uint64_t present_wait_id = 0;
 
-	while (true)
+	std::stop_callback stopCallback( stopToken, []
 	{
-		g_currentPresentWaitId.wait(present_wait_id);
+		std::unique_lock lock( present_wait_lock );
+		g_currentPresentWaitId = k_uPresentWaitShutdownId;
+		g_currentPresentWaitId.notify_all();
+	} );
+
+	while ( !stopToken.stop_requested() )
+	{
+		g_currentPresentWaitId.wait( present_wait_id );
 
 		// Lock to make sure swapchain destruction is waited on and that
 		// it's for this swapchain.
 		{
-			std::unique_lock lock(present_wait_lock);
+			std::unique_lock lock( present_wait_lock );
 			present_wait_id = g_currentPresentWaitId.load();
 
-			if (present_wait_id != 0)
+			if ( stopToken.stop_requested() )
+				break;
+
+			if ( present_wait_id != 0 )
 			{
 				g_device.vk.WaitForPresentKHR( g_device.device(), g_output.swapChain, present_wait_id, 1'000'000'000lu );
 				uint64_t vblanktime = get_time_in_nanos();
@@ -2992,6 +3105,15 @@ static void present_wait_thread_func( void )
 			}
 		}
 	}
+}
+
+void vulkan_present_wait_shutdown( void )
+{
+	if ( !g_presentWaitThread.joinable() )
+		return;
+
+	g_presentWaitThread.request_stop();
+	g_presentWaitThread.join();
 }
 
 void vulkan_update_swapchain_hdr_metadata( VulkanOutput_t *pOutput )
@@ -3139,20 +3261,13 @@ gamescope::OwningRc<CVulkanTexture> vulkan_create_flat_texture( uint32_t width, 
 
 	gamescope::OwningRc<CVulkanTexture> texture = new CVulkanTexture();
 	bool bRes = texture->BInit( width, height, 1u, VulkanFormatToDRM( VK_FORMAT_B8G8R8A8_UNORM ), flags );
-	assert( bRes );
+	if ( !bRes )
+		return nullptr;
 
-	auto [_dst, offset] = g_device.uploadBufferData( width * height * 4 );
-	uint8_t *dst = (uint8_t *)_dst;
-	for ( uint32_t i = 0; i < width * height * 4; i += 4 )
-	{
-		dst[i + 0] = b;
-		dst[i + 1] = g;
-		dst[i + 2] = r;
-		dst[i + 3] = a;
-	}
+	VkClearColorValue color = { .float32 = { r / 255.0f, g / 255.0f, b / 255.0f, a / 255.0f } };
 
 	auto cmdBuffer = g_device.commandBuffer();
-	cmdBuffer->copyBufferToImage(g_device.uploadBuffer(), offset, 0, texture.get());
+	cmdBuffer->clearImage(texture.get(), color);
 	g_device.submit(std::move(cmdBuffer));
 	g_device.waitIdle();
 
@@ -3532,11 +3647,26 @@ bool vulkan_make_output()
 	return true;
 }
 
-static void update_tmp_images( uint32_t width, uint32_t height )
+// scRGB needs FP16 range. PQ needs 10 bits and UNORM clamps filter overshoot below 0 before the PQ decode.
+static uint32_t tmp_image_format( GamescopeAppTextureColorspace colorspace )
+{
+	switch ( colorspace )
+	{
+		case GAMESCOPE_APP_TEXTURE_COLORSPACE_SCRGB:
+			return DRM_FORMAT_ABGR16161616F;
+		case GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ:
+			return DRM_FORMAT_ABGR2101010;
+		default:
+			return DRM_FORMAT_ARGB8888;
+	}
+}
+
+static void update_tmp_images( uint32_t width, uint32_t height, uint32_t uFormat )
 {
 	if ( g_output.tmpOutput != nullptr
 			&& width == g_output.tmpOutput->width()
-			&& height == g_output.tmpOutput->height() )
+			&& height == g_output.tmpOutput->height()
+			&& uFormat == g_output.tmpOutput->drmFormat() )
 	{
 		return;
 	}
@@ -3546,7 +3676,7 @@ static void update_tmp_images( uint32_t width, uint32_t height )
 	createFlags.bStorage = true;
 
 	g_output.tmpOutput = new CVulkanTexture();
-	bool bSuccess = g_output.tmpOutput->BInit( width, height, 1u, DRM_FORMAT_ARGB8888, createFlags, nullptr );
+	bool bSuccess = g_output.tmpOutput->BInit( width, height, 1u, uFormat, createFlags, nullptr );
 
 	if ( !bSuccess )
 	{
@@ -3636,8 +3766,7 @@ bool vulkan_init( VkInstance instance, VkSurfaceKHR surface )
 
 	if ( GetBackend()->UsesVulkanSwapchain() )
 	{
-		std::thread present_wait_thread( present_wait_thread_func );
-		present_wait_thread.detach();
+		g_presentWaitThread = std::jthread( present_wait_thread_func );
 	}
 
 	s_bInitted = true;
@@ -3651,6 +3780,7 @@ gamescope::OwningRc<CVulkanTexture> vulkan_create_texture_from_dmabuf( struct wl
 
 	CVulkanTexture::createFlags texCreateFlags;
 	texCreateFlags.bSampled = true;
+	texCreateFlags.bTransferSrc = true;
 
 	//fprintf(stderr, "pDMA->width: %d pDMA->height: %d pDMA->format: 0x%x pDMA->modifier: 0x%lx pDMA->n_planes: %d\n",
 	//	pDMA->width, pDMA->height, pDMA->format, pDMA->modifier, pDMA->n_planes);
@@ -3811,10 +3941,12 @@ struct BlitPushData_t
 			scale[i] = layer->scale;
 			offset[i] = layer->offsetPixelCenter();
 			opacity[i] = layer->opacity;
-            if (layer->isScreenSize() || (layer->filter == GamescopeUpscaleFilter::LINEAR && layer->viewConvertsToLinearAutomatically()))
+            // SGSR only exists as a pre-pass, a layer still carrying it samples as linear.
+            GamescopeUpscaleFilter eFilter = layer->filter == GamescopeUpscaleFilter::SGSR ? GamescopeUpscaleFilter::LINEAR : layer->filter;
+            if (layer->isScreenSize() || (eFilter == GamescopeUpscaleFilter::LINEAR && layer->viewConvertsToLinearAutomatically()))
                 u_shaderFilter |= ((uint32_t)GamescopeUpscaleFilter::FROM_VIEW) << (i * 4);
             else
-                u_shaderFilter |= ((uint32_t)layer->filter) << (i * 4);
+                u_shaderFilter |= ((uint32_t)eFilter) << (i * 4);
 
 			u_alphaMode |= ((uint32_t)layer->eAlphaBlendingMode) << ( i * 4 );
 
@@ -3910,10 +4042,36 @@ struct EasuPushData_t
 	uvec4_t Const1;
 	uvec4_t Const2;
 	uvec4_t Const3;
+	glm::mat3x4 ctm;
 
-	EasuPushData_t(uint32_t inputX, uint32_t inputY, uint32_t tempX, uint32_t tempY)
+	EasuPushData_t(const FrameInfo_t::Layer_t *layer, uint32_t inputX, uint32_t inputY, uint32_t tempX, uint32_t tempY)
 	{
 		FsrEasuCon(&Const0.x, &Const1.x, &Const2.x, &Const3.x, inputX, inputY, inputX, inputY, tempX, tempY);
+
+		if (layer->ctm)
+		{
+			ctm = layer->ctm->View<glm::mat3x4>();
+		}
+		else
+		{
+			ctm = glm::mat3x4
+			{
+				1, 0, 0, 0,
+				0, 1, 0, 0,
+				0, 0, 1, 0
+			};
+		}
+	}
+};
+
+struct SgsrPushData_t
+{
+	uint32_t u_width;
+	uint32_t u_height;
+
+	SgsrPushData_t(uint32_t tempX, uint32_t tempY)
+		: u_width(tempX), u_height(tempY)
+	{
 	}
 };
 
@@ -3955,10 +4113,11 @@ struct RcasPushData_t
 		{
 			const FrameInfo_t::Layer_t *layer = &frameInfo->layers.get( i );
 
-            if (i == 0 || layer->isScreenSize() || (layer->filter == GamescopeUpscaleFilter::LINEAR && layer->viewConvertsToLinearAutomatically()))
+            GamescopeUpscaleFilter eFilter = layer->filter == GamescopeUpscaleFilter::SGSR ? GamescopeUpscaleFilter::LINEAR : layer->filter;
+            if (i == 0 || layer->isScreenSize() || (eFilter == GamescopeUpscaleFilter::LINEAR && layer->viewConvertsToLinearAutomatically()))
                 u_shaderFilter |= ((uint32_t)GamescopeUpscaleFilter::FROM_VIEW) << (i * 4);
             else
-                u_shaderFilter |= ((uint32_t)layer->filter) << (i * 4);
+                u_shaderFilter |= ((uint32_t)eFilter) << (i * 4);
 
 			u_alphaMode |= ((uint32_t)layer->eAlphaBlendingMode) << ( i * 4 );
 
@@ -3996,7 +4155,7 @@ struct NisPushData_t
 {
 	NISConfig nisConfig;
 
-	NisPushData_t(uint32_t inputX, uint32_t inputY, uint32_t tempX, uint32_t tempY, float sharpness)
+	NisPushData_t(uint32_t inputX, uint32_t inputY, uint32_t tempX, uint32_t tempY, float sharpness, NISHDRMode hdrMode)
 	{
 		NVScalerUpdateConfig(
 			nisConfig, sharpness,
@@ -4005,7 +4164,8 @@ struct NisPushData_t
 			inputX, inputY,
 			0, 0,
 			tempX, tempY,
-			tempX, tempY);
+			tempX, tempY,
+			hdrMode);
 	}
 };
 #pragma pack(pop)
@@ -4089,6 +4249,180 @@ std::optional<uint64_t> vulkan_screenshot( const struct FrameInfo_t *frameInfo, 
 extern std::string g_reshade_effect;
 extern uint32_t g_reshade_technique_idx;
 
+// GPU timestamps around each composite, read back a few submits later and
+// averaged per filter so a diagnostic never stalls the queue.
+namespace
+{
+	struct CompositeTiming_t
+	{
+		static constexpr uint32_t k_uSlots = 64;
+
+		struct Pending_t
+		{
+			uint32_t uSlot;
+			const char *pszKey;
+			// Set when a middle timestamp splits the two upscale passes.
+			const char *pszKeyPre;
+			const char *pszKeyPost;
+			// A reused slot reports the previous use as available until its
+			// reset executes, so results are only read once the submit is done.
+			uint64_t ulSeqNo;
+		};
+
+		struct Accum_t
+		{
+			double flTotalNs = 0.0;
+			uint32_t uCount = 0;
+		};
+
+		VkQueryPool pool = VK_NULL_HANDLE;
+		float flPeriodNs = 0.0f;
+		uint64_t ulValidMask = ~0ull;
+		bool bUnsupported = false;
+		uint32_t uNextSlot = 0;
+		std::deque<Pending_t> pending;
+		bool bMidWritten[ k_uSlots ] = {};
+		std::unordered_map<const char *, Accum_t> accum;
+		uint64_t ulLastReportNs = 0;
+	};
+
+	CompositeTiming_t g_CompositeTiming;
+
+	const char *UpscaleFilterName( GamescopeUpscaleFilter eFilter )
+	{
+		switch ( eFilter )
+		{
+			case GamescopeUpscaleFilter::LINEAR:  return "linear";
+			case GamescopeUpscaleFilter::NEAREST: return "nearest";
+			case GamescopeUpscaleFilter::FSR:     return "fsr";
+			case GamescopeUpscaleFilter::NIS:     return "nis";
+			case GamescopeUpscaleFilter::PIXEL:   return "pixel";
+			case GamescopeUpscaleFilter::SGSR:    return "sgsr";
+			default:                              return "view";
+		}
+	}
+
+	bool CompositeTimingInit()
+	{
+		CompositeTiming_t &t = g_CompositeTiming;
+		if ( t.pool != VK_NULL_HANDLE || t.bUnsupported )
+			return t.pool != VK_NULL_HANDLE;
+
+		uint32_t uFamilyCount = 0;
+		g_device.vk.GetPhysicalDeviceQueueFamilyProperties( g_device.physDev(), &uFamilyCount, nullptr );
+		std::vector<VkQueueFamilyProperties> families( uFamilyCount );
+		g_device.vk.GetPhysicalDeviceQueueFamilyProperties( g_device.physDev(), &uFamilyCount, families.data() );
+		if ( g_device.queueFamily() >= uFamilyCount || families[ g_device.queueFamily() ].timestampValidBits == 0 )
+		{
+			composite_timing_log.errorf( "queue family %u has no timestamp support", g_device.queueFamily() );
+			t.bUnsupported = true;
+			return false;
+		}
+
+		const uint32_t uValidBits = families[ g_device.queueFamily() ].timestampValidBits;
+		t.ulValidMask = uValidBits >= 64 ? ~0ull : ( ( 1ull << uValidBits ) - 1 );
+
+		VkPhysicalDeviceProperties props;
+		g_device.vk.GetPhysicalDeviceProperties( g_device.physDev(), &props );
+		t.flPeriodNs = props.limits.timestampPeriod;
+
+		VkQueryPoolCreateInfo createInfo =
+		{
+			.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
+			.queryType = VK_QUERY_TYPE_TIMESTAMP,
+			.queryCount = CompositeTiming_t::k_uSlots * 3,
+		};
+		VkResult res = g_device.vk.CreateQueryPool( g_device.device(), &createInfo, nullptr, &t.pool );
+		if ( res != VK_SUCCESS )
+		{
+			vk_errorf( res, "composite_timing: vkCreateQueryPool failed" );
+			t.bUnsupported = true;
+			return false;
+		}
+		return true;
+	}
+
+	void CompositeTimingDrain()
+	{
+		CompositeTiming_t &t = g_CompositeTiming;
+		while ( !t.pending.empty() )
+		{
+			const CompositeTiming_t::Pending_t &p = t.pending.front();
+			if ( p.ulSeqNo == 0 || p.ulSeqNo > g_device.completedSeqNo() )
+				break;
+			// Value then availability per query, 64-bit, begin/mid/end.
+			const uint32_t uCount = p.pszKeyPre ? 3 : 2;
+			const uint32_t uEnd = p.pszKeyPre ? 2 : 1;
+			uint64_t ulResults[ 6 ] = {};
+			VkResult res = g_device.vk.GetQueryPoolResults( g_device.device(), t.pool, p.uSlot * 3, uCount, sizeof( ulResults ), ulResults, sizeof( uint64_t ) * 2,
+				VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT );
+			if ( res != VK_SUCCESS || !ulResults[ 1 ] || !ulResults[ uEnd * 2 + 1 ] )
+				break;
+
+			auto Add = [&]( const char *pszKey, uint64_t ulFrom, uint64_t ulTo )
+			{
+				CompositeTiming_t::Accum_t &a = t.accum[ pszKey ];
+				a.flTotalNs += double( ( ulTo - ulFrom ) & t.ulValidMask ) * t.flPeriodNs;
+				a.uCount++;
+			};
+			Add( p.pszKey, ulResults[ 0 ], ulResults[ uEnd * 2 ] );
+			if ( p.pszKeyPre )
+			{
+				Add( p.pszKeyPre, ulResults[ 0 ], ulResults[ 2 ] );
+				Add( p.pszKeyPost, ulResults[ 2 ], ulResults[ 4 ] );
+			}
+			t.pending.pop_front();
+		}
+
+		const uint64_t ulNow = get_time_in_nanos();
+		if ( ulNow - t.ulLastReportNs < 2'000'000'000ull )
+			return;
+		t.ulLastReportNs = ulNow;
+		for ( auto &[ pszKey, a ] : t.accum )
+		{
+			if ( a.uCount )
+				composite_timing_log.debugf( "%s %.0f us avg over %u", pszKey, a.flTotalNs / a.uCount / 1000.0, a.uCount );
+			a = {};
+		}
+	}
+
+	// Returns the slot whose end timestamp the caller writes before submit.
+	std::optional<uint32_t> CompositeTimingBegin( CVulkanCmdBuffer *pCmdBuffer )
+	{
+		if ( !composite_timing_log.Enabled( LOG_DEBUG ) || !CompositeTimingInit() )
+			return std::nullopt;
+
+		CompositeTiming_t &t = g_CompositeTiming;
+		CompositeTimingDrain();
+		if ( t.pending.size() >= CompositeTiming_t::k_uSlots )
+			return std::nullopt;
+
+		const uint32_t uSlot = t.uNextSlot;
+		t.uNextSlot = ( t.uNextSlot + 1 ) % CompositeTiming_t::k_uSlots;
+		t.bMidWritten[ uSlot ] = false;
+		g_device.vk.CmdResetQueryPool( pCmdBuffer->rawBuffer(), t.pool, uSlot * 3, 3 );
+		// Bottom of pipe so the first timestamp lands after earlier submissions drain.
+		g_device.vk.CmdWriteTimestamp( pCmdBuffer->rawBuffer(), VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, t.pool, uSlot * 3 );
+		return uSlot;
+	}
+
+	// Between the upscale pre-pass and the composite that follows it.
+	void CompositeTimingMid( CVulkanCmdBuffer *pCmdBuffer, uint32_t uSlot )
+	{
+		CompositeTiming_t &t = g_CompositeTiming;
+		g_device.vk.CmdWriteTimestamp( pCmdBuffer->rawBuffer(), VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, t.pool, uSlot * 3 + 1 );
+		t.bMidWritten[ uSlot ] = true;
+	}
+
+	void CompositeTimingEnd( CVulkanCmdBuffer *pCmdBuffer, uint32_t uSlot, const char *pszKey, const char *pszKeyPre, const char *pszKeyPost )
+	{
+		CompositeTiming_t &t = g_CompositeTiming;
+		const bool bMid = t.bMidWritten[ uSlot ];
+		g_device.vk.CmdWriteTimestamp( pCmdBuffer->rawBuffer(), VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, t.pool, uSlot * 3 + ( bMid ? 2 : 1 ) );
+		t.pending.push_back( { uSlot, pszKey, bMid ? pszKeyPre : nullptr, bMid ? pszKeyPost : nullptr, 0 } );
+	}
+}
+
 ReshadeEffectPipeline *g_pLastReshadeEffect = nullptr;
 
 std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamescope::Rc<CVulkanTexture> pPipewireTexture, bool partial, gamescope::Rc<CVulkanTexture> pOutputOverride, bool increment, std::unique_ptr<CVulkanCmdBuffer> pInCommandBuffer )
@@ -4139,12 +4473,25 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 	// Overrides (screenshots, upscale cache) are logical-sized, so never rotated.
 	const uint32_t uOutputRotation = pOutputOverride ? 0u : g_uOutputRotation;
 
+	// The pre-emptive upscale is the only caller that brings its own command buffer.
+	const bool bPreemptiveUpscale = pOutputOverride != nullptr && pInCommandBuffer != nullptr;
 	auto cmdBuffer = pInCommandBuffer ? std::move( pInCommandBuffer ) : g_device.commandBuffer();
+
+	// Subsurfaces and popups are fenced by the client's acquire point. Wait on it on
+	// the GPU rather than on this thread to avoid stalling the compositor.
+	for ( int i = 0; i < frameInfo->layers.count(); i++ )
+	{
+		const FrameInfo_t::Layer_t &layer = frameInfo->layers.get( i );
+		if ( layer.acquirePoint )
+			cmdBuffer->AddDependency( layer.acquirePoint->GetTimeline()->ToVkSemaphore(), layer.acquirePoint->GetPoint() );
+	}
+
+	const std::optional<uint32_t> oTimingSlot = CompositeTimingBegin( cmdBuffer.get() );
 
 	for (uint32_t i = 0; i < EOTF_Count; i++)
 		cmdBuffer->bindColorMgmtLuts(i, frameInfo->shaperLut[i], frameInfo->lut3D[i]);
 
-	if ( frameInfo->useFSRLayer0 )
+	if ( frameInfo->useFSRLayer0 || frameInfo->useSGSRLayer0 )
 	{
 		uint32_t inputX = frameInfo->layers.get( 0 ).tex->width();
 		uint32_t inputY = frameInfo->layers.get( 0 ).tex->height();
@@ -4152,19 +4499,29 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 		uint32_t tempX = frameInfo->layers.get( 0 ).integerWidth();
 		uint32_t tempY = frameInfo->layers.get( 0 ).integerHeight();
 
-		update_tmp_images(tempX, tempY);
+		// EASU leaves HDR as PQ, so 10 bits holds it at the bandwidth of 8.
+		update_tmp_images(tempX, tempY, ColorspaceIsHDR( frameInfo->layers.get( 0 ).colorspace ) ? DRM_FORMAT_ABGR2101010 : DRM_FORMAT_ARGB8888);
 
-		cmdBuffer->bindPipeline(g_device.pipeline(SHADER_TYPE_EASU));
+		if ( frameInfo->useSGSRLayer0 )
+			cmdBuffer->bindPipeline(g_device.pipeline(SHADER_TYPE_SGSR));
+		else
+			cmdBuffer->bindPipeline(g_device.pipeline(SHADER_TYPE_EASU, 1, 0, 0, frameInfo->layers.get( 0 ).colorspace));
 		cmdBuffer->bindTarget(g_output.tmpOutput);
 		cmdBuffer->bindTexture(0, frameInfo->layers.get( 0 ).tex);
 		cmdBuffer->setTextureSrgb(0, true);
 		cmdBuffer->setSamplerUnnormalized(0, false);
 		cmdBuffer->setSamplerNearest(0, false);
-		cmdBuffer->uploadConstants<EasuPushData_t>(inputX, inputY, tempX, tempY);
+		if ( frameInfo->useSGSRLayer0 )
+			cmdBuffer->uploadConstants<SgsrPushData_t>(tempX, tempY);
+		else
+			cmdBuffer->uploadConstants<EasuPushData_t>(&frameInfo->layers.get( 0 ), inputX, inputY, tempX, tempY);
 
 		int pixelsPerGroup = 16;
 
 		cmdBuffer->dispatch(div_roundup(tempX, pixelsPerGroup), div_roundup(tempY, pixelsPerGroup));
+
+		if ( oTimingSlot )
+			CompositeTimingMid( cmdBuffer.get(), *oTimingSlot );
 
 		cmdBuffer->bindPipeline(g_device.pipeline(SHADER_TYPE_RCAS, frameInfo->layers.count(), frameInfo->ycbcrMask() & ~1, 0u, frameInfo->colorspaceMask(), outputTF ));
 		bind_all_layers(cmdBuffer.get(), frameInfo);
@@ -4173,7 +4530,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 		cmdBuffer->setSamplerUnnormalized(0, false);
 		cmdBuffer->setSamplerNearest(0, false);
 		cmdBuffer->bindTarget(compositeImage);
-		cmdBuffer->uploadConstants<RcasPushData_t>(frameInfo, g_upscaleFilterSharpness / 10.0f, uOutputRotation);
+		cmdBuffer->uploadConstants<RcasPushData_t>(frameInfo, frameInfo->nUpscaleSharpness / 10.0f, uOutputRotation);
 
 		cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup));
 	}
@@ -4185,11 +4542,14 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 		uint32_t tempX = frameInfo->layers.get( 0 ).integerWidth();
 		uint32_t tempY = frameInfo->layers.get( 0 ).integerHeight();
 
-		update_tmp_images(tempX, tempY);
+		update_tmp_images(tempX, tempY, tmp_image_format(frameInfo->layers.get( 0 ).colorspace));
 
-		float nisSharpness = (20 - g_upscaleFilterSharpness) / 20.0f;
+		float nisSharpness = (20 - frameInfo->nUpscaleSharpness) / 20.0f;
 
-		cmdBuffer->bindPipeline(g_device.pipeline(SHADER_TYPE_NIS));
+		// The SDR luma ramp bottoms out at 0.9, which is 72 nits in scRGB.
+		const bool bNisLinearHdr = frameInfo->layers.get( 0 ).colorspace == GAMESCOPE_APP_TEXTURE_COLORSPACE_SCRGB;
+
+		cmdBuffer->bindPipeline(g_device.pipeline(bNisLinearHdr ? SHADER_TYPE_NIS_HDR_LINEAR : SHADER_TYPE_NIS));
 		cmdBuffer->bindTarget(g_output.tmpOutput);
 		cmdBuffer->bindTexture(0, frameInfo->layers.get( 0 ).tex);
 		cmdBuffer->setTextureSrgb(0, true);
@@ -4201,7 +4561,8 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 		cmdBuffer->bindTexture(VKR_NIS_COEF_USM_SLOT, g_output.nisUsmImage);
 		cmdBuffer->setSamplerUnnormalized(VKR_NIS_COEF_USM_SLOT, false);
 		cmdBuffer->setSamplerNearest(VKR_NIS_COEF_USM_SLOT, false);
-		cmdBuffer->uploadConstants<NisPushData_t>(inputX, inputY, tempX, tempY, nisSharpness);
+		// NISHDRMode{} is None, which X11's None macro hides.
+		cmdBuffer->uploadConstants<NisPushData_t>(inputX, inputY, tempX, tempY, nisSharpness, bNisLinearHdr ? NISHDRMode::Linear : NISHDRMode{});
 
 		int pixelsPerGroupX = 32;
 		int pixelsPerGroupY = 24;
@@ -4224,14 +4585,18 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 	}
 	else if ( frameInfo->blurLayer0 )
 	{
-		update_tmp_images(currentOutputWidth, currentOutputHeight);
+		update_tmp_images(currentOutputWidth, currentOutputHeight, tmp_image_format(frameInfo->layers.get( 0 ).colorspace));
 
 		ShaderType type = SHADER_TYPE_BLUR_FIRST_PASS;
 
 		uint32_t blur_layer_count = 1;
 		// Also blur the override on top if we have one.
-		if (frameInfo->layers.count() >= 2 && frameInfo->layers.get( 1 ).zpos == g_zposOverride)
-			blur_layer_count++;
+		for ( uint32_t i = 1; i < (uint32_t)frameInfo->layers.count(); i++ )
+		{
+			if ( frameInfo->layers.get( i ).zpos > (int)g_zposOverride )
+				break;
+			blur_layer_count = i + 1;
+		}
 
 		cmdBuffer->bindPipeline(g_device.pipeline(type, blur_layer_count, frameInfo->ycbcrMask() & 0x3u, 0, frameInfo->colorspaceMask(), outputTF ));
 		cmdBuffer->bindTarget(g_output.tmpOutput);
@@ -4320,7 +4685,34 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 		}
 	}
 
+	if ( oTimingSlot )
+	{
+		// Keys are stable buffers so the accumulator can hash the pointer.
+		static char szKeys[ 3 ][ 2 ][ 8 ][ 32 ];
+		GamescopeUpscaleFilter eFilter = frameInfo->layers.count() ? frameInfo->layers.get( 0 ).filter : GamescopeUpscaleFilter::LINEAR;
+		// Label the pass that ran, including HDR fallback and cached frames.
+		if ( frameInfo->useSGSRLayer0 )
+			eFilter = GamescopeUpscaleFilter::SGSR;
+		else if ( frameInfo->useFSRLayer0 )
+			eFilter = GamescopeUpscaleFilter::FSR;
+		else if ( frameInfo->useNISLayer0 )
+			eFilter = GamescopeUpscaleFilter::NIS;
+		else if ( UpscaleFilterUsesSharpness( eFilter ) )
+			eFilter = GamescopeUpscaleFilter::LINEAR;
+		const uint32_t uFilter = std::min<uint32_t>( uint32_t( eFilter ), 7u );
+		const char *pszMode = bPreemptiveUpscale ? "preupscale" : "composite";
+		char *pszKey = szKeys[ 0 ][ bPreemptiveUpscale ][ uFilter ];
+		char *pszKeyPre = szKeys[ 1 ][ bPreemptiveUpscale ][ uFilter ];
+		char *pszKeyPost = szKeys[ 2 ][ bPreemptiveUpscale ][ uFilter ];
+		snprintf( pszKey, sizeof( szKeys[ 0 ][ 0 ][ 0 ] ), "%s %s", pszMode, UpscaleFilterName( eFilter ) );
+		snprintf( pszKeyPre, sizeof( szKeys[ 0 ][ 0 ][ 0 ] ), "%s %s pre-pass", pszMode, UpscaleFilterName( eFilter ) );
+		snprintf( pszKeyPost, sizeof( szKeys[ 0 ][ 0 ][ 0 ] ), "%s %s rcas", pszMode, UpscaleFilterName( eFilter ) );
+		CompositeTimingEnd( cmdBuffer.get(), *oTimingSlot, pszKey, pszKeyPre, pszKeyPost );
+	}
+
 	uint64_t sequence = g_device.submit(std::move(cmdBuffer));
+	if ( oTimingSlot )
+		g_CompositeTiming.pending.back().ulSeqNo = sequence;
 
 	if ( !GetBackend()->UsesVulkanSwapchain() && pOutputOverride == nullptr && increment )
 	{
@@ -4345,20 +4737,21 @@ bool vulkan_has_drm_props()
 	return false;
 }
 
-bool vulkan_has_drm_modifiers_for_features(VkFormat format, VkFormatFeatureFlags features)
+bool vulkan_format_supports_features(VkFormat format, VkFormatFeatureFlags features)
 {
-	if ( !g_device.supportsModifiers() )
-		return false;
-
 	VkDrmFormatModifierPropertiesListEXT modifierPropList = {
 		.sType = VK_STRUCTURE_TYPE_DRM_FORMAT_MODIFIER_PROPERTIES_LIST_EXT,
 	};
 	VkFormatProperties2 formatProps = {
 		.sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2,
-		.pNext = &modifierPropList,
+		.pNext = g_device.supportsModifiers() ? &modifierPropList : nullptr,
 	};
 
 	g_device.vk.GetPhysicalDeviceFormatProperties2( g_device.physDev(), format, &formatProps );
+
+	// Without modifiers, flippable images are created with optimal tiling
+	if ( !g_device.supportsModifiers() )
+		return ( formatProps.formatProperties.optimalTilingFeatures & features ) == features;
 
 	if ( modifierPropList.drmFormatModifierCount == 0 )
 		return false;
@@ -4377,6 +4770,10 @@ bool vulkan_has_drm_modifiers_for_features(VkFormat format, VkFormatFeatureFlags
 
 gamescope::Rc<CVulkanTexture> vulkan_get_last_output_image( bool partial, bool defer )
 {
+	// A remake drops the deferred images until the next composite makes them.
+	if ( g_output.outputImages.empty() )
+		return nullptr;
+
 	// Get previous image ( +2 )
 	// 1 2 3
 	//   |
@@ -4557,6 +4954,7 @@ gamescope::OwningRc<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struc
 	gamescope::OwningRc<CVulkanTexture> pTex = new CVulkanTexture();
 	CVulkanTexture::createFlags texCreateFlags;
 	texCreateFlags.bSampled = true;
+	texCreateFlags.bTransferSrc = true;
 	texCreateFlags.bTransferDst = true;
 	texCreateFlags.bFlippable = true;
 	if ( pTex->BInit( width, height, 1u, drmFormat, texCreateFlags, nullptr, 0, 0, nullptr, pBackendFb ) == false )

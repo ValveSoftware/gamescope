@@ -1,0 +1,7 @@
+#version 450
+
+#extension GL_GOOGLE_include_directive : enable
+
+#define NIS_HDR_MODE NIS_HDR_MODE_LINEAR
+
+#include "nis.h"

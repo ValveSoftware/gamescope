@@ -7,6 +7,8 @@
 #include <chrono>
 #include <atomic>
 #include <condition_variable>
+#include <filesystem>
+#include <fstream>
 
 #include <assert.h>
 #include <fcntl.h>
@@ -27,6 +29,27 @@ namespace gamescope
 {
 	ConVar<bool> vblank_debug( "vblank_debug", false, "Enable vblank debug spew to stderr." );
 
+	// Target residency of the deepest idle state a CPU may enter, zero without cpuidle.
+	static uint64_t GetDeepestIdleResidency()
+	{
+		uint64_t ulResidency = 0;
+		std::error_code ec;
+		for ( const auto &cpu : std::filesystem::directory_iterator( "/sys/devices/system/cpu", ec ) )
+		{
+			std::error_code ecStates;
+			for ( const auto &state : std::filesystem::directory_iterator( cpu.path() / "cpuidle", ecStates ) )
+			{
+				int nDisabled = 1;
+				uint64_t ulStateResidency = 0;
+				std::ifstream( state.path() / "disable" ) >> nDisabled;
+				std::ifstream( state.path() / "residency" ) >> ulStateResidency;
+				if ( !nDisabled )
+					ulResidency = std::max( ulResidency, ulStateResidency * 1'000 );
+			}
+		}
+		return ulResidency;
+	}
+
 	CVBlankTimer::CVBlankTimer()
 	{
 		m_ulTargetVBlank = get_time_in_nanos();
@@ -37,6 +60,8 @@ namespace gamescope
 			// Majority of backends fall down this optimal
 			// timerfd path, vs nudge thread.
 			g_VBlankLog.infof( "Using timerfd." );
+
+			m_ulPreWakeLead = GetDeepestIdleResidency();
 		}
 		else
 		{
@@ -82,19 +107,6 @@ namespace gamescope
 		return m_ulLastVBlank;
 	}
 
-	uint64_t CVBlankTimer::GetNextVBlank( uint64_t ulOffset ) const
-	{
-		const uint64_t ulIntervalNSecs = mHzToRefreshCycle( GetRefresh() );
-		const uint64_t ulNow = get_time_in_nanos();
-
-		uint64_t ulTargetPoint = GetLastVBlank() + ulIntervalNSecs - ulOffset;
-
-		while ( ulTargetPoint < ulNow )
-			ulTargetPoint += ulIntervalNSecs;
-
-		return ulTargetPoint;
-	}
-
 	uint64_t CVBlankTimer::VRRWakeupOffset( uint64_t *pulDrawTime, uint64_t *pulRedZone ) const
 	{
 		uint64_t ulDrawTime = cv_adaptive_sync_uncapped ? m_ulVRRRollingMaxSubmitTime.load() : 0;
@@ -120,9 +132,17 @@ namespace gamescope
 
 	VBlankScheduleTime CVBlankTimer::CalcNextWakeupTime( bool bPreemptive )
 	{
+		std::unique_lock lock( m_ScheduleMutex );
+		return CalcNextWakeupTimeLocked( bPreemptive );
+	}
+
+	VBlankScheduleTime CVBlankTimer::CalcNextWakeupTimeLocked( bool bPreemptive )
+	{
 		const GamescopeScreenType eScreenType = GetBackend()->GetScreenType();
 
-		const int nRefreshRate = GetRefresh();
+		// SDL changes the override on focus events; use one snapshot for rate and policy.
+		const int nNestedRefresh = g_nNestedRefresh;
+		const int nRefreshRate = nNestedRefresh ? nNestedRefresh : g_nOutputRefresh;
 		const uint64_t ulRefreshInterval = mHzToRefreshCycle( nRefreshRate );
 
 		bool bVRR = GetBackend()->GetCurrentConnector() && GetBackend()->GetCurrentConnector()->IsVRRActive();
@@ -175,6 +195,8 @@ namespace gamescope
 				m_ulRollingMaxDrawTime = ulNewRollingDrawTime;
 
 			ulOffset = ulNewRollingDrawTime + ulRedZone;
+			// The wake must land after the anchoring vblank is reported, or Next() slips it a whole refresh.
+			ulOffset = std::min( ulOffset, ulRefreshInterval - std::min( ulRedZone, ulRefreshInterval / 2 ) );
 
 			if ( vblank_debug && !bPreemptive )
 				VBlankDebugSpew( ulOffset, ulDrawTime, ulRedZone );
@@ -195,15 +217,15 @@ namespace gamescope
 				VBlankDebugSpew( ulOffset, ulDrawTime, ulRedZone );
 		}
 
-		const uint64_t ulScheduledWakeupPoint = GetNextVBlank( ulOffset );
-		const uint64_t ulTargetVBlank = ulScheduledWakeupPoint + ulOffset;
-
-		VBlankScheduleTime schedule =
+		return VBlank::Next(
 		{
-			.ulTargetVBlank = ulTargetVBlank,
-			.ulScheduledWakeupPoint = ulScheduledWakeupPoint,
-		};
-		return schedule;
+			.ulLastVBlank = GetLastVBlank(),
+			.ulInterval = ulRefreshInterval,
+			.ulOffset = ulOffset,
+			.ulNow = get_time_in_nanos(),
+			.bVRR = bVRR,
+			.bRateOverride = GetBackend()->SupportsIndependentRefresh() && nNestedRefresh != 0,
+		}, m_LastVBlankSchedule );
 	}
 
 	std::optional<VBlankTime> CVBlankTimer::ProcessVBlank()
@@ -215,6 +237,14 @@ namespace gamescope
 			? oVBlank->schedule.ulScheduledWakeupPoint
 			: get_time_in_nanos();
 		return oVBlank;
+	}
+
+	std::optional<VBlankScheduleTime> CVBlankTimer::GetArmedSchedule()
+	{
+		std::unique_lock lock( m_ScheduleMutex );
+		if ( UsingTimerFD() && m_bArmed )
+			return m_TimerFDSchedule;
+		return std::nullopt;
 	}
 
 	void CVBlankTimer::MarkVBlank( uint64_t ulNanos, bool bReArmTimer )
@@ -272,9 +302,17 @@ namespace gamescope
 
 		if ( UsingTimerFD() )
 		{
-			m_TimerFDSchedule = CalcNextWakeupTime( bPreemptive );
+			m_TimerFDSchedule = CalcNextWakeupTimeLocked( bPreemptive );
 
-			ITimerWaitable::ArmTimer( m_TimerFDSchedule.ulScheduledWakeupPoint );
+			// VRR only delays a late flip, a fixed refresh misses the vblank.
+			const uint64_t ulWakeup = m_TimerFDSchedule.ulScheduledWakeupPoint;
+			const bool bVRR = GetBackend()->GetCurrentConnector() && GetBackend()->GetCurrentConnector()->IsVRRActive();
+			// Within the lead already reserved before vblank, so deep idle stays available for most of a frame.
+			m_bPreWake = !bVRR && m_ulPreWakeLead && m_ulPreWakeLead <= m_TimerFDSchedule.ulTargetVBlank - ulWakeup &&
+				ulWakeup > get_time_in_nanos() + m_ulPreWakeLead;
+
+			m_ulTimerFDArmedPoint = m_bPreWake ? ulWakeup - m_ulPreWakeLead : ulWakeup;
+			ITimerWaitable::ArmTimer( m_ulTimerFDArmedPoint );
 		}
 	}
 
@@ -294,11 +332,22 @@ namespace gamescope
 		{
 			std::unique_lock lock( m_ScheduleMutex );
 
-			// Disarm the timer if it was armed.
-			if ( !m_bArmed.exchange( false ) )
+			// Readiness from before another thread rearmed the timer is stale.
+			if ( !m_bArmed || get_time_in_nanos() < m_ulTimerFDArmedPoint )
 				return;
 
+			// A late pre-wake counts as the real wakeup.
+			if ( std::exchange( m_bPreWake, false ) && get_time_in_nanos() < m_TimerFDSchedule.ulScheduledWakeupPoint )
+			{
+				m_ulTimerFDArmedPoint = m_TimerFDSchedule.ulScheduledWakeupPoint;
+				ITimerWaitable::ArmTimer( m_ulTimerFDArmedPoint );
+				return;
+			}
 
+			// Disarm the timer if it was armed.
+			m_bArmed = false;
+
+			m_LastVBlankSchedule = m_TimerFDSchedule;
 			m_PendingVBlank = VBlankTime
 			{
 				.schedule = m_TimerFDSchedule,
@@ -352,8 +401,28 @@ namespace gamescope
 				return;
 			}
 
-			gpuvis_trace_printf( "got vblank" );
-			m_PendingVBlank = time;
+			{
+				std::unique_lock lock( m_ScheduleMutex );
+				const bool bVRR = GetBackend()->GetCurrentConnector() && GetBackend()->GetCurrentConnector()->IsVRRActive();
+				const int nNestedRefresh = g_nNestedRefresh;
+				const uint64_t ulTargetFloor = VBlank::TargetFloor( m_LastVBlankSchedule,
+				{
+					.ulInterval = mHzToRefreshCycle( nNestedRefresh ? nNestedRefresh : g_nOutputRefresh ),
+					.bVRR = bVRR,
+					.bRateOverride = GetBackend()->SupportsIndependentRefresh() && nNestedRefresh != 0,
+				} );
+				// A feedback rearm can start FrameSync before the previous nudge is read.
+				if ( time.schedule.ulTargetVBlank > ulTargetFloor )
+				{
+					m_LastVBlankSchedule = time.schedule;
+					gpuvis_trace_printf( "got vblank" );
+					m_PendingVBlank = time;
+					return;
+				}
+			}
+
+			gpuvis_trace_printf( "Ignoring duplicate vblank... Pre-emptively re-arming." );
+			ArmNextVBlank( true );
 		}
 	}
 

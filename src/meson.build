@@ -22,6 +22,7 @@ sdl2_dep = dependency('SDL2', required: get_option('sdl2_backend'))
 avif_dep = dependency('libavif', version: '>=1.0.0', required: get_option('avif_screenshots'))
 pixman_dep = dependency('pixman-1')
 udev_dep = dependency('libudev')
+systemd_dep = dependency('libsystemd', required: false)
 
 wlroots_dep = dependency(
   'wlroots-0.20',
@@ -32,7 +33,7 @@ wlroots_dep = dependency(
 
 displayinfo_dep = dependency(
   'libdisplay-info',
-  version: ['>= 0.0.0', '< 0.5.0'],
+  version: ['>= 0.2.0', '< 0.5.0'],
   fallback: 'libdisplay-info',
   default_options: ['default_library=static'],
 )
@@ -63,12 +64,16 @@ shader_src = [
   'shaders/cs_composite_blur.comp',
   'shaders/cs_composite_blur_cond.comp',
   'shaders/cs_composite_rcas.comp',
+  'shaders/cs_composite_rcas_1px.comp',
   'shaders/cs_easu.comp',
   'shaders/cs_easu_fp16.comp',
   'shaders/cs_gaussian_blur_horizontal.comp',
   'shaders/cs_nis.comp',
   'shaders/cs_nis_fp16.comp',
+  'shaders/cs_nis_hdr_linear.comp',
+  'shaders/cs_nis_hdr_linear_fp16.comp',
   'shaders/cs_rgb_to_nv12.comp',
+  'shaders/cs_sgsr.comp',
 ]
 
 spirv_shaders = glsl_generator.process(shader_src)
@@ -109,6 +114,7 @@ src = [
   'color_helpers.cpp',
   'main.cpp',
   'edid.cpp',
+  'mode_list_file.cpp',
   'wlserver.cpp',
   'vblankmanager.cpp',
   'rendervulkan.cpp',
@@ -145,6 +151,7 @@ if sdl2_dep.found()
   src += 'Backends/SDLBackend.cpp'
 endif
 
+gamescope_cpp_args += '-DHAVE_SYSTEMD=@0@'.format(systemd_dep.found().to_int())
 gamescope_cpp_args += '-DHAVE_DRM=@0@'.format(drm_dep.found().to_int())
 gamescope_cpp_args += '-DHAVE_SDL2=@0@'.format(sdl2_dep.found().to_int())
 gamescope_cpp_args += '-DHAVE_AVIF=@0@'.format(avif_dep.found().to_int())
@@ -158,6 +165,10 @@ src += protocols_client_src
 
 if pipewire_dep.found()
   src += 'pipewire.cpp'
+endif
+
+if systemd_dep.found()
+  src += 'logind_sleep.cpp'
 endif
 
 if openvr_dep.found()
@@ -197,7 +208,7 @@ gamescope_version = configure_file(
       xkbcommon, thread_dep, sdl2_dep, wlroots_dep,
       vulkan_dep, liftoff_dep, dep_xtst, dep_xmu, cap_dep, epoll_dep, pipewire_dep, librt_dep,
       stb_dep, displayinfo_dep, openvr_dep, dep_xcursor, avif_dep, dep_xi,
-      libdecor_dep, eis_dep, luajit_dep, libinput_dep, pixman_dep, udev_dep,
+      libdecor_dep, eis_dep, luajit_dep, libinput_dep, pixman_dep, udev_dep, systemd_dep,
     ],
     install: true,
     cpp_args: gamescope_cpp_args,
@@ -222,7 +233,7 @@ executable('gamescope_color_microbench', ['color_bench.cpp', 'color_helpers.cpp'
 
 executable('gamescope_color_tests', ['color_tests.cpp', 'color_helpers.cpp'], gamescope_core_src, gamescope_version, dependencies:[glm_dep, cap_dep])
 
-executable('gamescopectl', ['Apps/gamescopectl.cpp'], gamescope_core_src, gamescope_version, protocols_client_src, dependencies: [dep_wayland, cap_dep], install:true )
+executable('gamescopectl', ['Apps/gamescopectl.cpp'], gamescope_core_src, gamescope_version, protocols_client_src, dependencies: [dep_wayland, cap_dep], install: true, cpp_args: ['-Werror=switch-enum'])
 
 executable('gamescope-type', ['Apps/gamescope_type.c'], protocols_client_src, dependencies: [dep_wayland, cap_dep], install:true )
 

@@ -41,6 +41,7 @@ meson install -C build/ --skip-subprojects
 
 * **Super + F** : Toggle fullscreen
 * **Super + N** : Toggle nearest neighbour filtering
+* **Super + B** : Toggle bilinear filtering
 * **Super + U** : Toggle FSR upscaling
 * **Super + Y** : Toggle NIS upscaling
 * **Super + I** : Increase FSR sharpness by 1
@@ -73,6 +74,7 @@ See `gamescope --help` for a full list of options.
 * `-o`: set a frame-rate limit for the game when unfocused. Specified in frames per second. Defaults to unlimited.
 * `-F fsr`: use AMD FidelityFX™ Super Resolution 1.0 for upscaling
 * `-F nis`: use NVIDIA Image Scaling v1.0.3 for upscaling
+* `-F sgsr`: use Snapdragon™ Game Super Resolution 1 with RCAS sharpening for upscaling
 * `-S integer`: use integer scaling.
 * `-S stretch`: use stretch scaling, the game will fill the window. (e.g. 4:3 to 16:9)
 * `-b`: create a border-less window.

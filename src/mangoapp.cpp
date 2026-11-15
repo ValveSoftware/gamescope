@@ -2,6 +2,7 @@
 #include <unistd.h>
 #include <sys/msg.h>
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cstring>
 #include <memory>
@@ -16,6 +17,7 @@
 
 static bool inited = false;
 static int msgid = 0;
+std::atomic<uint32_t> g_uScanoutRefreshmHz = 0;
 static std::mutex s_SnapshotMutex;
 static std::unordered_map<uint32_t, MangoappSnapshot_t> s_ConnectorSnapshots;
 extern bool g_bAppWantsHDRCached;
@@ -41,6 +43,9 @@ struct mangoapp_msg_v1 {
     bool bAppWantsHDR : 1;
     bool bSteamFocused : 1;
     char engineName[40];
+    uint8_t upscaler; // GamescopeUpscaleFilter that produced the frame, LINEAR when none did
+    uint8_t wantedUpscaler; // GamescopeUpscaleFilter the user selected
+    uint32_t scanoutRefreshmHz; // refreshes the panel actually scanned out, follows VRR, 0 when unknown
 
     // WARNING: Always ADD fields, never remove or repurpose fields
 } __attribute__((packed));
@@ -194,8 +199,9 @@ void mangoapp_update( uint64_t visible_frametime, uint64_t app_frametime_ns, uin
     MangoappSnapshot_t snapshot;
     if ( uMsgType == k_uMangoappLegacyMsgType )
     {
-        snapshot.bFSRActive = g_bFSRActive;
-        snapshot.uFSRSharpness = (uint8_t) g_upscaleFilterSharpness;
+        snapshot.eActiveUpscaler = g_eActiveUpscaler;
+        snapshot.eWantedUpscaler = g_eWantedUpscaler;
+        snapshot.uFSRSharpness = (uint8_t) g_nActiveUpscaleSharpness;
         snapshot.nPid = focusWindow_pid;
         snapshot.uOutputWidth = g_nOutputWidth;
         snapshot.uOutputHeight = g_nOutputHeight;
@@ -219,12 +225,15 @@ void mangoapp_update( uint64_t visible_frametime, uint64_t app_frametime_ns, uin
     msg.visible_frametime_ns = visible_frametime;
     msg.app_frametime_ns = app_frametime_ns;
     msg.latency_ns = latency_ns;
-    msg.fsrUpscale = snapshot.bFSRActive;
+    msg.fsrUpscale = snapshot.eActiveUpscaler == GamescopeUpscaleFilter::FSR;
+    msg.upscaler = uint8_t( snapshot.eActiveUpscaler );
+    msg.wantedUpscaler = uint8_t( snapshot.eWantedUpscaler );
     msg.fsrSharpness = snapshot.uFSRSharpness;
     msg.pid = snapshot.nPid;
     msg.outputWidth = snapshot.uOutputWidth;
     msg.outputHeight = snapshot.uOutputHeight;
     msg.displayRefresh = (uint16_t) gamescope::ConvertmHzToHz( snapshot.nOutputRefreshmHz );
+    msg.scanoutRefreshmHz = g_uScanoutRefreshmHz;
     msg.bAppWantsHDR = snapshot.bAppWantsHDR;
     msg.bSteamFocused = snapshot.bSteamFocused;
     if (snapshot.pEngineName)

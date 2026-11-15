@@ -154,13 +154,6 @@ namespace gamescope
         }
     };
 
-    struct BackendMode
-    {
-        uint32_t uWidth;
-        uint32_t uHeight;
-        uint32_t uRefresh; // Hz
-    };
-
     struct BackendPresentFeedback
     {
     public:
@@ -213,6 +206,9 @@ namespace gamescope
         virtual BackendPresentFeedback& PresentationFeedback() = 0;
 
         virtual uint64_t GetVirtualConnectorKey() const = 0;
+
+        // A stand-in connector with no display behind it, e.g. the DRM headless virtual screen.
+        virtual bool IsHeadless() const { return false; }
 
         virtual INestedHints *GetNestedHints() = 0;
 
@@ -373,6 +369,25 @@ namespace gamescope
 
         virtual bool SupportsExplicitSync() const = 0;
 
+        virtual bool SupportsScreenSleep() const
+        {
+            return false;
+        }
+
+        virtual void SleepScreen( gamescope::GamescopeScreenType eType, bool bSleep )
+        {
+        }
+
+        virtual bool ScreenAsleep( gamescope::GamescopeScreenType eType )
+        {
+            return false;
+        }
+
+        virtual bool WaitForScreenAsleep( gamescope::GamescopeScreenType eType, uint32_t uTimeoutMs )
+        {
+            return false;
+        }
+
         // Dumb helper we should remove to support multi display someday.
         gamescope::GamescopeScreenType GetScreenType()
         {
@@ -391,6 +406,8 @@ namespace gamescope
         virtual void HackUpdatePatchedEdid() = 0;
 
         virtual bool NeedsFrameSync() const = 0;
+        // Desktop-nested backends can pace a requested rate independently of host scanout.
+        virtual bool SupportsIndependentRefresh() const = 0;
 
         virtual TouchClickMode GetTouchClickMode() = 0;
 
@@ -430,6 +447,7 @@ namespace gamescope
         virtual void HackUpdatePatchedEdid() override {}
 
         virtual bool NeedsFrameSync() const override;
+        virtual bool SupportsIndependentRefresh() const override { return false; }
 
         virtual TouchClickMode GetTouchClickMode() override;
 

@@ -239,6 +239,43 @@ namespace gamescope
             return m_pChild->SupportsExplicitSync();
 		}
 
+		virtual bool SupportsScreenSleep() const override
+		{
+			// Doesn't need to be 'initted' for this check.
+			return m_pChild->SupportsScreenSleep();
+		}
+
+		virtual void SleepScreen( gamescope::GamescopeScreenType eType, bool bSleep ) override
+		{
+			{
+				std::shared_lock lock{ m_mutInit };
+				if ( m_bInittedChild )
+					return m_pChild->SleepScreen( eType, bSleep );
+			}
+		}
+
+		virtual bool ScreenAsleep( gamescope::GamescopeScreenType eType ) override
+		{
+			{
+				std::shared_lock lock{ m_mutInit };
+				if ( m_bInittedChild )
+					return m_pChild->ScreenAsleep( eType );
+			}
+
+			return false;
+		}
+
+		virtual bool WaitForScreenAsleep( gamescope::GamescopeScreenType eType, uint32_t uTimeoutMs ) override
+		{
+			{
+				std::shared_lock lock{ m_mutInit };
+				if ( m_bInittedChild )
+					return m_pChild->WaitForScreenAsleep( eType, uTimeoutMs );
+			}
+
+			return false;
+		}
+
 		virtual bool IsPaused() const override
 		{
             {
@@ -298,6 +335,11 @@ namespace gamescope
         {
             // Deferred backends do not support frame sync.
             return false;
+        }
+
+        virtual bool SupportsIndependentRefresh() const override
+        {
+            return m_pChild->SupportsIndependentRefresh();
         }
 
         virtual TouchClickMode GetTouchClickMode() override
