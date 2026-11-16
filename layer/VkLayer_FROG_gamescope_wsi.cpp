@@ -17,6 +17,7 @@
 #include <cstdio>
 #include <cstring>
 #include <memory>
+#include <mutex>
 #include <utility>
 #include <tuple>
 #include <vector>
@@ -566,6 +567,10 @@ namespace GamescopeWSILayer {
   };
   static vkroots::ObjectMap<VkInstance, GamescopeInstanceData> gamescopeInstances;
 
+  // One entry per X11 surface, across all instances.
+  static std::mutex gamescopeSurfaceWindowsMutex;
+  static std::vector<std::pair<xcb_connection_t*, xcb_window_t>> gamescopeSurfaceWindows;
+
   struct GamescopeSurfaceData {
     VkInstance instance;
     wl_display *display;
@@ -691,6 +696,22 @@ namespace GamescopeWSILayer {
   #endif
           return false;
         }
+      }
+
+      // Our frames replace the whole toplevel, hiding the client's other surfaces in it.
+      std::vector<xcb_window_t> otherWindows;
+      if (!hdrColorspace) {
+        std::scoped_lock lock(gamescopeSurfaceWindowsMutex);
+        for (const auto& [otherConnection, otherWindow] : gamescopeSurfaceWindows) {
+          if (otherConnection == connection && otherWindow != window)
+            otherWindows.push_back(otherWindow);
+        }
+      }
+      if (xcb::anyWindowInToplevel(connection, std::move(otherWindows), *toplevelWindow)) {
+#if GAMESCOPE_WSI_BYPASS_DEBUG
+        fprintf(stderr, "[Gamescope WSI] Not bypassing: window 0x%x shares its toplevel with another surface.\n", window);
+#endif
+        return false;
       }
 
       // I want to add more checks wrt. composite redirects and such here,
@@ -1312,6 +1333,12 @@ namespace GamescopeWSILayer {
         state.emplace(std::move(*entry));
         gamescopeSurfaces.erase(surface);
       }
+      if (state) {
+        std::scoped_lock lock(gamescopeSurfaceWindowsMutex);
+        auto entry = std::find(gamescopeSurfaceWindows.begin(), gamescopeSurfaceWindows.end(), std::pair(state->connection, state->window));
+        if (entry != gamescopeSurfaceWindows.end())
+          gamescopeSurfaceWindows.erase(entry);
+      }
       if (state)
         pDispatch.DestroySurfaceKHR(instance, state->fallbackSurface, pAllocator);
       pDispatch.DestroySurfaceKHR(instance, surface, pAllocator);
@@ -1464,6 +1491,11 @@ namespace GamescopeWSILayer {
       }
       gamescopeSurface->waylandObjects = std::move(waylandObjects);
       *pSurface = surface;
+
+      {
+        std::scoped_lock lock(gamescopeSurfaceWindowsMutex);
+        gamescopeSurfaceWindows.emplace_back(connection, window);
+      }
 
       DumpGamescopeSurfaceState(gamescopeInstance, gamescopeSurface);
 
