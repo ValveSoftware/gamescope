@@ -2,8 +2,10 @@
 
 #include <X11/Xlib-xcb.h>
 #include <xcb/composite.h>
+#include <algorithm>
 #include <cstdio>
 #include <optional>
+#include <vector>
 
 namespace xcb {
 
@@ -129,6 +131,26 @@ namespace xcb {
 
       window = reply->parent;
     }
+  }
+
+  // Whether any of these windows is the toplevel or somewhere inside it.
+  static bool anyWindowInToplevel(xcb_connection_t* connection, std::vector<xcb_window_t> windows, xcb_window_t toplevel) {
+    while (!windows.empty()) {
+      if (std::find(windows.begin(), windows.end(), toplevel) != windows.end())
+        return true;
+
+      std::vector<xcb_query_tree_cookie_t> cookies;
+      for (xcb_window_t window : windows)
+        cookies.push_back(xcb_query_tree(connection, window));
+
+      windows.clear();
+      for (xcb_query_tree_cookie_t cookie : cookies) {
+        auto reply = Reply<xcb_query_tree_reply_t>{ xcb_query_tree_reply(connection, cookie, nullptr) };
+        if (reply && reply->parent != XCB_WINDOW_NONE && reply->parent != reply->root)
+          windows.push_back(reply->parent);
+      }
+    }
+    return false;
   }
 
   static std::optional<VkRect2D> getWindowRect(xcb_connection_t* connection, xcb_window_t window) {
