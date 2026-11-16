@@ -1238,9 +1238,6 @@ static void create_gamescope_swapchain( struct wl_client *client, struct wl_reso
 		= wl_resource_create( client, &gamescope_swapchain_interface, wl_resource_get_version( resource ), id );
 	wl_resource_set_implementation( gamescope_swapchain_resource, &gamescope_swapchain_impl, wl_surface_info, gamescope_swapchain_handle_resource_destroy );
 
-	if (wl_surface_info->gamescope_swapchains.size())
-		wl_log.errorf("create_swapchain: Surface already had a gamescope_swapchain! Warning!");
-
 	s_PresentTimingRoutes.emplace( gamescope_swapchain_resource,
 		std::make_shared<gamescope::PresentTimingRoute>( gamescope::PresentTimingRoute{ .resource = gamescope_swapchain_resource, .timing_events = timing_events } ) );
 	wl_surface_info->gamescope_swapchains.emplace_back( gamescope_swapchain_resource );
