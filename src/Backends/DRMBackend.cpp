@@ -2364,6 +2364,11 @@ static void drm_set_colorop_curve( drmModeAtomicReq *req, gamescope::CDRMColorOp
 		pColorOp->GetProperties().CURVE_1D_TYPE->SetPendingValue( req, *oValue, true );
 }
 
+static bool drm_property_changed( const std::optional<gamescope::CDRMAtomicProperty> &oProperty )
+{
+	return oProperty && oProperty->GetPendingValue() != oProperty->GetCurrentValue();
+}
+
 static inline uint32_t ColorSpaceToEOTFIndex( GamescopeAppTextureColorspace colorspace )
 {
 	switch ( colorspace )
@@ -3585,6 +3590,7 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 		}
 	}
 
+	bool bColorOpsChanged = false;
 	if ( ret == 0 && g_bSupportsColorPipeline )
 	{
 		for ( int i = 0; i < frameInfo->layers.count() && ret == 0; i++ )
@@ -3605,6 +3611,7 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 				{
 					if ( pPlane->GetProperties().COLOR_PIPELINE )
 						pPlane->GetProperties().COLOR_PIPELINE->SetPendingValue( drm->req, 0, true );
+					bColorOpsChanged |= drm_property_changed( pPlane->GetProperties().COLOR_PIPELINE );
 					break;
 				}
 
@@ -3682,6 +3689,13 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 					}
 				}
 
+				bColorOpsChanged |= drm_property_changed( pPlane->GetProperties().COLOR_PIPELINE );
+				for ( std::unique_ptr<gamescope::CDRMColorOp> &pColorOp : p->ops )
+				{
+					for ( std::optional<gamescope::CDRMAtomicProperty> &oProperty : pColorOp->GetProperties() )
+						bColorOpsChanged |= drm_property_changed( oProperty );
+				}
+
 				break;
 			}
 		}
@@ -3692,6 +3706,20 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 		// We don't support partial composition yet
 		if ( liftoff_output_needs_composition( drm->lo_output ) )
 			ret = -EINVAL;
+	}
+
+	// liftoff never tested the colorops, and an async flip cannot change them.
+	if ( ret == 0 && bColorOpsChanged )
+	{
+		drm->flags &= ~DRM_MODE_PAGE_FLIP_ASYNC;
+
+		ret = drmModeAtomicCommit( drm->fd, drm->req, ( drm->flags & ~DRM_MODE_PAGE_FLIP_EVENT ) | DRM_MODE_ATOMIC_TEST_ONLY, nullptr );
+		if ( ret != 0 )
+		{
+			drm_log.debugf( "drm_prepare_liftoff: colorop state failed TEST_ONLY: %s", strerror( -ret ) );
+			if ( ret == -ERANGE || ret == -ENOSPC )
+				ret = -EINVAL;
+		}
 	}
 
 	// If we aren't modesetting and we got -EINVAL, that means that we
