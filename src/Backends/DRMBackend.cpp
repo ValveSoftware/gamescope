@@ -309,8 +309,6 @@ namespace gamescope
 		PQ_125_Inverse_EOTF,
 		BT2020_Inverse_OETF,
 		BT2020_OETF,
-		Gamma22,
-		Gamma22_Inverse,
 		Count,
 	};
 
@@ -2191,6 +2189,10 @@ void hash_combine(size_t& s, const T& v)
 	s^= h(v) + 0x9e3779b9 + (s<< 6) + (s>> 2);
 }
 
+static constexpr uint32_t k_ColorNeedFixedMatrix = 1u << 0;
+static constexpr uint32_t k_ColorNeedCTM         = 1u << 1;
+static constexpr uint32_t k_ColorNeedLuts        = 1u << 2;
+
 struct LiftoffStateCacheEntry
 {
 	LiftoffStateCacheEntry()
@@ -2210,6 +2212,7 @@ struct LiftoffStateCacheEntry
 		drm_color_encoding colorEncoding;
 		drm_color_range    colorRange;
 		gamescope::EDRMColorOpFixedMatrix coloropFM;
+		uint32_t colorNeed;
 		GamescopeAppTextureColorspace colorspace;
 		AlphaBlendingMode_t eAlphaBlendingMode;
 	} layerState[ k_nMaxLayers ];
@@ -2240,6 +2243,7 @@ struct LiftoffStateCacheEntryKasher
 			hash_combine(hash, k.layerState[i].colorEncoding);
 			hash_combine(hash, k.layerState[i].colorRange);
 			hash_combine(hash, k.layerState[i].coloropFM);
+			hash_combine(hash, k.layerState[i].colorNeed);
 			hash_combine(hash, k.layerState[i].colorspace);
 			hash_combine(hash, k.layerState[i].eAlphaBlendingMode);
 		}
@@ -2351,27 +2355,6 @@ static inline amdgpu_transfer_function inverse_tf(amdgpu_transfer_function tf)
 	}
 }
 
-static inline std::optional<gamescope::EDRMColorOpCurve> amd_tf_to_drm_curve ( amdgpu_transfer_function tf )
-{
-	switch ( tf )
-	{
-		case AMDGPU_TRANSFER_FUNCTION_SRGB_EOTF:
-			return gamescope::EDRMColorOpCurve::SRGB_EOTF;
-		case AMDGPU_TRANSFER_FUNCTION_PQ_EOTF:
-			return gamescope::EDRMColorOpCurve::PQ_125_EOTF;
-		case AMDGPU_TRANSFER_FUNCTION_SRGB_INV_EOTF:
-			return gamescope::EDRMColorOpCurve::SRGB_Inverse_EOTF;
-		case AMDGPU_TRANSFER_FUNCTION_PQ_INV_EOTF:
-			return gamescope::EDRMColorOpCurve::PQ_125_Inverse_EOTF;
-		case AMDGPU_TRANSFER_FUNCTION_GAMMA22_EOTF:
-			return gamescope::EDRMColorOpCurve::Gamma22;
-		case AMDGPU_TRANSFER_FUNCTION_GAMMA22_INV_EOTF:
-			return gamescope::EDRMColorOpCurve::Gamma22_Inverse;
-		default:
-			return std::nullopt;
-	}
-}
-
 static void drm_set_colorop_curve( drmModeAtomicReq *req, gamescope::CDRMColorOp *pColorOp, std::optional<gamescope::EDRMColorOpCurve> oCurve )
 {
 	std::optional<uint64_t> oValue = oCurve ? pColorOp->GetCurveValue( *oCurve ) : std::nullopt;
@@ -2404,6 +2387,8 @@ static inline uint32_t ColorSpaceToEOTFIndex( GamescopeAppTextureColorspace colo
 LiftoffStateCacheEntry FrameInfoToLiftoffStateCacheEntry( struct drm_t *drm, const FrameInfo_t *frameInfo )
 {
 	LiftoffStateCacheEntry entry{};
+
+	const bool bFullColorPipeline = drm_supports_color_pipeline( drm );
 
 	entry.nLayerCount = frameInfo->layers.count();
 	for ( int i = 0; i < entry.nLayerCount; i++ )
@@ -2449,6 +2434,16 @@ LiftoffStateCacheEntry FrameInfoToLiftoffStateCacheEntry( struct drm_t *drm, con
 			entry.layerState[i].colorspace = frameInfo->layers.get( i ).colorspace;
 		}
 		entry.layerState[i].eAlphaBlendingMode = frameInfo->layers.get( i ).eAlphaBlendingMode;
+
+		if ( g_bSupportsColorPipeline )
+		{
+			if ( entry.layerState[i].ycbcr )
+				entry.layerState[i].colorNeed |= k_ColorNeedFixedMatrix;
+			if ( frameInfo->layers.get( i ).ctm != nullptr && !cv_drm_debug_disable_ctm )
+				entry.layerState[i].colorNeed |= k_ColorNeedCTM;
+			if ( frameInfo->layers.get( i ).applyColorMgmt && bFullColorPipeline )
+				entry.layerState[i].colorNeed |= k_ColorNeedLuts;
+		}
 	}
 
 	return entry;
@@ -2574,8 +2569,6 @@ namespace gamescope
 		"PQ 125 Inverse EOTF",
 		"BT.2020 Inverse OETF",
 		"BT.2020 OETF",
-		"Gamma 2.2",
-		"Gamma 2.2 Inverse",
 	};
 	static_assert( std::size( s_ColorOpCurveNames ) == size_t( EDRMColorOpCurve::Count ) );
 
@@ -3354,6 +3347,25 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 	if (needs_modeset)
 		g_LiftoffStateCache.clear();
 
+	if ( g_bSupportsColorPipeline )
+	{
+		const bool bFullColorPipeline = drm_supports_color_pipeline( drm );
+		for ( int i = 0; i < entry.nLayerCount; i++ )
+		{
+			const uint32_t uColorNeed = entry.layerState[i].colorNeed;
+			const uint32_t uEOTF = ColorSpaceToEOTFIndex( entry.layerState[i].colorspace );
+
+			if ( ( ( uColorNeed & k_ColorNeedFixedMatrix ) && ( cv_drm_debug_disable_color_encoding || cv_drm_debug_disable_color_range ) ) ||
+			     ( ( uColorNeed & k_ColorNeedCTM ) && !bFullColorPipeline ) ||
+			     ( ( uColorNeed & k_ColorNeedLuts ) && !cv_drm_debug_disable_shaper_and_3dlut &&
+			       ( !drm->pending.shaperlut_colorop_id[ uEOTF ] || !drm->pending.lut3d_colorop_id[ uEOTF ] ) ) )
+			{
+				drm_log.debugf( "drm_prepare_liftoff: layer %d cannot be color managed at scanout", i );
+				return -EINVAL;
+			}
+		}
+	}
+
 	if (is_liftoff_caching_enabled())
 	{
 		if (g_LiftoffStateCache.count(entry) != 0)
@@ -3430,7 +3442,7 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 				/* If the new KMS colorop API is in use,
 				 * COLOR_ENCODING and COLOR_RANGE are deprecated
 				 */
-				if (!drm_supports_color_pipeline( drm ))
+				if (!g_bSupportsColorPipeline)
 				{
 					if ( !cv_drm_debug_disable_color_encoding && bYCbCr )
 					{
@@ -3522,7 +3534,7 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 			liftoff_layer_set_property( drm->lo_layers[ i ], "FB_ID", 0 );
 			liftoff_layer_set_property( drm->lo_layers[ i ], "IN_FENCE_FD", -1 );
 
-			if (!drm_supports_color_pipeline( drm ))
+			if (!g_bSupportsColorPipeline)
 			{
 				liftoff_layer_unset_property( drm->lo_layers[ i ], "COLOR_ENCODING" );
 				liftoff_layer_unset_property( drm->lo_layers[ i ], "COLOR_RANGE" );
@@ -3573,9 +3585,9 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 		}
 	}
 
-	if ( ret == 0 && drm_supports_color_pipeline( drm ) )
+	if ( ret == 0 && g_bSupportsColorPipeline )
 	{
-		for ( int i = 0; i < frameInfo->layers.count(); i++ )
+		for ( int i = 0; i < frameInfo->layers.count() && ret == 0; i++ )
 		{
 			struct liftoff_plane *plane = liftoff_layer_get_plane( drm->lo_layers[ i ] );
 			uint32_t plane_id = plane ? liftoff_plane_get_id( plane ) : 0;
@@ -3588,102 +3600,85 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 				if ( pPlane->GetObjectId() != plane_id )
 					continue;
 
-				if ( !pPlane->GetProperties().COLOR_PIPELINE )
-					break;
-
-				if ( !frameInfo->layers.get( i ).applyColorMgmt )
+				const uint32_t uColorNeed = entry.layerState[i].colorNeed;
+				if ( uColorNeed == 0 )
 				{
-					pPlane->GetProperties().COLOR_PIPELINE->SetPendingValue( drm->req, 0, true );
+					if ( pPlane->GetProperties().COLOR_PIPELINE )
+						pPlane->GetProperties().COLOR_PIPELINE->SetPendingValue( drm->req, 0, true );
 					break;
 				}
 
-				bool bYCbCr = entry.layerState[i].ycbcr;
 				gamescope::CDRMColorPipeline *p = pPlane->GetColorPipeline();
-				if ( !p || !p->bFull ) {
+				std::optional<uint64_t> oFixedMatrix = ( p && p->pFixedMatrix ) ? p->pFixedMatrix->GetFixedMatrixValue( entry.layerState[i].coloropFM ) : std::nullopt;
+				if ( !p ||
+				     ( ( uColorNeed & k_ColorNeedFixedMatrix ) && !oFixedMatrix ) ||
+				     ( ( uColorNeed & k_ColorNeedCTM ) && !p->pCTM ) ||
+				     ( ( uColorNeed & k_ColorNeedLuts ) && !p->bFull ) )
+				{
 					drm_log.debugf( "drm_prepare_liftoff: No color pipeline fits color mgmt needs of plane_id %u", plane_id );
+					ret = -EINVAL;
 					break;
 				}
 
 				pPlane->GetProperties().COLOR_PIPELINE->SetPendingValue( drm->req, p->uId, true );
 
-				if ( p->pFixedMatrix )
+				const bool bLuts = ( uColorNeed & k_ColorNeedLuts ) != 0;
+				for ( std::unique_ptr<gamescope::CDRMColorOp> &pColorOp : p->ops )
 				{
-					std::optional<uint64_t> oFixedMatrix = p->pFixedMatrix->GetFixedMatrixValue( entry.layerState[i].coloropFM );
-					if ( !cv_drm_debug_disable_color_encoding &&
-					     !cv_drm_debug_disable_color_range &&
-					     bYCbCr && oFixedMatrix )
-					{
-						p->pFixedMatrix->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
-						p->pFixedMatrix->GetProperties().FIXED_MATRIX_TYPE->SetPendingValue( drm->req, *oFixedMatrix, true );
-					}
-					else
-					{
-						p->pFixedMatrix->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
-					}
+					gamescope::CDRMColorOp *pOp = pColorOp.get();
+					if ( ( pOp == p->pFixedMatrix && ( uColorNeed & k_ColorNeedFixedMatrix ) ) ||
+					     ( pOp == p->pCTM && ( uColorNeed & k_ColorNeedCTM ) ) ||
+					     ( bLuts && ( pOp == p->pDegammaCurve || pOp == p->pShaperCurve || pOp == p->pShaperLut || pOp == p->pLut3D ) ) )
+						continue;
+
+					pOp->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
 				}
 
-				GamescopeAppTextureColorspace colorspace = entry.layerState[i].colorspace;
-				std::optional<gamescope::EDRMColorOpCurve> degamma_tf = colorspace_to_drm_plane_degamma_curve( colorspace );
-				std::optional<gamescope::EDRMColorOpCurve> shaper_tf = colorspace_to_drm_plane_shaper_curve( colorspace );
-
-				if ( bYCbCr )
+				if ( uColorNeed & k_ColorNeedFixedMatrix )
 				{
-					degamma_tf = gamescope::EDRMColorOpCurve::BT2020_Inverse_OETF;
-					shaper_tf = gamescope::EDRMColorOpCurve::BT2020_OETF;
+					p->pFixedMatrix->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
+					p->pFixedMatrix->GetProperties().FIXED_MATRIX_TYPE->SetPendingValue( drm->req, *oFixedMatrix, true );
 				}
 
-				bool bUseDegamma = !cv_drm_debug_disable_degamma_tf;
-				drm_set_colorop_curve( drm->req, p->pDegammaCurve, bUseDegamma ? degamma_tf : std::nullopt );
-
-				const gamescope::BackendBlob *pShaperLutBlob = drm->pending.shaperlut_colorop_id[ ColorSpaceToEOTFIndex( colorspace ) ].get();
-				const gamescope::BackendBlob *pLut3DBlob = drm->pending.lut3d_colorop_id[ ColorSpaceToEOTFIndex( colorspace ) ].get();
-
-				bool bUseShaperAnd3DLUT = !cv_drm_debug_disable_shaper_and_3dlut && pShaperLutBlob && pLut3DBlob;
-				drm_set_colorop_curve( drm->req, p->pShaperCurve, bUseShaperAnd3DLUT ? shaper_tf : std::nullopt );
-
-				if ( bUseShaperAnd3DLUT )
-				{
-					p->pShaperLut->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
-					p->pShaperLut->GetProperties().DATA->SetPendingValue( drm->req, pShaperLutBlob->GetBlobValue(), true );
-
-					p->pLut3D->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
-					p->pLut3D->GetProperties().DATA->SetPendingValue( drm->req, pLut3DBlob->GetBlobValue(), true );
-				}
-				else
-				{
-					p->pShaperLut->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
-					p->pLut3D->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
-				}
-
-				std::optional<gamescope::EDRMColorOpCurve> blend_tf = amd_tf_to_drm_curve( drm->pending.output_tf );
-				bool bUseBlend = !cv_drm_debug_disable_blend_tf && !bSinglePlane;
-				drm_set_colorop_curve( drm->req, p->pBlendCurve, bUseBlend ? blend_tf : std::nullopt );
-
-				if ( frameInfo->layers.get( i ).ctm != nullptr )
+				if ( uColorNeed & k_ColorNeedCTM )
 				{
 					p->pCTM->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
 					p->pCTM->GetProperties().DATA->SetPendingValue( drm->req, frameInfo->layers.get( i ).ctm->GetBlobValue(), true );
 				}
-				else
-				{
-					p->pCTM->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
-				}
 
-				for ( std::unique_ptr<gamescope::CDRMColorOp> &pColorOp : p->ops )
+				if ( bLuts )
 				{
-					gamescope::CDRMColorOp *pOp = pColorOp.get();
-					if ( pOp == p->pFixedMatrix || pOp == p->pDegammaCurve || pOp == p->pCTM || pOp == p->pShaperCurve ||
-					     pOp == p->pShaperLut || pOp == p->pLut3D || pOp == p->pBlendCurve )
-						continue;
+					GamescopeAppTextureColorspace colorspace = entry.layerState[i].colorspace;
+					std::optional<gamescope::EDRMColorOpCurve> degamma_tf = colorspace_to_drm_plane_degamma_curve( colorspace );
+					std::optional<gamescope::EDRMColorOpCurve> shaper_tf = colorspace_to_drm_plane_shaper_curve( colorspace );
 
-					if ( pOp->GetType() == gamescope::EDRMColorOpType::Multiplier )
+					if ( entry.layerState[i].ycbcr )
 					{
-						pOp->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
-						pOp->GetProperties().MULTIPLIER->SetPendingValue( drm->req, 0x100000000ULL, true );
+						degamma_tf = gamescope::EDRMColorOpCurve::BT2020_Inverse_OETF;
+						shaper_tf = gamescope::EDRMColorOpCurve::BT2020_OETF;
+					}
+
+					bool bUseDegamma = !cv_drm_debug_disable_degamma_tf;
+					drm_set_colorop_curve( drm->req, p->pDegammaCurve, bUseDegamma ? degamma_tf : std::nullopt );
+
+					const gamescope::BackendBlob *pShaperLutBlob = drm->pending.shaperlut_colorop_id[ ColorSpaceToEOTFIndex( colorspace ) ].get();
+					const gamescope::BackendBlob *pLut3DBlob = drm->pending.lut3d_colorop_id[ ColorSpaceToEOTFIndex( colorspace ) ].get();
+
+					bool bUseShaperAnd3DLUT = !cv_drm_debug_disable_shaper_and_3dlut && pShaperLutBlob && pLut3DBlob;
+					drm_set_colorop_curve( drm->req, p->pShaperCurve, bUseShaperAnd3DLUT ? shaper_tf : std::nullopt );
+
+					if ( bUseShaperAnd3DLUT )
+					{
+						p->pShaperLut->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
+						p->pShaperLut->GetProperties().DATA->SetPendingValue( drm->req, pShaperLutBlob->GetBlobValue(), true );
+
+						p->pLut3D->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
+						p->pLut3D->GetProperties().DATA->SetPendingValue( drm->req, pLut3DBlob->GetBlobValue(), true );
 					}
 					else
 					{
-						pOp->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
+						p->pShaperLut->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
+						p->pLut3D->GetProperties().BYPASS->SetPendingValue( drm->req, 1, true );
 					}
 				}
 
@@ -3853,7 +3848,7 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 
 	bool bSinglePlane = frameInfo->layers.count() < 2 && cv_drm_single_plane_optimizations;
 
-	if ( ( drm_supports_color_mgmt( &g_DRM ) || drm_supports_color_pipeline( &g_DRM ) ) && frameInfo->applyOutputColorMgmt )
+	if ( drm_supports_color_mgmt( &g_DRM ) && frameInfo->applyOutputColorMgmt )
 	{
 		if ( !cv_drm_debug_disable_output_tf && !bSinglePlane )
 		{
@@ -4177,11 +4172,17 @@ bool drm_update_color_mgmt(struct drm_t *drm)
 		if ( !g_ColorMgmtLuts[i].HasLuts() )
 			continue;
 
-		drm->pending.shaperlut_id[ i ] = GetBackend()->CreateBackendBlob( g_ColorMgmtLuts[i].lut1d );
-		drm->pending.lut3d_id[ i ] = GetBackend()->CreateBackendBlob( g_ColorMgmtLuts[i].lut3d );
+		if ( drm_supports_color_mgmt( drm ) )
+		{
+			drm->pending.shaperlut_id[ i ] = GetBackend()->CreateBackendBlob( g_ColorMgmtLuts[i].lut1d );
+			drm->pending.lut3d_id[ i ] = GetBackend()->CreateBackendBlob( g_ColorMgmtLuts[i].lut3d );
+		}
 
-		drm->pending.shaperlut_colorop_id[ i ] = GetBackend()->CreateBackendBlob( lut_convert_16bit_to_32bit( g_ColorMgmtLuts[i].lut1d ) );
-		drm->pending.lut3d_colorop_id[ i ] = GetBackend()->CreateBackendBlob( lut_convert_16bit_to_32bit( g_ColorMgmtLuts[i].lut3d ) );
+		if ( drm_supports_color_pipeline( drm ) )
+		{
+			drm->pending.shaperlut_colorop_id[ i ] = GetBackend()->CreateBackendBlob( lut_convert_16bit_to_32bit( g_ColorMgmtLuts[i].lut1d ) );
+			drm->pending.lut3d_colorop_id[ i ] = GetBackend()->CreateBackendBlob( lut_convert_16bit_to_32bit( g_ColorMgmtLuts[i].lut3d ) );
+		}
 	}
 
 	return true;
@@ -4452,7 +4453,8 @@ bool drm_supports_color_pipeline(struct drm_t *drm)
 	if ( !drm->pPrimaryPlane )
 		return false;
 
-	return drm->pPrimaryPlane->GetProperties().COLOR_PIPELINE.has_value() ;
+	gamescope::CDRMColorPipeline *pPipeline = drm->pPrimaryPlane->GetColorPipeline();
+	return pPipeline && pPipeline->bFull;
 }
 
 std::span<const uint32_t> drm_get_valid_refresh_rates( struct drm_t *drm )
