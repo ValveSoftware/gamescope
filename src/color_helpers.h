@@ -395,6 +395,9 @@ void buildSDRColorimetry( displaycolorimetry_t * pColorimetry, colormapping_t *p
 // Build colorimetry and a gamut mapping for the given PQ configuration
 void buildPQColorimetry( displaycolorimetry_t * pColorimetry, colormapping_t *pMapping, const displaycolorimetry_t & nativeDisplayOutput );
 
+// The night mode factor of the bake as a gain on G2.2 encoded values, unity for any other EOTF pair.
+glm::vec3 calcScanoutGain( EOTF sourceEOTF, EOTF destEOTF, const nightmode_t & nightmode );
+
 // Colormetry helper functions for DRM, kindly taken from Weston:
 // https://gitlab.freedesktop.org/wayland/weston/-/blob/main/libweston/backend-drm/kms-color.c
 // Licensed under MIT.

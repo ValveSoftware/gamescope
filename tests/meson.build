@@ -8,7 +8,7 @@ endforeach
 
 gamescope_tests = executable(
 	'gamescope_tests',
-	unittest_src + ['../src/color_helpers.cpp', 'test_color_helpers.cpp', 'test_convar.cpp', 'test_focus_placement.cpp', 'test_mangoapp_config.cpp', 'test_mangoapp_control.cpp', 'test_mode_list.cpp', 'test_present_timing_schedule.cpp', 'test_process.cpp', 'test_swapchain_wire.cpp', 'test_upscale.cpp', 'test_utils_commit_queue.cpp', 'test_utils_parsers.cpp', 'test_utils_string.cpp', 'test_utils_vblank_schedule.cpp', 'test_vrclient_detect.cpp'] + swapchain_client_src + limiter_client_src + [swapchain_server_header],
+	unittest_src + ['../src/color_helpers.cpp', 'test_color_helpers.cpp', 'test_convar.cpp', 'test_focus_placement.cpp', 'test_mangoapp_config.cpp', 'test_mangoapp_control.cpp', 'test_mode_list.cpp', 'test_present_timing_schedule.cpp', 'test_process.cpp', 'test_scanout_transform.cpp', 'test_swapchain_wire.cpp', 'test_upscale.cpp', 'test_utils_commit_queue.cpp', 'test_utils_parsers.cpp', 'test_utils_string.cpp', 'test_utils_vblank_schedule.cpp', 'test_vrclient_detect.cpp'] + swapchain_client_src + limiter_client_src + [swapchain_server_header],
 	include_directories: [srcdir, sol2_include],
 	dependencies: [catch2_dep, luajit_dep, cap_dep, drm_dep, glm_dep, vulkan_dep, wlroots_dep, dep_wayland, wayland_server],
 	cpp_args: gamescope_cpp_args,
@@ -23,6 +23,7 @@ test('mangoapp_config', gamescope_tests, args: ['[mangoapp_config]'])
 test('mangoapp_control', gamescope_tests, args: ['[mangoapp_control]'])
 test('mode_list', gamescope_tests, args: ['[mode_list]'])
 test('present_timing_schedule', gamescope_tests, args: ['[present_timing_schedule]'])
+test('scanout_transform', gamescope_tests, args: ['[scanout_transform]'])
 test('swapchain_wire', gamescope_tests, args: ['[swapchain_wire]'])
 test('upscale', gamescope_tests, args: ['[upscale]'])
 test('utils/commit_queue', gamescope_tests, args: ['[commit_queue]'])

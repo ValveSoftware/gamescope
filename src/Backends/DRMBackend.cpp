@@ -140,6 +140,7 @@ struct drm_t {
 		std::shared_ptr<gamescope::BackendBlob> shaperlut_id[ EOTF_Count ];
 		std::shared_ptr<gamescope::BackendBlob> lut3d_colorop_id[ EOTF_Count ];
 		std::shared_ptr<gamescope::BackendBlob> shaperlut_colorop_id[ EOTF_Count ];
+		std::shared_ptr<gamescope::BackendBlob> encoded_gain_ctm_id[ EOTF_Count ];
 		amdgpu_transfer_function output_tf = AMDGPU_TRANSFER_FUNCTION_DEFAULT;
 	} current, pending;
 
@@ -2192,6 +2193,7 @@ void hash_combine(size_t& s, const T& v)
 static constexpr uint32_t k_ColorNeedFixedMatrix = 1u << 0;
 static constexpr uint32_t k_ColorNeedCTM         = 1u << 1;
 static constexpr uint32_t k_ColorNeedLuts        = 1u << 2;
+static constexpr uint32_t k_ColorNeedEncodedGain = 1u << 3;
 
 struct LiftoffStateCacheEntry
 {
@@ -2448,6 +2450,9 @@ LiftoffStateCacheEntry FrameInfoToLiftoffStateCacheEntry( struct drm_t *drm, con
 				entry.layerState[i].colorNeed |= k_ColorNeedCTM;
 			if ( frameInfo->layers.get( i ).applyColorMgmt && bFullColorPipeline )
 				entry.layerState[i].colorNeed |= k_ColorNeedLuts;
+			else if ( frameInfo->layers.get( i ).applyColorMgmt && !g_bForceDisableColorMgmt &&
+			          g_ColorMgmtLuts[ ColorSpaceToEOTFIndex( entry.layerState[i].colorspace ) ].vScanoutGain != glm::vec3( 1.0f ) )
+				entry.layerState[i].colorNeed |= k_ColorNeedEncodedGain;
 		}
 	}
 
@@ -3362,6 +3367,7 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 
 			if ( ( ( uColorNeed & k_ColorNeedFixedMatrix ) && ( cv_drm_debug_disable_color_encoding || cv_drm_debug_disable_color_range ) ) ||
 			     ( ( uColorNeed & k_ColorNeedCTM ) && !bFullColorPipeline ) ||
+			     ( ( uColorNeed & k_ColorNeedEncodedGain ) && !drm->pending.encoded_gain_ctm_id[ uEOTF ] ) ||
 			     ( ( uColorNeed & k_ColorNeedLuts ) && !cv_drm_debug_disable_shaper_and_3dlut &&
 			       ( !drm->pending.shaperlut_colorop_id[ uEOTF ] || !drm->pending.lut3d_colorop_id[ uEOTF ] ) ) )
 			{
@@ -3619,7 +3625,7 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 				std::optional<uint64_t> oFixedMatrix = ( p && p->pFixedMatrix ) ? p->pFixedMatrix->GetFixedMatrixValue( entry.layerState[i].coloropFM ) : std::nullopt;
 				if ( !p ||
 				     ( ( uColorNeed & k_ColorNeedFixedMatrix ) && !oFixedMatrix ) ||
-				     ( ( uColorNeed & k_ColorNeedCTM ) && !p->pCTM ) ||
+				     ( ( uColorNeed & ( k_ColorNeedCTM | k_ColorNeedEncodedGain ) ) && !p->pCTM ) ||
 				     ( ( uColorNeed & k_ColorNeedLuts ) && !p->bFull ) )
 				{
 					drm_log.debugf( "drm_prepare_liftoff: No color pipeline fits color mgmt needs of plane_id %u", plane_id );
@@ -3634,7 +3640,7 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 				{
 					gamescope::CDRMColorOp *pOp = pColorOp.get();
 					if ( ( pOp == p->pFixedMatrix && ( uColorNeed & k_ColorNeedFixedMatrix ) ) ||
-					     ( pOp == p->pCTM && ( uColorNeed & k_ColorNeedCTM ) ) ||
+					     ( pOp == p->pCTM && ( uColorNeed & ( k_ColorNeedCTM | k_ColorNeedEncodedGain ) ) ) ||
 					     ( bLuts && ( pOp == p->pDegammaCurve || pOp == p->pShaperCurve || pOp == p->pShaperLut || pOp == p->pLut3D ) ) )
 						continue;
 
@@ -3651,6 +3657,11 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 				{
 					p->pCTM->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
 					p->pCTM->GetProperties().DATA->SetPendingValue( drm->req, frameInfo->layers.get( i ).ctm->GetBlobValue(), true );
+				}
+				else if ( uColorNeed & k_ColorNeedEncodedGain )
+				{
+					p->pCTM->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
+					p->pCTM->GetProperties().DATA->SetPendingValue( drm->req, drm->pending.encoded_gain_ctm_id[ ColorSpaceToEOTFIndex( entry.layerState[i].colorspace ) ]->GetBlobValue(), true );
 				}
 
 				if ( bLuts )
@@ -4179,7 +4190,7 @@ static std::array<uint32_t, N> lut_convert_16bit_to_32bit( const uint16_t (&lut)
 
 bool drm_update_color_mgmt(struct drm_t *drm)
 {
-	if ( !drm_supports_color_mgmt( drm ) && !drm_supports_color_pipeline ( &g_DRM ) )
+	if ( !drm_supports_color_mgmt( drm ) && !g_bSupportsColorPipeline )
 		return true;
 
 	if ( g_ColorMgmt.serial == drm->current.color_mgmt_serial )
@@ -4193,6 +4204,7 @@ bool drm_update_color_mgmt(struct drm_t *drm)
 		drm->pending.lut3d_id[ i ] = 0;
 		drm->pending.shaperlut_colorop_id[ i ] = 0;
 		drm->pending.lut3d_colorop_id[ i ] = 0;
+		drm->pending.encoded_gain_ctm_id[ i ] = 0;
 	}
 
 	for ( uint32_t i = 0; i < EOTF_Count; i++ )
@@ -4210,6 +4222,23 @@ bool drm_update_color_mgmt(struct drm_t *drm)
 		{
 			drm->pending.shaperlut_colorop_id[ i ] = GetBackend()->CreateBackendBlob( lut_convert_16bit_to_32bit( g_ColorMgmtLuts[i].lut1d ) );
 			drm->pending.lut3d_colorop_id[ i ] = GetBackend()->CreateBackendBlob( lut_convert_16bit_to_32bit( g_ColorMgmtLuts[i].lut3d ) );
+		}
+		else if ( g_bSupportsColorPipeline && g_ColorMgmtLuts[i].vScanoutGain != glm::vec3( 1.0f ) )
+		{
+			glm::vec3 vGain = g_ColorMgmtLuts[i].vScanoutGain;
+			for ( int c = 0; c < 3; c++ )
+			{
+				// i915's 9-bit coefficient mantissa tops out at 511/512, so send unity instead.
+				if ( vGain[c] >= 1.0f - 1.0f / 1024.0f )
+					vGain[c] = 1.0f;
+			}
+			glm::mat3x4 ctm
+			{
+				vGain.x, 0,       0,       0,
+				0,       vGain.y, 0,       0,
+				0,       0,       vGain.z, 0,
+			};
+			drm->pending.encoded_gain_ctm_id[ i ] = GetBackend()->CreateBackendBlob( ctm );
 		}
 	}
 
