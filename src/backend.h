@@ -168,6 +168,8 @@ namespace gamescope
     enum class ConnectorProperty
     {
         IsFileBrowser,
+        // A popup is open on top of another popup, e.g. a submenu over its menu.
+        HasNestedPopup,
     };
 
     class IBackendConnector
