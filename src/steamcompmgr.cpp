@@ -11071,6 +11071,9 @@ steamcompmgr_main(int argc, char **argv)
 		static int nIgnoredOverlayRepaints = 0;
 		static uint64_t s_ulLastContentPaintTime = 0;
 
+		// Taken before the position is sampled, so a move during the paint asks for the next frame.
+		const bool bCursorRepaint = hasCursorRepaint.exchange( false );
+
 		if ( !hasRepaintNonBasePlane )
 			nIgnoredOverlayRepaints = 0;
 
@@ -11171,13 +11174,13 @@ steamcompmgr_main(int argc, char **argv)
 				{
 					case FlipType::Normal:
 					{
-						bShouldPaint = vblank && ( hasRepaint || hasRepaintNonBasePlane || hasCursorRepaint || bForceSyncFlip );
+						bShouldPaint = vblank && ( hasRepaint || hasRepaintNonBasePlane || bCursorRepaint || bForceSyncFlip );
 						break;
 					}
 
 					case FlipType::Async:
 					{
-						bShouldPaint = hasRepaint || hasCursorRepaint;
+						bShouldPaint = hasRepaint || bCursorRepaint;
 
 						if ( vblank && !bShouldPaint && hasRepaintNonBasePlane )
 							nIgnoredOverlayRepaints++;
@@ -11190,7 +11193,7 @@ steamcompmgr_main(int argc, char **argv)
 						bShouldPaint = hasRepaint && bVRRCanFlip;
 
 						// Content at or above adaptive_sync_cursor_min_fps carries the cursor with its own frames.
-						if ( !bShouldPaint && hasCursorRepaint && bVRRCanFlip )
+						if ( !bShouldPaint && bCursorRepaint && bVRRCanFlip )
 						{
 							const int nCursorMinFPS = cv_adaptive_sync_cursor_min_fps;
 							if ( nCursorMinFPS <= 0 ||
@@ -11205,7 +11208,7 @@ steamcompmgr_main(int argc, char **argv)
 						     cv_adaptive_sync_idle_hold )
 						{
 							bShouldPaint = true;
-							bRepeatFrame = !hasCursorRepaint && !hasRepaintNonBasePlane;
+							bRepeatFrame = !bCursorRepaint && !hasRepaintNonBasePlane;
 						}
 
 						if ( bIsVBlankFromTimer )
@@ -11269,13 +11272,16 @@ steamcompmgr_main(int argc, char **argv)
 
 			hasRepaint = false;
 			hasRepaintNonBasePlane = false;
-			hasCursorRepaint = false;
 			nIgnoredOverlayRepaints = 0;
 
 			{
 				gamescope::CScriptScopedLock script;
 				script.Manager().CallHook( "OnPostPaint" );
 			}
+		}
+		else if ( bCursorRepaint )
+		{
+			hasCursorRepaint = true;
 		}
 
 		publish_mangoapp_snapshot();
