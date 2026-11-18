@@ -8044,6 +8044,8 @@ steamcompmgr_exit(void)
     wlserver_lock();
     wlserver_shutdown();
     wlserver_unlock(false);
+
+    vulkan_shutdown();
 }
 
 [[noreturn]] static int
