@@ -358,12 +358,19 @@ namespace gamescope
         }
 
         bool IsTouchForbidden() const { return m_bForbidTouchMode; }
+        bool HasNestedPopup() const { return m_bHasNestedPopup; }
 
         virtual void SetProperty( ConnectorProperty eProperty, std::any value )
         {
             if ( eProperty == ConnectorProperty::IsFileBrowser )
             {
                 m_bForbidTouchMode = std::any_cast<bool>( value );
+            }
+            else if ( eProperty == ConnectorProperty::HasNestedPopup )
+            {
+                bool bHasNestedPopup = std::any_cast<bool>( value );
+                if ( m_bHasNestedPopup.exchange( bHasNestedPopup ) != bHasNestedPopup )
+                    openvr_log.debugf( "Connector %p nested popup: %s", this, bHasNestedPopup ? "open" : "closed" );
             }
         }
 
@@ -458,7 +465,9 @@ namespace gamescope
         uint32_t m_uNextCompositeImage = 0;
         bool m_bWarnedCompositeExhaustion = false;
 
-        bool m_bForbidTouchMode = false;
+        // Set on the steamcompmgr thread, read on the VR input thread.
+        std::atomic<bool> m_bForbidTouchMode = { false };
+        std::atomic<bool> m_bHasNestedPopup = { false };
     };
 
 	class COpenVRBackend final : public CBaseBackend
@@ -907,6 +916,12 @@ namespace gamescope
 
                 if ( VirtualConnectorKeyIsNonSteamWindow( pMouseConnector->GetVirtualConnectorKey() ) )
                 {
+                    // A touch on a submenu can be reported on the submenu's X window instead of the menu's grab window. Chromium only
+                    // converts the press into the grab window's coordinates, not the release, so it handles the release at the wrong spot
+                    // and the item never activates. We still use touch for single popups, so lists in them can be scrolled.
+                    if ( pMouseConnector->HasNestedPopup() )
+                        return TouchClickModes::Left;
+
                     return TouchClickModes::Passthrough;
                 }
 

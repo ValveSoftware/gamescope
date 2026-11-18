@@ -5598,6 +5598,12 @@ determine_and_apply_focus( global_focus_t *pFocus )
 		pFocus->pVirtualConnector->SetProperty( gamescope::ConnectorProperty::IsFileBrowser, pFocus->inputFocusWindow->bIsDolphin );
 	}
 
+	if ( pFocus->pVirtualConnector )
+	{
+		bool bHasNestedPopup = pFocus->overrideWindow && !pFocus->overrideUnderlayWindows.empty();
+		pFocus->pVirtualConnector->SetProperty( gamescope::ConnectorProperty::HasNestedPopup, bHasNestedPopup );
+	}
+
 	// Backchannel to Steam
 	unsigned long focusedWindow = 0;
 	unsigned long focusedAppId = 0;
