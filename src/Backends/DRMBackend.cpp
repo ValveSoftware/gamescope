@@ -3380,6 +3380,27 @@ namespace gamescope
 	}
 }
 
+static bool drm_plane_fits_color_need( gamescope::CDRMPlane *pPlane, uint32_t uColorNeed, gamescope::EDRMColorOpFixedMatrix eFixedMatrix )
+{
+	gamescope::CDRMColorPipeline *p = pPlane->GetColorPipeline();
+	if ( !p )
+		return false;
+
+	if ( ( uColorNeed & k_ColorNeedFixedMatrix ) && ( !p->pFixedMatrix || !p->pFixedMatrix->GetFixedMatrixValue( eFixedMatrix ) ) )
+		return false;
+
+	if ( ( uColorNeed & ( k_ColorNeedCTM | k_ColorNeedEncodedGain ) ) && !p->pCTM )
+		return false;
+
+	if ( ( uColorNeed & k_ColorNeedLuts ) && !p->bFull )
+		return false;
+
+	if ( ( uColorNeed & k_ColorNeedBlendDecode ) && ( !p->pBlendCurve || !p->pBlendCurve->GetCurveValue( gamescope::EDRMColorOpCurve::SRGB_EOTF ) ) )
+		return false;
+
+	return true;
+}
+
 static int
 drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, bool needs_modeset )
 {
@@ -3439,6 +3460,31 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 			liftoff_layer_set_property( drm->lo_layers[ i ], "FB_ID", pDrmFb->GetFbId());
 			liftoff_layer_set_property( drm->lo_layers[ i ], "IN_FENCE_FD", nFence );
 			drm->m_FbIdsInRequest.emplace_back( pDrmFb );
+
+			if ( g_bSupportsColorPipeline )
+			{
+				uint32_t uAllowedPlanes[ 64 ];
+				size_t nAllowedPlanes = 0;
+				if ( entry.layerState[i].colorNeed != 0 )
+				{
+					for ( std::unique_ptr< gamescope::CDRMPlane > &pPlane : drm->planes )
+					{
+						if ( nAllowedPlanes < std::size( uAllowedPlanes ) &&
+						     ( pPlane->GetModePlane()->possible_crtcs & drm->pCRTC->GetCRTCMask() ) &&
+						     drm_plane_fits_color_need( pPlane.get(), entry.layerState[i].colorNeed, entry.layerState[i].coloropFM ) )
+							uAllowedPlanes[ nAllowedPlanes++ ] = pPlane->GetObjectId();
+					}
+
+					if ( nAllowedPlanes == 0 )
+					{
+						drm_log.debugf( "drm_prepare_liftoff: no plane fits the color mgmt needs of layer %d", i );
+						return -EINVAL;
+					}
+				}
+
+				if ( liftoff_layer_set_allowed_planes( drm->lo_layers[ i ], uAllowedPlanes, nAllowedPlanes ) != 0 )
+					return -EINVAL;
+			}
 
 			liftoff_layer_set_property( drm->lo_layers[ i ], "zpos", entry.layerState[i].zpos );
 			liftoff_layer_set_property( drm->lo_layers[ i ], "alpha", frameInfo->layers.get( i ).opacity * 0xffff);
@@ -3656,19 +3702,14 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 					break;
 				}
 
-				gamescope::CDRMColorPipeline *p = pPlane->GetColorPipeline();
-				std::optional<uint64_t> oFixedMatrix = ( p && p->pFixedMatrix ) ? p->pFixedMatrix->GetFixedMatrixValue( entry.layerState[i].coloropFM ) : std::nullopt;
-				if ( !p ||
-				     ( ( uColorNeed & k_ColorNeedFixedMatrix ) && !oFixedMatrix ) ||
-				     ( ( uColorNeed & ( k_ColorNeedCTM | k_ColorNeedEncodedGain ) ) && !p->pCTM ) ||
-				     ( ( uColorNeed & k_ColorNeedLuts ) && !p->bFull ) ||
-				     ( ( uColorNeed & k_ColorNeedBlendDecode ) && ( !p->pBlendCurve || !p->pBlendCurve->GetCurveValue( gamescope::EDRMColorOpCurve::SRGB_EOTF ) ) ) )
+				if ( !drm_plane_fits_color_need( pPlane.get(), uColorNeed, entry.layerState[i].coloropFM ) )
 				{
 					drm_log.debugf( "drm_prepare_liftoff: No color pipeline fits color mgmt needs of plane_id %u", plane_id );
 					ret = -EINVAL;
 					break;
 				}
 
+				gamescope::CDRMColorPipeline *p = pPlane->GetColorPipeline();
 				pPlane->GetProperties().COLOR_PIPELINE->SetPendingValue( drm->req, p->uId, true );
 
 				const bool bLuts = ( uColorNeed & k_ColorNeedLuts ) != 0;
@@ -3687,7 +3728,7 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 				if ( uColorNeed & k_ColorNeedFixedMatrix )
 				{
 					p->pFixedMatrix->GetProperties().BYPASS->SetPendingValue( drm->req, 0, true );
-					p->pFixedMatrix->GetProperties().FIXED_MATRIX_TYPE->SetPendingValue( drm->req, *oFixedMatrix, true );
+					p->pFixedMatrix->GetProperties().FIXED_MATRIX_TYPE->SetPendingValue( drm->req, *p->pFixedMatrix->GetFixedMatrixValue( entry.layerState[i].coloropFM ), true );
 				}
 
 				if ( uColorNeed & k_ColorNeedCTM )
