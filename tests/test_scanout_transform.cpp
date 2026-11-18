@@ -210,6 +210,20 @@ float MaxScanoutError( const Published_t &published, const glm::vec3 &vGain )
 	}
 	return flMaxError;
 }
+
+// The post-blend 3D LUT samples the encoded values with no shaper in front of it.
+float MaxLut3DOnlyError( const Published_t &published )
+{
+	float flMaxError = 0.f;
+	for ( const glm::vec3 &color : Samples() )
+	{
+		glm::vec3 composite = SampleLut3D( published.lut3d, SampleShaper( published.lut1d, color ) );
+		glm::vec3 scanout = SampleLut3D( published.lut3d, color );
+		for ( int c = 0; c < 3; c++ )
+			flMaxError = std::max( flMaxError, std::fabs( composite[c] - scanout[c] ) );
+	}
+	return flMaxError;
+}
 }
 
 TEST_CASE( "No gain is published without night mode", "[scanout_transform]" )
@@ -249,4 +263,26 @@ TEST_CASE( "No gain is published for PQ content or PQ output", "[scanout_transfo
 	REQUIRE( ( calcScanoutGain( EOTF_PQ, EOTF_PQ, nightmode ) == glm::vec3( 1.f ) ) );
 	REQUIRE( ( calcScanoutGain( EOTF_PQ, EOTF_Gamma22, nightmode ) == glm::vec3( 1.f ) ) );
 	REQUIRE( ( calcScanoutGain( EOTF_Gamma22, EOTF_PQ, nightmode ) == glm::vec3( 1.f ) ) );
+}
+
+TEST_CASE( "The 3D LUT alone carries the transform when the shaper is the identity", "[scanout_transform]" )
+{
+	const bool bHDR10Output = GENERATE( false, true );
+	CAPTURE( bHDR10Output );
+	Settings_t settings;
+	settings.native = displaycolorimetry_widegamutgeneric;
+	settings.bHDR10Output = bHDR10Output;
+	settings.eInputEOTF = bHDR10Output ? EOTF_PQ : EOTF_Gamma22;
+	settings.flSDRGamutWideness = 0.5f;
+	settings.nightmode = { 0.5f, 0.08f, 0.9f };
+	REQUIRE( BIsShaperIdentity( settings.eInputEOTF, bHDR10Output ? EOTF_PQ : EOTF_Gamma22, settings.flSDRInputGain ) );
+	REQUIRE( MaxLut3DOnlyError( Bake( settings ) ) <= k_flTolerance );
+}
+
+TEST_CASE( "The 3D LUT alone misses an input gain", "[scanout_transform]" )
+{
+	Settings_t settings;
+	settings.flSDRInputGain = 1.5f;
+	REQUIRE( !BIsShaperIdentity( EOTF_Gamma22, EOTF_Gamma22, settings.flSDRInputGain ) );
+	REQUIRE( MaxLut3DOnlyError( Bake( settings ) ) > k_flTolerance );
 }

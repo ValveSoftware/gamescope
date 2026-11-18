@@ -670,10 +670,15 @@ inline T calcLinearToEOTF( const T & input, EOTF eotf, const tonemapping_t & ton
 
 bool g_bUseSourceEOTFForShaper = false;
 
+bool BIsShaperIdentity( EOTF sourceEOTF, EOTF destEOTF, float flGain )
+{
+    return sourceEOTF == destEOTF && flGain == 1.f;
+}
+
 template <typename T>
 inline T applyShaper( const T & input, EOTF source, EOTF dest, const tonemapping_t & tonemapping, float flGain )
 {
-    if ( ( source == dest && flGain == 1.f ) || !tonemapping.bUseShaper )
+    if ( BIsShaperIdentity( source, dest, flGain ) || !tonemapping.bUseShaper )
     {
         return input;
     }

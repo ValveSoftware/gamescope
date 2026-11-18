@@ -354,6 +354,7 @@ create_color_mgmt_luts(const gamescope_color_mgmt_t& newColorMgmt, gamescope_col
 			memcpy(g_ColorMgmtLuts[nInputEOTF].lut1d, g_ColorMgmtLutsOverride[nInputEOTF].lut1d, sizeof(g_ColorMgmtLutsOverride[nInputEOTF].lut1d));
 			memcpy(g_ColorMgmtLuts[nInputEOTF].lut3d, g_ColorMgmtLutsOverride[nInputEOTF].lut3d, sizeof(g_ColorMgmtLutsOverride[nInputEOTF].lut3d));
 			outColorMgmtLuts[nInputEOTF].vScanoutGain = glm::vec3( 1.0f );
+			outColorMgmtLuts[nInputEOTF].bShaperIdentity = false;
 		}
 		else
 		{
@@ -445,6 +446,7 @@ create_color_mgmt_luts(const gamescope_color_mgmt_t& newColorMgmt, gamescope_col
 				colorMapping, newColorMgmt.nightmode, tonemapping, pLook, flGain );
 
 			outColorMgmtLuts[nInputEOTF].vScanoutGain = calcScanoutGain( inputEOTF, newColorMgmt.outputEncodingEOTF, newColorMgmt.nightmode );
+			outColorMgmtLuts[nInputEOTF].bShaperIdentity = BIsShaperIdentity( inputEOTF, newColorMgmt.outputEncodingEOTF, flGain );
 
 			// Create quantized output luts
 			for ( size_t i=0, end = g_tmpLut1d.dataR.size(); i<end; ++i )

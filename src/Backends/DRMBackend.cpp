@@ -459,7 +459,26 @@ namespace gamescope
 		CDRMCRTC( drmModeCrtc *pCRTC, uint32_t uCRTCMask );
 
 		void RefreshState();
+		void InitColorPipelines();
 		uint32_t GetCRTCMask() const { return m_uCRTCMask; }
+
+		CDRMColorPipeline *GetColorPipeline() { return m_ColorPipelines.empty() ? nullptr : &m_ColorPipelines.front(); }
+
+		template <typename Func>
+		void ForEachProperty( Func fnFunc )
+		{
+			for ( std::optional<CDRMAtomicProperty> &oProperty : m_Props )
+				fnFunc( oProperty );
+
+			for ( CDRMColorPipeline &pipeline : m_ColorPipelines )
+			{
+				for ( std::unique_ptr<CDRMColorOp> &pColorOp : pipeline.ops )
+				{
+					for ( std::optional<CDRMAtomicProperty> &oProperty : pColorOp->GetProperties() )
+						fnFunc( oProperty );
+				}
+			}
+		}
 
 		struct CRTCProperties
 		{
@@ -476,6 +495,7 @@ namespace gamescope
 			std::optional<CDRMAtomicProperty> VRR_ENABLED;
 			std::optional<CDRMAtomicProperty> OUT_FENCE_PTR;
 			std::optional<CDRMAtomicProperty> AMD_CRTC_REGAMMA_TF;
+			std::optional<CDRMAtomicProperty> COLOR_PIPELINE;
 			std::optional<CDRMAtomicProperty> DUMMY_END;
 		};
 		      CRTCProperties &GetProperties()       { return m_Props; }
@@ -484,6 +504,7 @@ namespace gamescope
 		CAutoDeletePtr<drmModeCrtc> m_pCRTC;
 		uint32_t m_uCRTCMask = 0u;
 		CRTCProperties m_Props;
+		std::vector<CDRMColorPipeline> m_ColorPipelines;
 	};
 
 	class CDRMConnector final : public CBaseBackendConnector, public CDRMAtomicTypedObject<DRM_MODE_OBJECT_CONNECTOR>
@@ -704,6 +725,7 @@ struct drm_color_ctm2 {
 bool g_bSupportsAsyncFlips = false;
 bool g_bSupportsSyncObjs = false;
 bool g_bSupportsColorPipeline = false;
+bool g_bSupportsCRTCColorPipeline = false;
 
 extern gamescope::GamescopeModeGeneration g_eGamescopeModeGeneration;
 extern GamescopePanelOrientation g_DesiredInternalOrientation;
@@ -1114,6 +1136,20 @@ static bool get_resources(struct drm_t *drm)
 	for ( std::unique_ptr< gamescope::CDRMPlane > &pPlane : drm->planes )
 		pPlane->InitColorPipelines();
 
+	for ( std::unique_ptr< gamescope::CDRMCRTC > &pCRTC : drm->crtcs )
+		pCRTC->InitColorPipelines();
+
+	if ( g_bSupportsCRTCColorPipeline &&
+	     std::none_of( drm->crtcs.begin(), drm->crtcs.end(), []( std::unique_ptr< gamescope::CDRMCRTC > &pCRTC ){ return pCRTC->GetColorPipeline() != nullptr; } ) )
+	{
+		// The cap hides GAMMA_LUT, which amdgpu's colorop path still re-encodes with.
+		drm_log.infof( "No CRTC color pipeline has a 3D LUT, keeping the legacy CRTC color properties" );
+		if ( drmSetClientCap( drm->fd, DRM_CLIENT_CAP_CRTC_COLOR_PIPELINE, 0 ) != 0 )
+			drm_log.errorf_errno( "drmSetClientCap(CRTC_COLOR_PIPELINE, 0) failed" );
+		g_bSupportsCRTCColorPipeline = false;
+	}
+
+	// Re-reads the CRTC properties the cap hid.
 	return refresh_state( drm );
 }
 
@@ -1700,6 +1736,7 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 	}
 
 	g_bSupportsColorPipeline = drmSetClientCap(drm->fd, DRM_CLIENT_CAP_PLANE_COLOR_PIPELINE, 1) == 0;
+	g_bSupportsCRTCColorPipeline = g_bSupportsColorPipeline && drmSetClientCap(drm->fd, DRM_CLIENT_CAP_CRTC_COLOR_PIPELINE, 1) == 0;
 
 	if (!get_resources(drm)) {
 		return false;
@@ -1917,6 +1954,9 @@ void finish_drm(struct drm_t *drm)
 
 		if ( pCRTC->GetProperties().AMD_CRTC_REGAMMA_TF )
 			pCRTC->GetProperties().AMD_CRTC_REGAMMA_TF->SetPendingValue( req, 0, true );
+
+		if ( pCRTC->GetProperties().COLOR_PIPELINE )
+			pCRTC->GetProperties().COLOR_PIPELINE->SetPendingValue( req, 0, true );
 	}
 
 	for ( std::unique_ptr< gamescope::CDRMPlane > &pPlane : drm->planes )
@@ -2208,6 +2248,7 @@ struct LiftoffStateCacheEntry
 	}
 
     int nLayerCount;
+	bool bCRTCLut3D;
 
 	struct LiftoffLayerState_t
 	{
@@ -2236,6 +2277,7 @@ struct LiftoffStateCacheEntryKasher
 	{
 		size_t hash = 0;
 		hash_combine(hash, k.nLayerCount);
+		hash_combine(hash, k.bCRTCLut3D);
 		for ( int i = 0; i < k.nLayerCount; i++ )
 		{
 			hash_combine(hash, k.layerState[i].ycbcr);
@@ -2428,6 +2470,7 @@ LiftoffStateCacheEntry FrameInfoToLiftoffStateCacheEntry( struct drm_t *drm, con
 	const bool bFullColorPipeline = drm_supports_color_pipeline( drm );
 
 	entry.nLayerCount = frameInfo->layers.count();
+	entry.bCRTCLut3D = drm->pCRTC->GetProperties().COLOR_PIPELINE && drm->pCRTC->GetProperties().COLOR_PIPELINE->GetPendingValue() != 0;
 	for ( int i = 0; i < entry.nLayerCount; i++ )
 	{
 		const uint16_t srcWidth  = frameInfo->layers.get( i ).tex->width();
@@ -2478,9 +2521,9 @@ LiftoffStateCacheEntry FrameInfoToLiftoffStateCacheEntry( struct drm_t *drm, con
 				entry.layerState[i].colorNeed |= k_ColorNeedFixedMatrix;
 			if ( frameInfo->layers.get( i ).ctm != nullptr && !cv_drm_debug_disable_ctm )
 				entry.layerState[i].colorNeed |= k_ColorNeedCTM;
-			if ( frameInfo->layers.get( i ).applyColorMgmt && bFullColorPipeline )
+			if ( frameInfo->layers.get( i ).applyColorMgmt && !entry.bCRTCLut3D && bFullColorPipeline )
 				entry.layerState[i].colorNeed |= k_ColorNeedLuts;
-			else if ( frameInfo->layers.get( i ).applyColorMgmt && !g_bForceDisableColorMgmt &&
+			else if ( frameInfo->layers.get( i ).applyColorMgmt && !entry.bCRTCLut3D && !g_bForceDisableColorMgmt &&
 			          g_ColorMgmtLuts[ ColorSpaceToEOTFIndex( entry.layerState[i].colorspace ) ].vScanoutGain != glm::vec3( 1.0f ) )
 				entry.layerState[i].colorNeed |= k_ColorNeedEncodedGain;
 			if ( drm->pending.output_tf != AMDGPU_TRANSFER_FUNCTION_DEFAULT )
@@ -2858,13 +2901,13 @@ namespace gamescope
 		return true;
 	}
 
-	void CDRMPlane::InitColorPipelines()
+	static void ParseColorPipelines( const char *pszObject, uint32_t uObjectId, const std::optional<CDRMAtomicProperty> &oColorPipeline, std::vector<CDRMColorPipeline> *pPipelines )
 	{
-		if ( !m_Props.COLOR_PIPELINE )
+		if ( !oColorPipeline )
 			return;
 
 		std::vector<std::pair<std::string, uint64_t>> pipelineEnums;
-		if ( !GetPropertyEnums( m_Props.COLOR_PIPELINE->GetPropertyId(), &pipelineEnums ) )
+		if ( !GetPropertyEnums( oColorPipeline->GetPropertyId(), &pipelineEnums ) )
 			return;
 
 		for ( const auto &[ sName, ulHeadId ] : pipelineEnums )
@@ -2875,13 +2918,18 @@ namespace gamescope
 			CDRMColorPipeline pipeline;
 			if ( !ParseColorPipeline( uint32_t( ulHeadId ), &pipeline ) )
 			{
-				drm_log.infof( "Plane %u: ignoring color pipeline '%s'", GetObjectId(), sName.c_str() );
+				drm_log.infof( "%s %u: ignoring color pipeline '%s'", pszObject, uObjectId, sName.c_str() );
 				continue;
 			}
 
-			drm_log.infof( "Plane %u: color pipeline '%s', %zu ops%s", GetObjectId(), sName.c_str(), pipeline.ops.size(), pipeline.bFull ? ", full" : "" );
-			m_ColorPipelines.emplace_back( std::move( pipeline ) );
+			drm_log.infof( "%s %u: color pipeline '%s', %zu ops%s", pszObject, uObjectId, sName.c_str(), pipeline.ops.size(), pipeline.bFull ? ", full" : "" );
+			pPipelines->emplace_back( std::move( pipeline ) );
 		}
+	}
+
+	void CDRMPlane::InitColorPipelines()
+	{
+		ParseColorPipelines( "Plane", GetObjectId(), m_Props.COLOR_PIPELINE, &m_ColorPipelines );
 	}
 
 	CDRMColorPipeline *CDRMPlane::GetColorPipeline()
@@ -2921,7 +2969,31 @@ namespace gamescope
 			m_Props.VRR_ENABLED         = CDRMAtomicProperty::Instantiate( "VRR_ENABLED",         this, *rawProperties );
 			m_Props.OUT_FENCE_PTR       = CDRMAtomicProperty::Instantiate( "OUT_FENCE_PTR",       this, *rawProperties );
 			m_Props.AMD_CRTC_REGAMMA_TF = CDRMAtomicProperty::Instantiate( "AMD_CRTC_REGAMMA_TF", this, *rawProperties );
+			m_Props.COLOR_PIPELINE      = CDRMAtomicProperty::Instantiate( "COLOR_PIPELINE",      this, *rawProperties );
 		}
+
+		for ( CDRMColorPipeline &pipeline : m_ColorPipelines )
+		{
+			for ( std::unique_ptr<CDRMColorOp> &pColorOp : pipeline.ops )
+				pColorOp->RefreshState();
+		}
+	}
+
+	void CDRMCRTC::InitColorPipelines()
+	{
+		ParseColorPipelines( "CRTC", GetObjectId(), m_Props.COLOR_PIPELINE, &m_ColorPipelines );
+
+		for ( CDRMColorPipeline &pipeline : m_ColorPipelines )
+		{
+			pipeline.pLut3D = nullptr;
+			for ( std::unique_ptr<CDRMColorOp> &pColorOp : pipeline.ops )
+			{
+				if ( pColorOp->GetType() == EDRMColorOpType::Lut3D && pColorOp->GetSize() == s_nLutEdgeSize3d )
+					pipeline.pLut3D = pColorOp.get();
+			}
+		}
+
+		std::erase_if( m_ColorPipelines, []( const CDRMColorPipeline &pipeline ){ return !pipeline.pLut3D; } );
 	}
 
 	/////////////////////////
@@ -3842,11 +3914,11 @@ void drm_rollback( struct drm_t *drm )
 
 	for ( std::unique_ptr< gamescope::CDRMCRTC > &pCRTC : drm->crtcs )
 	{
-		for ( std::optional<gamescope::CDRMAtomicProperty> &oProperty : pCRTC->GetProperties() )
+		pCRTC->ForEachProperty( []( std::optional<gamescope::CDRMAtomicProperty> &oProperty )
 		{
 			if ( oProperty )
 				oProperty->Rollback();
-		}
+		} );
 	}
 
 	for ( std::unique_ptr< gamescope::CDRMPlane > &pPlane : drm->planes )
@@ -3916,6 +3988,31 @@ static void drm_unlink_foreign_planes( struct drm_t *drm )
 	}
 
 	drmModeAtomicFree( req );
+}
+
+// With no shaper stage, the post-blend 3D LUT carries the transform only for one EOTF with an identity shaper.
+static gamescope::BackendBlob *drm_get_crtc_lut3d( struct drm_t *drm, const struct FrameInfo_t *frameInfo )
+{
+	if ( !drm->pCRTC->GetColorPipeline() || !frameInfo->applyOutputColorMgmt || g_bForceDisableColorMgmt || cv_drm_debug_disable_shaper_and_3dlut )
+		return nullptr;
+
+	std::optional<uint32_t> oEOTF;
+	for ( int i = 0; i < frameInfo->layers.count(); i++ )
+	{
+		const FrameInfo_t::Layer_t &layer = frameInfo->layers.get( i );
+		// The cursor goes through the LUT with the frame, it would otherwise turn the transform off whenever it shows.
+		if ( layer.zpos == g_zposCursor )
+			continue;
+		const uint32_t uEOTF = ColorSpaceToEOTFIndex( layer.isYcbcr() ? GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB : layer.colorspace );
+		if ( !layer.applyColorMgmt || layer.ctm != nullptr || ( oEOTF && *oEOTF != uEOTF ) )
+			return nullptr;
+		oEOTF = uEOTF;
+	}
+
+	if ( !oEOTF || !g_ColorMgmtLuts[ *oEOTF ].bShaperIdentity )
+		return nullptr;
+
+	return drm->pending.lut3d_colorop_id[ *oEOTF ].get();
 }
 
 /* Prepares an atomic commit for the provided scene-graph. Returns 0 on success,
@@ -4081,6 +4178,9 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 
 			if ( pCRTC->GetProperties().AMD_CRTC_REGAMMA_TF )
 				pCRTC->GetProperties().AMD_CRTC_REGAMMA_TF->SetPendingValue( drm->req, 0, bForceInRequest );
+
+			if ( pCRTC->GetProperties().COLOR_PIPELINE )
+				pCRTC->GetProperties().COLOR_PIPELINE->SetPendingValue( drm->req, 0, bForceInRequest );
 		}
 
 		if ( drm->pConnector && !bSleep )
@@ -4148,10 +4248,27 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 
 			drm->pCRTC->GetProperties().GAMMA_LUT->SetPendingValue( drm->req, pGammaLut ? pGammaLut->GetBlobValue() : 0lu, bForceInRequest );
 		}
+
+		if ( drm->pCRTC->GetProperties().COLOR_PIPELINE )
+		{
+			gamescope::CDRMColorPipeline *p = drm->pCRTC->GetColorPipeline();
+			gamescope::BackendBlob *pLut3D = drm_get_crtc_lut3d( drm, frameInfo );
+
+			drm->pCRTC->GetProperties().COLOR_PIPELINE->SetPendingValue( drm->req, pLut3D ? p->uId : 0lu, true );
+			if ( pLut3D )
+			{
+				for ( std::unique_ptr<gamescope::CDRMColorOp> &pColorOp : p->ops )
+					pColorOp->GetProperties().BYPASS->SetPendingValue( drm->req, pColorOp.get() == p->pLut3D ? 0 : 1, true );
+				p->pLut3D->GetProperties().DATA->SetPendingValue( drm->req, pLut3D->GetBlobValue(), true );
+			}
+		}
 	}
 
-	// libliftoff tests with these flags, and an async flip cannot change GAMMA_LUT.
-	if ( g_bSupportsColorPipeline && drm->pCRTC && drm_property_changed( drm->pCRTC->GetProperties().GAMMA_LUT ) )
+	// libliftoff tests with these flags, and an async flip cannot change a CRTC property.
+	bool bCRTCChanged = false;
+	if ( g_bSupportsColorPipeline && drm->pCRTC )
+		drm->pCRTC->ForEachProperty( [ &bCRTCChanged ]( std::optional<gamescope::CDRMAtomicProperty> &oProperty ){ bCRTCChanged |= drm_property_changed( oProperty ); } );
+	if ( bCRTCChanged )
 		flags &= ~DRM_MODE_PAGE_FLIP_ASYNC;
 
 	drm->flags = flags;
@@ -4322,11 +4439,12 @@ bool drm_update_color_mgmt(struct drm_t *drm)
 		}
 
 		if ( drm_supports_color_pipeline( drm ) )
-		{
 			drm->pending.shaperlut_colorop_id[ i ] = GetBackend()->CreateBackendBlob( lut_convert_16bit_to_32bit( g_ColorMgmtLuts[i].lut1d ) );
+
+		if ( drm_supports_color_pipeline( drm ) || g_bSupportsCRTCColorPipeline )
 			drm->pending.lut3d_colorop_id[ i ] = GetBackend()->CreateBackendBlob( lut_convert_16bit_to_32bit( g_ColorMgmtLuts[i].lut3d ) );
-		}
-		else if ( g_bSupportsColorPipeline && g_ColorMgmtLuts[i].vScanoutGain != glm::vec3( 1.0f ) )
+
+		if ( !drm_supports_color_pipeline( drm ) && g_bSupportsColorPipeline && g_ColorMgmtLuts[i].vScanoutGain != glm::vec3( 1.0f ) )
 		{
 			glm::vec3 vGain = g_ColorMgmtLuts[i].vScanoutGain;
 			for ( int c = 0; c < 3; c++ )
@@ -5266,11 +5384,11 @@ namespace gamescope
 
 				for ( std::unique_ptr< gamescope::CDRMCRTC > &pCRTC : drm->crtcs )
 				{
-					for ( std::optional<gamescope::CDRMAtomicProperty> &oProperty : pCRTC->GetProperties() )
+					pCRTC->ForEachProperty( []( std::optional<gamescope::CDRMAtomicProperty> &oProperty )
 					{
 						if ( oProperty )
 							oProperty->OnCommit();
-					}
+					} );
 				}
 
 				for ( std::unique_ptr< gamescope::CDRMPlane > &pPlane : drm->planes )
