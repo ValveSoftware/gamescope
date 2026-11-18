@@ -11,7 +11,8 @@ class CVulkanTexture;
 
 struct UpscaledTexture_t
 {
-	GamescopeUpscaleFilter eFilter{};
+	GamescopeUpscaleFilter eFilter{}; // Requested filter, used as the cache key.
+	GamescopeUpscaleFilter eActiveFilter{}; // Filter used to render this texture.
 	GamescopeUpscaleScaler eScaler{};
 	uint32_t uOutputWidth = 0;
 	uint32_t uOutputHeight = 0;
