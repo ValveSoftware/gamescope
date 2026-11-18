@@ -3,7 +3,7 @@
 	url = https://gitlab.freedesktop.org/wlroots/wlroots.git
 [submodule "subprojects/libliftoff"]
 	path = subprojects/libliftoff
-	url = https://gitlab.freedesktop.org/emersion/libliftoff.git
+	url = https://gitlab.freedesktop.org/matte-schwartz/libliftoff.git
 [submodule "subprojects/vkroots"]
 	path = subprojects/vkroots
 	url = https://github.com/Joshua-Ashton/vkroots
