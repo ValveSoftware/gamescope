@@ -670,10 +670,15 @@ inline T calcLinearToEOTF( const T & input, EOTF eotf, const tonemapping_t & ton
 
 bool g_bUseSourceEOTFForShaper = false;
 
+bool BIsShaperIdentity( EOTF sourceEOTF, EOTF destEOTF, float flGain )
+{
+    return sourceEOTF == destEOTF && flGain == 1.f;
+}
+
 template <typename T>
 inline T applyShaper( const T & input, EOTF source, EOTF dest, const tonemapping_t & tonemapping, float flGain )
 {
-    if ( ( source == dest && flGain == 1.f ) || !tonemapping.bUseShaper )
+    if ( BIsShaperIdentity( source, dest, flGain ) || !tonemapping.bUseShaper )
     {
         return input;
     }
@@ -685,6 +690,14 @@ inline T applyShaper( const T & input, EOTF source, EOTF dest, const tonemapping
 }
 
 bool g_bHuePreservationWhenClipping = false;
+
+inline glm::vec3 calcNightModeMult( const nightmode_t & nightmode )
+{
+    // amount and saturation are overdetermined but we separate the two as they conceptually represent
+    // different quantities, and this preserves forwards algorithmic compatibility
+    glm::vec3 nightModeMultHSV( nightmode.hue, clamp01( nightmode.saturation * nightmode.amount ), 1.f );
+    return hsv_to_rgb( nightModeMultHSV );
+}
 
 template <uint32_t lutEdgeSize3d>
 void calcColorTransform( lut1d_t * pShaper, int nLutSize1d,
@@ -734,10 +747,7 @@ void calcColorTransform( lut1d_t * pShaper, int nLutSize1d,
             dest_from_native = dest_from_xyz * normalised_primary_matrix( native.primaries, native.white, 1.f );
 
         // Precalc night mode scalars & digital gain
-        // amount and saturation are overdetermined but we separate the two as they conceptually represent
-        // different quantities, and this preserves forwards algorithmic compatibility
-        glm::vec3 nightModeMultHSV( nightmode.hue, clamp01( nightmode.saturation * nightmode.amount ), 1.f );
-        glm::vec3 vMultLinear = glm::pow( hsv_to_rgb( nightModeMultHSV ), glm::vec3( 2.2f ) );
+        glm::vec3 vMultLinear = glm::pow( calcNightModeMult( nightmode ), glm::vec3( 2.2f ) );
         vMultLinear = vMultLinear * flGain;
 
         // Calculate the virtual white point adaptation
@@ -835,6 +845,15 @@ void calcColorTransform( lut1d_t * pShaper, int nLutSize1d,
             }
         }
     }
+}
+
+glm::vec3 calcScanoutGain( EOTF sourceEOTF, EOTF destEOTF, const nightmode_t & nightmode )
+{
+    // The bake's 2.2 power on the factor cancels against its pure 2.2 decode and encode.
+    if ( sourceEOTF != EOTF_Gamma22 || destEOTF != EOTF_Gamma22 )
+        return glm::vec3( 1.f );
+
+    return calcNightModeMult( nightmode );
 }
 
 bool BIsWideGamut( const displaycolorimetry_t & nativeDisplayOutput )
