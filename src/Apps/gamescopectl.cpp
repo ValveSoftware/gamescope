@@ -8,6 +8,7 @@
 #include "Utils/Version.h"
 
 #include <wayland-client.h>
+#include <algorithm>
 #include <gamescope-control-client-protocol.h>
 #include <gamescope-private-client-protocol.h>
 
@@ -126,9 +127,19 @@ namespace gamescope
         }
 
         std::string szArg1 = std::string{ args[0] };
-        std::string szArg2 = args.size() == 1 ? "" : std::string{ args[1] };
 
-        gamescope_private_execute( m_pGamescopePrivate, szArg1.c_str(), szArg2.c_str() );
+        // execute always carries a value, and an empty one is still a set,
+        // so reading a convar needs the print request.
+        if ( args.size() == 1 && wl_proxy_get_version( (struct wl_proxy *)m_pGamescopePrivate ) >= GAMESCOPE_PRIVATE_PRINT_SINCE_VERSION )
+        {
+            gamescope_private_print( m_pGamescopePrivate, szArg1.c_str() );
+        }
+        else
+        {
+            std::string szArg2 = args.size() == 1 ? "" : std::string{ args[1] };
+
+            gamescope_private_execute( m_pGamescopePrivate, szArg1.c_str(), szArg2.c_str() );
+        }
         wl_display_roundtrip( m_pDisplay );
 
         return true;
@@ -143,7 +154,7 @@ namespace gamescope
         }
         else if ( m_bInitPrivate && !strcmp( pInterface, gamescope_private_interface.name ) )
         {
-            m_pGamescopePrivate = (decltype(m_pGamescopePrivate))  wl_registry_bind( pRegistry, uName, &gamescope_private_interface, uVersion );
+            m_pGamescopePrivate = (decltype(m_pGamescopePrivate))  wl_registry_bind( pRegistry, uName, &gamescope_private_interface, std::min<uint32_t>( uVersion, gamescope_private_interface.version ) );
             gamescope_private_add_listener( m_pGamescopePrivate, &s_GamescopePrivateListener, this );
         }
     }
