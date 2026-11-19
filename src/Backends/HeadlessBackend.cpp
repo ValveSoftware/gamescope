@@ -206,6 +206,11 @@ namespace gamescope
 			return nullptr;
 		}
 
+		virtual bool SupportsColorManagement() const override
+		{
+			return false;
+		}
+
 		virtual bool SupportsPlaneHardwareCursor() const override
 		{
 			return false;

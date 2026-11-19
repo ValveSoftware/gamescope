@@ -1029,7 +1029,7 @@ namespace gamescope
             return m_pIPCResourceManager;
         }
 
-        bool SupportsColorManagement() const
+        virtual bool SupportsColorManagement() const override
         {
             return false;
         }
