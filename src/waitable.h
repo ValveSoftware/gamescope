@@ -114,9 +114,10 @@ namespace gamescope
     class CFunctionWaitable final : public IWaitable
     {
     public:
-        CFunctionWaitable( int nFD, std::function<void()> fnPollFunc = nullptr )
+        CFunctionWaitable( int nFD, std::function<void()> fnPollFunc = nullptr, std::function<void()> fnHangUpFunc = nullptr )
             : m_nFD{ nFD }
             , m_fnPollFunc{ fnPollFunc }
+            , m_fnHangUpFunc{ fnHangUpFunc }
         {
         }
 
@@ -124,6 +125,14 @@ namespace gamescope
         {
             if ( m_fnPollFunc )
                 m_fnPollFunc();
+        }
+
+        void OnPollHangUp() final
+        {
+            if ( m_fnHangUpFunc )
+                m_fnHangUpFunc();
+            else
+                IWaitable::OnPollHangUp();
         }
 
         void Drain()
@@ -138,6 +147,7 @@ namespace gamescope
     private:
         int m_nFD;
         std::function<void()> m_fnPollFunc;
+        std::function<void()> m_fnHangUpFunc;
     };
 
     class ITimerWaitable : public IWaitable
