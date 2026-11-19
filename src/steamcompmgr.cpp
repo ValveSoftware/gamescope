@@ -3069,11 +3069,19 @@ static void paint_pipewire()
 	if ( !bAppIdMatches )
 		return;
 
-	// If the commits are the same as they were last time, don't repaint and don't push a new buffer on the stream.
+	// Full-display capture includes the Steam overlay when it has visible contents.
+	steamcompmgr_win_t *pOverlay = !ulFocusAppId && pFocus->overlayWindow && pFocus->overlayWindow->opacity
+		? pFocus->overlayWindow : nullptr;
+	const uint64_t ulOverlayCommitId = window_last_done_commit_id( pOverlay );
+	const uint32_t uOverlayOpacity = ulOverlayCommitId ? pOverlay->opacity : 0;
+
+	// Skip repainting when the captured commits and overlay opacity haven't changed.
 	static uint64_t s_ulLastFocusCommitId = 0;
 	static uint64_t s_ulLastOverrideCommitId = 0;
 	static uint64_t s_ulLastUnderlayCommitId = 0;
 	static uint64_t s_ulLastDecorationCommitId = 0;
+	static uint64_t s_ulLastOverlayCommitId = 0;
+	static uint32_t s_uLastOverlayOpacity = 0;
 
 	uint64_t ulFocusCommitId = window_last_done_commit_id( pFocus->focusWindow );
 	uint64_t ulOverrideCommitId = window_last_done_commit_id( pFocus->overrideWindow );
@@ -3090,13 +3098,10 @@ static void paint_pipewire()
 	if ( ulFocusCommitId == s_ulLastFocusCommitId &&
 	     ulOverrideCommitId == s_ulLastOverrideCommitId &&
 	     ulUnderlayCommitId == s_ulLastUnderlayCommitId &&
-	     ulDecorationCommitId == s_ulLastDecorationCommitId )
+	     ulDecorationCommitId == s_ulLastDecorationCommitId &&
+	     ulOverlayCommitId == s_ulLastOverlayCommitId &&
+	     uOverlayOpacity == s_uLastOverlayOpacity )
 		return;
-
-	s_ulLastFocusCommitId = ulFocusCommitId;
-	s_ulLastOverrideCommitId = ulOverrideCommitId;
-	s_ulLastUnderlayCommitId = ulUnderlayCommitId;
-	s_ulLastDecorationCommitId = ulDecorationCommitId;
 
 	uint32_t uWidth = s_pPipewireBuffer->texture->width();
 	uint32_t uHeight = s_pPipewireBuffer->texture->height();
@@ -3113,7 +3118,7 @@ static void paint_pipewire()
 	steamcompmgr_win_t *fit = pFocus->overrideWindow;
 
 	// Leave room for the overlay painted below.
-	const int nReservedLayers = ( !ulFocusAppId && pFocus->overlayWindow && pFocus->overlayWindow->opacity ) ? 1 : 0;
+	const int nReservedLayers = ulOverlayCommitId ? 1 : 0;
 	frameInfo.nReservedLayers = nReservedLayers;
 
 	paint_window( pFocus, pFocus->focusWindow, pFocus->focusWindow, &frameInfo, nullptr, 0, 1.0f, fit );
@@ -3137,9 +3142,9 @@ static void paint_pipewire()
 		}
 	}
 
-	if ( !ulFocusAppId && pFocus->overlayWindow && pFocus->overlayWindow->opacity )
+	if ( ulOverlayCommitId )
 	{
-		paint_window( pFocus, pFocus->overlayWindow, pFocus->overlayWindow, &frameInfo, nullptr, PaintWindowFlag::DrawBorders | PaintWindowFlag::NoFilter |
+		paint_window( pFocus, pOverlay, pOverlay, &frameInfo, nullptr, PaintWindowFlag::DrawBorders | PaintWindowFlag::NoFilter |
 				( cv_overlay_unmultiplied_alpha ? PaintWindowFlag::CoverageMode : 0 )  );
 	}
 
@@ -3162,6 +3167,13 @@ static void paint_pipewire()
 	if ( oPipewireSequence )
 	{
 		vulkan_wait( *oPipewireSequence, true );
+
+		s_ulLastFocusCommitId = ulFocusCommitId;
+		s_ulLastOverrideCommitId = ulOverrideCommitId;
+		s_ulLastUnderlayCommitId = ulUnderlayCommitId;
+		s_ulLastDecorationCommitId = ulDecorationCommitId;
+		s_ulLastOverlayCommitId = ulOverlayCommitId;
+		s_uLastOverlayOpacity = uOverlayOpacity;
 
 		push_pipewire_buffer( s_pPipewireBuffer );
 		s_pPipewireBuffer = nullptr;
