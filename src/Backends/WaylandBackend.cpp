@@ -2995,6 +2995,7 @@ namespace gamescope
             case KEY_I:
             case KEY_O:
             case KEY_S:
+            case KEY_M:
                 return true;
             default:
                 return false;
@@ -3070,6 +3071,11 @@ namespace gamescope
 
             case KEY_S:
                 gamescope::CScreenshotManager::Get().TakeScreenshot( true );
+                break;
+
+            case KEY_M:
+                g_bForceRelativeMouse = !g_bForceRelativeMouse;
+                force_repaint();
                 break;
 
             default:
