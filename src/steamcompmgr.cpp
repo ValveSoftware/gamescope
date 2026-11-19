@@ -2543,6 +2543,7 @@ namespace PaintWindowFlag
 	static const uint32_t CoverageMode = 1u << 6;
 	static const uint32_t ClampToOutput = 1u << 7;
 	static const uint32_t SubpixelOffsets = 1u << 8;
+	static const uint32_t SurfaceTree = 1u << 9;
 }
 using PaintWindowFlags = uint32_t;
 
@@ -2885,7 +2886,7 @@ paint_window(global_focus_t *pFocus, steamcompmgr_win_t *w, steamcompmgr_win_t *
 
 	// Subsurfaces and popups are painted here instead of paint_all so their
 	// layers are drawn above the base plane they belong to.
-	if ( layer && ( flags & PaintWindowFlag::BasePlane ) && lastCommit )
+	if ( layer && ( flags & ( PaintWindowFlag::BasePlane | PaintWindowFlag::SurfaceTree ) ) && lastCommit )
 	{
 		struct wlr_surface *rootSurface = lastCommit->surf;
 		if ( rootSurface )
@@ -3116,14 +3117,14 @@ static void paint_pipewire()
 	const int nReservedLayers = ( !ulFocusAppId && pFocus->overlayWindow && pFocus->overlayWindow->opacity ) ? 1 : 0;
 	frameInfo.nReservedLayers = nReservedLayers;
 
-	paint_window( pFocus, pFocus->focusWindow, pFocus->focusWindow, &frameInfo, nullptr, 0, 1.0f, fit );
+	paint_window( pFocus, pFocus->focusWindow, pFocus->focusWindow, &frameInfo, nullptr, PaintWindowFlag::SurfaceTree, 1.0f, fit );
 
 	if ( !pFocus->focusWindow->isSteamStreamingClient )
-		paint_override_underlays( pFocus, pFocus->focusWindow, &frameInfo, nullptr, nReservedLayers );
+		paint_override_underlays( pFocus, pFocus->focusWindow, &frameInfo, nullptr, nReservedLayers, PaintWindowFlag::SurfaceTree );
 
 	if ( pFocus->overrideWindow && !pFocus->focusWindow->isSteamStreamingClient )
 		paint_window( pFocus, pFocus->overrideWindow, pFocus->focusWindow, &frameInfo, nullptr,
-			PaintWindowFlag::NoFilter | PaintWindowFlag::ClampToOutput, 1.0f, fit );
+			PaintWindowFlag::NoFilter | PaintWindowFlag::ClampToOutput | PaintWindowFlag::SurfaceTree, 1.0f, fit );
 
 	if ( !pFocus->focusWindow->isSteamStreamingClient )
 	{
@@ -3133,13 +3134,13 @@ static void paint_pipewire()
 				break;
 
 			if ( decoration->opacity )
-				paint_window( pFocus, decoration, pFocus->focusWindow, &frameInfo, nullptr, PaintWindowFlag::NoFilter, 1.0f, decoration );
+				paint_window( pFocus, decoration, pFocus->focusWindow, &frameInfo, nullptr, PaintWindowFlag::NoFilter | PaintWindowFlag::SurfaceTree, 1.0f, decoration );
 		}
 	}
 
 	if ( !ulFocusAppId && pFocus->overlayWindow && pFocus->overlayWindow->opacity )
 	{
-		paint_window( pFocus, pFocus->overlayWindow, pFocus->overlayWindow, &frameInfo, nullptr, PaintWindowFlag::DrawBorders | PaintWindowFlag::NoFilter |
+		paint_window( pFocus, pFocus->overlayWindow, pFocus->overlayWindow, &frameInfo, nullptr, PaintWindowFlag::DrawBorders | PaintWindowFlag::NoFilter | PaintWindowFlag::SurfaceTree |
 				( cv_overlay_unmultiplied_alpha ? PaintWindowFlag::CoverageMode : 0 )  );
 	}
 
@@ -3770,19 +3771,19 @@ paint_all( global_focus_t *pFocus, bool async, bool bRepeatFrame )
 					screenshotFrameInfo.shaperLut[nInputEOTF] = luts[nInputEOTF].vk_lut1d;
 				}
 
-				paint_window( pFocus, pFocus->focusWindow, pFocus->focusWindow, &screenshotFrameInfo, nullptr, PaintWindowFlag::SubpixelOffsets, 1.0f, pFocus->overrideWindow );
+				paint_window( pFocus, pFocus->focusWindow, pFocus->focusWindow, &screenshotFrameInfo, nullptr, PaintWindowFlag::SubpixelOffsets | PaintWindowFlag::SurfaceTree, 1.0f, pFocus->overrideWindow );
 				if ( !pFocus->focusWindow->isSteamStreamingClient )
-					paint_override_underlays( pFocus, pFocus->focusWindow, &screenshotFrameInfo, nullptr, 0, PaintWindowFlag::SubpixelOffsets );
+					paint_override_underlays( pFocus, pFocus->focusWindow, &screenshotFrameInfo, nullptr, 0, PaintWindowFlag::SubpixelOffsets | PaintWindowFlag::SurfaceTree );
 				if ( pFocus->overrideWindow && !pFocus->focusWindow->isSteamStreamingClient )
 					paint_window( pFocus, pFocus->overrideWindow, pFocus->focusWindow, &screenshotFrameInfo, nullptr,
-						PaintWindowFlag::NoFilter | PaintWindowFlag::ClampToOutput | PaintWindowFlag::SubpixelOffsets, 1.0f, pFocus->overrideWindow );
+						PaintWindowFlag::NoFilter | PaintWindowFlag::ClampToOutput | PaintWindowFlag::SubpixelOffsets | PaintWindowFlag::SurfaceTree, 1.0f, pFocus->overrideWindow );
 				if ( !pFocus->focusWindow->isSteamStreamingClient )
 				{
 					for ( steamcompmgr_win_t *decoration : pFocus->decorationWindows )
 					{
 						if ( decoration->opacity )
 							paint_window( pFocus, decoration, pFocus->focusWindow, &screenshotFrameInfo, nullptr,
-								PaintWindowFlag::NoFilter | PaintWindowFlag::SubpixelOffsets, 1.0f, decoration );
+								PaintWindowFlag::NoFilter | PaintWindowFlag::SubpixelOffsets | PaintWindowFlag::SurfaceTree, 1.0f, decoration );
 					}
 				}
 
