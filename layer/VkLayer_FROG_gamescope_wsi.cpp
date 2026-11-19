@@ -294,6 +294,20 @@ namespace GamescopeWSILayer {
     return s_minImageCount;
   }
 
+  // The longest a present reuses the Xwayland bypass check's answer, see
+  // BypassEventWatcher. 0 checks on every present.
+  static uint64_t getBypassRecheckInterval() {
+    static uint64_t s_interval = []() -> uint64_t {
+      uint32_t ms = 1000;
+      if (auto value = parseEnv<uint32_t>("GAMESCOPE_WSI_BYPASS_RECHECK_MS")) {
+        ms = *value;
+        fprintf(stderr, "[Gamescope WSI] Bypass recheck interval overridden by GAMESCOPE_WSI_BYPASS_RECHECK_MS: %u ms\n", ms);
+      }
+      return uint64_t(ms) * 1'000'000ul;
+    }();
+    return s_interval;
+  }
+
   static bool getEnsureMinImageCount() {
     static bool s_ensureMinImageCount = []() -> bool {
       if (auto ensure = parseEnv<bool>("GAMESCOPE_WSI_ENSURE_MIN_IMAGE_COUNT")) {
@@ -571,6 +585,96 @@ namespace GamescopeWSILayer {
   static std::mutex gamescopeSurfaceWindowsMutex;
   static std::vector<std::pair<xcb_connection_t*, xcb_window_t>> gamescopeSurfaceWindows;
 
+  // canBypassXWayland() makes about eight synchronous X requests, and
+  // QueuePresentKHR used to make them after every present, while the
+  // application usually holds its queue lock. The answer only changes when the
+  // window or one of its ancestors is configured, mapped, unmapped, reparented
+  // or destroyed, when the window gets or loses child windows, or when
+  // _WINE_ALLOW_FLIP or WM_CLASS change. The application's events are not ours
+  // to read, so one X connection of our own watches the windows for those
+  // events. A present reuses the last answer while none arrived since and it
+  // is younger than GAMESCOPE_WSI_BYPASS_RECHECK_MS (default 1000). Anything
+  // the events miss is seen by that bound.
+  class BypassEventWatcher {
+  public:
+    // Watch window and its ancestors below the root.
+    void watch(xcb_window_t window) {
+      std::scoped_lock lock(m_mutex);
+      if (!connect())
+        return;
+
+      const uint32_t eventMask = XCB_EVENT_MASK_STRUCTURE_NOTIFY | XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY | XCB_EVENT_MASK_PROPERTY_CHANGE;
+      xcb_change_window_attributes(m_connection, window, XCB_CW_EVENT_MASK, &eventMask);
+      for (auto parent = xcb::getParentWindow(m_connection, window); parent; parent = xcb::getParentWindow(m_connection, *parent))
+        xcb_change_window_attributes(m_connection, *parent, XCB_CW_EVENT_MASK, &eventMask);
+      xcb_flush(m_connection);
+    }
+
+    // Read the pending events without blocking. The returned serial moves with
+    // every event that can change a bypass answer; *pReparents moves with
+    // every reparent, after which the ancestors must be watched again.
+    uint64_t poll(uint64_t *pReparents) {
+      std::scoped_lock lock(m_mutex);
+      if (m_connection) {
+        while (xcb_generic_event_t *event = xcb_poll_for_event(m_connection)) {
+          switch (event->response_type & ~0x80) {
+            case XCB_PROPERTY_NOTIFY: {
+              auto *propertyEvent = reinterpret_cast<xcb_property_notify_event_t *>(event);
+              if (propertyEvent->atom == m_wineAllowFlip || propertyEvent->atom == XCB_ATOM_WM_CLASS)
+                m_serial++;
+              break;
+            }
+            case XCB_REPARENT_NOTIFY:
+              m_reparents++;
+              m_serial++;
+              break;
+            default:
+              // Configure, map, unmap, create, destroy, and errors for
+              // windows that went away.
+              m_serial++;
+              break;
+          }
+          free(event);
+        }
+
+        if (xcb_connection_has_error(m_connection)) {
+          fprintf(stderr, "[Gamescope WSI] Bypass check: X event connection lost, rechecking on the time bound only.\n");
+          xcb_disconnect(m_connection);
+          m_connection = nullptr;
+          m_serial++;
+        }
+      }
+      *pReparents = m_reparents;
+      return m_serial;
+    }
+
+  private:
+    bool connect() {
+      if (m_connectTried)
+        return m_connection != nullptr;
+      m_connectTried = true;
+
+      xcb_connection_t *connection = xcb_connect(nullptr, nullptr);
+      if (xcb_connection_has_error(connection)) {
+        fprintf(stderr, "[Gamescope WSI] Bypass check: no X event connection, rechecking on the time bound only.\n");
+        xcb_disconnect(connection);
+        return false;
+      }
+      if (auto atom = xcb::getAtom(connection, "_WINE_ALLOW_FLIP"))
+        m_wineAllowFlip = *atom;
+      m_connection = connection;
+      return true;
+    }
+
+    std::mutex m_mutex;
+    xcb_connection_t *m_connection = nullptr;
+    bool m_connectTried = false;
+    xcb_atom_t m_wineAllowFlip = XCB_ATOM_NONE;
+    uint64_t m_serial = 0;
+    uint64_t m_reparents = 0;
+  };
+  static BypassEventWatcher s_bypassEventWatcher;
+
   struct GamescopeSurfaceData {
     VkInstance instance;
     wl_display *display;
@@ -586,6 +690,18 @@ namespace GamescopeWSILayer {
 
     // Cached for comparison.
     std::optional<VkRect2D> cachedWindowRect;
+
+    // The last canBypassXWayland() answer of a present, see BypassEventWatcher.
+    // Reset on swapchain creation.
+    struct PresentBypass {
+      bool watched = false;
+      uint64_t watchedReparents = 0;
+      bool valid = false;
+      bool hdrColorspace = false;
+      bool canBypass = false;
+      uint64_t serial = 0;
+      uint64_t checkedAt = 0;
+    } presentBypass;
 
     bool isWayland() const {
       // Is native Wayland?
@@ -719,6 +835,43 @@ namespace GamescopeWSILayer {
       // So let's see how it goes for now. :-)
       // Come back to this eventually.
       return true;
+    }
+
+    // canBypassXWayland() for QueuePresentKHR: the last answer while no X
+    // event that could change it arrived and it is younger than the recheck
+    // interval. Also leaves cachedWindowRect as of that answer.
+    bool canBypassXWaylandAtPresent(bool hdrColorspace) {
+      if (isWayland())
+        return true;
+
+      const uint64_t interval = getBypassRecheckInterval();
+      if (!interval)
+        return canBypassXWayland(hdrColorspace);
+
+      uint64_t reparents = 0;
+      const uint64_t serial = s_bypassEventWatcher.poll(&reparents);
+      if (!presentBypass.watched || presentBypass.watchedReparents != reparents) {
+        s_bypassEventWatcher.watch(window);
+        presentBypass.watched = true;
+        presentBypass.watchedReparents = reparents;
+        presentBypass.valid = false;
+      }
+
+      const uint64_t now = getTimeMonotonic();
+      if (presentBypass.valid &&
+          presentBypass.hdrColorspace == hdrColorspace &&
+          presentBypass.serial == serial &&
+          now - presentBypass.checkedAt < interval)
+        return presentBypass.canBypass;
+
+      // The serial was read before the check: an event that arrives while it
+      // runs makes the next present check again.
+      presentBypass.valid = true;
+      presentBypass.hdrColorspace = hdrColorspace;
+      presentBypass.canBypass = canBypassXWayland(hdrColorspace);
+      presentBypass.serial = serial;
+      presentBypass.checkedAt = now;
+      return presentBypass.canBypass;
     }
   };
   static vkroots::ObjectMap<VkSurfaceKHR, GamescopeSurfaceData> gamescopeSurfaces;
@@ -1576,6 +1729,9 @@ namespace GamescopeWSILayer {
       const bool hdrColorspace = pCreateInfo->imageColorSpace == VK_COLOR_SPACE_HDR10_ST2084_EXT ||
                                   pCreateInfo->imageColorSpace == VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT;
       const bool canBypass = gamescopeSurface->canBypassXWayland(hdrColorspace);
+      // The first present checks again, and watches the window's ancestors as
+      // they are now.
+      gamescopeSurface->presentBypass = {};
 
       VkSwapchainCreateInfoKHR swapchainInfo = *pCreateInfo;
       swapchainInfo.flags &= ~VK_SWAPCHAIN_CREATE_PRESENT_TIMING_BIT_EXT;
@@ -2139,7 +2295,7 @@ namespace GamescopeWSILayer {
             continue;
           }
 
-          const bool canBypass = gamescopeSurface->canBypassXWayland(gamescopeSwapchain->isHdrColorspace);
+          const bool canBypass = gamescopeSurface->canBypassXWaylandAtPresent(gamescopeSwapchain->isHdrColorspace);
           if (canBypass != gamescopeSwapchain->isBypassingXWayland) {
             if (canBypass) {
               if (!(gamescopeSurface->flags & GamescopeLayerClient::Flag::NoSuboptimal))
