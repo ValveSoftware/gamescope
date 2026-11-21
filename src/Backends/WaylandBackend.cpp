@@ -3046,15 +3046,15 @@ namespace gamescope
                 break;
 
             case KEY_U:
-                g_wantedUpscaleFilter = GamescopeUpscaleFilter::LINEAR : GamescopeUpscaleFilter::FSR;
+                g_wantedUpscaleFilter = GamescopeUpscaleFilter::FSR;
                 break;
 
             case KEY_Y:
-                g_wantedUpscaleFilter = GamescopeUpscaleFilter::LINEAR : GamescopeUpscaleFilter::NIS;
+                g_wantedUpscaleFilter = GamescopeUpscaleFilter::NIS;
                 break;
 
             case KEY_T:
-                g_wantedUpscaleFilter = GamescopeUpscaleFilter::LINEAR : GamescopeUpscaleFilter::SGSR;
+                g_wantedUpscaleFilter = GamescopeUpscaleFilter::SGSR;
                 break;
 
             case KEY_I:
