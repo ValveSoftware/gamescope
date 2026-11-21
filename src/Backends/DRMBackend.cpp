@@ -2060,7 +2060,8 @@ struct LiftoffStateCacheEntry
 		bool ycbcr;
 		uint32_t zpos;
 		uint32_t srcW, srcH;
-		uint32_t crtcX, crtcY, crtcW, crtcH;
+		int32_t crtcX, crtcY;
+		uint32_t crtcW, crtcH;
 		uint16_t opacity;
 		drm_color_encoding colorEncoding;
 		drm_color_range    colorRange;
@@ -2949,8 +2950,8 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 			}
 			liftoff_layer_set_property( drm->lo_layers[ i ], "rotation", ulOrientation );
 
-			liftoff_layer_set_property( drm->lo_layers[ i ], "CRTC_X", entry.layerState[i].crtcX);
-			liftoff_layer_set_property( drm->lo_layers[ i ], "CRTC_Y", entry.layerState[i].crtcY);
+			liftoff_layer_set_property( drm->lo_layers[ i ], "CRTC_X", (uint64_t)(int64_t)entry.layerState[i].crtcX);
+			liftoff_layer_set_property( drm->lo_layers[ i ], "CRTC_Y", (uint64_t)(int64_t)entry.layerState[i].crtcY);
 
 			liftoff_layer_set_property( drm->lo_layers[ i ], "CRTC_W", entry.layerState[i].crtcW);
 			liftoff_layer_set_property( drm->lo_layers[ i ], "CRTC_H", entry.layerState[i].crtcH);
