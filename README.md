@@ -17,12 +17,56 @@ If running RadeonSI clients with older cards (GFX8 and below), currently have to
 
 ## Building
 
-Dependent first (**Debian/Debian-based**):
+Dependencies first (**Debian/Debian-based**):
 ```
 apt install meson ninja-build pkg-config cmake libpipewire-0.3-dev hwdata libx11-dev libwayland-dev libvulkan-dev wayland-protocols libx11-xcb-dev libxdamage-dev libxcomposite-dev libxcursor-dev libxxf86vm-dev libxtst-dev libxres-dev libxmu-dev libxkbcommon-dev libcap-dev libsdl2-dev libavif-dev libpixman-1-dev liblcms2-dev libseat-dev libinput-dev xwayland libxcb-composite0-dev libxcb-ewmh-dev libxcb-icccm4-dev libxcb-res0-dev glslang-tools libluajit-5.1-dev libcatch2-dev
 ```
 
-Build with:
+Note: Debian stable (13 "trixie") packages some libraries older than Gamescope
+and its bundled wlroots require. If `meson setup` complains about the versions
+below, install newer ones first:
+
+- **Vulkan-Headers >= 1.4.335** (build from source):
+
+  ```
+  git clone --depth 1 --branch v1.4.341 https://github.com/KhronosGroup/Vulkan-Headers /tmp/Vulkan-Headers
+  cmake -B /tmp/Vulkan-Headers/build -S /tmp/Vulkan-Headers -DCMAKE_INSTALL_PREFIX=/usr/local
+  sudo cmake --install /tmp/Vulkan-Headers/build
+  ```
+- **wayland >= 1.24.0** (from trixie-backports):
+
+  ```
+  echo "deb http://deb.debian.org/debian trixie-backports main contrib non-free non-free-firmware" | sudo tee /etc/apt/sources.list.d/backports.list
+  sudo apt update
+  sudo apt install -t trixie-backports libwayland-dev libwayland-server0 libwayland-client0 libwayland-cursor0 libwayland-egl1
+  ```
+- **libdrm >= 2.4.129** (build from source):
+
+  ```
+  sudo apt install libpciaccess-dev
+  git clone --depth 1 --branch libdrm-2.4.129 https://gitlab.freedesktop.org/mesa/libdrm.git /tmp/libdrm
+  meson setup /tmp/libdrm/build /tmp/libdrm --prefix=/usr/local -Dintel=disabled -Dradeon=disabled -Damdgpu=enabled -Dnouveau=disabled -Dvmwgfx=disabled -Dtests=false
+  ninja -C /tmp/libdrm/build
+  sudo ninja -C /tmp/libdrm/build install
+  sudo ldconfig
+  ```
+
+Dependencies first (**Fedora/Fedora-based**):
+```
+dnf install meson ninja-build gcc-c++ pkgconf-pkg-config cmake pipewire-devel hwdata libX11-devel wayland-devel vulkan-headers vulkan-loader-devel wayland-protocols-devel libXdamage-devel libXcomposite-devel libXcursor-devel libXxf86vm-devel libXtst-devel libXres-devel libXmu-devel libxkbcommon-devel libcap-devel SDL2-devel libavif-devel pixman-devel lcms2-devel libseat-devel libinput-devel xorg-x11-server-Xwayland-devel libxcb-devel xcb-util-wm-devel glslang-devel luajit-devel libdecor-devel google-benchmark-devel libdrm-devel
+```
+
+Gamescope's tests need Catch2 v3 (`catch2-with-main`), but Fedora's
+`catch2-devel` is v2, so build v3 from source:
+
+```
+git clone --depth 1 --branch v3.7.1 https://github.com/catchorg/Catch2.git /tmp/Catch2
+cmake -B /tmp/Catch2/build -S /tmp/Catch2 -DCMAKE_INSTALL_PREFIX=/usr/local -DBUILD_TESTING=OFF
+cmake --build /tmp/Catch2/build -j$(nproc)
+sudo cmake --install /tmp/Catch2/build
+```
+
+Then, on any distribution, build with:
 
 ```
 git submodule update --init
