@@ -212,7 +212,7 @@ namespace gamescope
                 case EIS_EVENT_KEYBOARD_KEY:
                 {
                     wlserver_lock();
-                    wlserver_key( eis_event_keyboard_get_key( pEisEvent ), eis_event_keyboard_get_key_is_press( pEisEvent ), ++s_uSequence );
+                    wlserver_emulated_key( eis_event_keyboard_get_key( pEisEvent ), eis_event_keyboard_get_key_is_press( pEisEvent ), ++s_uSequence );
                     wlserver_unlock();
                 }
                 break;
