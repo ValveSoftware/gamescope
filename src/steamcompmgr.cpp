@@ -6872,11 +6872,15 @@ void gamescope_set_selection(std::string_view contents, GamescopeSelection eSele
 void gamescope_set_reshade_effect(std::string effect_path)
 {
 	gamescope_xwayland_server_t *server = wlserver_get_xwayland_server(0);
+	if (!server || !server->ctx)
+		return;
 	set_string_prop(server->ctx.get(), server->ctx->atoms.gamescopeReshadeEffect, effect_path);
 }
 
 void gamescope_clear_reshade_effect() {
 	gamescope_xwayland_server_t *server = wlserver_get_xwayland_server(0);
+	if (!server || !server->ctx)
+		return;
 	clear_prop(server->ctx.get(), server->ctx->atoms.gamescopeReshadeEffect);
 }
 
@@ -8046,6 +8050,9 @@ steamcompmgr_exit(void)
 		gamescope_xwayland_server_t *server = NULL;
 		for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
 		{
+			if (!server->ctx)
+				continue;
+
 			for ( steamcompmgr_win_t *w = server->ctx->list; w; w = w->xwayland().next )
 				w->commit_queue.clear();
 		}
@@ -9772,6 +9779,9 @@ void update_limiter_atoms(xwayland_ctx_t *root_ctx, bool force, bool* needs_flus
 	gamescope_xwayland_server_t *server = NULL;
 	for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
 	{
+		if (!server->ctx || !server->ctx->dpy)
+			continue;
+
 		XChangeProperty(server->ctx->dpy, server->ctx->root, server->ctx->atoms.gamescopeLimiterFeedback, XA_CARDINAL, 32, PropModeReplace,
 			(unsigned char *)&uLimiterFeedback, 1 );
 
@@ -9916,6 +9926,9 @@ void update_edid_prop()
 	gamescope_xwayland_server_t *server = NULL;
 	for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
 	{
+		if (!server->ctx || !server->ctx->dpy)
+			continue;
+
 		XTextProperty text_property =
 		{
 			.value = (unsigned char *)filename,
@@ -10351,6 +10364,9 @@ static void relay_mangoapp_control()
 	gamescope_xwayland_server_t *server = NULL;
 	for (size_t i = 0; !bAnyTagged && (server = wlserver_get_xwayland_server(i)); i++)
 	{
+		if (!server->ctx)
+			continue;
+
 		for ( steamcompmgr_win_t *w = server->ctx->list; w; w = w->xwayland().next )
 		{
 			if ( w->uMangoappMsgType )
