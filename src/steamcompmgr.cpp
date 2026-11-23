@@ -6828,35 +6828,36 @@ handle_client_message(xwayland_ctx_t *ctx, XClientMessageEvent *ev)
 	}
 }
 
-static void x11_set_selection_owner(xwayland_ctx_t *ctx, std::string contents, GamescopeSelection eSelectionTarget)
+static void x11_set_selection_owner(xwayland_ctx_t *ctx, GamescopeSelection eSelectionTarget)
 {
-	Atom target;
-	if (eSelectionTarget == GAMESCOPE_SELECTION_CLIPBOARD)
-	{
-		target = ctx->atoms.clipboard;
-	}
-	else if (eSelectionTarget == GAMESCOPE_SELECTION_PRIMARY)
-	{
-		target = ctx->atoms.primarySelection;
-	}
-	else
-	{
+	if (!ctx || !ctx->dpy || !ctx->ourWindow)
 		return;
-	}
+
+	Atom target = None;
+	if (eSelectionTarget == GAMESCOPE_SELECTION_CLIPBOARD)
+		target = ctx->atoms.clipboard;
+	else if (eSelectionTarget == GAMESCOPE_SELECTION_PRIMARY)
+		target = ctx->atoms.primarySelection;
+	else
+		return;
+
+	if (!target)
+		return;
 
 	XSetSelectionOwner(ctx->dpy, target, ctx->ourWindow, CurrentTime);
 }
 
-void gamescope_set_selection(std::string contents, GamescopeSelection eSelection)
+void gamescope_set_selection(const char *contents, GamescopeSelection eSelection)
+{
+	gamescope_set_selection(contents ? std::string_view{contents} : std::string_view{}, eSelection);
+}
+
+void gamescope_set_selection(std::string_view contents, GamescopeSelection eSelection)
 {
 	if (eSelection == GAMESCOPE_SELECTION_CLIPBOARD)
-	{
 		clipboard = contents;
-	}
 	else if (eSelection == GAMESCOPE_SELECTION_PRIMARY)
-	{
 		primarySelection = contents;
-	}
 
 	gamescope_xwayland_server_t *server = NULL;
 	for (int i = 0; (server = wlserver_get_xwayland_server(i)); i++)
@@ -6864,7 +6865,7 @@ void gamescope_set_selection(std::string contents, GamescopeSelection eSelection
 		xwayland_ctx_t *ctx = server->ctx.get();
 
 		if (ctx)
-			x11_set_selection_owner(ctx, contents, eSelection);
+			x11_set_selection_owner(ctx, eSelection);
 	}
 }
 
@@ -9691,6 +9692,11 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 	}
 
 	ctx->cursor->undirty();
+
+	if (!clipboard.empty())
+		x11_set_selection_owner(ctx, GAMESCOPE_SELECTION_CLIPBOARD);
+	if (!primarySelection.empty())
+		x11_set_selection_owner(ctx, GAMESCOPE_SELECTION_PRIMARY);
 
 	XFlush(ctx->dpy);
 }
