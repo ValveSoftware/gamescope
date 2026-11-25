@@ -3409,6 +3409,24 @@ void wlserver_mousewarp( double x, double y, uint32_t time, bool bSynthetic )
 	wlr_seat_pointer_notify_frame( wlserver.wlr.seat );
 }
 
+// Absolute pointer motion from a nested backend, in normalized output coordinates.
+// Unlike wlserver_touchmotion, this is not subject to the touch click mode, which
+// only governs touch input.
+void wlserver_mousemotion_absolute( double x, double y, uint32_t time )
+{
+	assert( wlserver_is_lock_held() );
+
+	if ( wlserver.mouse_focus_surface != NULL )
+	{
+		double tx = ( x * g_nOutputWidth + focusedWindowOffsetX ) * focusedWindowScaleX;
+		double ty = ( y * g_nOutputHeight + focusedWindowOffsetY ) * focusedWindowScaleY;
+
+		wlserver_mousewarp( tx, ty, time, false );
+	}
+
+	bump_input_counter();
+}
+
 void wlserver_fake_mouse_pos( double x, double y )
 {
 	// Fake a pos for eg. hiding true cursor state from Steam.
