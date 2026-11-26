@@ -368,7 +368,7 @@ namespace gamescope
 		std::vector<std::unique_ptr<CDRMColorOp>> ops;
 		CDRMColorOp *pFixedMatrix = nullptr, *pDegammaCurve = nullptr, *pCTM = nullptr,
 		            *pShaperCurve = nullptr, *pShaperLut = nullptr, *pLut3D = nullptr,
-		            *pBlendCurve = nullptr;
+		            *pBlendCurve = nullptr, *pRegammaCurve = nullptr;
 		bool bFull = false;
 	};
 
@@ -1142,8 +1142,8 @@ static bool get_resources(struct drm_t *drm)
 	if ( g_bSupportsCRTCColorPipeline &&
 	     std::none_of( drm->crtcs.begin(), drm->crtcs.end(), []( std::unique_ptr< gamescope::CDRMCRTC > &pCRTC ){ return pCRTC->GetColorPipeline() != nullptr; } ) )
 	{
-		// The cap hides GAMMA_LUT, which amdgpu's colorop path still re-encodes with.
-		drm_log.infof( "No CRTC color pipeline has a 3D LUT, keeping the legacy CRTC color properties" );
+		// The cap hides GAMMA_LUT, which the colorop path then needs to re-encode the blend.
+		drm_log.infof( "No CRTC color pipeline has a 3D LUT or a regamma curve, keeping the legacy CRTC color properties" );
 		if ( drmSetClientCap( drm->fd, DRM_CLIENT_CAP_CRTC_COLOR_PIPELINE, 0 ) != 0 )
 			drm_log.errorf_errno( "drmSetClientCap(CRTC_COLOR_PIPELINE, 0) failed" );
 		g_bSupportsCRTCColorPipeline = false;
@@ -2239,6 +2239,7 @@ static constexpr uint32_t k_ColorNeedCTM         = 1u << 1;
 static constexpr uint32_t k_ColorNeedLuts        = 1u << 2;
 static constexpr uint32_t k_ColorNeedEncodedGain = 1u << 3;
 static constexpr uint32_t k_ColorNeedBlendDecode = 1u << 4;
+static constexpr uint32_t k_ColorNeedBlendDecodePQ = 1u << 5;
 
 struct LiftoffStateCacheEntry
 {
@@ -2443,6 +2444,44 @@ static gamescope::BackendBlob *drm_get_srgb_gamma_lut( struct drm_t *drm, uint32
 	return drm->srgb_gamma_lut.get();
 }
 
+static gamescope::CDRMColorOp *drm_get_crtc_regamma_curve( struct drm_t *drm )
+{
+	gamescope::CDRMColorPipeline *p = drm->pCRTC ? drm->pCRTC->GetColorPipeline() : nullptr;
+	return p ? p->pRegammaCurve : nullptr;
+}
+
+static std::optional<gamescope::EDRMColorOpCurve> drm_output_tf_to_regamma_curve( amdgpu_transfer_function tf )
+{
+	switch ( tf )
+	{
+		case AMDGPU_TRANSFER_FUNCTION_SRGB_EOTF:
+			return gamescope::EDRMColorOpCurve::SRGB_Inverse_EOTF;
+		case AMDGPU_TRANSFER_FUNCTION_PQ_EOTF:
+			return gamescope::EDRMColorOpCurve::PQ_125_Inverse_EOTF;
+		default:
+			return std::nullopt;
+	}
+}
+
+// Whether something after the blender can re-encode planes decoded with this TF.
+static bool drm_can_regamma( struct drm_t *drm, amdgpu_transfer_function tf )
+{
+	if ( gamescope::CDRMColorOp *pRegammaCurve = drm_get_crtc_regamma_curve( drm ) )
+	{
+		std::optional<gamescope::EDRMColorOpCurve> oCurve = drm_output_tf_to_regamma_curve( tf );
+		if ( !oCurve || !pRegammaCurve->GetCurveValue( *oCurve ) )
+			return false;
+
+		// A full plane pipeline only promises the sRGB decode.
+		gamescope::CDRMColorPipeline *pPlanePipeline = drm->pPrimaryPlane ? drm->pPrimaryPlane->GetColorPipeline() : nullptr;
+		return tf != AMDGPU_TRANSFER_FUNCTION_PQ_EOTF ||
+			( pPlanePipeline && pPlanePipeline->pBlendCurve && pPlanePipeline->pBlendCurve->GetCurveValue( gamescope::EDRMColorOpCurve::PQ_125_EOTF ) );
+	}
+
+	// GAMMA_LUT cannot hold a PQ inverse over the blended range.
+	return tf == AMDGPU_TRANSFER_FUNCTION_SRGB_EOTF && drm_get_gamma_lut_size( drm ) != 0;
+}
+
 static inline uint32_t ColorSpaceToEOTFIndex( GamescopeAppTextureColorspace colorspace )
 {
 	switch ( colorspace )
@@ -2470,7 +2509,8 @@ LiftoffStateCacheEntry FrameInfoToLiftoffStateCacheEntry( struct drm_t *drm, con
 	const bool bFullColorPipeline = drm_supports_color_pipeline( drm );
 
 	entry.nLayerCount = frameInfo->layers.count();
-	entry.bCRTCLut3D = drm->pCRTC->GetProperties().COLOR_PIPELINE && drm->pCRTC->GetProperties().COLOR_PIPELINE->GetPendingValue() != 0;
+	entry.bCRTCLut3D = drm->pCRTC->GetColorPipeline() && drm->pCRTC->GetColorPipeline()->pLut3D &&
+		drm->pCRTC->GetProperties().COLOR_PIPELINE && drm->pCRTC->GetProperties().COLOR_PIPELINE->GetPendingValue() != 0;
 	for ( int i = 0; i < entry.nLayerCount; i++ )
 	{
 		const uint16_t srcWidth  = frameInfo->layers.get( i ).tex->width();
@@ -2526,7 +2566,9 @@ LiftoffStateCacheEntry FrameInfoToLiftoffStateCacheEntry( struct drm_t *drm, con
 			else if ( frameInfo->layers.get( i ).applyColorMgmt && !entry.bCRTCLut3D && !g_bForceDisableColorMgmt &&
 			          g_ColorMgmtLuts[ ColorSpaceToEOTFIndex( entry.layerState[i].colorspace ) ].vScanoutGain != glm::vec3( 1.0f ) )
 				entry.layerState[i].colorNeed |= k_ColorNeedEncodedGain;
-			if ( drm->pending.output_tf != AMDGPU_TRANSFER_FUNCTION_DEFAULT )
+			if ( drm->pending.output_tf == AMDGPU_TRANSFER_FUNCTION_PQ_EOTF )
+				entry.layerState[i].colorNeed |= k_ColorNeedBlendDecodePQ;
+			else if ( drm->pending.output_tf != AMDGPU_TRANSFER_FUNCTION_DEFAULT )
 				entry.layerState[i].colorNeed |= k_ColorNeedBlendDecode;
 		}
 	}
@@ -2986,14 +3028,22 @@ namespace gamescope
 		for ( CDRMColorPipeline &pipeline : m_ColorPipelines )
 		{
 			pipeline.pLut3D = nullptr;
+			pipeline.pRegammaCurve = nullptr;
 			for ( std::unique_ptr<CDRMColorOp> &pColorOp : pipeline.ops )
 			{
 				if ( pColorOp->GetType() == EDRMColorOpType::Lut3D && pColorOp->GetSize() == s_nLutEdgeSize3d )
 					pipeline.pLut3D = pColorOp.get();
+				else if ( pColorOp->GetType() == EDRMColorOpType::Curve1D && !pipeline.pRegammaCurve &&
+				          pColorOp->GetCurveValue( EDRMColorOpCurve::SRGB_Inverse_EOTF ) )
+					pipeline.pRegammaCurve = pColorOp.get();
 			}
+
+			// The 3D LUT takes encoded values, so a pipeline that has one never re-encodes.
+			if ( pipeline.pLut3D )
+				pipeline.pRegammaCurve = nullptr;
 		}
 
-		std::erase_if( m_ColorPipelines, []( const CDRMColorPipeline &pipeline ){ return !pipeline.pLut3D; } );
+		std::erase_if( m_ColorPipelines, []( const CDRMColorPipeline &pipeline ){ return !pipeline.pLut3D && !pipeline.pRegammaCurve; } );
 	}
 
 	/////////////////////////
@@ -3470,6 +3520,9 @@ static bool drm_plane_fits_color_need( gamescope::CDRMPlane *pPlane, uint32_t uC
 	if ( ( uColorNeed & k_ColorNeedBlendDecode ) && ( !p->pBlendCurve || !p->pBlendCurve->GetCurveValue( gamescope::EDRMColorOpCurve::SRGB_EOTF ) ) )
 		return false;
 
+	if ( ( uColorNeed & k_ColorNeedBlendDecodePQ ) && ( !p->pBlendCurve || !p->pBlendCurve->GetCurveValue( gamescope::EDRMColorOpCurve::PQ_125_EOTF ) ) )
+		return false;
+
 	return true;
 }
 
@@ -3495,7 +3548,8 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 			if ( ( ( uColorNeed & k_ColorNeedFixedMatrix ) && ( cv_drm_debug_disable_color_encoding || cv_drm_debug_disable_color_range ) ) ||
 			     ( ( uColorNeed & k_ColorNeedCTM ) && !bFullColorPipeline ) ||
 			     ( ( uColorNeed & k_ColorNeedEncodedGain ) && !drm->pending.encoded_gain_ctm_id[ uEOTF ] ) ||
-			     ( ( uColorNeed & k_ColorNeedBlendDecode ) && !cv_drm_debug_disable_regamma_tf && !drm->srgb_gamma_lut ) ||
+			     ( ( uColorNeed & k_ColorNeedBlendDecode ) && !cv_drm_debug_disable_regamma_tf &&
+			       !drm_get_crtc_regamma_curve( drm ) && !drm->srgb_gamma_lut ) ||
 			     ( ( uColorNeed & k_ColorNeedLuts ) && !cv_drm_debug_disable_shaper_and_3dlut &&
 			       ( !drm->pending.shaperlut_colorop_id[ uEOTF ] || !drm->pending.lut3d_colorop_id[ uEOTF ] ) ) )
 			{
@@ -3790,7 +3844,7 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 					gamescope::CDRMColorOp *pOp = pColorOp.get();
 					if ( ( pOp == p->pFixedMatrix && ( uColorNeed & k_ColorNeedFixedMatrix ) ) ||
 					     ( pOp == p->pCTM && ( uColorNeed & ( k_ColorNeedCTM | k_ColorNeedEncodedGain ) ) ) ||
-					     ( pOp == p->pBlendCurve && ( uColorNeed & k_ColorNeedBlendDecode ) ) ||
+					     ( pOp == p->pBlendCurve && ( uColorNeed & ( k_ColorNeedBlendDecode | k_ColorNeedBlendDecodePQ ) ) ) ||
 					     ( bLuts && ( pOp == p->pDegammaCurve || pOp == p->pShaperCurve || pOp == p->pShaperLut || pOp == p->pLut3D ) ) )
 						continue;
 
@@ -3850,9 +3904,11 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 					}
 				}
 
-				if ( uColorNeed & k_ColorNeedBlendDecode )
+				if ( uColorNeed & ( k_ColorNeedBlendDecode | k_ColorNeedBlendDecodePQ ) )
 				{
-					std::optional<gamescope::EDRMColorOpCurve> blend_tf = gamescope::EDRMColorOpCurve::SRGB_EOTF;
+					std::optional<gamescope::EDRMColorOpCurve> blend_tf = ( uColorNeed & k_ColorNeedBlendDecodePQ )
+						? gamescope::EDRMColorOpCurve::PQ_125_EOTF
+						: gamescope::EDRMColorOpCurve::SRGB_EOTF;
 					drm_set_colorop_curve( drm->req, p->pBlendCurve, !cv_drm_debug_disable_blend_tf ? blend_tf : std::nullopt );
 				}
 
@@ -3993,7 +4049,8 @@ static void drm_unlink_foreign_planes( struct drm_t *drm )
 // With no shaper stage, the post-blend 3D LUT carries the transform only for one EOTF with an identity shaper.
 static gamescope::BackendBlob *drm_get_crtc_lut3d( struct drm_t *drm, const struct FrameInfo_t *frameInfo )
 {
-	if ( !drm->pCRTC->GetColorPipeline() || !frameInfo->applyOutputColorMgmt || g_bForceDisableColorMgmt || cv_drm_debug_disable_shaper_and_3dlut )
+	if ( !drm->pCRTC->GetColorPipeline() || !drm->pCRTC->GetColorPipeline()->pLut3D ||
+	     !frameInfo->applyOutputColorMgmt || g_bForceDisableColorMgmt || cv_drm_debug_disable_shaper_and_3dlut )
 		return nullptr;
 
 	std::optional<uint32_t> oEOTF;
@@ -4082,10 +4139,13 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 		}
 	}
 	else if ( drm_supports_color_pipeline( drm ) && frameInfo->applyOutputColorMgmt &&
-	          !cv_drm_debug_disable_output_tf && !bSinglePlane &&
-	          frameInfo->outputEncodingEOTF != EOTF_PQ && drm_get_gamma_lut_size( drm ) != 0 )
+	          !cv_drm_debug_disable_output_tf && !bSinglePlane )
 	{
-		drm->pending.output_tf = AMDGPU_TRANSFER_FUNCTION_SRGB_EOTF;
+		const amdgpu_transfer_function tf = frameInfo->outputEncodingEOTF == EOTF_PQ
+			? AMDGPU_TRANSFER_FUNCTION_PQ_EOTF
+			: AMDGPU_TRANSFER_FUNCTION_SRGB_EOTF;
+
+		drm->pending.output_tf = drm_can_regamma( drm, tf ) ? tf : AMDGPU_TRANSFER_FUNCTION_DEFAULT;
 	}
 	else
 	{
@@ -4254,12 +4314,22 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 			gamescope::CDRMColorPipeline *p = drm->pCRTC->GetColorPipeline();
 			gamescope::BackendBlob *pLut3D = drm_get_crtc_lut3d( drm, frameInfo );
 
-			drm->pCRTC->GetProperties().COLOR_PIPELINE->SetPendingValue( drm->req, pLut3D ? p->uId : 0lu, true );
-			if ( pLut3D )
+			std::optional<gamescope::EDRMColorOpCurve> oRegamma;
+			if ( p && p->pRegammaCurve && !cv_drm_debug_disable_regamma_tf )
+				oRegamma = drm_output_tf_to_regamma_curve( drm->pending.output_tf );
+
+			gamescope::CDRMColorOp *pActive = pLut3D ? p->pLut3D : ( oRegamma ? p->pRegammaCurve : nullptr );
+
+			drm->pCRTC->GetProperties().COLOR_PIPELINE->SetPendingValue( drm->req, pActive ? p->uId : 0lu, true );
+			if ( pActive )
 			{
 				for ( std::unique_ptr<gamescope::CDRMColorOp> &pColorOp : p->ops )
-					pColorOp->GetProperties().BYPASS->SetPendingValue( drm->req, pColorOp.get() == p->pLut3D ? 0 : 1, true );
-				p->pLut3D->GetProperties().DATA->SetPendingValue( drm->req, pLut3D->GetBlobValue(), true );
+					pColorOp->GetProperties().BYPASS->SetPendingValue( drm->req, pColorOp.get() == pActive ? 0 : 1, true );
+
+				if ( pLut3D )
+					p->pLut3D->GetProperties().DATA->SetPendingValue( drm->req, pLut3D->GetBlobValue(), true );
+				else
+					drm_set_colorop_curve( drm->req, p->pRegammaCurve, oRegamma );
 			}
 		}
 	}
@@ -4857,9 +4927,10 @@ namespace gamescope
 			if ( g_bOutputHDREnabled )
 			{
 				bNeedsFullComposite |= g_bHDRItmEnable;
-				// Nothing after the blender can encode PQ on the colorop path.
+				// Only a CRTC regamma curve can encode PQ after the blender on the colorop path.
 				bNeedsFullComposite |= pFrameInfo->layers.count() > 1 && pFrameInfo->applyOutputColorMgmt &&
-					pFrameInfo->outputEncodingEOTF == EOTF_PQ && drm_supports_color_pipeline( &g_DRM );
+					pFrameInfo->outputEncodingEOTF == EOTF_PQ && drm_supports_color_pipeline( &g_DRM ) &&
+					!drm_can_regamma( &g_DRM, AMDGPU_TRANSFER_FUNCTION_PQ_EOTF );
 				if ( !SupportsColorManagement() )
 				{
 					bNeedsFullComposite |= ( pFrameInfo->layers.count() > 1 || pFrameInfo->layers.get( 0 ).colorspace != GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ );
