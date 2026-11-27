@@ -143,6 +143,7 @@ bool g_bWasPartialComposite = false;
 bool ShouldDrawCursor();
 
 std::atomic<uint32_t> g_unCurrentVRSceneAppId;
+std::atomic<bool> g_bVRStandby;
 std::atomic<uint64_t> g_FocusedVROverlayMouse;
 std::atomic<uint64_t> g_FocusedVROverlayKeyboard;
 
@@ -1843,11 +1844,10 @@ import_commit (
 	if (swapchain_feedback)
 		commit->feedback = *swapchain_feedback;
 	commit->present_timing = std::move( present_timing );
-	if (window_is_vr_scene_app( w )) {
+	// While the headset sleeps no VR frame is waiting on this window, and the
+	// app's own present may be all that paces it.
+	if (window_is_vr_scene_app( w ) && !g_bVRStandby.load( std::memory_order_relaxed )) {
 		commit->async = true;
-		commit->fifo = false;
-	} else if (window_is_vr_app( w )) {
-		// Heuristic match keeps vblank-aligned flips, no async tearing.
 		commit->fifo = false;
 	}
 
