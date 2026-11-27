@@ -686,12 +686,10 @@ namespace gamescope
 					else
 					{
 						wlserver_lock();
-						wlserver_touchmotion(
+						wlserver_mousemotion_absolute(
 							event.motion.x / float(g_nOutputWidthPts),
 							event.motion.y / float(g_nOutputHeightPts),
-							0,
 							fake_timestamp );
-						wlserver_touchframe();
 						wlserver_unlock();
 					}
 				}
