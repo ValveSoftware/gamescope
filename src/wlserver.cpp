@@ -3390,6 +3390,10 @@ void wlserver_mousewarp( double x, double y, uint32_t time, bool bSynthetic )
 {
 	assert( wlserver_is_lock_held() );
 
+	// A position sent alone shows up in Xwayland as raw motion with large deltas.
+	if ( !bSynthetic )
+		wlserver_perform_rel_pointer_motion( x - wlserver.mouse_surface_cursorx, y - wlserver.mouse_surface_cursory );
+
 	wlserver.mouse_surface_cursorx = x;
 	wlserver.mouse_surface_cursory = y;
 
