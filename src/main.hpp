@@ -140,6 +140,9 @@ extern bool g_bRt;
 extern int g_nXWaylandCount;
 extern bool g_bNoTouchPointerEmulation;
 
+extern bool g_bCustomRepeatRateSet;
+extern bool g_bCustomRepeatDelaySet;
+
 extern uint32_t g_preferVendorID;
 extern uint32_t g_preferDeviceID;
 

@@ -65,6 +65,7 @@
 #include "log.hpp"
 #include "ime.hpp"
 #include "xwayland_ctx.hpp"
+#include "convar.h"
 #include "refresh_rate.h"
 #include "InputEmulation.h"
 #include "commit.h"
@@ -2311,6 +2312,29 @@ static std::unique_ptr<gamescope::GamescopeInputServer> g_InputServer;
 #endif
 
 static void wlserver_update_keymap();
+static void wlserver_update_keyboard_repeat();
+
+gamescope::ConVar<int> cv_keyboard_repeat_rate( "keyboard_repeat_rate", 25,
+	"Keyboard repeat rate (repeats per second)",
+	[]( gamescope::ConVar<int> & ) { wlserver_update_keyboard_repeat(); } );
+
+gamescope::ConVar<int> cv_keyboard_repeat_delay( "keyboard_repeat_delay", 600,
+	"Keyboard repeat delay (milliseconds)",
+	[]( gamescope::ConVar<int> & ) { wlserver_update_keyboard_repeat(); } );
+
+static void wlserver_update_keyboard_repeat()
+{
+	if ( !wlserver.keyboard_group )
+		return;
+
+	int rate = std::clamp( (int)cv_keyboard_repeat_rate, 0, 1000 );
+	int delay = ( rate > 0 ) ? std::clamp( (int)cv_keyboard_repeat_delay, 50, 10000 )
+	                         : std::clamp( (int)cv_keyboard_repeat_delay, 0, 10000 );
+
+	wlr_keyboard_set_repeat_info( &wlserver.keyboard_group->keyboard, rate, delay );
+	if ( wlserver.wlr.virtual_keyboard_device )
+		wlr_keyboard_set_repeat_info( wlserver.wlr.virtual_keyboard_device, rate, delay );
+}
 
 // Steam pushes the user's keyboard layout in here, as nothing in the session
 // exports it to us. See gamescope_control.set_keyboard_layout and
@@ -2387,6 +2411,17 @@ void wlserver_set_keyboard_layout( const char *pszLayout )
 	cv_xkb_layout = std::string{ pszLayout };
 }
 
+void wlserver_set_keyboard_repeat_info( int32_t nRate, int32_t nDelay )
+{
+	assert( wlserver_is_lock_held() );
+
+	if ( nRate >= 0 && !g_bCustomRepeatRateSet && (int)cv_keyboard_repeat_rate != nRate )
+		cv_keyboard_repeat_rate = nRate;
+
+	if ( nDelay >= 0 && !g_bCustomRepeatDelaySet && (int)cv_keyboard_repeat_delay != nDelay )
+		cv_keyboard_repeat_delay = nDelay;
+}
+
 bool wlserver_init( void ) {
 	assert( wlserver.display != nullptr );
 
@@ -2421,7 +2456,7 @@ bool wlserver_init( void ) {
 	// in sync (one single layout and a shared state)
 	wlserver.keyboard_group = wlr_keyboard_group_create();
 	struct wlr_keyboard *keyboard = &wlserver.keyboard_group->keyboard;
-	wlr_keyboard_set_repeat_info(keyboard, 25, 600);
+	wlserver_update_keyboard_repeat();
 	wlserver_update_keymap();
 	wlserver.keyboard_group_modifiers.notify = wlserver_handle_modifiers;
 	wl_signal_add(&keyboard->events.modifiers, &wlserver.keyboard_group_modifiers);
