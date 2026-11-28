@@ -1780,10 +1780,44 @@ namespace gamescope
         UpdateVRRRefreshRate();
     }
 
+    // --nested-unfocused-refresh (-o): like the SDL backend does on focus
+    // events, drop g_nNestedRefresh to g_nNestedUnfocusedRefresh while the
+    // host compositor reports our toplevel as not activated, and restore it
+    // once it is activated again. g_nNestedRefresh (rather than
+    // g_nOutputRefresh) is what the vblank timer paces with when -r is set.
+    //
+    // The activated state is optional in xdg-shell, so only start treating
+    // its absence as "unfocused" after it has been reported at least once;
+    // a compositor that never sends it keeps the full refresh.
+    static bool s_bSeenActivated = false;
+    static int s_nFocusedNestedRefresh = -1;
+
+    static void UpdateNestedRefreshForActivation( bool bActivated )
+    {
+        if ( !g_nNestedUnfocusedRefresh )
+            return;
+
+        if ( bActivated )
+            s_bSeenActivated = true;
+
+        if ( !bActivated && s_bSeenActivated && s_nFocusedNestedRefresh < 0 )
+        {
+            s_nFocusedNestedRefresh = g_nNestedRefresh;
+            g_nNestedRefresh = g_nNestedUnfocusedRefresh;
+        }
+        else if ( bActivated && s_nFocusedNestedRefresh >= 0 )
+        {
+            g_nNestedRefresh = s_nFocusedNestedRefresh;
+            s_nFocusedNestedRefresh = -1;
+        }
+    }
+
     void CWaylandPlane::LibDecor_Frame_Configure( libdecor_frame *pFrame, libdecor_configuration *pConfiguration )
     {
 	    if ( !libdecor_configuration_get_window_state( pConfiguration, &m_eWindowState ) )
 		    m_eWindowState = LIBDECOR_WINDOW_STATE_NONE;
+	    else
+		    UpdateNestedRefreshForActivation( m_eWindowState & LIBDECOR_WINDOW_STATE_ACTIVE );
 
         int32_t uScale = GetScale();
 
