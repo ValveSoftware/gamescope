@@ -479,6 +479,7 @@ namespace gamescope
         uint32_t m_uMaxTargetLuminance = 203;
         displaycolorimetry_t m_DisplayColorimetry = displaycolorimetry_709;
         std::vector<uint8_t> m_FakeEdid;
+        mutable BackendMode m_NativeMode{};
 
         CWaylandBackend *m_pBackend = nullptr;
 
@@ -1202,7 +1203,8 @@ namespace gamescope
 
     GamescopeScreenType CWaylandConnector::GetScreenType() const
     {
-        return gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL;
+        // Steam only sizes itself from an external mode list.
+        return gamescope::GAMESCOPE_SCREEN_TYPE_EXTERNAL;
     }
     GamescopePanelOrientation CWaylandConnector::GetCurrentOrientation() const
     {
@@ -1227,7 +1229,13 @@ namespace gamescope
     }
     std::span<const BackendMode> CWaylandConnector::GetModes() const
     {
-        return std::span<const BackendMode>{};
+        m_NativeMode = BackendMode
+        {
+            .uWidth = g_nOutputWidth,
+            .uHeight = g_nOutputHeight,
+            .uRefresh = uint32_t( ConvertmHzToHz( g_nOutputRefresh ) ),
+        };
+        return std::span<const BackendMode>{ &m_NativeMode, 1 };
     }
 
     bool CWaylandConnector::SupportsVRR() const
@@ -2351,7 +2359,7 @@ namespace gamescope
     }
     IBackendConnector *CWaylandBackend::GetConnector( GamescopeScreenType eScreenType )
     {
-        if ( eScreenType == GAMESCOPE_SCREEN_TYPE_INTERNAL )
+        if ( eScreenType == GAMESCOPE_SCREEN_TYPE_EXTERNAL )
             return GetCurrentConnector();
 
         return nullptr;

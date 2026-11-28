@@ -127,6 +127,7 @@ namespace gamescope
 		SDL_Window *m_pWindow = nullptr;
 		VkSurfaceKHR m_pVkSurface = VK_NULL_HANDLE;
 		BackendConnectorHDRInfo m_HDRInfo{};
+		mutable BackendMode m_NativeMode{};
 	};
 
 	class CSDLBackend : public CBaseBackend
@@ -277,7 +278,8 @@ namespace gamescope
 
 	GamescopeScreenType CSDLConnector::GetScreenType() const
 	{
-		return gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL;
+		// Steam only sizes itself from an external mode list.
+		return gamescope::GAMESCOPE_SCREEN_TYPE_EXTERNAL;
 	}
 	GamescopePanelOrientation CSDLConnector::GetCurrentOrientation() const
 	{
@@ -302,7 +304,13 @@ namespace gamescope
 	}
 	std::span<const BackendMode> CSDLConnector::GetModes() const
 	{
-		return std::span<const BackendMode>{};
+		m_NativeMode = BackendMode
+		{
+			.uWidth = g_nOutputWidth,
+			.uHeight = g_nOutputHeight,
+			.uRefresh = uint32_t( ConvertmHzToHz( g_nOutputRefresh ) ),
+		};
+		return std::span<const BackendMode>{ &m_NativeMode, 1 };
 	}
 
 	bool CSDLConnector::SupportsVRR() const
@@ -478,7 +486,7 @@ namespace gamescope
 	}
 	IBackendConnector *CSDLBackend::GetConnector( GamescopeScreenType eScreenType )
 	{
-		if ( eScreenType == GAMESCOPE_SCREEN_TYPE_INTERNAL )
+		if ( eScreenType == GAMESCOPE_SCREEN_TYPE_EXTERNAL )
 			return &m_Connector;
 
 		return nullptr;
