@@ -5,6 +5,7 @@
 #include <signal.h>
 #include <stdlib.h>
 #include <string>
+#include <vector>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -222,4 +223,55 @@ TEST_CASE("GetAppIdFromReaper", "[process]") {
     SECTION("non-existent pid") {
         REQUIRE(gamescope::Process::GetAppIdFromReaper(std::numeric_limits<pid_t>::max()) == 0u);
     }
+}
+
+TEST_CASE("ExitCodeFromWaitStatus", "[process]") {
+    auto status_of = [](const char *cmd) {
+        pid_t pid = fork();
+        if (pid == 0) {
+            execl("/bin/sh", "sh", "-c", cmd, nullptr);
+            _exit(126);
+        }
+        int status = 0;
+        waitpid(pid, &status, 0);
+        return gamescope::Process::ExitCodeFromWaitStatus(status);
+    };
+
+    REQUIRE(status_of("exit 0") == 0);
+    REQUIRE(status_of("exit 7") == 7);
+    REQUIRE(status_of("kill -KILL $$") == 128 + SIGKILL);
+}
+
+namespace {
+
+// Runs the real gamescopereaper (built next to the tests) and returns its exit code.
+int RunReaper(std::vector<const char *> cmd) {
+    char buf[PATH_MAX];
+    ssize_t len = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (len < 0) return -1;
+    buf[len] = '\0';
+    std::string reaper = std::filesystem::path(buf).parent_path().parent_path() / "src" / "gamescopereaper";
+
+    std::vector<const char *> argv = {reaper.c_str(), "--"};
+    argv.insert(argv.end(), cmd.begin(), cmd.end());
+    argv.push_back(nullptr);
+
+    pid_t pid = fork();
+    if (pid == 0) {
+        execv(argv[0], const_cast<char **>(argv.data()));
+        _exit(255);
+    }
+    int status = 0;
+    waitpid(pid, &status, 0);
+    return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+}
+
+} // namespace
+
+TEST_CASE("gamescopereaper propagates the exit status", "[process]") {
+    REQUIRE(RunReaper({"true"}) == 0);
+    REQUIRE(RunReaper({"sh", "-c", "exit 7"}) == 7);
+    REQUIRE(RunReaper({"false"}) == 1);
+    REQUIRE(RunReaper({"sh", "-c", "kill -SEGV $$"}) == 128 + SIGSEGV);
+    REQUIRE(RunReaper({"/nonexistent/command"}) == 127);
 }

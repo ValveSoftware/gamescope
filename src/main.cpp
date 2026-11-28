@@ -295,6 +295,8 @@ const char usage[] =
 	"";
 
 std::atomic< bool > g_bRun{true};
+// Exit status of the command after `--`, returned by gamescope itself.
+std::atomic< int > g_nPrimaryChildExitCode{0};
 
 int g_nNestedWidth = 0;
 int g_nNestedHeight = 0;
@@ -1125,6 +1127,8 @@ int main(int argc, char **argv)
 
 	gamescope::Process::KillAllChildren( getpid(), SIGTERM );
 	gamescope::Process::WaitForAllChildren();
+
+	return g_nPrimaryChildExitCode;
 }
 
 static void steamCompMgrThreadRun(int argc, char **argv)
