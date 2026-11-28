@@ -160,6 +160,7 @@ struct steamcompmgr_win_t {
 	unsigned int restoreWidth = 0;
 	unsigned int restoreHeight = 0;
 	bool is_dialog = false;
+	bool isComboPopup = false;
 	bool maybe_a_dropdown = false;
 	bool outdatedInteractiveFocus = false;
 
