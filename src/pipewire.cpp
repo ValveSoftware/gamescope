@@ -98,6 +98,7 @@ static void build_format_params(struct spa_pod_builder *builder, spa_video_forma
 	struct spa_rectangle size = SPA_RECTANGLE(s_nCaptureWidth, s_nCaptureHeight);
 	struct spa_rectangle min_requested_size = { 0, 0 };
 	struct spa_rectangle max_requested_size = { UINT32_MAX, UINT32_MAX };
+	struct spa_rectangle def_requested_size = SPA_RECTANGLE( s_nRequestedWidth, s_nRequestedHeight );
 	struct spa_fraction framerate = SPA_FRACTION(0, 1);
 	uint64_t modifier = DRM_FORMAT_MOD_LINEAR;
 
@@ -109,7 +110,7 @@ static void build_format_params(struct spa_pod_builder *builder, spa_video_forma
 		SPA_FORMAT_VIDEO_format, SPA_POD_Id(format),
 		SPA_FORMAT_VIDEO_size, SPA_POD_Rectangle(&size),
 		SPA_FORMAT_VIDEO_framerate, SPA_POD_Fraction(&framerate),
-		SPA_FORMAT_VIDEO_requested_size, SPA_POD_CHOICE_RANGE_Rectangle( &min_requested_size, &min_requested_size, &max_requested_size ),
+		SPA_FORMAT_VIDEO_requested_size, SPA_POD_CHOICE_RANGE_Rectangle( &def_requested_size, &min_requested_size, &max_requested_size ),
 		SPA_FORMAT_VIDEO_gamescope_focus_appid, SPA_POD_CHOICE_RANGE_Long( 0ll, INT64_MIN, INT64_MAX ),
 		0);
 	if (format == SPA_VIDEO_FORMAT_NV12) {
@@ -138,7 +139,7 @@ static void build_format_params(struct spa_pod_builder *builder, spa_video_forma
 		SPA_FORMAT_VIDEO_format, SPA_POD_Id(format),
 		SPA_FORMAT_VIDEO_size, SPA_POD_Rectangle(&size),
 		SPA_FORMAT_VIDEO_framerate, SPA_POD_Fraction(&framerate),
-		SPA_FORMAT_VIDEO_requested_size, SPA_POD_CHOICE_RANGE_Rectangle( &min_requested_size, &min_requested_size, &max_requested_size ),
+		SPA_FORMAT_VIDEO_requested_size, SPA_POD_CHOICE_RANGE_Rectangle( &def_requested_size, &min_requested_size, &max_requested_size ),
 		SPA_FORMAT_VIDEO_gamescope_focus_appid, SPA_POD_CHOICE_RANGE_Long( 0ll, INT64_MIN, INT64_MAX ),
 		0);
 	if (format == SPA_VIDEO_FORMAT_NV12) {
@@ -169,6 +170,45 @@ static std::vector<const struct spa_pod *> build_format_params(struct spa_pod_bu
 
 	return params;
 }
+
+static void registry_handle_global(void *data, uint32_t id, uint32_t permissions,
+	const char *type, uint32_t version, const struct spa_dict *props)
+{
+	struct pipewire_state *state = (struct pipewire_state *) data;
+	if (strcmp(type, PW_TYPE_INTERFACE_Link) != 0 || props == nullptr)
+		return;
+
+	const char *output = spa_dict_lookup(props, PW_KEY_LINK_OUTPUT_NODE);
+	uint32_t output_node;
+	if (output != nullptr && spa_atou32(output, &output_node, 10) &&
+	    output_node == pw_stream_get_node_id(state->stream))
+		state->consumer_links.insert(id);
+}
+
+static void registry_handle_global_remove(void *data, uint32_t id)
+{
+	struct pipewire_state *state = (struct pipewire_state *) data;
+	if (state->consumer_links.erase(id) == 0 || !state->consumer_links.empty())
+		return;
+
+	// A renegotiation also clears the format and pauses the stream, only unlinking ends the request.
+	s_nRequestedWidth = 0;
+	s_nRequestedHeight = 0;
+	state->gamescope_info.requested_size = SPA_RECTANGLE(0, 0);
+	calculate_capture_size();
+
+	uint8_t buf[4096];
+	struct spa_pod_builder builder = SPA_POD_BUILDER_INIT(buf, sizeof(buf));
+	std::vector<const struct spa_pod *> params = build_format_params(&builder);
+	if (pw_stream_update_params(state->stream, params.data(), params.size()) < 0)
+		pwr_log.errorf("pw_stream_update_params failed");
+}
+
+static const struct pw_registry_events registry_events = {
+	.version = PW_VERSION_REGISTRY_EVENTS,
+	.global = registry_handle_global,
+	.global_remove = registry_handle_global_remove,
+};
 
 static void request_buffer(struct pipewire_state *state)
 {
@@ -351,6 +391,8 @@ static void stream_handle_param_changed(void *data, uint32_t id, const struct sp
 		return;
 
 	struct spa_gamescope gamescope_info{};
+	// The requested size is optional, seed it so a format that omits it leaves the cap alone.
+	gamescope_info.requested_size = SPA_RECTANGLE( s_nRequestedWidth, s_nRequestedHeight );
 
 	int ret = spa_format_video_raw_parse_with_gamescope(param, &state->video_info, &gamescope_info);
 	if (ret < 0) {
@@ -662,6 +704,9 @@ static void run_pipewire(struct pipewire_state *state)
 	}
 
 	pwr_log.infof("exiting");
+	spa_hook_remove(&state->registry_listener);
+	pw_proxy_destroy((struct pw_proxy *) state->registry);
+	state->consumer_links.clear();
 	pw_stream_destroy(state->stream);
 	pw_core_disconnect(state->core);
 	pw_context_destroy(state->context);
@@ -725,6 +770,13 @@ bool init_pipewire(void)
 		pwr_log.errorf("pw_stream_connect failed");
 		return false;
 	}
+
+	state->registry = pw_core_get_registry(state->core, PW_VERSION_REGISTRY, 0);
+	if (!state->registry) {
+		pwr_log.errorf("pw_core_get_registry failed");
+		return false;
+	}
+	pw_registry_add_listener(state->registry, &state->registry_listener, &registry_events, state);
 
 	state->running = true;
 	ret = 0;
