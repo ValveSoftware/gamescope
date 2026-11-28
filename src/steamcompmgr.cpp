@@ -6828,35 +6828,36 @@ handle_client_message(xwayland_ctx_t *ctx, XClientMessageEvent *ev)
 	}
 }
 
-static void x11_set_selection_owner(xwayland_ctx_t *ctx, std::string contents, GamescopeSelection eSelectionTarget)
+static void x11_set_selection_owner(xwayland_ctx_t *ctx, GamescopeSelection eSelectionTarget)
 {
-	Atom target;
-	if (eSelectionTarget == GAMESCOPE_SELECTION_CLIPBOARD)
-	{
-		target = ctx->atoms.clipboard;
-	}
-	else if (eSelectionTarget == GAMESCOPE_SELECTION_PRIMARY)
-	{
-		target = ctx->atoms.primarySelection;
-	}
-	else
-	{
+	if (!ctx || !ctx->dpy || !ctx->ourWindow)
 		return;
-	}
+
+	Atom target = None;
+	if (eSelectionTarget == GAMESCOPE_SELECTION_CLIPBOARD)
+		target = ctx->atoms.clipboard;
+	else if (eSelectionTarget == GAMESCOPE_SELECTION_PRIMARY)
+		target = ctx->atoms.primarySelection;
+	else
+		return;
+
+	if (!target)
+		return;
 
 	XSetSelectionOwner(ctx->dpy, target, ctx->ourWindow, CurrentTime);
 }
 
-void gamescope_set_selection(std::string contents, GamescopeSelection eSelection)
+void gamescope_set_selection(const char *contents, GamescopeSelection eSelection)
+{
+	gamescope_set_selection(contents ? std::string_view{contents} : std::string_view{}, eSelection);
+}
+
+void gamescope_set_selection(std::string_view contents, GamescopeSelection eSelection)
 {
 	if (eSelection == GAMESCOPE_SELECTION_CLIPBOARD)
-	{
 		clipboard = contents;
-	}
 	else if (eSelection == GAMESCOPE_SELECTION_PRIMARY)
-	{
 		primarySelection = contents;
-	}
 
 	gamescope_xwayland_server_t *server = NULL;
 	for (int i = 0; (server = wlserver_get_xwayland_server(i)); i++)
@@ -6864,18 +6865,22 @@ void gamescope_set_selection(std::string contents, GamescopeSelection eSelection
 		xwayland_ctx_t *ctx = server->ctx.get();
 
 		if (ctx)
-			x11_set_selection_owner(ctx, contents, eSelection);
+			x11_set_selection_owner(ctx, eSelection);
 	}
 }
 
 void gamescope_set_reshade_effect(std::string effect_path)
 {
 	gamescope_xwayland_server_t *server = wlserver_get_xwayland_server(0);
+	if (!server || !server->ctx)
+		return;
 	set_string_prop(server->ctx.get(), server->ctx->atoms.gamescopeReshadeEffect, effect_path);
 }
 
 void gamescope_clear_reshade_effect() {
 	gamescope_xwayland_server_t *server = wlserver_get_xwayland_server(0);
+	if (!server || !server->ctx)
+		return;
 	clear_prop(server->ctx.get(), server->ctx->atoms.gamescopeReshadeEffect);
 }
 
@@ -8045,6 +8050,9 @@ steamcompmgr_exit(void)
 		gamescope_xwayland_server_t *server = NULL;
 		for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
 		{
+			if (!server->ctx)
+				continue;
+
 			for ( steamcompmgr_win_t *w = server->ctx->list; w; w = w->xwayland().next )
 				w->commit_queue.clear();
 		}
@@ -9692,6 +9700,11 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 
 	ctx->cursor->undirty();
 
+	if (!clipboard.empty())
+		x11_set_selection_owner(ctx, GAMESCOPE_SELECTION_CLIPBOARD);
+	if (!primarySelection.empty())
+		x11_set_selection_owner(ctx, GAMESCOPE_SELECTION_PRIMARY);
+
 	XFlush(ctx->dpy);
 }
 
@@ -9766,6 +9779,9 @@ void update_limiter_atoms(xwayland_ctx_t *root_ctx, bool force, bool* needs_flus
 	gamescope_xwayland_server_t *server = NULL;
 	for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
 	{
+		if (!server->ctx || !server->ctx->dpy)
+			continue;
+
 		XChangeProperty(server->ctx->dpy, server->ctx->root, server->ctx->atoms.gamescopeLimiterFeedback, XA_CARDINAL, 32, PropModeReplace,
 			(unsigned char *)&uLimiterFeedback, 1 );
 
@@ -9910,6 +9926,9 @@ void update_edid_prop()
 	gamescope_xwayland_server_t *server = NULL;
 	for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
 	{
+		if (!server->ctx || !server->ctx->dpy)
+			continue;
+
 		XTextProperty text_property =
 		{
 			.value = (unsigned char *)filename,
@@ -10345,6 +10364,9 @@ static void relay_mangoapp_control()
 	gamescope_xwayland_server_t *server = NULL;
 	for (size_t i = 0; !bAnyTagged && (server = wlserver_get_xwayland_server(i)); i++)
 	{
+		if (!server->ctx)
+			continue;
+
 		for ( steamcompmgr_win_t *w = server->ctx->list; w; w = w->xwayland().next )
 		{
 			if ( w->uMangoappMsgType )
