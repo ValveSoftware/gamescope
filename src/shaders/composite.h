@@ -103,9 +103,14 @@ vec3 apply_layer_color_mgmt(vec3 color, uint layer, uint colorspace) {
     if (colorspace == colorspace_passthru)
         return color;
 
-    if (c_itm_enable)
+    // Inverse tone mapping only applies to SDR layers; HDR layers are left
+    // as they are. BT.2446 Method A works on BT.2020 and returns nits, so
+    // convert the primaries first and return the result in scRGB encoding
+    // (nits / 80), which is what the PQ shaper path below expects.
+    if (c_itm_enable && (colorspace == colorspace_sRGB || colorspace == colorspace_linear))
     {
-        color = bt2446a_inverse_tonemapping(color, u_itmSdrNits, u_itmTargetNits);
+        color = convert_primaries(max(color, vec3(0.0f)), rec709_to_xyz, xyz_to_rec2020);
+        color = bt2446a_inverse_tonemapping(color, u_itmSdrNits, u_itmTargetNits) / 80.0f;
         colorspace = colorspace_pq;
     }
 
