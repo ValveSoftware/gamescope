@@ -2886,6 +2886,19 @@ void wlserver_key( uint32_t key, bool press, uint32_t time )
 	bump_input_counter();
 }
 
+void wlserver_emulated_key( uint32_t key, bool press, uint32_t time )
+{
+	assert( wlserver_is_lock_held() );
+
+	struct wlr_keyboard_key_event event = {
+		.time_msec = time,
+		.keycode = key,
+		.update_state = true,
+		.state = press ? WL_KEYBOARD_KEY_STATE_PRESSED : WL_KEYBOARD_KEY_STATE_RELEASED,
+	};
+	wlr_keyboard_notify_key( &wlserver.keyboard_group->keyboard, &event );
+}
+
 void wlserver_keyboard_modifiers( uint32_t depressed, uint32_t latched, uint32_t locked, uint32_t group )
 {
 	assert( wlserver_is_lock_held() );
