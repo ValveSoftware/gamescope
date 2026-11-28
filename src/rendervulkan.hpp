@@ -553,6 +553,8 @@ struct gamescope_color_mgmt_luts
 	bool bHasLut1D = false;
 	uint16_t lut3d[s_nLutEdgeSize3d*s_nLutEdgeSize3d*s_nLutEdgeSize3d*4];
 	uint16_t lut1d[s_nLutSize1d*4];
+	glm::vec3 vScanoutGain{ 1.0f };
+	bool bShaperIdentity = false;
 
 	gamescope::Rc<CVulkanTexture> vk_lut3d;
 	gamescope::Rc<CVulkanTexture> vk_lut1d;
@@ -574,6 +576,8 @@ struct gamescope_color_mgmt_luts
 	{
 		bHasLut1D = false;
 		bHasLut3D = false;
+		vScanoutGain = glm::vec3( 1.0f );
+		bShaperIdentity = false;
 	}
 };
 
